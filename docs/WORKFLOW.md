@@ -31,6 +31,21 @@ From phase 2 onward, reviews move to real pull requests (`gh pr create`), and th
 
 ---
 
+## Phase 1 exception: Claude works alone
+
+**Codex joins from phase 2.** Phase 1 (foundation) is implemented entirely by Claude.
+
+The review gate still exists — it changes shape. Instead of per-task cross-review, a **fresh reviewer subagent reviews all fourteen task diffs at the end of the phase**, with no implementation context. That is Task 15 of the phase 1 plan.
+
+Two consequences follow, and both are handled in the plan rather than left implicit:
+
+- **Task branches are not deleted at merge time.** The reviewer needs each task's isolated diff. Branches are deleted only after Task 15 consumes them.
+- **The escalation guards (Task 4) are reviewed first**, before any other diff. Tasks 5–14 build on them, so a defect there is the most expensive one to discover late.
+
+Everything below describes the standing two-agent model, which resumes at phase 2.
+
+---
+
 ## Roles
 
 **Claude** — lead. Owns architecture, specs, and implementation plans. Splits milestones into tasks. Implements tasks. Reviews every Codex pull request.

@@ -62,25 +62,32 @@ tests/Feature/
 lang/{en,ar}/
 ```
 
-**Task ownership and dependencies:**
+**Phase 1 is implemented by Claude alone.** Codex joins from phase 2. This changes the review model: instead of per-task cross-review, a **fresh reviewer subagent reviews all fourteen task diffs at the end** (Task 15), with no implementation context.
 
-| Task | Owner | Depends on | Parallel with |
-|---|---|---|---|
-| 1 Scaffold | Claude | — | — |
-| 2 Roles & permissions | Claude | 1 | — |
-| 3 User model & auth | Claude | 2 | — |
-| 4 Escalation guards | Claude | 3 | — |
-| 5 Staff account UI | Claude | 4 | 6 |
-| 6 Staff profiles | Codex | 3 | 5 |
-| 7 Students | Claude | 3 | 8 |
-| 8 Courses | Codex | 3 | 7 |
-| 9 Batches | Codex | 8 | — |
-| 10 Instructor hours | Claude | 9 | 12 |
-| 11 Enrollments | Claude | 7, 9 | 12 |
-| 12 Activity log | Codex | 3 | 10, 11 |
-| 13 Backups | Codex | 1 | 10, 11 |
-| 14 i18n scaffolding | Codex | 1 | any |
-| 15 Doc reconciliation | Claude | all | — |
+The cost of that choice is recorded here so it is not forgotten: a defect in Task 4 surfaces only after Tasks 5–14 are built on top of it. Task 15 therefore reviews Task 4 **first**, before anything else, so a rework there is discovered before the reviewer has spent its attention elsewhere.
+
+**Task order and dependencies:**
+
+| Task | Depends on | Notes |
+|---|---|---|
+| 1 Scaffold | — | |
+| 2 Roles & permissions | 1 | |
+| 3 User model & auth | 2 | |
+| 4 Escalation guards | 3 | Security-critical |
+| 5 Staff account UI | 4 | |
+| 6 Staff profiles | 3 | |
+| 7 Students | 3 | |
+| 8 Courses | 3 | |
+| 9 Batches | 8 | |
+| 10 Instructor hours | 9 | |
+| 11 Enrollments | 7, 9 | |
+| 12 Activity log | 3 | |
+| 13 Backups | 1 | |
+| 14 i18n scaffolding | 1 | Its enforcement test may force fixes back through tasks 5–12 |
+| 15 Phase 1 review | all above | Fresh reviewer subagent |
+| 16 Doc reconciliation | 15 | |
+
+Tasks run in this order. Worktree-per-task from `docs/WORKFLOW.md` still applies — it keeps each task's diff reviewable in isolation at Task 15, which is the whole point of the branch structure.
 
 ---
 
@@ -94,15 +101,22 @@ cd ../Training-center-worktrees/P1-T{NN}
 composer install
 ```
 
-At the **end** of every task, after the reviewing agent approves the local diff:
+At the **end** of every task, once tests, Pint, and Larastan pass:
 
 ```bash
 cd ../../Training-center
 git merge --squash p1/t{nn}-{slug}
 git commit
 git worktree remove ../Training-center-worktrees/P1-T{NN}
-git branch -D p1/t{nn}-{slug}
 ```
+
+**Do not delete the task branch.** Task 15's reviewer needs each task's isolated diff:
+
+```bash
+git diff main...p1/t04-escalation-guards
+```
+
+Branches are deleted only after Task 15 approves them.
 
 Tasks 1 and 2 are the exception: they land directly on `main`, because there is no project to branch from until the scaffold exists.
 
@@ -110,7 +124,7 @@ Tasks 1 and 2 are the exception: they land directly on `main`, because there is 
 
 ## Task 1: Project scaffold
 
-**Owner:** Claude · **Branch:** none, direct to `main`
+**Branch:** none, direct to `main`
 
 **Files:**
 - Create: entire Laravel skeleton
@@ -246,7 +260,7 @@ git commit -m "chore: scaffold Laravel 12 + Filament with domain structure [P1-T
 
 ## Task 2: Roles and permissions
 
-**Owner:** Claude · **Branch:** none, direct to `main`
+**Branch:** none, direct to `main`
 
 **Files:**
 - Create: `database/seeders/RolePermissionSeeder.php`
@@ -447,7 +461,7 @@ git commit -m "feat(staff): add four roles with permission sets [P1-T02]"
 
 ## Task 3: User model and authentication
 
-**Owner:** Claude · **Branch:** `p1/t03-user-auth`
+**Branch:** `p1/t03-user-auth`
 
 **Files:**
 - Create: `database/migrations/xxxx_add_fields_to_users_table.php`
@@ -792,7 +806,7 @@ Event::listen(Login::class, function (Login $event): void {
 Run: `php artisan test --filter="PanelAccessTest|ForcePasswordChangeTest"`
 Expected: 7 passed.
 
-- [ ] **Step 11: Commit and request review**
+- [ ] **Step 11: Commit**
 
 ```bash
 vendor/bin/pint && vendor/bin/phpstan analyse && php artisan test
@@ -800,13 +814,13 @@ git add -A
 git commit -m "feat(staff): add user fields, panel access control, forced password change [P1-T03]"
 ```
 
-Request Codex review per `docs/WORKFLOW.md`: `git diff main...p1/t03-user-auth`
+Keep the branch. Task 15 reviews it.
 
 ---
 
 ## Task 4: Escalation guards
 
-**Owner:** Claude · **Branch:** `p1/t04-escalation-guards`
+**Branch:** `p1/t04-escalation-guards`
 
 The three guards from spec section 5. This is the highest-risk task in phase 1 — a mistake here is a privilege escalation vulnerability.
 
@@ -1084,7 +1098,7 @@ Gate::policy(User::class, UserPolicy::class);
 Run: `php artisan test --filter=EscalationGuardTest`
 Expected: 11 passed.
 
-- [ ] **Step 8: Commit and request review**
+- [ ] **Step 8: Commit**
 
 ```bash
 vendor/bin/pint && vendor/bin/phpstan analyse && php artisan test
@@ -1092,13 +1106,13 @@ git add -A
 git commit -m "feat(staff): enforce three privilege escalation guards [P1-T04]"
 ```
 
-Request Codex review. **Flag this task explicitly as security-critical in the review request** — the reviewer should attempt to think of a fourth escalation path not covered by these tests.
+Keep the branch. **Task 15 reviews this diff first, before any other task**, and its explicit brief is to find a fourth escalation path these eleven tests do not cover.
 
 ---
 
 ## Task 5: Staff account management UI
 
-**Owner:** Claude · **Branch:** `p1/t05-staff-accounts`
+**Branch:** `p1/t05-staff-accounts`
 
 **Files:**
 - Create: `app/Domain/Staff/Actions/ResetUserPasswordAction.php`
@@ -1309,7 +1323,7 @@ The reset-password notification is `persistent()` deliberately — the plaintext
 Run: `php artisan test --filter=UserResourceTest`
 Expected: 3 passed.
 
-- [ ] **Step 6: Commit and request review**
+- [ ] **Step 6: Commit**
 
 ```bash
 vendor/bin/pint && vendor/bin/phpstan analyse && php artisan test
@@ -1321,7 +1335,7 @@ git commit -m "feat(staff): add user management resource with password reset [P1
 
 ## Task 6: Staff profiles
 
-**Owner:** Codex · **Branch:** `p1/t06-staff-profiles`
+**Branch:** `p1/t06-staff-profiles`
 
 **Files:**
 - Create: `database/migrations/2026_07_20_000200_create_staff_profiles_table.php`
@@ -1537,7 +1551,7 @@ Import `Illuminate\Database\Eloquent\Relations\HasOne`.
 Run: `php artisan test --filter=StaffProfileTest`
 Expected: 4 passed.
 
-- [ ] **Step 9: Commit and request review**
+- [ ] **Step 9: Commit**
 
 ```bash
 vendor/bin/pint && vendor/bin/phpstan analyse && php artisan test
@@ -1545,13 +1559,13 @@ git add -A
 git commit -m "feat(staff): add staff profiles with employment type [P1-T06]"
 ```
 
-Request Claude review: `git diff main...p1/t06-staff-profiles`
+Keep the branch. Task 15 reviews it.
 
 ---
 
 ## Task 7: Students
 
-**Owner:** Claude · **Branch:** `p1/t07-students`
+**Branch:** `p1/t07-students`
 
 **Files:**
 - Create: `database/migrations/2026_07_20_000300_create_students_table.php`
@@ -1900,7 +1914,7 @@ Move to `app/Domain/Enrollment/Filament/Resources/`, update the namespace, and s
 Run: `php artisan test --filter=StudentTest`
 Expected: 8 passed.
 
-- [ ] **Step 10: Commit and request review**
+- [ ] **Step 10: Commit**
 
 ```bash
 vendor/bin/pint && vendor/bin/phpstan analyse && php artisan test
@@ -1912,7 +1926,7 @@ git commit -m "feat(enrollment): add students with status and policy [P1-T07]"
 
 ## Task 8: Courses
 
-**Owner:** Codex · **Branch:** `p1/t08-courses` · **Runs in parallel with Task 7**
+**Branch:** `p1/t08-courses`
 
 **Files:**
 - Create: `database/migrations/2026_07_20_000400_create_courses_table.php`
@@ -1922,7 +1936,7 @@ git commit -m "feat(enrollment): add students with status and policy [P1-T07]"
 - Create: `app/Domain/Enrollment/Filament/Resources/CourseResource.php`
 - Create: `tests/Feature/Enrollment/CourseTest.php`
 
-**Scope note:** this task must not modify `app/Providers/AppServiceProvider.php` beyond appending one `Gate::policy()` line, because Task 7 is editing the same file in parallel. Expect a trivial conflict on merge and resolve by keeping both lines.
+**Scope note:** this task appends exactly one `Gate::policy()` line to `app/Providers/AppServiceProvider.php`. Keep it to that — several tasks touch this file, and a minimal append keeps each task's diff independently reviewable at Task 15.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2179,7 +2193,7 @@ Move to `app/Domain/Enrollment/Filament/Resources/`, update the namespace. **Rem
 Run: `php artisan test --filter=CourseTest`
 Expected: 5 passed.
 
-- [ ] **Step 9: Commit and request review**
+- [ ] **Step 9: Commit**
 
 ```bash
 vendor/bin/pint && vendor/bin/phpstan analyse && php artisan test
@@ -2191,7 +2205,7 @@ git commit -m "feat(enrollment): add course catalog [P1-T08]"
 
 ## Task 9: Batches
 
-**Owner:** Codex · **Branch:** `p1/t09-batches`
+**Branch:** `p1/t09-batches`
 
 **Files:**
 - Create: `database/migrations/2026_07_20_000500_create_batches_table.php`
@@ -2530,7 +2544,7 @@ Move to `app/Domain/Enrollment/Filament/Resources/`, update the namespace, and *
 Run: `php artisan test --filter=BatchTest`
 Expected: 6 passed.
 
-- [ ] **Step 10: Commit and request review**
+- [ ] **Step 10: Commit**
 
 ```bash
 vendor/bin/pint && vendor/bin/phpstan analyse && php artisan test
@@ -2542,7 +2556,7 @@ git commit -m "feat(enrollment): add batches with course inheritance and status 
 
 ## Task 10: Instructor hour allocation
 
-**Owner:** Claude · **Branch:** `p1/t10-instructor-hours`
+**Branch:** `p1/t10-instructor-hours`
 
 The two-instructor problem from spec section 6. Hours belong to the batch↔instructor relationship.
 
@@ -2820,7 +2834,7 @@ In the generated relation manager, the attach form must include the pivot field:
 Run: `php artisan test --filter=InstructorHoursTest`
 Expected: 6 passed.
 
-- [ ] **Step 9: Commit and request review**
+- [ ] **Step 9: Commit**
 
 ```bash
 vendor/bin/pint && vendor/bin/phpstan analyse && php artisan test
@@ -2832,7 +2846,7 @@ git commit -m "feat(enrollment): add instructor hour allocation with mismatch wa
 
 ## Task 11: Enrollments
 
-**Owner:** Claude · **Branch:** `p1/t11-enrollments`
+**Branch:** `p1/t11-enrollments`
 
 **Files:**
 - Create: `database/migrations/2026_07_20_000700_create_enrollments_table.php`
@@ -3273,7 +3287,7 @@ php artisan make:filament-relation-manager BatchResource enrollments student.ful
 Run: `php artisan test --filter=EnrollmentTest`
 Expected: 7 passed.
 
-- [ ] **Step 11: Commit and request review**
+- [ ] **Step 11: Commit**
 
 ```bash
 vendor/bin/pint && vendor/bin/phpstan analyse && php artisan test
@@ -3285,7 +3299,7 @@ git commit -m "feat(enrollment): add enrollments with duplicate and closed-batch
 
 ## Task 12: Activity log
 
-**Owner:** Codex · **Branch:** `p1/t12-activity-log`
+**Branch:** `p1/t12-activity-log`
 
 **Files:**
 - Create: `app/Domain/Staff/Policies/ActivityPolicy.php`
@@ -3541,7 +3555,7 @@ public static function table(Table $table): Table
 Run: `php artisan test --filter=ActivityLogTest`
 Expected: 6 passed.
 
-- [ ] **Step 9: Commit and request review**
+- [ ] **Step 9: Commit**
 
 ```bash
 vendor/bin/pint && vendor/bin/phpstan analyse && php artisan test
@@ -3553,7 +3567,7 @@ git commit -m "feat(staff): add append-only activity log with auth events [P1-T1
 
 ## Task 13: Automated backups
 
-**Owner:** Codex · **Branch:** `p1/t13-backups`
+**Branch:** `p1/t13-backups`
 
 Per spec section 11 — set up before there is anything valuable to lose.
 
@@ -3684,7 +3698,7 @@ Append to `docs/WORKFLOW.md` under a new "Deployment requirements" heading:
 - Verify after the first deploy: `php artisan backup:run` should complete and the file should appear in the bucket.
 ```
 
-- [ ] **Step 9: Commit and request review**
+- [ ] **Step 9: Commit**
 
 ```bash
 vendor/bin/pint && vendor/bin/phpstan analyse && php artisan test
@@ -3696,7 +3710,7 @@ git commit -m "feat: add automated off-server daily database backups [P1-T13]"
 
 ## Task 14: Internationalization scaffolding
 
-**Owner:** Codex · **Branch:** `p1/t14-i18n`
+**Branch:** `p1/t14-i18n`
 
 Structure only. Arabic translations arrive in phase 4; this task guarantees phase 4 is a translation exercise rather than a refactor.
 
@@ -3935,7 +3949,7 @@ Expected: 6 passed (4 data-driven key-parity cases plus 2 others).
 
 If the hardcoded-string test fails, fix the offending resources from tasks 5–12 by wrapping their labels in `__()`. That is the test doing its job.
 
-- [ ] **Step 9: Commit and request review**
+- [ ] **Step 9: Commit**
 
 ```bash
 vendor/bin/pint && vendor/bin/phpstan analyse && php artisan test
@@ -3945,9 +3959,107 @@ git commit -m "feat: add bilingual scaffolding with RTL support and key-parity t
 
 ---
 
-## Task 15: Documentation reconciliation
+## Task 15: Phase 1 review by a fresh reviewer
 
-**Owner:** Claude · **Branch:** `p1/t15-doc-reconciliation`
+**No branch** — this task produces findings, not code.
+
+A reviewing subagent with **no implementation context** reviews all fourteen task diffs. It has not seen the reasoning behind any decision, which is the point: it cannot inherit the implementer's blind spots.
+
+- [ ] **Step 1: Confirm every task branch still exists**
+
+```bash
+git branch --list 'p1/*'
+```
+
+Expected: fourteen branches, `p1/t01-*` through `p1/t14-*`. If any were deleted, reconstruct the diff from the squashed commit on `main` instead.
+
+- [ ] **Step 2: Dispatch the reviewer on Task 4 first**
+
+Task 4 is reviewed before anything else, because tasks 5–14 are built on top of it and a defect there is the most expensive one to find late.
+
+Dispatch a subagent with this brief:
+
+```
+Review this diff: git diff main...p1/t04-escalation-guards
+
+Context you need:
+- Spec: docs/superpowers/specs/2026-07-20-training-center-dashboard-design.md, section 5
+- Standards: docs/ENGINEERING.md
+
+This code enforces three privilege escalation guards:
+1. An admin cannot create, edit, or delete a super admin.
+2. No user can modify their own roles or permissions.
+3. The last active super admin cannot be deleted or deactivated.
+
+Your primary task: find a FOURTH escalation path the eleven existing tests do
+not cover. Consider at minimum — role assignment through the Filament form
+versus through the policy, direct Eloquent writes that bypass the policy layer,
+soft-deleted super admins counting or not counting as survivors, a user holding
+multiple roles simultaneously, permission changes made directly rather than
+through a role, and queued jobs or seeders acting with no authenticated user.
+
+Report findings with file:line. Do not fix anything. If you find nothing, say
+so plainly rather than manufacturing findings.
+```
+
+- [ ] **Step 3: Resolve Task 4 findings before continuing**
+
+Any confirmed escalation path becomes a fix plus a regression test on a new branch `p1/t04-fix-{slug}`, merged before the review proceeds. Findings you disagree with should be answered with reasoning, not implemented reflexively — the reviewer can be wrong.
+
+- [ ] **Step 4: Dispatch the reviewer on the remaining thirteen diffs**
+
+```
+Review these diffs in order:
+  git diff main...p1/t01-scaffold        (through)
+  git diff main...p1/t14-i18n
+
+Reference documents:
+- Spec: docs/superpowers/specs/2026-07-20-training-center-dashboard-design.md
+- Standards: docs/ENGINEERING.md
+
+Check each diff for:
+1. Correctness, including unhappy paths.
+2. Spec compliance. Silent deviation from the spec is a finding, not a detail.
+3. Standards compliance — permission-based not role-based authorization, money
+   as decimal(12,3), foreign keys constrained with deliberate onDelete behavior,
+   no derived financial values stored, no hardcoded user-facing strings,
+   logical CSS properties only.
+4. Test quality. Every permission test must assert the negative case, not only
+   the positive. Flag any test that only proves the happy path.
+5. Phase discipline. Phase 1 must contain no financial features. The price
+   columns exist in migrations but must not be readable or editable anywhere
+   in the UI.
+
+Report findings with file:line, ranked most severe first. Do not fix anything.
+```
+
+- [ ] **Step 5: Triage and resolve**
+
+Group findings into: fix now, fix in phase 2, and reject with reasoning. Record the rejections and their justification — Task 16 folds them into the spec so the same question is not re-opened later.
+
+- [ ] **Step 6: Verify the full suite after all fixes**
+
+```bash
+php artisan test
+vendor/bin/pint --test
+vendor/bin/phpstan analyse
+```
+
+Expected: all pass. **Report actual output.**
+
+- [ ] **Step 7: Delete the task branches**
+
+Only now, once the review has consumed them:
+
+```bash
+git branch --list 'p1/*' | xargs -r git branch -D
+```
+
+---
+
+## Task 16: Documentation reconciliation
+
+**Branch:** `p1/t16-doc-reconciliation`
 
 Per `docs/WORKFLOW.md`, documentation is updated as part of the milestone, not afterward.
 
@@ -3976,6 +4088,8 @@ Review `docs/superpowers/specs/2026-07-20-training-center-dashboard-design.md` s
 
 - Permission naming format (section 5)
 - Any Filament version differences discovered in Task 1
+- Any Task 15 finding that was rejected with reasoning — record the reasoning in the spec so the same question is not re-opened in phase 2
+- Any Task 15 finding deferred to phase 2 — record it as a known limitation
 
 A spec that no longer matches the code is worse than no spec, because it is trusted and wrong.
 
@@ -4026,7 +4140,7 @@ Expected: all pass. **Report the actual output.** Do not claim phase 1 complete 
 
 ```bash
 git add -A
-git commit -m "docs: reconcile documentation with phase 1 implementation [P1-T15]"
+git commit -m "docs: reconcile documentation with phase 1 implementation [P1-T16]"
 ```
 
 - [ ] **Step 7: Create the remote and push**
