@@ -84,7 +84,8 @@ Filament's native authentication. No Breeze, Fortify, or Jetstream — Filament 
 - **Password reset (phase 1):** an administrator opens the user record and generates a temporary password, displayed once. The `must_change_password` flag forces a change at next login.
 - **Notifications** are implemented as Laravel Notification classes with the mail driver set to `log`. Enabling welcome and password-reset emails later requires configuring a provider, not rewriting code.
 - **Sessions:** database-backed, 8-hour idle timeout.
-- **Throttling:** 5 login attempts per email and IP combination per minute.
+- **Throttling:** provided by Filament's own login page, which calls `rateLimit(5)` — 5 attempts per minute, keyed per component and IP. This spec originally called for email+IP keying via a Laravel named limiter; that was written before it was known Filament self-throttles. A named `login` limiter was implemented in P1-T03 and then **removed**, because nothing referenced `throttle:login` — there are no Laravel auth routes in this app — and a registered-but-unreferenced limiter reads as an active control while protecting nothing. Phase 3 adds one when the student portal introduces real auth routes.
+- **Forced password change is a UX gate, not an authorization boundary.** The `ForcePasswordChange` middleware is registered non-persistently, so it runs on page loads but not on Livewire update requests. This is required for the change-password form to submit at all — a persistent middleware would redirect the save request itself and make the flow an inescapable trap. The consequence is that a flagged user could in principle drive other Livewire components before changing their password. Anything that must be a genuine boundary belongs in a policy, not here.
 - **Two-factor authentication:** out of scope for phase 1. Filament supports it natively when wanted.
 
 ---
