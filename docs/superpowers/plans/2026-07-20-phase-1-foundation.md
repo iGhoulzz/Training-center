@@ -82,9 +82,9 @@ tests/Feature/
 lang/{en,ar}/
 ```
 
-**Phase 1 is implemented by Claude alone.** Codex joins from phase 2. This changes the review model: instead of per-task cross-review, a **fresh reviewer subagent reviews all fourteen task diffs at the end** (Task 15), with no implementation context.
+**Claude implements every phase 1 task; Codex reviews.** The two-agent model in `docs/WORKFLOW.md` holds — only the implementation split changes for this phase. Codex applies the review contract to each task, and reviews may arrive before implementation as well as after: Task 2's steps below were revised in response to a pre-implementation Codex review of the installed Shield source.
 
-The cost of that choice is recorded here so it is not forgotten: a defect in Task 4 surfaces only after Tasks 5–14 are built on top of it. Task 15 therefore reviews Task 4 **first**, before anything else, so a rework there is discovered before the reviewer has spent its attention elsewhere.
+Task 15 remains as an end-of-phase sweep by a fresh reviewer with no implementation context, reviewing Task 4 **first** — a defect in the escalation guards surfaces only after Tasks 5–14 are built on top of them, so it is the most expensive one to find late.
 
 **Task order and dependencies:**
 
@@ -285,20 +285,64 @@ git commit -m "chore: scaffold Laravel 12 + Filament with domain structure [P1-T
 **Files:**
 - Create: `database/seeders/RolePermissionSeeder.php`
 - Create: `tests/Feature/RolePermissionSeederTest.php`
+- Create: `config/filament-shield.php` (published)
+- Create: `database/migrations/*_create_permission_tables.php` (published)
 - Modify: `database/seeders/DatabaseSeeder.php`
 - Modify: `app/Models/User.php`
+- Modify: `app/Providers/Filament/AdminPanelProvider.php` (modified by `shield:install`)
+- Possibly created by `shield:install`: `app/Policies/RolePolicy.php`, `app/Filament/Resources/RoleResource*`
 
-- [ ] **Step 1: Publish and run permission migrations**
+### Revisions from Codex review, verified against installed source
+
+Shield 4.2 is installed. Four corrections to the original steps, each verified rather than taken on trust:
+
+1. **Ordering.** `shield:install` shells out to `shield:generate` — confirmed at `vendor/bezhansalleh/filament-shield/src/Commands/InstallCommand.php:103`. That query hits the `permissions` table, so Spatie's migrations must be published **and run** before `shield:install`, not after.
+2. **Permission format.** Shield 4.2 defaults to `'separator' => ':'` and `'case' => 'pascal'`, producing `ViewAny:Role`. The config header lists `snake` among supported formats. Publishing the config with `separator: '_'` and `case: 'snake'` yields the `view_any_role` format this plan and the docs assume.
+3. **`role` belongs in the seeder's resource list.** The test asserts `hasPermissionTo('update_role')` returns false. Spatie throws `PermissionDoesNotExist` for an unknown permission name rather than returning false, so the permission must exist for the negative assertion to mean anything.
+4. **`canAccessPanel()` must not use `hasAnyRole()`.** The original step violated this project's own first non-negotiable — permission-based authorization, never role-based. Replaced with an `access_admin_panel` permission granted to super_admin, admin, and staff.
+
+- [ ] **Step 1: Publish and run Spatie's permission migrations first**
 
 ```bash
 php artisan vendor:publish --provider="Spatie\Permission\PermissionServiceProvider"
-php artisan shield:install admin --no-interaction
 php artisan migrate
 ```
 
-Expected: `roles`, `permissions`, `model_has_roles`, `model_has_permissions`, `role_has_permissions` tables created.
+Expected: `roles`, `permissions`, `model_has_roles`, `model_has_permissions`, `role_has_permissions` tables created. Verify with `php artisan migrate:status` before continuing — `shield:install` fails against a missing `permissions` table.
 
-- [ ] **Step 2: Add the HasRoles trait to User**
+- [ ] **Step 2: Publish and configure Shield before installing it**
+
+```bash
+php artisan vendor:publish --tag=filament-shield-config
+```
+
+In `config/filament-shield.php`, change the `permissions` block:
+
+```php
+'permissions' => [
+    'separator' => '_',
+    'case' => 'snake',
+    'generate' => true,
+],
+```
+
+This must happen **before** `shield:install`, because the installer generates permissions immediately and would otherwise write `ViewAny:Role` records that then have to be cleaned up.
+
+- [ ] **Step 3: Install Shield**
+
+```bash
+php artisan shield:install admin --no-interaction
+```
+
+Expected: `AdminPanelProvider.php` gains the Shield plugin registration, and Shield generates `Role` resource permissions in the configured snake format. Confirm the format took effect:
+
+```bash
+php artisan tinker --execute="echo Spatie\Permission\Models\Permission::pluck('name')->implode(', ');"
+```
+
+Expected: names like `view_any_role`, `update_role`. **If you see `ViewAny:Role`, the config did not apply** — stop, fix the config, truncate the `permissions` table, and re-run `shield:generate`.
+
+- [ ] **Step 4: Add the HasRoles trait and permission-based panel access to User**
 
 In `app/Models/User.php`:
 
@@ -311,14 +355,18 @@ class User extends Authenticatable implements FilamentUser
 
     public function canAccessPanel(Panel $panel): bool
     {
-        return $this->is_active && $this->hasAnyRole(['super_admin', 'admin', 'staff']);
+        return $this->is_active && $this->can('access_admin_panel');
     }
 }
 ```
 
-Import `Filament\Models\Contracts\FilamentUser` and `Filament\Panel`. The `is_active` column arrives in Task 3; until then this reads as null and denies access, which is expected and temporary.
+Import `Filament\Models\Contracts\FilamentUser` and `Filament\Panel`.
 
-- [ ] **Step 3: Write the failing test**
+`access_admin_panel` is a custom permission granted to super_admin, admin, and staff — not to student. Using a permission rather than `hasAnyRole()` keeps this compliant with the project's permission-only rule, and means a future fifth role needs no code change here.
+
+The `is_active` column arrives in Task 3; until then it reads as null and denies access, which is expected and temporary.
+
+- [ ] **Step 5: Write the failing test**
 
 Create `tests/Feature/RolePermissionSeederTest.php`:
 
@@ -363,14 +411,34 @@ it('denies admin the ability to manage roles', function () {
 
     expect(Role::findByName('admin')->hasPermissionTo('update_role'))->toBeFalse();
 });
+
+it('grants admin panel access to staff roles but not students', function () {
+    $this->seed(Database\Seeders\RolePermissionSeeder::class);
+
+    expect(Role::findByName('super_admin')->hasPermissionTo('access_admin_panel'))->toBeTrue()
+        ->and(Role::findByName('admin')->hasPermissionTo('access_admin_panel'))->toBeTrue()
+        ->and(Role::findByName('staff')->hasPermissionTo('access_admin_panel'))->toBeTrue()
+        ->and(Role::findByName('student')->hasPermissionTo('access_admin_panel'))->toBeFalse();
+});
+
+it('generates permissions in snake_case, not Shield default pascal', function () {
+    $this->seed(Database\Seeders\RolePermissionSeeder::class);
+
+    $names = Spatie\Permission\Models\Permission::pluck('name');
+
+    expect($names)->toContain('view_any_role')
+        ->and($names->filter(fn (string $n): bool => str_contains($n, ':')))->toBeEmpty();
+});
 ```
 
-- [ ] **Step 4: Run the test to verify it fails**
+The last test is a guard against Shield's config being reset or overwritten by a future `vendor:publish --force`. Without it, a silent revert to `ViewAny:Role` would break every policy in the project at once.
+
+- [ ] **Step 6: Run the test to verify it fails**
 
 Run: `php artisan test --filter=RolePermissionSeederTest`
 Expected: FAIL — `Class "Database\Seeders\RolePermissionSeeder" does not exist`
 
-- [ ] **Step 5: Write the seeder**
+- [ ] **Step 7: Write the seeder**
 
 Create `database/seeders/RolePermissionSeeder.php`:
 
@@ -388,15 +456,24 @@ use Spatie\Permission\PermissionRegistrar;
 
 class RolePermissionSeeder extends Seeder
 {
-    /** Resources that receive the standard CRUD permission set. */
+    /**
+     * Resources that receive the standard CRUD permission set.
+     *
+     * 'role' is included so that negative assertions work: Spatie throws
+     * PermissionDoesNotExist for an unknown permission name rather than
+     * returning false, so a permission must exist for a test to prove a
+     * role does NOT have it.
+     */
     private const RESOURCES = [
-        'user', 'staff_profile', 'student', 'course', 'batch', 'enrollment', 'activity',
+        'user', 'staff_profile', 'student', 'course', 'batch', 'enrollment',
+        'activity', 'role',
     ];
 
     private const ACTIONS = ['view_any', 'view', 'create', 'update', 'delete'];
 
     /** Abilities that are not plain CRUD. */
     private const CUSTOM = [
+        'access_admin_panel',
         'assign_role',
         'reset_user_password',
         'assign_instructor',
@@ -428,6 +505,7 @@ class RolePermissionSeeder extends Seeder
             ...$this->crudFor('staff_profile'),
             ...$this->crudFor('user'),
             'view_any_activity', 'view_activity',
+            'access_admin_panel',
             'reset_user_password',
             'assign_instructor',
         ]);
@@ -438,8 +516,10 @@ class RolePermissionSeeder extends Seeder
             'view_any_batch', 'view_batch',
             'view_any_enrollment', 'view_enrollment',
             'create_enrollment', 'update_enrollment',
+            'access_admin_panel',
         ]);
 
+        // Students reach the portal in phase 3, never the admin panel.
         Role::findOrCreate('student', 'web')->syncPermissions([]);
     }
 
@@ -456,7 +536,7 @@ class RolePermissionSeeder extends Seeder
 
 Note: `admin` receives the full CRUD set for `user`, but Task 4's `UserPolicy` prevents an admin from touching a super admin. Permissions grant the *category*; policies enforce the *boundary*. Both layers are required.
 
-- [ ] **Step 6: Register the seeder**
+- [ ] **Step 8: Register the seeder**
 
 In `database/seeders/DatabaseSeeder.php`, inside `run()`:
 
@@ -464,18 +544,20 @@ In `database/seeders/DatabaseSeeder.php`, inside `run()`:
 $this->call(RolePermissionSeeder::class);
 ```
 
-- [ ] **Step 7: Run tests to verify they pass**
+- [ ] **Step 9: Run tests to verify they pass**
 
 Run: `php artisan test --filter=RolePermissionSeederTest`
-Expected: 4 passed.
+Expected: 6 passed.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
-vendor/bin/pint && vendor/bin/phpstan analyse
+vendor/bin/pint && composer analyse && php artisan test
 git add -A
 git commit -m "feat(staff): add four roles with permission sets [P1-T02]"
 ```
+
+Use `composer analyse` rather than the bare PHPStan command — it passes `--memory-limit=1G`, and the default 128M already crashes on this project.
 
 ---
 
