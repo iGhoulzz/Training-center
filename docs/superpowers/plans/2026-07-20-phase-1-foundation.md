@@ -574,6 +574,10 @@ Use `composer analyse` rather than the bare PHPStan command — it passes `--mem
 - Modify: `database/factories/UserFactory.php`
 - Modify: `app/Providers/Filament/AdminPanelProvider.php`
 
+### Carried over from Task 2
+
+Task 2 left `canAccessPanel()` reading `$this->getAttribute('is_active')` rather than `$this->is_active`, because PHPStan level 6 correctly rejected a property that did not exist yet. **Once Step 3's migration adds the column, change it to `$this->is_active`** and confirm `composer analyse` still passes. Behavior is identical; this is a readability fix, not a functional one.
+
 - [ ] **Step 1: Write the failing tests**
 
 Create `tests/Feature/Auth/PanelAccessTest.php`:

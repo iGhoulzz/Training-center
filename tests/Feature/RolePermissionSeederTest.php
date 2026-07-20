@@ -59,3 +59,45 @@ it('generates permissions in snake_case, not Shield default pascal', function ()
     expect($names)->toContain('view_any_role')
         ->and($names->filter(fn (string $n): bool => str_contains($n, ':')))->toBeEmpty();
 });
+
+/**
+ * Guards against seeder/policy drift.
+ *
+ * Shield generates policies referencing abilities the seeder may not create.
+ * When that happens the check fails closed — the action silently returns false
+ * for everyone, including super_admin — which is easy to miss because nothing
+ * errors. This asserts every permission any policy references actually exists.
+ */
+it('seeds every permission referenced by any policy', function () {
+    $this->seed(RolePermissionSeeder::class);
+
+    $seeded = Permission::pluck('name')->all();
+    $policyDir = app_path('Policies');
+
+    if (! is_dir($policyDir)) {
+        expect(true)->toBeTrue();
+
+        return;
+    }
+
+    $missing = [];
+
+    foreach (glob($policyDir.'/*.php') ?: [] as $policy) {
+        preg_match_all(
+            "/can\(\s*'([a-z0-9_]+)'/",
+            (string) file_get_contents($policy),
+            $matches,
+        );
+
+        foreach ($matches[1] as $ability) {
+            if (! in_array($ability, $seeded, strict: true)) {
+                $missing[] = basename($policy).' → '.$ability;
+            }
+        }
+    }
+
+    expect($missing)->toBeEmpty(
+        'Policies reference permissions the seeder does not create: '
+        .implode(', ', $missing),
+    );
+});

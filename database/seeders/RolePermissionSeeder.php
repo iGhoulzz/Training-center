@@ -35,6 +35,25 @@ class RolePermissionSeeder extends Seeder
         'manage_settings',
     ];
 
+    /**
+     * Extra abilities on the Role resource that Shield's generated RolePolicy
+     * references but the standard CRUD set does not cover.
+     *
+     * These must be seeded rather than left to `shield:generate`. Otherwise a
+     * freshly provisioned environment has a RolePolicy referencing permissions
+     * that do not exist, and every one of these actions silently returns false
+     * for everybody — including super_admin.
+     */
+    private const ROLE_EXTRA = [
+        'delete_any_role',
+        'force_delete_role',
+        'force_delete_any_role',
+        'restore_role',
+        'restore_any_role',
+        'replicate_role',
+        'reorder_role',
+    ];
+
     public function run(): void
     {
         app(PermissionRegistrar::class)->forgetCachedPermissions();
@@ -45,7 +64,7 @@ class RolePermissionSeeder extends Seeder
             }
         }
 
-        foreach (self::CUSTOM as $ability) {
+        foreach ([...self::CUSTOM, ...self::ROLE_EXTRA] as $ability) {
             Permission::findOrCreate($ability, 'web');
         }
 
