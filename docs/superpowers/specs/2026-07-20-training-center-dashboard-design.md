@@ -125,6 +125,12 @@ These are the three failure modes that break role systems in practice, and each 
 2. No user can modify their own roles or permissions.
 3. The system refuses to delete or deactivate the last active super admin.
 
+Enforcement lives in `UserPolicy` **and** at the model layer, because a policy only runs when something chooses to consult it — Spatie's `assignRole()` answers to no gate, so a Filament form could otherwise grant `super_admin` without the policy ever executing.
+
+Guard 3 was extended during implementation to cover role *removal* as well as deletion and deactivation: `removeRole('super_admin')` or `syncRoles([])` on the last super admin reaches the identical end state — nobody able to manage roles — and the guard as originally specified said nothing about it.
+
+Guards 1 and 2 skip when no user is authenticated, since seeders and console commands legitimately assign roles with no principal; they protect the request path, not the CLI path. Guard 3 has no exemption and holds everywhere. `docs/ENGINEERING.md` records the writes that bypass model events and must not be used on `User`.
+
 ---
 
 ## 6. Data model

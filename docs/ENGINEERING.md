@@ -63,10 +63,33 @@ app/Domain/Enrollment/
 - Permission-based, never role-based, in code: `$user->can('students.delete')`. **Never** `$user->hasRole('admin')`.
 - No `role` column on `users` — Spatie's pivot tables own role assignment.
 - Every model has a Policy. Every Filament resource is gated by it.
-- The three escalation guards are enforced in Policies and covered by tests:
+- The three escalation guards are enforced in Policies **and at the model layer**, and covered by tests:
   1. An admin cannot create, edit, or delete a super admin.
   2. No user can modify their own roles or permissions.
   3. The last active super admin cannot be deleted or deactivated.
+
+### The one permitted role check
+
+`UserPolicy` uses `hasRole('super_admin')` in `outranks()` and `assignRole()`. This is the sole exception to the permission-only rule, and it is deliberate: the thing being expressed *is* rank. "Is this person a super admin" cannot be reduced to a permission check without inventing a synthetic permission that duplicates the role. Do not "fix" it.
+
+### Writes that bypass model events
+
+Guards 1 and 2 are enforced in overridden `assignRole`/`removeRole`/`syncRoles`; guard 3 hooks `deleting`, `forceDeleting`, and `updating`. Eloquent events do not fire for these, so **none of the following may be used on `User`**:
+
+- `User::query()->update([...])` / `->delete()` — query-builder bulk writes
+- `updateQuietly()` / `deleteQuietly()`
+- `$user->roles()->detach()` — operate through `removeRole()` / `syncRoles()` instead
+
+None are reachable from the UI; each requires deliberately written code. Closing them properly would need database triggers, which is out of scope. Treat this list as a review checklist item.
+
+### Two subtleties worth knowing before touching this code
+
+- **`forceDelete()` needs its own hook.** Spatie's `bootHasRoles()` registers a `deleting` listener that detaches all roles when force-deleting. Trait boot methods run before `booted()`, so by the time a `deleting` guard runs, the role pivot rows are already gone and `hasRole()` answers false. The guard hooks `forceDeleting`, which fires before any detaching.
+- **`super_admin.define_via_gate` in `config/filament-shield.php` must stay `false`.** Setting it `true` makes `Gate::before` return true for every ability, which silently defeats guard 2 — `modifyOwnRoles` would never run. A test pins this value.
+
+### Guards and the CLI path
+
+The model-layer enforcement of guards 1 and 2 **skips when no user is authenticated**, because seeders, factories, queued jobs, and console commands legitimately assign roles with no principal to authorize against. Those two guards therefore protect the request path, not the CLI path. **Guard 3 has no such exemption** and holds everywhere, including in tinker and seeders — losing the last super admin is unrecoverable, so it is absolute.
 
 ---
 
