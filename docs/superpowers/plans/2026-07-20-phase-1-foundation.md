@@ -1,0 +1,4063 @@
+# Phase 1 — Foundation Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** A working Laravel + Filament system where staff can log in under four roles and manage students, courses, batches, and enrollments — with every change audited and the database backed up. No financial features.
+
+**Architecture:** One Laravel application. Filament admin panel at `/admin`, guarded by `spatie/laravel-permission` + Filament Shield. Code organized by domain under `app/Domain/{Enrollment,Staff}/`, each domain owning its models, actions, policies, and Filament resources. Business logic lives in Action classes; models hold only relationships, casts, and scopes.
+
+**Tech Stack:** PHP 8.3+, Laravel 12, Filament v4, MySQL 8, Pest 3, Larastan, Pint, `spatie/laravel-permission`, `bezhansalleh/filament-shield`, `spatie/laravel-activitylog`, `spatie/laravel-backup`.
+
+**Reference documents:**
+- Spec: `docs/superpowers/specs/2026-07-20-training-center-dashboard-design.md`
+- Standards: `docs/ENGINEERING.md`
+- Workflow: `docs/WORKFLOW.md`
+
+---
+
+## Decision recorded during planning: permission naming
+
+The spec and `docs/ENGINEERING.md` used `students.delete` as the permission format. **Filament Shield generates `delete_student` / `view_any_student`.** Forcing dot notation requires overriding Shield's generator, which breaks on upgrade.
+
+**Resolution:** adopt Shield's native format. Task 15 updates the three documents. The governing rule is unchanged — authorization is permission-based, never role-based. Only the string format differs.
+
+Throughout this plan, permissions are: `view_any_{model}`, `view_{model}`, `create_{model}`, `update_{model}`, `delete_{model}`, plus custom abilities where noted.
+
+---
+
+## Filament version caveat
+
+This plan targets **Filament v4**, whose resource API uses `Schema $schema` with `->components([...])`. If `composer show filament/filament` reports v3, the API is `Form $form` with `->schema([...])`, and `Filament\Schemas\Schema` does not exist — use `Filament\Forms\Form`. Task 1 records the installed version. Adjust resource signatures accordingly; everything else in this plan is version-independent.
+
+---
+
+## File structure
+
+```
+app/
+├── Domain/
+│   ├── Enrollment/
+│   │   ├── Actions/          EnrollStudentAction, AssignInstructorAction
+│   │   ├── Data/             EnrollStudentData, AssignInstructorData
+│   │   ├── Enums/            StudentStatus, BatchStatus, EnrollmentStatus
+│   │   ├── Exceptions/       DuplicateEnrollmentException, BatchClosedException
+│   │   ├── Models/           Student, Course, Batch, Enrollment
+│   │   ├── Policies/         StudentPolicy, CoursePolicy, BatchPolicy, EnrollmentPolicy
+│   │   └── Filament/Resources/
+│   └── Staff/
+│       ├── Actions/          CreateStaffAction, ResetUserPasswordAction
+│       ├── Data/             CreateStaffData
+│       ├── Enums/            EmploymentType
+│       ├── Exceptions/       LastSuperAdminException, PrivilegeEscalationException
+│       ├── Models/           StaffProfile
+│       ├── Policies/         UserPolicy, ActivityPolicy
+│       └── Filament/Resources/
+├── Models/User.php
+├── Http/Middleware/ForcePasswordChange.php
+└── Providers/Filament/AdminPanelProvider.php
+
+database/migrations/
+database/factories/
+tests/Feature/
+lang/{en,ar}/
+```
+
+**Task ownership and dependencies:**
+
+| Task | Owner | Depends on | Parallel with |
+|---|---|---|---|
+| 1 Scaffold | Claude | — | — |
+| 2 Roles & permissions | Claude | 1 | — |
+| 3 User model & auth | Claude | 2 | — |
+| 4 Escalation guards | Claude | 3 | — |
+| 5 Staff account UI | Claude | 4 | 6 |
+| 6 Staff profiles | Codex | 3 | 5 |
+| 7 Students | Claude | 3 | 8 |
+| 8 Courses | Codex | 3 | 7 |
+| 9 Batches | Codex | 8 | — |
+| 10 Instructor hours | Claude | 9 | 12 |
+| 11 Enrollments | Claude | 7, 9 | 12 |
+| 12 Activity log | Codex | 3 | 10, 11 |
+| 13 Backups | Codex | 1 | 10, 11 |
+| 14 i18n scaffolding | Codex | 1 | any |
+| 15 Doc reconciliation | Claude | all | — |
+
+---
+
+## Task 0 (every task): worktree setup and teardown
+
+Per `docs/WORKFLOW.md`, each task runs in its own worktree. At the **start** of every task below:
+
+```bash
+git worktree add ../Training-center-worktrees/P1-T{NN} -b p1/t{nn}-{slug}
+cd ../Training-center-worktrees/P1-T{NN}
+composer install
+```
+
+At the **end** of every task, after the reviewing agent approves the local diff:
+
+```bash
+cd ../../Training-center
+git merge --squash p1/t{nn}-{slug}
+git commit
+git worktree remove ../Training-center-worktrees/P1-T{NN}
+git branch -D p1/t{nn}-{slug}
+```
+
+Tasks 1 and 2 are the exception: they land directly on `main`, because there is no project to branch from until the scaffold exists.
+
+---
+
+## Task 1: Project scaffold
+
+**Owner:** Claude · **Branch:** none, direct to `main`
+
+**Files:**
+- Create: entire Laravel skeleton
+- Create: `phpstan.neon`, `pint.json`
+- Modify: `.env.example`, `composer.json`
+
+- [ ] **Step 1: Install Laravel and record versions**
+
+```bash
+composer create-project laravel/laravel . --no-interaction
+php artisan --version
+php -v
+```
+
+Expected: Laravel 12.x, PHP 8.3 or higher. If PHP is below 8.3, stop and report — the plan assumes 8.3 syntax.
+
+- [ ] **Step 2: Install Filament and record its major version**
+
+```bash
+composer require filament/filament --no-interaction
+php artisan filament:install --panels --no-interaction
+composer show filament/filament | grep versions
+```
+
+Record the version in the PR description. If it is v3, apply the Filament version caveat above to every resource in this plan.
+
+When prompted for the panel ID, answer `admin`.
+
+- [ ] **Step 3: Install remaining dependencies**
+
+```bash
+composer require spatie/laravel-permission bezhansalleh/filament-shield spatie/laravel-activitylog spatie/laravel-backup --no-interaction
+composer require --dev larastan/larastan pestphp/pest pestphp/pest-plugin-laravel --no-interaction
+php artisan pest:install --no-interaction
+```
+
+- [ ] **Step 4: Configure MySQL and verify the connection**
+
+In `.env`:
+
+```dotenv
+APP_LOCALE=en
+APP_FALLBACK_LOCALE=en
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=training_center
+DB_USERNAME=root
+DB_PASSWORD=
+```
+
+Mirror the same keys into `.env.example` with empty values.
+
+```bash
+php artisan migrate
+```
+
+Expected: migrations run without error. If the database does not exist, create it: `mysql -uroot -e "CREATE DATABASE training_center CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"`
+
+- [ ] **Step 5: Configure Larastan**
+
+Create `phpstan.neon`:
+
+```neon
+includes:
+    - vendor/larastan/larastan/extension.neon
+
+parameters:
+    paths:
+        - app
+    level: 6
+    ignoreErrors:
+        - '#PHPDoc tag @var#'
+```
+
+Run: `vendor/bin/phpstan analyse`
+Expected: `[OK] No errors`
+
+- [ ] **Step 6: Configure Pint**
+
+Create `pint.json`:
+
+```json
+{
+    "preset": "laravel",
+    "rules": {
+        "declare_strict_types": true,
+        "ordered_imports": { "sort_algorithm": "alpha" }
+    }
+}
+```
+
+Run: `vendor/bin/pint`
+Expected: files reformatted, exit 0.
+
+- [ ] **Step 7: Register domain resource discovery**
+
+In `app/Providers/Filament/AdminPanelProvider.php`, inside `panel()`, add discovery paths for each domain alongside the default:
+
+```php
+->discoverResources(
+    in: app_path('Domain/Enrollment/Filament/Resources'),
+    for: 'App\\Domain\\Enrollment\\Filament\\Resources',
+)
+->discoverResources(
+    in: app_path('Domain/Staff/Filament/Resources'),
+    for: 'App\\Domain\\Staff\\Filament\\Resources',
+)
+```
+
+Create the directories so discovery does not fail on a missing path:
+
+```bash
+mkdir -p app/Domain/Enrollment/Filament/Resources app/Domain/Staff/Filament/Resources
+```
+
+- [ ] **Step 8: Verify the suite runs and commit**
+
+```bash
+php artisan test
+vendor/bin/pint --test
+vendor/bin/phpstan analyse
+```
+
+Expected: all three pass.
+
+```bash
+git add -A
+git commit -m "chore: scaffold Laravel 12 + Filament with domain structure [P1-T01]"
+```
+
+---
+
+## Task 2: Roles and permissions
+
+**Owner:** Claude · **Branch:** none, direct to `main`
+
+**Files:**
+- Create: `database/seeders/RolePermissionSeeder.php`
+- Create: `tests/Feature/RolePermissionSeederTest.php`
+- Modify: `database/seeders/DatabaseSeeder.php`
+- Modify: `app/Models/User.php`
+
+- [ ] **Step 1: Publish and run permission migrations**
+
+```bash
+php artisan vendor:publish --provider="Spatie\Permission\PermissionServiceProvider"
+php artisan shield:install admin --no-interaction
+php artisan migrate
+```
+
+Expected: `roles`, `permissions`, `model_has_roles`, `model_has_permissions`, `role_has_permissions` tables created.
+
+- [ ] **Step 2: Add the HasRoles trait to User**
+
+In `app/Models/User.php`:
+
+```php
+use Spatie\Permission\Traits\HasRoles;
+
+class User extends Authenticatable implements FilamentUser
+{
+    use HasFactory, Notifiable, HasRoles;
+
+    public function canAccessPanel(Panel $panel): bool
+    {
+        return $this->is_active && $this->hasAnyRole(['super_admin', 'admin', 'staff']);
+    }
+}
+```
+
+Import `Filament\Models\Contracts\FilamentUser` and `Filament\Panel`. The `is_active` column arrives in Task 3; until then this reads as null and denies access, which is expected and temporary.
+
+- [ ] **Step 3: Write the failing test**
+
+Create `tests/Feature/RolePermissionSeederTest.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+use Spatie\Permission\Models\Role;
+
+uses(Illuminate\Foundation\Testing\RefreshDatabase::class);
+
+it('creates the four roles', function () {
+    $this->seed(Database\Seeders\RolePermissionSeeder::class);
+
+    expect(Role::pluck('name')->all())
+        ->toContain('super_admin', 'admin', 'staff', 'student');
+});
+
+it('gives super_admin every permission', function () {
+    $this->seed(Database\Seeders\RolePermissionSeeder::class);
+
+    $superAdmin = Role::findByName('super_admin');
+    $total = Spatie\Permission\Models\Permission::count();
+
+    expect($superAdmin->permissions)->toHaveCount($total);
+});
+
+it('denies staff any user-management permission', function () {
+    $this->seed(Database\Seeders\RolePermissionSeeder::class);
+
+    $staff = Role::findByName('staff');
+
+    expect($staff->hasPermissionTo('create_user'))->toBeFalse()
+        ->and($staff->hasPermissionTo('update_user'))->toBeFalse()
+        ->and($staff->hasPermissionTo('delete_user'))->toBeFalse()
+        ->and($staff->hasPermissionTo('view_any_activity'))->toBeFalse();
+});
+
+it('denies admin the ability to manage roles', function () {
+    $this->seed(Database\Seeders\RolePermissionSeeder::class);
+
+    expect(Role::findByName('admin')->hasPermissionTo('update_role'))->toBeFalse();
+});
+```
+
+- [ ] **Step 4: Run the test to verify it fails**
+
+Run: `php artisan test --filter=RolePermissionSeederTest`
+Expected: FAIL — `Class "Database\Seeders\RolePermissionSeeder" does not exist`
+
+- [ ] **Step 5: Write the seeder**
+
+Create `database/seeders/RolePermissionSeeder.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace Database\Seeders;
+
+use Illuminate\Database\Seeder;
+use Spatie\Permission\Models\Permission;
+use Spatie\Permission\Models\Role;
+use Spatie\Permission\PermissionRegistrar;
+
+class RolePermissionSeeder extends Seeder
+{
+    /** Resources that receive the standard CRUD permission set. */
+    private const RESOURCES = [
+        'user', 'staff_profile', 'student', 'course', 'batch', 'enrollment', 'activity',
+    ];
+
+    private const ACTIONS = ['view_any', 'view', 'create', 'update', 'delete'];
+
+    /** Abilities that are not plain CRUD. */
+    private const CUSTOM = [
+        'assign_role',
+        'reset_user_password',
+        'assign_instructor',
+        'manage_settings',
+    ];
+
+    public function run(): void
+    {
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+        foreach (self::RESOURCES as $resource) {
+            foreach (self::ACTIONS as $action) {
+                Permission::findOrCreate("{$action}_{$resource}", 'web');
+            }
+        }
+
+        foreach (self::CUSTOM as $ability) {
+            Permission::findOrCreate($ability, 'web');
+        }
+
+        $superAdmin = Role::findOrCreate('super_admin', 'web');
+        $superAdmin->syncPermissions(Permission::all());
+
+        Role::findOrCreate('admin', 'web')->syncPermissions([
+            ...$this->crudFor('student'),
+            ...$this->crudFor('course'),
+            ...$this->crudFor('batch'),
+            ...$this->crudFor('enrollment'),
+            ...$this->crudFor('staff_profile'),
+            ...$this->crudFor('user'),
+            'view_any_activity', 'view_activity',
+            'reset_user_password',
+            'assign_instructor',
+        ]);
+
+        Role::findOrCreate('staff', 'web')->syncPermissions([
+            'view_any_student', 'view_student',
+            'view_any_course', 'view_course',
+            'view_any_batch', 'view_batch',
+            'view_any_enrollment', 'view_enrollment',
+            'create_enrollment', 'update_enrollment',
+        ]);
+
+        Role::findOrCreate('student', 'web')->syncPermissions([]);
+    }
+
+    /** @return array<int, string> */
+    private function crudFor(string $resource): array
+    {
+        return array_map(
+            fn (string $action): string => "{$action}_{$resource}",
+            self::ACTIONS,
+        );
+    }
+}
+```
+
+Note: `admin` receives the full CRUD set for `user`, but Task 4's `UserPolicy` prevents an admin from touching a super admin. Permissions grant the *category*; policies enforce the *boundary*. Both layers are required.
+
+- [ ] **Step 6: Register the seeder**
+
+In `database/seeders/DatabaseSeeder.php`, inside `run()`:
+
+```php
+$this->call(RolePermissionSeeder::class);
+```
+
+- [ ] **Step 7: Run tests to verify they pass**
+
+Run: `php artisan test --filter=RolePermissionSeederTest`
+Expected: 4 passed.
+
+- [ ] **Step 8: Commit**
+
+```bash
+vendor/bin/pint && vendor/bin/phpstan analyse
+git add -A
+git commit -m "feat(staff): add four roles with permission sets [P1-T02]"
+```
+
+---
+
+## Task 3: User model and authentication
+
+**Owner:** Claude · **Branch:** `p1/t03-user-auth`
+
+**Files:**
+- Create: `database/migrations/xxxx_add_fields_to_users_table.php`
+- Create: `app/Http/Middleware/ForcePasswordChange.php`
+- Create: `tests/Feature/Auth/PanelAccessTest.php`
+- Create: `tests/Feature/Auth/ForcePasswordChangeTest.php`
+- Modify: `app/Models/User.php`
+- Modify: `database/factories/UserFactory.php`
+- Modify: `app/Providers/Filament/AdminPanelProvider.php`
+
+- [ ] **Step 1: Write the failing tests**
+
+Create `tests/Feature/Auth/PanelAccessTest.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+use App\Models\User;
+
+uses(Illuminate\Foundation\Testing\RefreshDatabase::class);
+
+beforeEach(function () {
+    $this->seed(Database\Seeders\RolePermissionSeeder::class);
+});
+
+it('allows an active staff user into the admin panel', function () {
+    $user = User::factory()->create(['is_active' => true]);
+    $user->assignRole('staff');
+
+    $this->actingAs($user)->get('/admin')->assertSuccessful();
+});
+
+it('denies a deactivated user', function () {
+    $user = User::factory()->create(['is_active' => false]);
+    $user->assignRole('admin');
+
+    $this->actingAs($user)->get('/admin')->assertForbidden();
+});
+
+it('denies a student the admin panel', function () {
+    $user = User::factory()->create(['is_active' => true]);
+    $user->assignRole('student');
+
+    $this->actingAs($user)->get('/admin')->assertForbidden();
+});
+
+it('denies a user with no role', function () {
+    $user = User::factory()->create(['is_active' => true]);
+
+    $this->actingAs($user)->get('/admin')->assertForbidden();
+});
+```
+
+Create `tests/Feature/Auth/ForcePasswordChangeTest.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+use App\Models\User;
+
+uses(Illuminate\Foundation\Testing\RefreshDatabase::class);
+
+beforeEach(function () {
+    $this->seed(Database\Seeders\RolePermissionSeeder::class);
+});
+
+it('redirects a flagged user to the password change page', function () {
+    $user = User::factory()->create([
+        'is_active' => true,
+        'must_change_password' => true,
+    ]);
+    $user->assignRole('admin');
+
+    $this->actingAs($user)
+        ->get('/admin')
+        ->assertRedirect('/admin/password-change');
+});
+
+it('does not redirect an unflagged user', function () {
+    $user = User::factory()->create([
+        'is_active' => true,
+        'must_change_password' => false,
+    ]);
+    $user->assignRole('admin');
+
+    $this->actingAs($user)->get('/admin')->assertSuccessful();
+});
+
+it('does not redirect on the password change page itself', function () {
+    $user = User::factory()->create([
+        'is_active' => true,
+        'must_change_password' => true,
+    ]);
+    $user->assignRole('admin');
+
+    $this->actingAs($user)
+        ->get('/admin/password-change')
+        ->assertSuccessful();
+});
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `php artisan test --filter="PanelAccessTest|ForcePasswordChangeTest"`
+Expected: FAIL — `Unknown column 'is_active'`
+
+- [ ] **Step 3: Write the migration**
+
+Create `database/migrations/2026_07_20_000100_add_fields_to_users_table.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::table('users', function (Blueprint $table): void {
+            $table->string('locale', 5)->default('en')->after('email');
+            $table->boolean('is_active')->default(true)->index()->after('locale');
+            $table->boolean('must_change_password')->default(false)->after('is_active');
+            $table->timestamp('last_login_at')->nullable()->after('must_change_password');
+            $table->softDeletes();
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::table('users', function (Blueprint $table): void {
+            $table->dropSoftDeletes();
+            $table->dropColumn(['locale', 'is_active', 'must_change_password', 'last_login_at']);
+        });
+    }
+};
+```
+
+Run: `php artisan migrate`
+
+- [ ] **Step 4: Update the User model**
+
+In `app/Models/User.php`:
+
+```php
+protected $fillable = [
+    'name', 'email', 'password', 'locale', 'is_active', 'must_change_password',
+];
+
+protected $hidden = ['password', 'remember_token'];
+
+protected function casts(): array
+{
+    return [
+        'email_verified_at' => 'datetime',
+        'last_login_at' => 'datetime',
+        'password' => 'hashed',
+        'is_active' => 'boolean',
+        'must_change_password' => 'boolean',
+    ];
+}
+
+public function scopeActive(Builder $query): void
+{
+    $query->where('is_active', true);
+}
+```
+
+Add `use Illuminate\Database\Eloquent\SoftDeletes;` to the trait list and import `Illuminate\Database\Eloquent\Builder`.
+
+- [ ] **Step 5: Update the factory**
+
+In `database/factories/UserFactory.php`, add to `definition()`:
+
+```php
+'locale' => 'en',
+'is_active' => true,
+'must_change_password' => false,
+```
+
+- [ ] **Step 6: Write the middleware**
+
+Create `app/Http/Middleware/ForcePasswordChange.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Http\Middleware;
+
+use Closure;
+use Illuminate\Http\Request;
+use Symfony\Component\HttpFoundation\Response;
+
+class ForcePasswordChange
+{
+    public function handle(Request $request, Closure $next): Response
+    {
+        $user = $request->user();
+
+        if ($user?->must_change_password && ! $request->routeIs('filament.admin.pages.password-change')) {
+            return redirect()->to('/admin/password-change');
+        }
+
+        return $next($request);
+    }
+}
+```
+
+- [ ] **Step 7: Create the password change page**
+
+```bash
+php artisan make:filament-page PasswordChange --panel=admin
+```
+
+In `app/Filament/Pages/PasswordChange.php`, replace the class body:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Filament\Pages;
+
+use Filament\Forms\Components\TextInput;
+use Filament\Notifications\Notification;
+use Filament\Pages\Page;
+use Filament\Schemas\Schema;
+use Illuminate\Support\Facades\Hash;
+
+class PasswordChange extends Page
+{
+    protected static bool $shouldRegisterNavigation = false;
+
+    protected string $view = 'filament.pages.password-change';
+
+    /** @var array<string, mixed> */
+    public array $data = [];
+
+    public function form(Schema $schema): Schema
+    {
+        return $schema
+            ->components([
+                TextInput::make('password')
+                    ->label(__('auth.new_password'))
+                    ->password()
+                    ->required()
+                    ->minLength(12)
+                    ->confirmed(),
+                TextInput::make('password_confirmation')
+                    ->label(__('auth.confirm_password'))
+                    ->password()
+                    ->required(),
+            ])
+            ->statePath('data');
+    }
+
+    public function save(): void
+    {
+        $state = $this->form->getState();
+
+        auth()->user()->update([
+            'password' => Hash::make($state['password']),
+            'must_change_password' => false,
+        ]);
+
+        Notification::make()->title(__('auth.password_updated'))->success()->send();
+
+        $this->redirect('/admin');
+    }
+}
+```
+
+Create `resources/views/filament/pages/password-change.blade.php`:
+
+```blade
+<x-filament-panels::page>
+    <form wire:submit="save">
+        {{ $this->form }}
+        <x-filament::button type="submit" class="mt-4">
+            {{ __('auth.update_password') }}
+        </x-filament::button>
+    </form>
+</x-filament-panels::page>
+```
+
+- [ ] **Step 8: Register middleware and login throttling**
+
+In `app/Providers/Filament/AdminPanelProvider.php`, add to the panel's `authMiddleware()` array:
+
+```php
+->authMiddleware([
+    \Filament\Http\Middleware\Authenticate::class,
+    \App\Http\Middleware\ForcePasswordChange::class,
+])
+```
+
+Add login throttling to the same panel chain:
+
+```php
+->login()
+->loginRouteSlug('login')
+->databaseNotifications()
+```
+
+Then in `app/Providers/AppServiceProvider.php` `boot()`, register the rate limiter:
+
+```php
+use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Support\Facades\RateLimiter;
+
+RateLimiter::for('login', fn ($request) => Limit::perMinute(5)
+    ->by(strtolower((string) $request->input('email')).'|'.$request->ip()));
+```
+
+- [ ] **Step 9: Record last login**
+
+In `app/Providers/AppServiceProvider.php` `boot()`:
+
+```php
+use Illuminate\Auth\Events\Login;
+use Illuminate\Support\Facades\Event;
+
+Event::listen(Login::class, function (Login $event): void {
+    $event->user->forceFill(['last_login_at' => now()])->saveQuietly();
+});
+```
+
+`saveQuietly()` is deliberate — a login timestamp must not generate an activity-log "user updated" entry in Task 12.
+
+- [ ] **Step 10: Run tests to verify they pass**
+
+Run: `php artisan test --filter="PanelAccessTest|ForcePasswordChangeTest"`
+Expected: 7 passed.
+
+- [ ] **Step 11: Commit and request review**
+
+```bash
+vendor/bin/pint && vendor/bin/phpstan analyse && php artisan test
+git add -A
+git commit -m "feat(staff): add user fields, panel access control, forced password change [P1-T03]"
+```
+
+Request Codex review per `docs/WORKFLOW.md`: `git diff main...p1/t03-user-auth`
+
+---
+
+## Task 4: Escalation guards
+
+**Owner:** Claude · **Branch:** `p1/t04-escalation-guards`
+
+The three guards from spec section 5. This is the highest-risk task in phase 1 — a mistake here is a privilege escalation vulnerability.
+
+**Files:**
+- Create: `app/Domain/Staff/Policies/UserPolicy.php`
+- Create: `app/Domain/Staff/Exceptions/LastSuperAdminException.php`
+- Create: `tests/Feature/Staff/EscalationGuardTest.php`
+- Modify: `app/Models/User.php`
+- Modify: `app/Providers/AppServiceProvider.php`
+
+- [ ] **Step 1: Write the failing tests**
+
+Create `tests/Feature/Staff/EscalationGuardTest.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+use App\Domain\Staff\Exceptions\LastSuperAdminException;
+use App\Models\User;
+
+uses(Illuminate\Foundation\Testing\RefreshDatabase::class);
+
+beforeEach(function () {
+    $this->seed(Database\Seeders\RolePermissionSeeder::class);
+
+    $this->superAdmin = User::factory()->create();
+    $this->superAdmin->assignRole('super_admin');
+
+    $this->admin = User::factory()->create();
+    $this->admin->assignRole('admin');
+
+    $this->staff = User::factory()->create();
+    $this->staff->assignRole('staff');
+});
+
+// Guard 1: an admin cannot touch a super admin
+it('forbids an admin from updating a super admin', function () {
+    expect($this->admin->can('update', $this->superAdmin))->toBeFalse();
+});
+
+it('forbids an admin from deleting a super admin', function () {
+    expect($this->admin->can('delete', $this->superAdmin))->toBeFalse();
+});
+
+it('forbids an admin from assigning the super_admin role', function () {
+    expect($this->admin->can('assignRole', [User::class, 'super_admin']))->toBeFalse();
+});
+
+it('allows an admin to update a staff user', function () {
+    expect($this->admin->can('update', $this->staff))->toBeTrue();
+});
+
+it('allows a super admin to update another super admin', function () {
+    $other = User::factory()->create();
+    $other->assignRole('super_admin');
+
+    expect($this->superAdmin->can('update', $other))->toBeTrue();
+});
+
+// Guard 2: nobody edits their own roles
+it('forbids a super admin from changing their own roles', function () {
+    expect($this->superAdmin->can('assignRole', [User::class, 'admin']))->toBeTrue()
+        ->and($this->superAdmin->can('modifyOwnRoles', $this->superAdmin))->toBeFalse();
+});
+
+it('forbids an admin from deleting their own account', function () {
+    expect($this->admin->can('delete', $this->admin))->toBeFalse();
+});
+
+// Guard 3: the last super admin is protected
+it('refuses to delete the last active super admin', function () {
+    $this->superAdmin->delete();
+})->throws(LastSuperAdminException::class);
+
+it('refuses to deactivate the last active super admin', function () {
+    $this->superAdmin->update(['is_active' => false]);
+})->throws(LastSuperAdminException::class);
+
+it('allows deleting a super admin when another active one exists', function () {
+    $second = User::factory()->create(['is_active' => true]);
+    $second->assignRole('super_admin');
+
+    $this->superAdmin->delete();
+
+    expect(User::find($this->superAdmin->id))->toBeNull();
+});
+
+it('does not count an inactive super admin as a survivor', function () {
+    $inactive = User::factory()->create(['is_active' => false]);
+    $inactive->assignRole('super_admin');
+
+    $this->superAdmin->delete();
+})->throws(LastSuperAdminException::class);
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `php artisan test --filter=EscalationGuardTest`
+Expected: FAIL — `Class "App\Domain\Staff\Exceptions\LastSuperAdminException" not found`
+
+- [ ] **Step 3: Write the exception**
+
+Create `app/Domain/Staff/Exceptions/LastSuperAdminException.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Staff\Exceptions;
+
+use RuntimeException;
+
+class LastSuperAdminException extends RuntimeException
+{
+    public function __construct()
+    {
+        parent::__construct('The last active super admin cannot be removed or deactivated.');
+    }
+}
+```
+
+- [ ] **Step 4: Write the policy**
+
+Create `app/Domain/Staff/Policies/UserPolicy.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Staff\Policies;
+
+use App\Models\User;
+
+class UserPolicy
+{
+    public function viewAny(User $actor): bool
+    {
+        return $actor->can('view_any_user');
+    }
+
+    public function view(User $actor, User $target): bool
+    {
+        return $actor->can('view_user');
+    }
+
+    public function create(User $actor): bool
+    {
+        return $actor->can('create_user');
+    }
+
+    public function update(User $actor, User $target): bool
+    {
+        if (! $actor->can('update_user')) {
+            return false;
+        }
+
+        return $this->outranks($actor, $target);
+    }
+
+    public function delete(User $actor, User $target): bool
+    {
+        if (! $actor->can('delete_user')) {
+            return false;
+        }
+
+        // Guard 2: no self-deletion.
+        if ($actor->is($target)) {
+            return false;
+        }
+
+        return $this->outranks($actor, $target);
+    }
+
+    /**
+     * Guard 1: only a super admin may grant the super_admin role.
+     */
+    public function assignRole(User $actor, string $role): bool
+    {
+        if (! $actor->can('assign_role')) {
+            return false;
+        }
+
+        return $role !== 'super_admin' || $actor->hasRole('super_admin');
+    }
+
+    /**
+     * Guard 2: nobody edits their own role assignments, regardless of rank.
+     */
+    public function modifyOwnRoles(User $actor, User $target): bool
+    {
+        return ! $actor->is($target);
+    }
+
+    public function resetPassword(User $actor, User $target): bool
+    {
+        if (! $actor->can('reset_user_password')) {
+            return false;
+        }
+
+        return $this->outranks($actor, $target);
+    }
+
+    /**
+     * Guard 1: a non-super-admin may never act on a super admin.
+     */
+    private function outranks(User $actor, User $target): bool
+    {
+        if ($target->hasRole('super_admin') && ! $actor->hasRole('super_admin')) {
+            return false;
+        }
+
+        return true;
+    }
+}
+```
+
+- [ ] **Step 5: Enforce guard 3 at the model layer**
+
+Guard 3 lives on the model, not the policy — it must hold no matter which code path attempts the change, including seeders, tinker, and queued jobs.
+
+In `app/Models/User.php`, add a `booted()` method:
+
+```php
+protected static function booted(): void
+{
+    static::deleting(function (User $user): void {
+        $user->assertNotLastSuperAdmin();
+    });
+
+    static::updating(function (User $user): void {
+        if ($user->isDirty('is_active') && $user->is_active === false) {
+            $user->assertNotLastSuperAdmin();
+        }
+    });
+}
+
+public function assertNotLastSuperAdmin(): void
+{
+    if (! $this->hasRole('super_admin')) {
+        return;
+    }
+
+    $survivors = static::query()
+        ->role('super_admin')
+        ->where('is_active', true)
+        ->whereKeyNot($this->getKey())
+        ->count();
+
+    if ($survivors === 0) {
+        throw new LastSuperAdminException();
+    }
+}
+```
+
+Import `App\Domain\Staff\Exceptions\LastSuperAdminException`.
+
+- [ ] **Step 6: Register the policy**
+
+In `app/Providers/AppServiceProvider.php` `boot()`:
+
+```php
+use App\Domain\Staff\Policies\UserPolicy;
+use App\Models\User;
+use Illuminate\Support\Facades\Gate;
+
+Gate::policy(User::class, UserPolicy::class);
+```
+
+- [ ] **Step 7: Run tests to verify they pass**
+
+Run: `php artisan test --filter=EscalationGuardTest`
+Expected: 11 passed.
+
+- [ ] **Step 8: Commit and request review**
+
+```bash
+vendor/bin/pint && vendor/bin/phpstan analyse && php artisan test
+git add -A
+git commit -m "feat(staff): enforce three privilege escalation guards [P1-T04]"
+```
+
+Request Codex review. **Flag this task explicitly as security-critical in the review request** — the reviewer should attempt to think of a fourth escalation path not covered by these tests.
+
+---
+
+## Task 5: Staff account management UI
+
+**Owner:** Claude · **Branch:** `p1/t05-staff-accounts`
+
+**Files:**
+- Create: `app/Domain/Staff/Actions/ResetUserPasswordAction.php`
+- Create: `app/Domain/Staff/Filament/Resources/UserResource.php` (+ generated pages)
+- Create: `tests/Feature/Staff/UserResourceTest.php`
+
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/Feature/Staff/UserResourceTest.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+use App\Domain\Staff\Actions\ResetUserPasswordAction;
+use App\Models\User;
+use Illuminate\Support\Facades\Hash;
+
+uses(Illuminate\Foundation\Testing\RefreshDatabase::class);
+
+beforeEach(function () {
+    $this->seed(Database\Seeders\RolePermissionSeeder::class);
+});
+
+it('generates a temporary password and flags the user', function () {
+    $target = User::factory()->create(['must_change_password' => false]);
+    $original = $target->password;
+
+    $plain = app(ResetUserPasswordAction::class)->execute($target);
+
+    $target->refresh();
+
+    expect($plain)->toHaveLength(16)
+        ->and($target->must_change_password)->toBeTrue()
+        ->and($target->password)->not->toBe($original)
+        ->and(Hash::check($plain, $target->password))->toBeTrue();
+});
+
+it('denies staff access to the user list', function () {
+    $staff = User::factory()->create(['is_active' => true]);
+    $staff->assignRole('staff');
+
+    $this->actingAs($staff)
+        ->get('/admin/users')
+        ->assertForbidden();
+});
+
+it('allows an admin to see the user list', function () {
+    $admin = User::factory()->create(['is_active' => true]);
+    $admin->assignRole('admin');
+
+    $this->actingAs($admin)
+        ->get('/admin/users')
+        ->assertSuccessful();
+});
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `php artisan test --filter=UserResourceTest`
+Expected: FAIL — `Target class [App\Domain\Staff\Actions\ResetUserPasswordAction] does not exist`
+
+- [ ] **Step 3: Write the action**
+
+Create `app/Domain/Staff/Actions/ResetUserPasswordAction.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Staff\Actions;
+
+use App\Models\User;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
+
+class ResetUserPasswordAction
+{
+    /**
+     * Generate a temporary password, store its hash, and force a change at next login.
+     *
+     * @return string The plaintext password, shown once to the administrator.
+     */
+    public function execute(User $user): string
+    {
+        $plain = Str::password(16, symbols: false);
+
+        $user->forceFill([
+            'password' => Hash::make($plain),
+            'must_change_password' => true,
+        ])->save();
+
+        return $plain;
+    }
+}
+```
+
+- [ ] **Step 4: Generate and write the resource**
+
+```bash
+php artisan make:filament-resource User --generate --panel=admin
+```
+
+Move the generated files from `app/Filament/Resources/` to `app/Domain/Staff/Filament/Resources/` and update their namespaces to `App\Domain\Staff\Filament\Resources`.
+
+Replace the resource body:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Staff\Filament\Resources;
+
+use App\Domain\Staff\Actions\ResetUserPasswordAction;
+use App\Models\User;
+use Filament\Actions\Action;
+use Filament\Forms\Components\Select;
+use Filament\Forms\Components\TextInput;
+use Filament\Forms\Components\Toggle;
+use Filament\Notifications\Notification;
+use Filament\Resources\Resource;
+use Filament\Schemas\Schema;
+use Filament\Tables\Columns\IconColumn;
+use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Table;
+use Spatie\Permission\Models\Role;
+
+class UserResource extends Resource
+{
+    protected static ?string $model = User::class;
+
+    public static function getModelLabel(): string
+    {
+        return __('staff.user');
+    }
+
+    public static function form(Schema $schema): Schema
+    {
+        return $schema->components([
+            TextInput::make('name')->label(__('staff.name'))->required()->maxLength(255),
+
+            TextInput::make('email')->label(__('staff.email'))
+                ->email()->required()->unique(ignoreRecord: true),
+
+            Select::make('locale')->label(__('staff.locale'))
+                ->options(['en' => 'English', 'ar' => 'العربية'])
+                ->default('en')->required(),
+
+            Toggle::make('is_active')->label(__('staff.is_active'))->default(true),
+
+            Select::make('roles')
+                ->label(__('staff.roles'))
+                ->relationship('roles', 'name')
+                ->multiple()
+                ->preload()
+                // Guard 1: a non-super-admin cannot see or grant super_admin.
+                ->options(fn (): array => Role::query()
+                    ->when(
+                        ! auth()->user()->hasRole('super_admin'),
+                        fn ($q) => $q->where('name', '!=', 'super_admin'),
+                    )
+                    ->pluck('name', 'name')
+                    ->all())
+                // Guard 2: nobody edits their own roles.
+                ->disabled(fn (?User $record): bool => $record !== null && auth()->user()->is($record)),
+        ]);
+    }
+
+    public static function table(Table $table): Table
+    {
+        return $table
+            ->columns([
+                TextColumn::make('name')->label(__('staff.name'))->searchable()->sortable(),
+                TextColumn::make('email')->label(__('staff.email'))->searchable(),
+                TextColumn::make('roles.name')->label(__('staff.roles'))->badge(),
+                IconColumn::make('is_active')->label(__('staff.is_active'))->boolean(),
+                TextColumn::make('last_login_at')->label(__('staff.last_login'))
+                    ->dateTime()->placeholder(__('staff.never'))->sortable(),
+            ])
+            ->recordActions([
+                Action::make('resetPassword')
+                    ->label(__('staff.reset_password'))
+                    ->icon('heroicon-o-key')
+                    ->requiresConfirmation()
+                    ->visible(fn (User $record): bool => auth()->user()->can('resetPassword', $record))
+                    ->action(function (User $record, ResetUserPasswordAction $action): void {
+                        $plain = $action->execute($record);
+
+                        Notification::make()
+                            ->title(__('staff.temp_password_generated'))
+                            ->body($plain)
+                            ->persistent()
+                            ->warning()
+                            ->send();
+                    }),
+            ]);
+    }
+}
+```
+
+The reset-password notification is `persistent()` deliberately — the plaintext appears exactly once and the administrator must dismiss it manually. A toast that auto-dismisses would lose the password.
+
+- [ ] **Step 5: Run tests to verify they pass**
+
+Run: `php artisan test --filter=UserResourceTest`
+Expected: 3 passed.
+
+- [ ] **Step 6: Commit and request review**
+
+```bash
+vendor/bin/pint && vendor/bin/phpstan analyse && php artisan test
+git add -A
+git commit -m "feat(staff): add user management resource with password reset [P1-T05]"
+```
+
+---
+
+## Task 6: Staff profiles
+
+**Owner:** Codex · **Branch:** `p1/t06-staff-profiles`
+
+**Files:**
+- Create: `database/migrations/2026_07_20_000200_create_staff_profiles_table.php`
+- Create: `app/Domain/Staff/Models/StaffProfile.php`
+- Create: `app/Domain/Staff/Enums/EmploymentType.php`
+- Create: `database/factories/StaffProfileFactory.php`
+- Create: `tests/Feature/Staff/StaffProfileTest.php`
+- Modify: `app/Models/User.php`
+
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/Feature/Staff/StaffProfileTest.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+use App\Domain\Staff\Enums\EmploymentType;
+use App\Domain\Staff\Models\StaffProfile;
+use App\Models\User;
+
+uses(Illuminate\Foundation\Testing\RefreshDatabase::class);
+
+it('links one profile to one user', function () {
+    $user = User::factory()->create();
+    $profile = StaffProfile::factory()->for($user)->create();
+
+    expect($user->fresh()->staffProfile->id)->toBe($profile->id)
+        ->and($profile->user->id)->toBe($user->id);
+});
+
+it('casts employment type to an enum', function () {
+    $profile = StaffProfile::factory()->create([
+        'employment_type' => EmploymentType::Instructor,
+    ]);
+
+    expect($profile->fresh()->employment_type)->toBe(EmploymentType::Instructor);
+});
+
+it('rejects a second profile for the same user', function () {
+    $user = User::factory()->create();
+    StaffProfile::factory()->for($user)->create();
+    StaffProfile::factory()->for($user)->create();
+})->throws(Illuminate\Database\UniqueConstraintViolationException::class);
+
+it('deletes the profile when the user is force deleted', function () {
+    $user = User::factory()->create();
+    StaffProfile::factory()->for($user)->create();
+
+    $user->forceDelete();
+
+    expect(StaffProfile::count())->toBe(0);
+});
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `php artisan test --filter=StaffProfileTest`
+Expected: FAIL — class not found.
+
+- [ ] **Step 3: Write the enum**
+
+Create `app/Domain/Staff/Enums/EmploymentType.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Staff\Enums;
+
+enum EmploymentType: string
+{
+    case Instructor = 'instructor';
+    case Administrative = 'administrative';
+    case Support = 'support';
+
+    public function label(): string
+    {
+        return __("staff.employment_type.{$this->value}");
+    }
+}
+```
+
+- [ ] **Step 4: Write the migration**
+
+Create `database/migrations/2026_07_20_000200_create_staff_profiles_table.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('staff_profiles', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('user_id')->unique()->constrained()->cascadeOnDelete();
+            $table->string('phone', 30)->nullable();
+            $table->string('job_title', 120)->nullable();
+            $table->date('hire_date')->nullable();
+            $table->string('employment_type', 30)->default('administrative')->index();
+            $table->timestamps();
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('staff_profiles');
+    }
+};
+```
+
+- [ ] **Step 5: Write the model**
+
+Create `app/Domain/Staff/Models/StaffProfile.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Staff\Models;
+
+use App\Domain\Staff\Enums\EmploymentType;
+use App\Models\User;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+
+class StaffProfile extends Model
+{
+    use HasFactory;
+
+    protected $fillable = ['user_id', 'phone', 'job_title', 'hire_date', 'employment_type'];
+
+    protected function casts(): array
+    {
+        return [
+            'hire_date' => 'date',
+            'employment_type' => EmploymentType::class,
+        ];
+    }
+
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
+    }
+}
+```
+
+- [ ] **Step 6: Write the factory**
+
+Create `database/factories/StaffProfileFactory.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace Database\Factories;
+
+use App\Domain\Staff\Enums\EmploymentType;
+use App\Domain\Staff\Models\StaffProfile;
+use App\Models\User;
+use Illuminate\Database\Eloquent\Factories\Factory;
+
+/** @extends Factory<StaffProfile> */
+class StaffProfileFactory extends Factory
+{
+    protected $model = StaffProfile::class;
+
+    public function definition(): array
+    {
+        return [
+            'user_id' => User::factory(),
+            'phone' => $this->faker->numerify('09########'),
+            'job_title' => $this->faker->jobTitle(),
+            'hire_date' => $this->faker->dateTimeBetween('-3 years'),
+            'employment_type' => $this->faker->randomElement(EmploymentType::cases()),
+        ];
+    }
+
+    public function instructor(): static
+    {
+        return $this->state(fn (): array => ['employment_type' => EmploymentType::Instructor]);
+    }
+}
+```
+
+- [ ] **Step 7: Add the relationship to User**
+
+In `app/Models/User.php`:
+
+```php
+public function staffProfile(): HasOne
+{
+    return $this->hasOne(\App\Domain\Staff\Models\StaffProfile::class);
+}
+```
+
+Import `Illuminate\Database\Eloquent\Relations\HasOne`.
+
+- [ ] **Step 8: Run tests to verify they pass**
+
+Run: `php artisan test --filter=StaffProfileTest`
+Expected: 4 passed.
+
+- [ ] **Step 9: Commit and request review**
+
+```bash
+vendor/bin/pint && vendor/bin/phpstan analyse && php artisan test
+git add -A
+git commit -m "feat(staff): add staff profiles with employment type [P1-T06]"
+```
+
+Request Claude review: `git diff main...p1/t06-staff-profiles`
+
+---
+
+## Task 7: Students
+
+**Owner:** Claude · **Branch:** `p1/t07-students`
+
+**Files:**
+- Create: `database/migrations/2026_07_20_000300_create_students_table.php`
+- Create: `app/Domain/Enrollment/Models/Student.php`
+- Create: `app/Domain/Enrollment/Enums/StudentStatus.php`
+- Create: `app/Domain/Enrollment/Policies/StudentPolicy.php`
+- Create: `database/factories/StudentFactory.php`
+- Create: `app/Domain/Enrollment/Filament/Resources/StudentResource.php`
+- Create: `tests/Feature/Enrollment/StudentTest.php`
+
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/Feature/Enrollment/StudentTest.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+use App\Domain\Enrollment\Enums\StudentStatus;
+use App\Domain\Enrollment\Models\Student;
+use App\Models\User;
+
+uses(Illuminate\Foundation\Testing\RefreshDatabase::class);
+
+beforeEach(function () {
+    $this->seed(Database\Seeders\RolePermissionSeeder::class);
+});
+
+it('requires a unique student code', function () {
+    Student::factory()->create(['student_code' => 'STU-0001']);
+    Student::factory()->create(['student_code' => 'STU-0001']);
+})->throws(Illuminate\Database\UniqueConstraintViolationException::class);
+
+it('allows a student with no linked user account', function () {
+    $student = Student::factory()->create(['user_id' => null]);
+
+    expect($student->user)->toBeNull()
+        ->and($student->exists)->toBeTrue();
+});
+
+it('exposes a full name accessor', function () {
+    $student = Student::factory()->create([
+        'first_name' => 'Amal',
+        'last_name' => 'Ibrahim',
+    ]);
+
+    expect($student->full_name)->toBe('Amal Ibrahim');
+});
+
+it('scopes to active students', function () {
+    Student::factory()->create(['status' => StudentStatus::Active]);
+    Student::factory()->create(['status' => StudentStatus::Inactive]);
+
+    expect(Student::active()->count())->toBe(1);
+});
+
+it('soft deletes rather than removing the row', function () {
+    $student = Student::factory()->create();
+    $student->delete();
+
+    expect(Student::count())->toBe(0)
+        ->and(Student::withTrashed()->count())->toBe(1);
+});
+
+// Permission boundaries — negative assertions matter as much as positive ones.
+it('lets staff view students but not create them', function () {
+    $staff = User::factory()->create(['is_active' => true]);
+    $staff->assignRole('staff');
+
+    expect($staff->can('viewAny', Student::class))->toBeTrue()
+        ->and($staff->can('create', Student::class))->toBeFalse()
+        ->and($staff->can('delete', Student::factory()->create()))->toBeFalse();
+});
+
+it('lets an admin fully manage students', function () {
+    $admin = User::factory()->create(['is_active' => true]);
+    $admin->assignRole('admin');
+
+    expect($admin->can('create', Student::class))->toBeTrue()
+        ->and($admin->can('delete', Student::factory()->create()))->toBeTrue();
+});
+
+it('denies a student role any access to the student list', function () {
+    $portalUser = User::factory()->create(['is_active' => true]);
+    $portalUser->assignRole('student');
+
+    expect($portalUser->can('viewAny', Student::class))->toBeFalse();
+});
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `php artisan test --filter=StudentTest`
+Expected: FAIL — class not found.
+
+- [ ] **Step 3: Write the enum**
+
+Create `app/Domain/Enrollment/Enums/StudentStatus.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Enrollment\Enums;
+
+enum StudentStatus: string
+{
+    case Prospective = 'prospective';
+    case Active = 'active';
+    case Graduated = 'graduated';
+    case Inactive = 'inactive';
+
+    public function label(): string
+    {
+        return __("enrollment.student_status.{$this->value}");
+    }
+}
+```
+
+- [ ] **Step 4: Write the migration**
+
+Create `database/migrations/2026_07_20_000300_create_students_table.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('students', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('user_id')->nullable()->unique()->constrained()->nullOnDelete();
+            $table->string('student_code', 30)->unique();
+            $table->string('first_name', 100);
+            $table->string('last_name', 100);
+            $table->string('email')->nullable()->index();
+            $table->string('phone', 30)->nullable()->index();
+            $table->string('national_id', 50)->nullable()->index();
+            $table->date('date_of_birth')->nullable();
+            $table->string('gender', 20)->nullable();
+            $table->text('address')->nullable();
+            $table->string('status', 30)->default('prospective')->index();
+            $table->text('notes')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+
+            $table->index(['last_name', 'first_name']);
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('students');
+    }
+};
+```
+
+`nullOnDelete()` on `user_id` is deliberate: deleting a portal account must not delete the student record. The student exists independently of their login.
+
+- [ ] **Step 5: Write the model**
+
+Create `app/Domain/Enrollment/Models/Student.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Enrollment\Models;
+
+use App\Domain\Enrollment\Enums\StudentStatus;
+use App\Models\User;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Casts\Attribute;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
+
+class Student extends Model
+{
+    use HasFactory, SoftDeletes;
+
+    protected $fillable = [
+        'user_id', 'student_code', 'first_name', 'last_name', 'email', 'phone',
+        'national_id', 'date_of_birth', 'gender', 'address', 'status', 'notes',
+    ];
+
+    protected function casts(): array
+    {
+        return [
+            'date_of_birth' => 'date',
+            'status' => StudentStatus::class,
+        ];
+    }
+
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
+    }
+
+    public function enrollments(): HasMany
+    {
+        return $this->hasMany(Enrollment::class);
+    }
+
+    protected function fullName(): Attribute
+    {
+        return Attribute::get(fn (): string => "{$this->first_name} {$this->last_name}");
+    }
+
+    public function scopeActive(Builder $query): void
+    {
+        $query->where('status', StudentStatus::Active);
+    }
+}
+```
+
+- [ ] **Step 6: Write the factory**
+
+Create `database/factories/StudentFactory.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace Database\Factories;
+
+use App\Domain\Enrollment\Enums\StudentStatus;
+use App\Domain\Enrollment\Models\Student;
+use Illuminate\Database\Eloquent\Factories\Factory;
+use Illuminate\Support\Str;
+
+/** @extends Factory<Student> */
+class StudentFactory extends Factory
+{
+    protected $model = Student::class;
+
+    public function definition(): array
+    {
+        return [
+            'user_id' => null,
+            'student_code' => 'STU-'.Str::upper(Str::random(8)),
+            'first_name' => $this->faker->firstName(),
+            'last_name' => $this->faker->lastName(),
+            'email' => $this->faker->unique()->safeEmail(),
+            'phone' => $this->faker->numerify('09########'),
+            'national_id' => $this->faker->numerify('############'),
+            'date_of_birth' => $this->faker->dateTimeBetween('-40 years', '-16 years'),
+            'gender' => $this->faker->randomElement(['male', 'female']),
+            'address' => $this->faker->address(),
+            'status' => StudentStatus::Active,
+            'notes' => null,
+        ];
+    }
+
+    public function prospective(): static
+    {
+        return $this->state(fn (): array => ['status' => StudentStatus::Prospective]);
+    }
+}
+```
+
+- [ ] **Step 7: Write the policy**
+
+Create `app/Domain/Enrollment/Policies/StudentPolicy.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Enrollment\Policies;
+
+use App\Domain\Enrollment\Models\Student;
+use App\Models\User;
+
+class StudentPolicy
+{
+    public function viewAny(User $user): bool
+    {
+        return $user->can('view_any_student');
+    }
+
+    public function view(User $user, Student $student): bool
+    {
+        return $user->can('view_student');
+    }
+
+    public function create(User $user): bool
+    {
+        return $user->can('create_student');
+    }
+
+    public function update(User $user, Student $student): bool
+    {
+        return $user->can('update_student');
+    }
+
+    public function delete(User $user, Student $student): bool
+    {
+        return $user->can('delete_student');
+    }
+}
+```
+
+Register it in `app/Providers/AppServiceProvider.php` `boot()`:
+
+```php
+Gate::policy(Student::class, StudentPolicy::class);
+```
+
+- [ ] **Step 8: Generate the Filament resource**
+
+```bash
+php artisan make:filament-resource Student --generate --panel=admin
+```
+
+Move to `app/Domain/Enrollment/Filament/Resources/`, update the namespace, and set the form fields to match the fillable list. Add to the table:
+
+```php
+->columns([
+    TextColumn::make('student_code')->label(__('enrollment.student_code'))->searchable()->sortable(),
+    TextColumn::make('full_name')->label(__('enrollment.full_name'))
+        ->searchable(['first_name', 'last_name']),
+    TextColumn::make('phone')->label(__('enrollment.phone'))->searchable(),
+    TextColumn::make('status')->label(__('enrollment.status'))->badge()
+        ->formatStateUsing(fn (StudentStatus $state): string => $state->label()),
+])
+->defaultSort('created_at', 'desc')
+```
+
+- [ ] **Step 9: Run tests to verify they pass**
+
+Run: `php artisan test --filter=StudentTest`
+Expected: 8 passed.
+
+- [ ] **Step 10: Commit and request review**
+
+```bash
+vendor/bin/pint && vendor/bin/phpstan analyse && php artisan test
+git add -A
+git commit -m "feat(enrollment): add students with status and policy [P1-T07]"
+```
+
+---
+
+## Task 8: Courses
+
+**Owner:** Codex · **Branch:** `p1/t08-courses` · **Runs in parallel with Task 7**
+
+**Files:**
+- Create: `database/migrations/2026_07_20_000400_create_courses_table.php`
+- Create: `app/Domain/Enrollment/Models/Course.php`
+- Create: `app/Domain/Enrollment/Policies/CoursePolicy.php`
+- Create: `database/factories/CourseFactory.php`
+- Create: `app/Domain/Enrollment/Filament/Resources/CourseResource.php`
+- Create: `tests/Feature/Enrollment/CourseTest.php`
+
+**Scope note:** this task must not modify `app/Providers/AppServiceProvider.php` beyond appending one `Gate::policy()` line, because Task 7 is editing the same file in parallel. Expect a trivial conflict on merge and resolve by keeping both lines.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/Feature/Enrollment/CourseTest.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+use App\Domain\Enrollment\Models\Course;
+use App\Models\User;
+
+uses(Illuminate\Foundation\Testing\RefreshDatabase::class);
+
+beforeEach(function () {
+    $this->seed(Database\Seeders\RolePermissionSeeder::class);
+});
+
+it('requires a unique course code', function () {
+    Course::factory()->create(['code' => 'ENG-B1']);
+    Course::factory()->create(['code' => 'ENG-B1']);
+})->throws(Illuminate\Database\UniqueConstraintViolationException::class);
+
+it('stores price with three decimal places for LYD', function () {
+    $course = Course::factory()->create(['default_price' => 1250.750]);
+
+    expect((string) $course->fresh()->default_price)->toBe('1250.750');
+});
+
+it('scopes to active courses', function () {
+    Course::factory()->create(['is_active' => true]);
+    Course::factory()->create(['is_active' => false]);
+
+    expect(Course::active()->count())->toBe(1);
+});
+
+it('denies staff the ability to create a course', function () {
+    $staff = User::factory()->create(['is_active' => true]);
+    $staff->assignRole('staff');
+
+    expect($staff->can('viewAny', Course::class))->toBeTrue()
+        ->and($staff->can('create', Course::class))->toBeFalse()
+        ->and($staff->can('update', Course::factory()->create()))->toBeFalse();
+});
+
+it('allows an admin to manage courses', function () {
+    $admin = User::factory()->create(['is_active' => true]);
+    $admin->assignRole('admin');
+
+    expect($admin->can('create', Course::class))->toBeTrue();
+});
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `php artisan test --filter=CourseTest`
+Expected: FAIL — class not found.
+
+- [ ] **Step 3: Write the migration**
+
+Create `database/migrations/2026_07_20_000400_create_courses_table.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('courses', function (Blueprint $table): void {
+            $table->id();
+            $table->string('code', 30)->unique();
+            $table->string('name_en', 200);
+            $table->string('name_ar', 200)->nullable();
+            $table->text('description_en')->nullable();
+            $table->text('description_ar')->nullable();
+            $table->unsignedSmallInteger('total_hours')->default(0);
+            // Phase 2 column. Created now so phase 2 never alters a table holding
+            // production data. Not displayed or editable in phase 1.
+            $table->decimal('default_price', 12, 3)->default(0);
+            $table->boolean('is_active')->default(true)->index();
+            $table->timestamps();
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('courses');
+    }
+};
+```
+
+- [ ] **Step 4: Write the model**
+
+Create `app/Domain/Enrollment/Models/Course.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Enrollment\Models;
+
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+
+class Course extends Model
+{
+    use HasFactory;
+
+    protected $fillable = [
+        'code', 'name_en', 'name_ar', 'description_en', 'description_ar',
+        'total_hours', 'default_price', 'is_active',
+    ];
+
+    protected function casts(): array
+    {
+        return [
+            'total_hours' => 'integer',
+            'default_price' => 'decimal:3',
+            'is_active' => 'boolean',
+        ];
+    }
+
+    public function batches(): HasMany
+    {
+        return $this->hasMany(Batch::class);
+    }
+
+    public function scopeActive(Builder $query): void
+    {
+        $query->where('is_active', true);
+    }
+
+    /** Localized name, falling back to English when the Arabic name is absent. */
+    public function name(): string
+    {
+        return app()->getLocale() === 'ar' && filled($this->name_ar)
+            ? $this->name_ar
+            : $this->name_en;
+    }
+}
+```
+
+- [ ] **Step 5: Write the factory**
+
+Create `database/factories/CourseFactory.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace Database\Factories;
+
+use App\Domain\Enrollment\Models\Course;
+use Illuminate\Database\Eloquent\Factories\Factory;
+use Illuminate\Support\Str;
+
+/** @extends Factory<Course> */
+class CourseFactory extends Factory
+{
+    protected $model = Course::class;
+
+    public function definition(): array
+    {
+        return [
+            'code' => Str::upper(Str::random(6)),
+            'name_en' => $this->faker->words(3, true),
+            'name_ar' => null,
+            'description_en' => $this->faker->sentence(),
+            'description_ar' => null,
+            'total_hours' => $this->faker->randomElement([20, 30, 40, 60]),
+            'default_price' => $this->faker->randomFloat(3, 100, 2000),
+            'is_active' => true,
+        ];
+    }
+
+    public function inactive(): static
+    {
+        return $this->state(fn (): array => ['is_active' => false]);
+    }
+}
+```
+
+- [ ] **Step 6: Write the policy**
+
+Create `app/Domain/Enrollment/Policies/CoursePolicy.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Enrollment\Policies;
+
+use App\Domain\Enrollment\Models\Course;
+use App\Models\User;
+
+class CoursePolicy
+{
+    public function viewAny(User $user): bool
+    {
+        return $user->can('view_any_course');
+    }
+
+    public function view(User $user, Course $course): bool
+    {
+        return $user->can('view_course');
+    }
+
+    public function create(User $user): bool
+    {
+        return $user->can('create_course');
+    }
+
+    public function update(User $user, Course $course): bool
+    {
+        return $user->can('update_course');
+    }
+
+    public function delete(User $user, Course $course): bool
+    {
+        return $user->can('delete_course');
+    }
+}
+```
+
+Append to `app/Providers/AppServiceProvider.php` `boot()`:
+
+```php
+Gate::policy(\App\Domain\Enrollment\Models\Course::class, \App\Domain\Enrollment\Policies\CoursePolicy::class);
+```
+
+- [ ] **Step 7: Generate the Filament resource**
+
+```bash
+php artisan make:filament-resource Course --generate --panel=admin
+```
+
+Move to `app/Domain/Enrollment/Filament/Resources/`, update the namespace. **Remove the `default_price` field from both the form and the table** — it is a phase 2 column and must not be visible in phase 1.
+
+- [ ] **Step 8: Run tests to verify they pass**
+
+Run: `php artisan test --filter=CourseTest`
+Expected: 5 passed.
+
+- [ ] **Step 9: Commit and request review**
+
+```bash
+vendor/bin/pint && vendor/bin/phpstan analyse && php artisan test
+git add -A
+git commit -m "feat(enrollment): add course catalog [P1-T08]"
+```
+
+---
+
+## Task 9: Batches
+
+**Owner:** Codex · **Branch:** `p1/t09-batches`
+
+**Files:**
+- Create: `database/migrations/2026_07_20_000500_create_batches_table.php`
+- Create: `app/Domain/Enrollment/Models/Batch.php`
+- Create: `app/Domain/Enrollment/Enums/BatchStatus.php`
+- Create: `app/Domain/Enrollment/Policies/BatchPolicy.php`
+- Create: `database/factories/BatchFactory.php`
+- Create: `app/Domain/Enrollment/Filament/Resources/BatchResource.php`
+- Create: `tests/Feature/Enrollment/BatchTest.php`
+
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/Feature/Enrollment/BatchTest.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+use App\Domain\Enrollment\Enums\BatchStatus;
+use App\Domain\Enrollment\Models\Batch;
+use App\Domain\Enrollment\Models\Course;
+
+uses(Illuminate\Foundation\Testing\RefreshDatabase::class);
+
+it('inherits total hours from its course when not overridden', function () {
+    $course = Course::factory()->create(['total_hours' => 30]);
+    $batch = Batch::factory()->for($course)->create(['total_hours' => null]);
+
+    expect($batch->effective_total_hours)->toBe(30);
+});
+
+it('uses its own total hours when overridden', function () {
+    $course = Course::factory()->create(['total_hours' => 30]);
+    $batch = Batch::factory()->for($course)->create(['total_hours' => 45]);
+
+    expect($batch->effective_total_hours)->toBe(45);
+});
+
+it('reflects a course hour change when inheriting', function () {
+    $course = Course::factory()->create(['total_hours' => 30]);
+    $batch = Batch::factory()->for($course)->create(['total_hours' => null]);
+
+    $course->update(['total_hours' => 36]);
+
+    expect($batch->fresh()->effective_total_hours)->toBe(36);
+});
+
+it('requires a unique batch code', function () {
+    Batch::factory()->create(['code' => 'ENG-B1-JAN']);
+    Batch::factory()->create(['code' => 'ENG-B1-JAN']);
+})->throws(Illuminate\Database\UniqueConstraintViolationException::class);
+
+it('reports whether it accepts enrollments', function () {
+    expect(Batch::factory()->create(['status' => BatchStatus::Active])->acceptsEnrollments())->toBeTrue()
+        ->and(Batch::factory()->create(['status' => BatchStatus::Planned])->acceptsEnrollments())->toBeTrue()
+        ->and(Batch::factory()->create(['status' => BatchStatus::Completed])->acceptsEnrollments())->toBeFalse()
+        ->and(Batch::factory()->create(['status' => BatchStatus::Cancelled])->acceptsEnrollments())->toBeFalse();
+});
+
+it('refuses to delete a course that has batches', function () {
+    $course = Course::factory()->create();
+    Batch::factory()->for($course)->create();
+
+    $course->delete();
+})->throws(Illuminate\Database\QueryException::class);
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `php artisan test --filter=BatchTest`
+Expected: FAIL — class not found.
+
+- [ ] **Step 3: Write the enum**
+
+Create `app/Domain/Enrollment/Enums/BatchStatus.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Enrollment\Enums;
+
+enum BatchStatus: string
+{
+    case Planned = 'planned';
+    case Active = 'active';
+    case Completed = 'completed';
+    case Cancelled = 'cancelled';
+
+    public function label(): string
+    {
+        return __("enrollment.batch_status.{$this->value}");
+    }
+
+    /** Closed batches reject new enrollments and instructor changes. */
+    public function isOpen(): bool
+    {
+        return in_array($this, [self::Planned, self::Active], strict: true);
+    }
+}
+```
+
+- [ ] **Step 4: Write the migration**
+
+Create `database/migrations/2026_07_20_000500_create_batches_table.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('batches', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('course_id')->constrained()->restrictOnDelete();
+            $table->string('code', 40)->unique();
+            $table->date('start_date')->nullable();
+            $table->date('end_date')->nullable();
+            $table->unsignedSmallInteger('capacity')->default(0);
+            // Null means inherit from the parent course.
+            $table->unsignedSmallInteger('total_hours')->nullable();
+            // Phase 2 column, unused in phase 1. Null means inherit.
+            $table->decimal('price', 12, 3)->nullable();
+            $table->string('status', 30)->default('planned')->index();
+            $table->timestamps();
+
+            $table->index(['course_id', 'status']);
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('batches');
+    }
+};
+```
+
+`restrictOnDelete()` on `course_id` is deliberate: deleting a course must never silently destroy its batches and their enrollment history.
+
+- [ ] **Step 5: Write the model**
+
+Create `app/Domain/Enrollment/Models/Batch.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Enrollment\Models;
+
+use App\Domain\Enrollment\Enums\BatchStatus;
+use App\Models\User;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Casts\Attribute;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+
+class Batch extends Model
+{
+    use HasFactory;
+
+    protected $fillable = [
+        'course_id', 'code', 'start_date', 'end_date',
+        'capacity', 'total_hours', 'price', 'status',
+    ];
+
+    protected function casts(): array
+    {
+        return [
+            'start_date' => 'date',
+            'end_date' => 'date',
+            'capacity' => 'integer',
+            'total_hours' => 'integer',
+            'price' => 'decimal:3',
+            'status' => BatchStatus::class,
+        ];
+    }
+
+    public function course(): BelongsTo
+    {
+        return $this->belongsTo(Course::class);
+    }
+
+    public function enrollments(): HasMany
+    {
+        return $this->hasMany(Enrollment::class);
+    }
+
+    public function instructors(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'batch_instructor')
+            ->withPivot('assigned_hours')
+            ->withTimestamps();
+    }
+
+    /** Falls back to the parent course rather than copying its value. */
+    protected function effectiveTotalHours(): Attribute
+    {
+        return Attribute::get(
+            fn (): int => $this->total_hours ?? $this->course->total_hours,
+        );
+    }
+
+    public function acceptsEnrollments(): bool
+    {
+        return $this->status->isOpen();
+    }
+
+    public function scopeOpen(Builder $query): void
+    {
+        $query->whereIn('status', [BatchStatus::Planned, BatchStatus::Active]);
+    }
+}
+```
+
+- [ ] **Step 6: Write the factory**
+
+Create `database/factories/BatchFactory.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace Database\Factories;
+
+use App\Domain\Enrollment\Enums\BatchStatus;
+use App\Domain\Enrollment\Models\Batch;
+use App\Domain\Enrollment\Models\Course;
+use Illuminate\Database\Eloquent\Factories\Factory;
+use Illuminate\Support\Str;
+
+/** @extends Factory<Batch> */
+class BatchFactory extends Factory
+{
+    protected $model = Batch::class;
+
+    public function definition(): array
+    {
+        return [
+            'course_id' => Course::factory(),
+            'code' => Str::upper(Str::random(10)),
+            'start_date' => now()->addWeek(),
+            'end_date' => now()->addMonths(3),
+            'capacity' => 20,
+            'total_hours' => null,
+            'price' => null,
+            'status' => BatchStatus::Planned,
+        ];
+    }
+
+    public function active(): static
+    {
+        return $this->state(fn (): array => ['status' => BatchStatus::Active]);
+    }
+
+    public function completed(): static
+    {
+        return $this->state(fn (): array => ['status' => BatchStatus::Completed]);
+    }
+}
+```
+
+- [ ] **Step 7: Write the policy**
+
+Create `app/Domain/Enrollment/Policies/BatchPolicy.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Enrollment\Policies;
+
+use App\Domain\Enrollment\Models\Batch;
+use App\Models\User;
+
+class BatchPolicy
+{
+    public function viewAny(User $user): bool
+    {
+        return $user->can('view_any_batch');
+    }
+
+    public function view(User $user, Batch $batch): bool
+    {
+        return $user->can('view_batch');
+    }
+
+    public function create(User $user): bool
+    {
+        return $user->can('create_batch');
+    }
+
+    public function update(User $user, Batch $batch): bool
+    {
+        return $user->can('update_batch') && $batch->acceptsEnrollments();
+    }
+
+    public function delete(User $user, Batch $batch): bool
+    {
+        return $user->can('delete_batch') && $batch->enrollments()->doesntExist();
+    }
+
+    public function assignInstructor(User $user, Batch $batch): bool
+    {
+        return $user->can('assign_instructor') && $batch->acceptsEnrollments();
+    }
+}
+```
+
+Register with `Gate::policy(Batch::class, BatchPolicy::class);`.
+
+- [ ] **Step 8: Generate the Filament resource**
+
+```bash
+php artisan make:filament-resource Batch --generate --panel=admin
+```
+
+Move to `app/Domain/Enrollment/Filament/Resources/`, update the namespace, and **remove the `price` field from form and table** — phase 2 only.
+
+- [ ] **Step 9: Run tests to verify they pass**
+
+Run: `php artisan test --filter=BatchTest`
+Expected: 6 passed.
+
+- [ ] **Step 10: Commit and request review**
+
+```bash
+vendor/bin/pint && vendor/bin/phpstan analyse && php artisan test
+git add -A
+git commit -m "feat(enrollment): add batches with course inheritance and status gating [P1-T09]"
+```
+
+---
+
+## Task 10: Instructor hour allocation
+
+**Owner:** Claude · **Branch:** `p1/t10-instructor-hours`
+
+The two-instructor problem from spec section 6. Hours belong to the batch↔instructor relationship.
+
+**Files:**
+- Create: `database/migrations/2026_07_20_000600_create_batch_instructor_table.php`
+- Create: `app/Domain/Enrollment/Actions/AssignInstructorAction.php`
+- Create: `app/Domain/Enrollment/Data/AssignInstructorData.php`
+- Create: `app/Domain/Enrollment/Exceptions/BatchClosedException.php`
+- Create: `tests/Feature/Enrollment/InstructorHoursTest.php`
+
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/Feature/Enrollment/InstructorHoursTest.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+use App\Domain\Enrollment\Actions\AssignInstructorAction;
+use App\Domain\Enrollment\Data\AssignInstructorData;
+use App\Domain\Enrollment\Exceptions\BatchClosedException;
+use App\Domain\Enrollment\Models\Batch;
+use App\Domain\Enrollment\Models\Course;
+use App\Models\User;
+
+uses(Illuminate\Foundation\Testing\RefreshDatabase::class);
+
+beforeEach(function () {
+    $this->seed(Database\Seeders\RolePermissionSeeder::class);
+
+    $this->course = Course::factory()->create(['total_hours' => 30]);
+    $this->batch = Batch::factory()->for($this->course)->active()->create(['total_hours' => null]);
+    $this->action = app(AssignInstructorAction::class);
+});
+
+it('assigns all hours to a single instructor', function () {
+    $sara = User::factory()->create();
+
+    $this->action->execute(new AssignInstructorData($this->batch->id, $sara->id, 30));
+
+    expect($this->batch->fresh()->instructors)->toHaveCount(1)
+        ->and($this->batch->fresh()->instructors->first()->pivot->assigned_hours)->toBe(30);
+});
+
+it('splits hours unevenly between two instructors', function () {
+    $sara = User::factory()->create();
+    $omar = User::factory()->create();
+
+    $this->action->execute(new AssignInstructorData($this->batch->id, $sara->id, 18));
+    $this->action->execute(new AssignInstructorData($this->batch->id, $omar->id, 12));
+
+    expect($this->batch->fresh()->totalAssignedHours())->toBe(30)
+        ->and($this->batch->fresh()->hasHourMismatch())->toBeFalse();
+});
+
+it('flags a mismatch when assigned hours undershoot the batch total', function () {
+    $sara = User::factory()->create();
+
+    $this->action->execute(new AssignInstructorData($this->batch->id, $sara->id, 20));
+
+    expect($this->batch->fresh()->hasHourMismatch())->toBeTrue();
+});
+
+it('allows co-teaching where both instructors cover all hours', function () {
+    $sara = User::factory()->create();
+    $omar = User::factory()->create();
+
+    $this->action->execute(new AssignInstructorData($this->batch->id, $sara->id, 30));
+    $this->action->execute(new AssignInstructorData($this->batch->id, $omar->id, 30));
+
+    // Warns, but is permitted — co-teaching is legitimate.
+    expect($this->batch->fresh()->totalAssignedHours())->toBe(60)
+        ->and($this->batch->fresh()->hasHourMismatch())->toBeTrue()
+        ->and($this->batch->fresh()->instructors)->toHaveCount(2);
+});
+
+it('updates hours instead of duplicating on reassignment', function () {
+    $sara = User::factory()->create();
+
+    $this->action->execute(new AssignInstructorData($this->batch->id, $sara->id, 18));
+    $this->action->execute(new AssignInstructorData($this->batch->id, $sara->id, 24));
+
+    expect($this->batch->fresh()->instructors)->toHaveCount(1)
+        ->and($this->batch->fresh()->totalAssignedHours())->toBe(24);
+});
+
+it('refuses to assign an instructor to a completed batch', function () {
+    $closed = Batch::factory()->for($this->course)->completed()->create();
+    $sara = User::factory()->create();
+
+    $this->action->execute(new AssignInstructorData($closed->id, $sara->id, 30));
+})->throws(BatchClosedException::class);
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `php artisan test --filter=InstructorHoursTest`
+Expected: FAIL — class not found.
+
+- [ ] **Step 3: Write the migration**
+
+Create `database/migrations/2026_07_20_000600_create_batch_instructor_table.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('batch_instructor', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('batch_id')->constrained()->cascadeOnDelete();
+            $table->foreignId('user_id')->constrained()->restrictOnDelete();
+            $table->unsignedSmallInteger('assigned_hours')->default(0);
+            $table->timestamps();
+
+            $table->unique(['batch_id', 'user_id']);
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('batch_instructor');
+    }
+};
+```
+
+`restrictOnDelete()` on `user_id` protects wage history in phase 2 — an instructor with assigned hours cannot be hard-deleted.
+
+- [ ] **Step 4: Write the exception and DTO**
+
+Create `app/Domain/Enrollment/Exceptions/BatchClosedException.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Enrollment\Exceptions;
+
+use RuntimeException;
+
+class BatchClosedException extends RuntimeException
+{
+    public function __construct(public readonly int $batchId)
+    {
+        parent::__construct("Batch {$batchId} is closed and cannot be modified.");
+    }
+}
+```
+
+Create `app/Domain/Enrollment/Data/AssignInstructorData.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Enrollment\Data;
+
+final class AssignInstructorData
+{
+    public function __construct(
+        public readonly int $batchId,
+        public readonly int $instructorId,
+        public readonly int $assignedHours,
+    ) {}
+}
+```
+
+- [ ] **Step 5: Write the action**
+
+Create `app/Domain/Enrollment/Actions/AssignInstructorAction.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Enrollment\Actions;
+
+use App\Domain\Enrollment\Data\AssignInstructorData;
+use App\Domain\Enrollment\Exceptions\BatchClosedException;
+use App\Domain\Enrollment\Models\Batch;
+use Illuminate\Support\Facades\DB;
+
+class AssignInstructorAction
+{
+    public function execute(AssignInstructorData $data): Batch
+    {
+        return DB::transaction(function () use ($data): Batch {
+            $batch = Batch::query()->lockForUpdate()->findOrFail($data->batchId);
+
+            if (! $batch->acceptsEnrollments()) {
+                throw new BatchClosedException($batch->id);
+            }
+
+            // syncWithoutDetaching updates the pivot when the pair already exists,
+            // which is what makes reassignment idempotent rather than duplicating.
+            $batch->instructors()->syncWithoutDetaching([
+                $data->instructorId => ['assigned_hours' => $data->assignedHours],
+            ]);
+
+            return $batch->refresh();
+        });
+    }
+}
+```
+
+- [ ] **Step 6: Add the hour helpers to Batch**
+
+In `app/Domain/Enrollment/Models/Batch.php`:
+
+```php
+public function totalAssignedHours(): int
+{
+    return (int) $this->instructors()->sum('assigned_hours');
+}
+
+/**
+ * True when assigned instructor hours do not equal the batch total.
+ * This is a warning condition, never a hard block — co-teaching legitimately
+ * produces a sum greater than the batch total.
+ */
+public function hasHourMismatch(): bool
+{
+    return $this->totalAssignedHours() !== $this->effective_total_hours;
+}
+```
+
+- [ ] **Step 7: Surface the warning in Filament**
+
+In `BatchResource`, add to the table columns:
+
+```php
+TextColumn::make('hour_allocation')
+    ->label(__('enrollment.hour_allocation'))
+    ->state(fn (Batch $record): string => "{$record->totalAssignedHours()} / {$record->effective_total_hours}")
+    ->badge()
+    ->color(fn (Batch $record): string => $record->hasHourMismatch() ? 'warning' : 'success')
+    ->tooltip(fn (Batch $record): ?string => $record->hasHourMismatch()
+        ? __('enrollment.hour_mismatch_hint')
+        : null),
+```
+
+Add an instructors relation manager:
+
+```bash
+php artisan make:filament-relation-manager BatchResource instructors name --panel=admin
+```
+
+In the generated relation manager, the attach form must include the pivot field:
+
+```php
+->recordSelect(fn (Select $select): Select => $select->label(__('enrollment.instructor')))
+->schema([
+    TextInput::make('assigned_hours')
+        ->label(__('enrollment.assigned_hours'))
+        ->numeric()
+        ->minValue(0)
+        ->required(),
+])
+```
+
+- [ ] **Step 8: Run tests to verify they pass**
+
+Run: `php artisan test --filter=InstructorHoursTest`
+Expected: 6 passed.
+
+- [ ] **Step 9: Commit and request review**
+
+```bash
+vendor/bin/pint && vendor/bin/phpstan analyse && php artisan test
+git add -A
+git commit -m "feat(enrollment): add instructor hour allocation with mismatch warning [P1-T10]"
+```
+
+---
+
+## Task 11: Enrollments
+
+**Owner:** Claude · **Branch:** `p1/t11-enrollments`
+
+**Files:**
+- Create: `database/migrations/2026_07_20_000700_create_enrollments_table.php`
+- Create: `app/Domain/Enrollment/Models/Enrollment.php`
+- Create: `app/Domain/Enrollment/Enums/EnrollmentStatus.php`
+- Create: `app/Domain/Enrollment/Actions/EnrollStudentAction.php`
+- Create: `app/Domain/Enrollment/Data/EnrollStudentData.php`
+- Create: `app/Domain/Enrollment/Exceptions/DuplicateEnrollmentException.php`
+- Create: `app/Domain/Enrollment/Policies/EnrollmentPolicy.php`
+- Create: `database/factories/EnrollmentFactory.php`
+- Create: `tests/Feature/Enrollment/EnrollmentTest.php`
+
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/Feature/Enrollment/EnrollmentTest.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+use App\Domain\Enrollment\Actions\EnrollStudentAction;
+use App\Domain\Enrollment\Data\EnrollStudentData;
+use App\Domain\Enrollment\Enums\EnrollmentStatus;
+use App\Domain\Enrollment\Exceptions\BatchClosedException;
+use App\Domain\Enrollment\Exceptions\DuplicateEnrollmentException;
+use App\Domain\Enrollment\Models\Batch;
+use App\Domain\Enrollment\Models\Enrollment;
+use App\Domain\Enrollment\Models\Student;
+use App\Models\User;
+
+uses(Illuminate\Foundation\Testing\RefreshDatabase::class);
+
+beforeEach(function () {
+    $this->seed(Database\Seeders\RolePermissionSeeder::class);
+
+    $this->batch = Batch::factory()->active()->create(['capacity' => 2]);
+    $this->action = app(EnrollStudentAction::class);
+});
+
+it('enrolls a student into an open batch', function () {
+    $student = Student::factory()->create();
+
+    $enrollment = $this->action->execute(new EnrollStudentData($student->id, $this->batch->id));
+
+    expect($enrollment->status)->toBe(EnrollmentStatus::Active)
+        ->and($enrollment->enrolled_at)->not->toBeNull();
+});
+
+it('rejects a duplicate enrollment', function () {
+    $student = Student::factory()->create();
+
+    $this->action->execute(new EnrollStudentData($student->id, $this->batch->id));
+    $this->action->execute(new EnrollStudentData($student->id, $this->batch->id));
+})->throws(DuplicateEnrollmentException::class);
+
+it('rejects enrollment into a completed batch', function () {
+    $closed = Batch::factory()->completed()->create();
+    $student = Student::factory()->create();
+
+    $this->action->execute(new EnrollStudentData($student->id, $closed->id));
+})->throws(BatchClosedException::class);
+
+it('permits exceeding capacity but reports it', function () {
+    // Capacity is 2; enroll 3.
+    foreach (range(1, 3) as $i) {
+        $student = Student::factory()->create();
+        $this->action->execute(new EnrollStudentData($student->id, $this->batch->id));
+    }
+
+    $batch = $this->batch->fresh();
+
+    expect($batch->enrollments)->toHaveCount(3)
+        ->and($batch->isOverCapacity())->toBeTrue();
+});
+
+it('marks an enrollment complete and stamps the date', function () {
+    $enrollment = Enrollment::factory()->create(['status' => EnrollmentStatus::Active]);
+
+    $enrollment->markCompleted();
+
+    expect($enrollment->fresh()->status)->toBe(EnrollmentStatus::Completed)
+        ->and($enrollment->fresh()->completed_at)->not->toBeNull();
+});
+
+it('enforces uniqueness at the database level', function () {
+    $student = Student::factory()->create();
+    Enrollment::factory()->create(['student_id' => $student->id, 'batch_id' => $this->batch->id]);
+    Enrollment::factory()->create(['student_id' => $student->id, 'batch_id' => $this->batch->id]);
+})->throws(Illuminate\Database\UniqueConstraintViolationException::class);
+
+it('allows staff to create enrollments but not delete them', function () {
+    $staff = User::factory()->create(['is_active' => true]);
+    $staff->assignRole('staff');
+
+    expect($staff->can('create', Enrollment::class))->toBeTrue()
+        ->and($staff->can('delete', Enrollment::factory()->create()))->toBeFalse();
+});
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `php artisan test --filter=EnrollmentTest`
+Expected: FAIL — class not found.
+
+- [ ] **Step 3: Write the enum, exception, and DTO**
+
+Create `app/Domain/Enrollment/Enums/EnrollmentStatus.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Enrollment\Enums;
+
+enum EnrollmentStatus: string
+{
+    case Active = 'active';
+    case Completed = 'completed';
+    case Withdrawn = 'withdrawn';
+
+    public function label(): string
+    {
+        return __("enrollment.enrollment_status.{$this->value}");
+    }
+}
+```
+
+Create `app/Domain/Enrollment/Exceptions/DuplicateEnrollmentException.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Enrollment\Exceptions;
+
+use RuntimeException;
+
+class DuplicateEnrollmentException extends RuntimeException
+{
+    public function __construct(
+        public readonly int $studentId,
+        public readonly int $batchId,
+    ) {
+        parent::__construct("Student {$studentId} is already enrolled in batch {$batchId}.");
+    }
+}
+```
+
+Create `app/Domain/Enrollment/Data/EnrollStudentData.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Enrollment\Data;
+
+final class EnrollStudentData
+{
+    public function __construct(
+        public readonly int $studentId,
+        public readonly int $batchId,
+    ) {}
+}
+```
+
+- [ ] **Step 4: Write the migration**
+
+Create `database/migrations/2026_07_20_000700_create_enrollments_table.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('enrollments', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('student_id')->constrained()->restrictOnDelete();
+            $table->foreignId('batch_id')->constrained()->restrictOnDelete();
+            $table->timestamp('enrolled_at');
+            $table->string('status', 30)->default('active')->index();
+            $table->timestamp('completed_at')->nullable();
+            $table->timestamp('certificate_issued_at')->nullable();
+            $table->timestamps();
+
+            $table->unique(['student_id', 'batch_id']);
+            $table->index(['batch_id', 'status']);
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('enrollments');
+    }
+};
+```
+
+Both foreign keys are `restrictOnDelete()`. In phase 2 an enrollment carries charges; cascading a delete would destroy financial history.
+
+- [ ] **Step 5: Write the model**
+
+Create `app/Domain/Enrollment/Models/Enrollment.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Enrollment\Models;
+
+use App\Domain\Enrollment\Enums\EnrollmentStatus;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+
+class Enrollment extends Model
+{
+    use HasFactory;
+
+    protected $fillable = [
+        'student_id', 'batch_id', 'enrolled_at', 'status',
+        'completed_at', 'certificate_issued_at',
+    ];
+
+    protected function casts(): array
+    {
+        return [
+            'enrolled_at' => 'datetime',
+            'completed_at' => 'datetime',
+            'certificate_issued_at' => 'datetime',
+            'status' => EnrollmentStatus::class,
+        ];
+    }
+
+    public function student(): BelongsTo
+    {
+        return $this->belongsTo(Student::class);
+    }
+
+    public function batch(): BelongsTo
+    {
+        return $this->belongsTo(Batch::class);
+    }
+
+    public function markCompleted(): void
+    {
+        $this->update([
+            'status' => EnrollmentStatus::Completed,
+            'completed_at' => now(),
+        ]);
+    }
+
+    public function scopeActive(Builder $query): void
+    {
+        $query->where('status', EnrollmentStatus::Active);
+    }
+}
+```
+
+- [ ] **Step 6: Write the action**
+
+Create `app/Domain/Enrollment/Actions/EnrollStudentAction.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Enrollment\Actions;
+
+use App\Domain\Enrollment\Data\EnrollStudentData;
+use App\Domain\Enrollment\Enums\EnrollmentStatus;
+use App\Domain\Enrollment\Exceptions\BatchClosedException;
+use App\Domain\Enrollment\Exceptions\DuplicateEnrollmentException;
+use App\Domain\Enrollment\Models\Batch;
+use App\Domain\Enrollment\Models\Enrollment;
+use Illuminate\Support\Facades\DB;
+
+class EnrollStudentAction
+{
+    public function execute(EnrollStudentData $data): Enrollment
+    {
+        return DB::transaction(function () use ($data): Enrollment {
+            $batch = Batch::query()->lockForUpdate()->findOrFail($data->batchId);
+
+            if (! $batch->acceptsEnrollments()) {
+                throw new BatchClosedException($batch->id);
+            }
+
+            $exists = Enrollment::query()
+                ->where('student_id', $data->studentId)
+                ->where('batch_id', $data->batchId)
+                ->exists();
+
+            if ($exists) {
+                throw new DuplicateEnrollmentException($data->studentId, $data->batchId);
+            }
+
+            // Capacity is intentionally not enforced. Over-enrollment is surfaced
+            // via Batch::isOverCapacity() as a warning, per spec section 6.
+            return Enrollment::create([
+                'student_id' => $data->studentId,
+                'batch_id' => $data->batchId,
+                'enrolled_at' => now(),
+                'status' => EnrollmentStatus::Active,
+            ]);
+        });
+    }
+}
+```
+
+- [ ] **Step 7: Add the capacity helper to Batch**
+
+In `app/Domain/Enrollment/Models/Batch.php`:
+
+```php
+/**
+ * Over-capacity is a warning state, never a block — centers routinely
+ * squeeze in one more student.
+ */
+public function isOverCapacity(): bool
+{
+    return $this->capacity > 0
+        && $this->enrollments()->active()->count() > $this->capacity;
+}
+```
+
+- [ ] **Step 8: Write the factory and policy**
+
+Create `database/factories/EnrollmentFactory.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace Database\Factories;
+
+use App\Domain\Enrollment\Enums\EnrollmentStatus;
+use App\Domain\Enrollment\Models\Batch;
+use App\Domain\Enrollment\Models\Enrollment;
+use App\Domain\Enrollment\Models\Student;
+use Illuminate\Database\Eloquent\Factories\Factory;
+
+/** @extends Factory<Enrollment> */
+class EnrollmentFactory extends Factory
+{
+    protected $model = Enrollment::class;
+
+    public function definition(): array
+    {
+        return [
+            'student_id' => Student::factory(),
+            'batch_id' => Batch::factory(),
+            'enrolled_at' => now(),
+            'status' => EnrollmentStatus::Active,
+            'completed_at' => null,
+            'certificate_issued_at' => null,
+        ];
+    }
+}
+```
+
+Create `app/Domain/Enrollment/Policies/EnrollmentPolicy.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Enrollment\Policies;
+
+use App\Domain\Enrollment\Models\Enrollment;
+use App\Models\User;
+
+class EnrollmentPolicy
+{
+    public function viewAny(User $user): bool
+    {
+        return $user->can('view_any_enrollment');
+    }
+
+    public function view(User $user, Enrollment $enrollment): bool
+    {
+        return $user->can('view_enrollment');
+    }
+
+    public function create(User $user): bool
+    {
+        return $user->can('create_enrollment');
+    }
+
+    /**
+     * Staff may only edit enrollments in batches they teach, per spec section 5.
+     */
+    public function update(User $user, Enrollment $enrollment): bool
+    {
+        if (! $user->can('update_enrollment')) {
+            return false;
+        }
+
+        if ($user->hasAnyRole(['super_admin', 'admin'])) {
+            return true;
+        }
+
+        return $enrollment->batch->instructors()->whereKey($user->id)->exists();
+    }
+
+    public function delete(User $user, Enrollment $enrollment): bool
+    {
+        return $user->can('delete_enrollment');
+    }
+}
+```
+
+Register with `Gate::policy(Enrollment::class, EnrollmentPolicy::class);`.
+
+- [ ] **Step 9: Add the enrollments relation manager**
+
+```bash
+php artisan make:filament-relation-manager BatchResource enrollments student.full_name --panel=admin
+```
+
+- [ ] **Step 10: Run tests to verify they pass**
+
+Run: `php artisan test --filter=EnrollmentTest`
+Expected: 7 passed.
+
+- [ ] **Step 11: Commit and request review**
+
+```bash
+vendor/bin/pint && vendor/bin/phpstan analyse && php artisan test
+git add -A
+git commit -m "feat(enrollment): add enrollments with duplicate and closed-batch guards [P1-T11]"
+```
+
+---
+
+## Task 12: Activity log
+
+**Owner:** Codex · **Branch:** `p1/t12-activity-log`
+
+**Files:**
+- Create: `app/Domain/Staff/Policies/ActivityPolicy.php`
+- Create: `app/Domain/Staff/Filament/Resources/ActivityResource.php`
+- Create: `tests/Feature/Staff/ActivityLogTest.php`
+- Modify: all domain models (add the `LogsActivity` trait)
+- Modify: `app/Providers/AppServiceProvider.php`
+
+- [ ] **Step 1: Publish the activity log migration**
+
+```bash
+php artisan vendor:publish --provider="Spatie\Activitylog\ActivitylogServiceProvider" --tag="activitylog-migrations"
+php artisan migrate
+```
+
+- [ ] **Step 2: Write the failing test**
+
+Create `tests/Feature/Staff/ActivityLogTest.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+use App\Domain\Enrollment\Models\Student;
+use App\Models\User;
+use Spatie\Activitylog\Models\Activity;
+
+uses(Illuminate\Foundation\Testing\RefreshDatabase::class);
+
+beforeEach(function () {
+    $this->seed(Database\Seeders\RolePermissionSeeder::class);
+
+    $this->actor = User::factory()->create(['is_active' => true]);
+    $this->actor->assignRole('admin');
+    $this->actingAs($this->actor);
+});
+
+it('logs student creation with the acting user', function () {
+    $student = Student::factory()->create();
+
+    $activity = Activity::query()->latest('id')->first();
+
+    expect($activity->description)->toBe('created')
+        ->and($activity->subject_id)->toBe($student->id)
+        ->and($activity->causer_id)->toBe($this->actor->id);
+});
+
+it('records a before and after diff on update', function () {
+    $student = Student::factory()->create(['first_name' => 'Amal']);
+    $student->update(['first_name' => 'Amel']);
+
+    $activity = Activity::query()->latest('id')->first();
+
+    expect($activity->description)->toBe('updated')
+        ->and($activity->properties['old']['first_name'])->toBe('Amal')
+        ->and($activity->properties['attributes']['first_name'])->toBe('Amel');
+});
+
+it('does not log a login timestamp update as a user change', function () {
+    $before = Activity::count();
+
+    $this->actor->forceFill(['last_login_at' => now()])->saveQuietly();
+
+    expect(Activity::count())->toBe($before);
+});
+
+it('denies staff access to the activity log', function () {
+    $staff = User::factory()->create(['is_active' => true]);
+    $staff->assignRole('staff');
+
+    expect($staff->can('viewAny', Activity::class))->toBeFalse();
+});
+
+it('allows an admin to view the activity log', function () {
+    expect($this->actor->can('viewAny', Activity::class))->toBeTrue();
+});
+
+it('forbids deleting an activity entry for every role', function () {
+    $superAdmin = User::factory()->create(['is_active' => true]);
+    $superAdmin->assignRole('super_admin');
+
+    $activity = Activity::query()->create([
+        'log_name' => 'default',
+        'description' => 'created',
+    ]);
+
+    expect($superAdmin->can('delete', $activity))->toBeFalse()
+        ->and($this->actor->can('delete', $activity))->toBeFalse();
+});
+```
+
+- [ ] **Step 3: Run the test to verify it fails**
+
+Run: `php artisan test --filter=ActivityLogTest`
+Expected: FAIL — no activity recorded.
+
+- [ ] **Step 4: Add the trait to every auditable model**
+
+Add to `User`, `StaffProfile`, `Student`, `Course`, `Batch`, and `Enrollment`:
+
+```php
+use Spatie\Activitylog\LogOptions;
+use Spatie\Activitylog\Traits\LogsActivity;
+
+// in the trait list
+use LogsActivity;
+
+public function getActivitylogOptions(): LogOptions
+{
+    return LogOptions::defaults()
+        ->logFillable()
+        ->logOnlyDirty()
+        ->dontSubmitEmptyLogs();
+}
+```
+
+For `User`, exclude sensitive and noisy fields:
+
+```php
+public function getActivitylogOptions(): LogOptions
+{
+    return LogOptions::defaults()
+        ->logFillable()
+        ->logExcept(['password', 'remember_token', 'last_login_at'])
+        ->logOnlyDirty()
+        ->dontSubmitEmptyLogs();
+}
+```
+
+- [ ] **Step 5: Log authentication events**
+
+In `app/Providers/AppServiceProvider.php` `boot()`:
+
+```php
+use Illuminate\Auth\Events\Failed;
+use Illuminate\Auth\Events\Logout;
+
+Event::listen(Login::class, fn (Login $e) => activity('auth')
+    ->causedBy($e->user)
+    ->withProperties(['ip' => request()->ip()])
+    ->log('logged_in'));
+
+Event::listen(Logout::class, fn (Logout $e) => activity('auth')
+    ->causedBy($e->user)
+    ->log('logged_out'));
+
+Event::listen(Failed::class, fn (Failed $e) => activity('auth')
+    ->withProperties([
+        'email' => $e->credentials['email'] ?? null,
+        'ip' => request()->ip(),
+    ])
+    ->log('login_failed'));
+```
+
+- [ ] **Step 6: Write the append-only policy**
+
+Create `app/Domain/Staff/Policies/ActivityPolicy.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Staff\Policies;
+
+use App\Models\User;
+use Spatie\Activitylog\Models\Activity;
+
+class ActivityPolicy
+{
+    public function viewAny(User $user): bool
+    {
+        return $user->can('view_any_activity');
+    }
+
+    public function view(User $user, Activity $activity): bool
+    {
+        return $user->can('view_activity');
+    }
+
+    /**
+     * The activity log is append-only. No role may create, edit, or delete
+     * entries — including super admin. An audit trail that can be edited
+     * is not an audit trail.
+     */
+    public function create(User $user): bool
+    {
+        return false;
+    }
+
+    public function update(User $user, Activity $activity): bool
+    {
+        return false;
+    }
+
+    public function delete(User $user, Activity $activity): bool
+    {
+        return false;
+    }
+}
+```
+
+Register with `Gate::policy(Activity::class, ActivityPolicy::class);`.
+
+- [ ] **Step 7: Build the read-only Filament resource**
+
+```bash
+php artisan make:filament-resource Activity --panel=admin
+```
+
+Move to `app/Domain/Staff/Filament/Resources/`, update the namespace, and make it read-only:
+
+```php
+public static function canCreate(): bool
+{
+    return false;
+}
+
+public static function table(Table $table): Table
+{
+    return $table
+        ->columns([
+            TextColumn::make('created_at')->label(__('staff.when'))->dateTime()->sortable(),
+            TextColumn::make('causer.name')->label(__('staff.who'))
+                ->placeholder(__('staff.system'))->searchable(),
+            TextColumn::make('description')->label(__('staff.action'))->badge(),
+            TextColumn::make('subject_type')->label(__('staff.record'))
+                ->formatStateUsing(fn (?string $state): string => class_basename($state ?? '—')),
+            TextColumn::make('properties')->label(__('staff.changes'))
+                ->limit(60)->wrap()->toggleable(),
+        ])
+        ->defaultSort('created_at', 'desc')
+        ->filters([
+            SelectFilter::make('causer_id')
+                ->label(__('staff.who'))
+                ->relationship('causer', 'name'),
+            Filter::make('created_at')->schema([
+                DatePicker::make('from')->label(__('staff.from')),
+                DatePicker::make('until')->label(__('staff.until')),
+            ])->query(fn (Builder $query, array $data): Builder => $query
+                ->when($data['from'] ?? null, fn ($q, $d) => $q->whereDate('created_at', '>=', $d))
+                ->when($data['until'] ?? null, fn ($q, $d) => $q->whereDate('created_at', '<=', $d))),
+        ])
+        // No recordActions and no toolbarActions — deletion must not be reachable.
+        ->recordActions([])
+        ->toolbarActions([]);
+}
+```
+
+- [ ] **Step 8: Run tests to verify they pass**
+
+Run: `php artisan test --filter=ActivityLogTest`
+Expected: 6 passed.
+
+- [ ] **Step 9: Commit and request review**
+
+```bash
+vendor/bin/pint && vendor/bin/phpstan analyse && php artisan test
+git add -A
+git commit -m "feat(staff): add append-only activity log with auth events [P1-T12]"
+```
+
+---
+
+## Task 13: Automated backups
+
+**Owner:** Codex · **Branch:** `p1/t13-backups`
+
+Per spec section 11 — set up before there is anything valuable to lose.
+
+**Files:**
+- Create: `config/backup.php` (published)
+- Create: `tests/Feature/BackupConfigTest.php`
+- Modify: `routes/console.php`
+- Modify: `.env.example`
+
+- [ ] **Step 1: Publish the config**
+
+```bash
+php artisan vendor:publish --provider="Spatie\Backup\BackupServiceProvider"
+```
+
+- [ ] **Step 2: Write the failing test**
+
+Create `tests/Feature/BackupConfigTest.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+it('backs up the database', function () {
+    expect(config('backup.backup.source.databases'))->toContain('mysql');
+});
+
+it('writes backups to an off-server disk', function () {
+    expect(config('backup.backup.destination.disks'))->toContain('backups');
+});
+
+it('keeps backups for at least 30 days', function () {
+    expect(config('backup.cleanup.default_strategy.keep_all_backups_for_days'))
+        ->toBeGreaterThanOrEqual(30);
+});
+
+it('registers a daily backup schedule', function () {
+    $events = collect(app(Illuminate\Console\Scheduling\Schedule::class)->events())
+        ->map(fn ($e) => $e->command)
+        ->filter();
+
+    expect($events->contains(fn (string $c): bool => str_contains($c, 'backup:run')))->toBeTrue()
+        ->and($events->contains(fn (string $c): bool => str_contains($c, 'backup:clean')))->toBeTrue();
+});
+```
+
+- [ ] **Step 3: Run the test to verify it fails**
+
+Run: `php artisan test --filter=BackupConfigTest`
+Expected: FAIL — disk `backups` not configured, no schedule registered.
+
+- [ ] **Step 4: Configure the off-server disk**
+
+In `config/filesystems.php`, add to `disks`:
+
+```php
+'backups' => [
+    'driver' => 's3',
+    'key' => env('BACKUP_S3_KEY'),
+    'secret' => env('BACKUP_S3_SECRET'),
+    'region' => env('BACKUP_S3_REGION'),
+    'bucket' => env('BACKUP_S3_BUCKET'),
+    'endpoint' => env('BACKUP_S3_ENDPOINT'),
+    'use_path_style_endpoint' => true,
+    'throw' => true,
+],
+```
+
+Add the matching keys to `.env.example` with empty values, and install the driver:
+
+```bash
+composer require league/flysystem-aws-s3-v3 --no-interaction
+```
+
+- [ ] **Step 5: Point the backup config at that disk**
+
+In `config/backup.php`:
+
+```php
+'source' => [
+    'files' => [
+        'include' => [base_path('storage/app/public')],
+        'exclude' => [base_path('vendor'), base_path('node_modules')],
+    ],
+    'databases' => ['mysql'],
+],
+
+'destination' => [
+    'filename_prefix' => 'training-center-',
+    'disks' => ['backups'],
+],
+```
+
+And under `cleanup.default_strategy`:
+
+```php
+'keep_all_backups_for_days' => 30,
+'keep_daily_backups_for_days' => 60,
+'keep_monthly_backups_for_months' => 12,
+```
+
+- [ ] **Step 6: Schedule the jobs**
+
+In `routes/console.php`:
+
+```php
+use Illuminate\Support\Facades\Schedule;
+
+Schedule::command('backup:clean')->daily()->at('01:00');
+Schedule::command('backup:run')->daily()->at('01:30');
+```
+
+- [ ] **Step 7: Run tests to verify they pass**
+
+Run: `php artisan test --filter=BackupConfigTest`
+Expected: 4 passed.
+
+- [ ] **Step 8: Document the deployment requirement**
+
+Append to `docs/WORKFLOW.md` under a new "Deployment requirements" heading:
+
+```markdown
+## Deployment requirements
+
+- Laravel's scheduler must run: `* * * * * cd /path/to/app && php artisan schedule:run >> /dev/null 2>&1`
+- The `BACKUP_S3_*` environment variables must be set. Without them, backups fail silently.
+- Verify after the first deploy: `php artisan backup:run` should complete and the file should appear in the bucket.
+```
+
+- [ ] **Step 9: Commit and request review**
+
+```bash
+vendor/bin/pint && vendor/bin/phpstan analyse && php artisan test
+git add -A
+git commit -m "feat: add automated off-server daily database backups [P1-T13]"
+```
+
+---
+
+## Task 14: Internationalization scaffolding
+
+**Owner:** Codex · **Branch:** `p1/t14-i18n`
+
+Structure only. Arabic translations arrive in phase 4; this task guarantees phase 4 is a translation exercise rather than a refactor.
+
+**Files:**
+- Create: `lang/en/{staff,enrollment,auth}.php`
+- Create: `lang/ar/{staff,enrollment,auth}.php`
+- Create: `app/Http/Middleware/SetLocale.php`
+- Create: `tests/Feature/LocalizationTest.php`
+- Modify: `bootstrap/app.php`, `app/Providers/Filament/AdminPanelProvider.php`
+
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/Feature/LocalizationTest.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+use App\Models\User;
+
+uses(Illuminate\Foundation\Testing\RefreshDatabase::class);
+
+beforeEach(function () {
+    $this->seed(Database\Seeders\RolePermissionSeeder::class);
+});
+
+it('applies the user locale to the request', function () {
+    $user = User::factory()->create(['is_active' => true, 'locale' => 'ar']);
+    $user->assignRole('admin');
+
+    $this->actingAs($user)->get('/admin');
+
+    expect(app()->getLocale())->toBe('ar');
+});
+
+it('falls back to english for a guest', function () {
+    $this->get('/admin/login');
+
+    expect(app()->getLocale())->toBe('en');
+});
+
+it('has matching keys in every english and arabic file', function (string $file) {
+    $en = require lang_path("en/{$file}.php");
+    $ar = require lang_path("ar/{$file}.php");
+
+    expect(array_keys($ar))->toEqualCanonicalizing(array_keys($en));
+})->with(['staff', 'enrollment', 'auth']);
+
+it('has no hardcoded strings in domain filament resources', function () {
+    $files = Illuminate\Support\Facades\File::allFiles(app_path('Domain'));
+
+    $offenders = collect($files)
+        ->filter(fn ($f): bool => str_contains($f->getPathname(), 'Filament'))
+        ->filter(fn ($f): bool => (bool) preg_match(
+            "/->label\(['\"]/",
+            (string) file_get_contents($f->getPathname()),
+        ))
+        ->map(fn ($f): string => $f->getRelativePathname())
+        ->values()
+        ->all();
+
+    expect($offenders)->toBeEmpty(
+        'Filament labels must use __() rather than literal strings: '.implode(', ', $offenders),
+    );
+});
+```
+
+The last test is the enforcement mechanism. Without it, "no hardcoded strings" is a guideline nobody follows.
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `php artisan test --filter=LocalizationTest`
+Expected: FAIL — language files do not exist.
+
+- [ ] **Step 3: Create the English language files**
+
+Create `lang/en/staff.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+return [
+    'user' => 'User',
+    'name' => 'Name',
+    'email' => 'Email',
+    'locale' => 'Language',
+    'is_active' => 'Active',
+    'roles' => 'Roles',
+    'last_login' => 'Last login',
+    'never' => 'Never',
+    'reset_password' => 'Reset password',
+    'temp_password_generated' => 'Temporary password generated',
+    'when' => 'When',
+    'who' => 'Who',
+    'action' => 'Action',
+    'record' => 'Record',
+    'changes' => 'Changes',
+    'system' => 'System',
+    'from' => 'From',
+    'until' => 'Until',
+    'employment_type' => [
+        'instructor' => 'Instructor',
+        'administrative' => 'Administrative',
+        'support' => 'Support',
+    ],
+];
+```
+
+Create `lang/en/enrollment.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+return [
+    'student_code' => 'Student code',
+    'full_name' => 'Name',
+    'phone' => 'Phone',
+    'status' => 'Status',
+    'instructor' => 'Instructor',
+    'assigned_hours' => 'Assigned hours',
+    'hour_allocation' => 'Hours allocated',
+    'hour_mismatch_hint' => 'Assigned instructor hours do not match the batch total.',
+    'student_status' => [
+        'prospective' => 'Prospective',
+        'active' => 'Active',
+        'graduated' => 'Graduated',
+        'inactive' => 'Inactive',
+    ],
+    'batch_status' => [
+        'planned' => 'Planned',
+        'active' => 'Active',
+        'completed' => 'Completed',
+        'cancelled' => 'Cancelled',
+    ],
+    'enrollment_status' => [
+        'active' => 'Active',
+        'completed' => 'Completed',
+        'withdrawn' => 'Withdrawn',
+    ],
+];
+```
+
+Create `lang/en/auth.php` (append to Laravel's existing file):
+
+```php
+'new_password' => 'New password',
+'confirm_password' => 'Confirm password',
+'update_password' => 'Update password',
+'password_updated' => 'Password updated',
+```
+
+- [ ] **Step 4: Create the Arabic files with identical key structure**
+
+Create `lang/ar/staff.php`, `lang/ar/enrollment.php`, and `lang/ar/auth.php` with **exactly the same keys**, values left as the English text for now. Phase 4 replaces the values; the key-parity test above prevents drift in the meantime.
+
+- [ ] **Step 5: Write the locale middleware**
+
+Create `app/Http/Middleware/SetLocale.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Http\Middleware;
+
+use Closure;
+use Illuminate\Http\Request;
+use Symfony\Component\HttpFoundation\Response;
+
+class SetLocale
+{
+    private const SUPPORTED = ['en', 'ar'];
+
+    public function handle(Request $request, Closure $next): Response
+    {
+        $locale = $request->user()?->locale ?? config('app.locale');
+
+        if (in_array($locale, self::SUPPORTED, strict: true)) {
+            app()->setLocale($locale);
+        }
+
+        return $next($request);
+    }
+}
+```
+
+Register it in `bootstrap/app.php`:
+
+```php
+->withMiddleware(function (Middleware $middleware): void {
+    $middleware->web(append: [\App\Http\Middleware\SetLocale::class]);
+})
+```
+
+- [ ] **Step 6: Enable RTL in the Filament panel**
+
+In `app/Providers/Filament/AdminPanelProvider.php`, add to the panel chain:
+
+```php
+->direction(fn (): string => app()->getLocale() === 'ar' ? 'rtl' : 'ltr')
+```
+
+If the installed Filament version has no `direction()` method, set the direction on the `<html>` tag in a published panel layout instead, and note the substitution in the PR description.
+
+- [ ] **Step 7: Add the CSS guard**
+
+Create `resources/css/README.md`:
+
+```markdown
+# Stylesheet rules
+
+Use logical CSS properties only. Physical properties break the Arabic (RTL) layout.
+
+| Never | Always |
+|---|---|
+| `margin-left` | `margin-inline-start` |
+| `margin-right` | `margin-inline-end` |
+| `padding-left` | `padding-inline-start` |
+| `padding-right` | `padding-inline-end` |
+| `text-align: left` | `text-align: start` |
+| `left` / `right` | `inset-inline-start` / `inset-inline-end` |
+
+In Tailwind, use `ms-*` / `me-*` / `ps-*` / `pe-*`, never `ml-*` / `mr-*` / `pl-*` / `pr-*`.
+```
+
+- [ ] **Step 8: Run tests to verify they pass**
+
+Run: `php artisan test --filter=LocalizationTest`
+Expected: 6 passed (4 data-driven key-parity cases plus 2 others).
+
+If the hardcoded-string test fails, fix the offending resources from tasks 5–12 by wrapping their labels in `__()`. That is the test doing its job.
+
+- [ ] **Step 9: Commit and request review**
+
+```bash
+vendor/bin/pint && vendor/bin/phpstan analyse && php artisan test
+git add -A
+git commit -m "feat: add bilingual scaffolding with RTL support and key-parity test [P1-T14]"
+```
+
+---
+
+## Task 15: Documentation reconciliation
+
+**Owner:** Claude · **Branch:** `p1/t15-doc-reconciliation`
+
+Per `docs/WORKFLOW.md`, documentation is updated as part of the milestone, not afterward.
+
+**Files:**
+- Modify: `docs/ENGINEERING.md`, `CLAUDE.md`, `AGENTS.md`
+- Modify: `docs/superpowers/specs/2026-07-20-training-center-dashboard-design.md`
+- Create: `docs/CHANGELOG.md`
+- Modify: this plan file
+
+- [ ] **Step 1: Correct the permission format in all three standards documents**
+
+In `docs/ENGINEERING.md`, `CLAUDE.md`, and `AGENTS.md`, replace every instance of the dot-notation example with Shield's format:
+
+- `$user->can('students.delete')` becomes `$user->can('delete_student')`
+- Add to `docs/ENGINEERING.md` under Authorization:
+
+```markdown
+Permission names follow Filament Shield's generated format: `{action}_{model}` —
+`view_any_student`, `create_course`, `delete_user`. Custom abilities are bare verbs:
+`assign_role`, `reset_user_password`, `assign_instructor`, `manage_settings`.
+```
+
+- [ ] **Step 2: Reconcile the spec with what was built**
+
+Review `docs/superpowers/specs/2026-07-20-training-center-dashboard-design.md` section by section against the merged code. For each deviation, update the spec to describe what exists. Known deviations to record:
+
+- Permission naming format (section 5)
+- Any Filament version differences discovered in Task 1
+
+A spec that no longer matches the code is worse than no spec, because it is trusted and wrong.
+
+- [ ] **Step 3: Write the changelog**
+
+Create `docs/CHANGELOG.md`:
+
+```markdown
+# Changelog
+
+## Phase 1 — Foundation (completed 2026-XX-XX)
+
+Staff can log in under four roles and manage students, courses, batches, and
+enrollments. Every change is audited. The database backs up nightly off-server.
+
+- Laravel 12 + Filament admin panel at `/admin`, organized by domain
+- Four roles via spatie/laravel-permission and Filament Shield
+- Three privilege escalation guards, enforced in policy and at the model layer
+- Staff accounts with admin-issued temporary passwords and forced change at next login
+- Students, course catalog, batches inheriting course defaults, enrollments
+- Instructor hour allocation on the batch↔instructor relationship, with mismatch warning
+- Append-only activity log covering data changes and authentication events
+- Automated daily off-server database backups
+- Bilingual scaffolding with RTL support and a key-parity test
+
+Not included: any financial feature, the student portal, certificates, the public site.
+```
+
+- [ ] **Step 4: Mark the plan complete**
+
+Add at the top of this file, below the header:
+
+```markdown
+> **Status:** Complete as of 2026-XX-XX. See `docs/CHANGELOG.md`.
+```
+
+- [ ] **Step 5: Verify the whole suite on main**
+
+```bash
+php artisan test
+vendor/bin/pint --test
+vendor/bin/phpstan analyse
+```
+
+Expected: all pass. **Report the actual output.** Do not claim phase 1 complete without it.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add -A
+git commit -m "docs: reconcile documentation with phase 1 implementation [P1-T15]"
+```
+
+- [ ] **Step 7: Create the remote and push**
+
+Phase 1 is complete, which is the trigger for creating the repository per `docs/WORKFLOW.md`:
+
+```bash
+gh repo create Training-center --private --source=. --remote=origin
+git push -u origin main
+```
+
+From phase 2 onward, reviews move to pull requests.
+
+---
+
+## Self-review against the spec
+
+| Spec section | Covered by |
+|---|---|
+| 3 Architecture — domain structure, admin panel | Task 1 |
+| 4 Authentication — no registration, temp passwords, throttling, sessions | Task 3 |
+| 5 Roles and permissions — matrix, three escalation guards | Tasks 2, 4 |
+| 6 Data model — users, staff_profiles, students, courses, batches, batch_instructor, enrollments | Tasks 3, 6, 7, 8, 9, 10, 11 |
+| 6 Status enums | Tasks 6, 7, 9, 11 |
+| 6 Price columns present but unused in phase 1 | Tasks 8, 9 |
+| 7 Activity log — append-only, auth events, diffs | Task 12 |
+| 9 Error handling — typed exceptions, transactions | Tasks 4, 10, 11 |
+| 10 Testing — permission tests with negative assertions | Tasks 2, 7, 8, 11, 12 |
+| 11 Operations — backups, scheduler | Task 13 |
+| 3 Internationalization from commit one | Task 14 |
+
+**Deferred to phase 2 by design:** all financial features (spec section 8), which is correct for a foundation phase.
+
+**Not built in phase 1 and correctly so:** student portal and certificates (phase 3), public site and Arabic translations (phase 4).
