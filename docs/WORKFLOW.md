@@ -4,16 +4,30 @@ How the two agents divide work, isolate it, review each other, and keep document
 
 ---
 
-## Prerequisite
+## Remote status: local until phase 1 completes
 
-Cross-review by pull request requires a Git remote. Before the first task:
+There is **no Git remote during phase 1** by decision. The GitHub repository gets created once the foundation phase is done.
+
+This changes *how* review happens, not *whether* it happens. During phase 1, steps 5 and 6 of the task lifecycle become a **local branch review**:
+
+```bash
+# Reviewer inspects the task branch against main
+git diff main...p1/t04-activity-log
+git log main..p1/t04-activity-log
+```
+
+The reviewing agent reads the full diff, applies the review contract below, and reports findings. The author resolves them. Only then does the branch merge into local `main`.
+
+Once phase 1 completes and the repository is pushed:
 
 ```bash
 gh repo create Training-center --private --source=. --remote=origin
 git push -u origin main
 ```
 
-Until a remote exists, the PR steps below cannot run. If the project stays local, substitute step 5 with a diff review against `main` in the working tree — the review requirement itself is not optional either way.
+From phase 2 onward, reviews move to real pull requests (`gh pr create`), and the review contract applies unchanged. The full phase 1 branch history is preserved by the initial push, so the local-review period remains auditable.
+
+**The review gate itself is never optional, in either mode.** No agent merges its own work unreviewed.
 
 ---
 

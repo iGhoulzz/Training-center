@@ -45,7 +45,7 @@ These are the rules that, when broken, are expensive to correct later:
 
 1. **Permission-based authorization only.** `$user->can('students.delete')`, never `$user->hasRole('admin')`. No `role` column on `users`.
 2. **No derived financial values stored.** Balances and totals are computed from source rows, always.
-3. **Money is `decimal(12,2)`.** Never float.
+3. **Money is `decimal(12,3)`.** Currency is LYD, which has three decimal places (1000 dirham to the dinar). Never float, never two decimals.
 4. **The activity log is append-only.** No delete path exists for any role, including super admin.
 5. **No hardcoded user-facing strings, and logical CSS properties only** (`margin-inline-start`, never `margin-left`). Arabic and RTL arrive in phase 4, but the structure is enforced from commit one.
 6. **Compensation rates are effective-dated, never overwritten.** A raise inserts a row; it does not update one.

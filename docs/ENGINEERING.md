@@ -50,7 +50,7 @@ app/Domain/Enrollment/
 
 - Every foreign key gets a real constraint with explicit `onDelete`: `restrictOnDelete()` for anything financial, `cascadeOnDelete()` only for genuine child records.
 - Index every foreign key, and every column used in `WHERE` or `ORDER BY`. Composite indexes for common query pairs.
-- Money is `decimal(12, 2)`. **Never float.**
+- Money is `decimal(12, 3)`. **Never float, never `decimal(12,2)`.** The currency is LYD, which subdivides into 1000 dirham per ISO 4217. Two decimal places would silently round dirham-precision amounts and break reconciliation. Display precision is a UI concern, not a storage one.
 - Status columns are `string(30)` with a `default`, an index, and a backed enum cast.
 - Explicit nullability on every column.
 - One migration per logical change. Never edit a migration that has run in production.

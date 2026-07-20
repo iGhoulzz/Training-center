@@ -29,7 +29,7 @@ A web-based management system for a single training center. It replaces nothing 
 | Database | MySQL | Nothing here requires PostgreSQL-specific features. MySQL runs everywhere and is more portable for this team. Migrations use Laravel's query builder, keeping a later switch possible. |
 | Hosting | VPS (Hetzner/DigitalOcean) managed via Ploi or Forge | Provides queue workers, Redis, scheduled tasks, and automated off-server backups. Roughly $15–25/month. |
 | Languages | Arabic and English, RTL | Translation structure and logical CSS properties from the first commit; Arabic strings land in phase 4. |
-| Currency | Single, configurable | Multi-currency is out of scope. |
+| Currency | Libyan Dinar (LYD), single currency | Stored as `decimal(12,3)` per ISO 4217 — the dinar subdivides into 1000 dirham. Display precision is a UI setting. Multi-currency is out of scope. |
 | Public registration | Disabled | All accounts are created by an administrator. |
 | Email | None at launch | Notification classes exist; mail driver set to `log`. Enabling email later is a config change. |
 
@@ -131,7 +131,7 @@ These are the three failure modes that break role systems in practice, and each 
 ### Normalization rules applied throughout
 
 - Every foreign key carries a real database constraint with explicit `onDelete` behavior: `restrict` for anything financial, `cascade` only for genuine child records.
-- Money is `DECIMAL(12,2)`. Never float.
+- Money is `DECIMAL(12,3)` — LYD subdivides into 1000 dirham, per ISO 4217. Never float. Never `DECIMAL(12,2)`, which would silently round any dirham-precision amount and break reconciliation.
 - Statuses are string columns backed by PHP enums — validated in the application, indexed in the database.
 - **No derived values are stored.** Balances, revenue, and wage totals are always computed from source rows.
 - Soft deletes on students and users; hard constraints on financial records. A payment is never deleted, only reversed.
