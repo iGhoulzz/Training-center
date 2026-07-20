@@ -72,17 +72,30 @@ it('seeds every permission referenced by any policy', function () {
     $this->seed(RolePermissionSeeder::class);
 
     $seeded = Permission::pluck('name')->all();
-    $policyDir = app_path('Policies');
 
-    if (! is_dir($policyDir)) {
-        expect(true)->toBeTrue();
+    /*
+     * Scans all of app/, not just app/Policies. Domain policies live under
+     * app/Domain/<Context>/Policies (UserPolicy is the first), and a directory
+     * scan that misses them is worse than no scan at all — it reads as
+     * coverage while silently ignoring the policies that matter most.
+     */
+    $policies = [];
 
-        return;
+    foreach (
+        new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator(app_path(), FilesystemIterator::SKIP_DOTS),
+        ) as $file
+    ) {
+        if (str_ends_with($file->getFilename(), 'Policy.php')) {
+            $policies[] = $file->getPathname();
+        }
     }
+
+    expect($policies)->not->toBeEmpty('Found no policies to scan — the scan is broken.');
 
     $missing = [];
 
-    foreach (glob($policyDir.'/*.php') ?: [] as $policy) {
+    foreach ($policies as $policy) {
         preg_match_all(
             "/can\(\s*'([a-z0-9_]+)'/",
             (string) file_get_contents($policy),
