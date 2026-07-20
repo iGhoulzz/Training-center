@@ -1,0 +1,14 @@
+includes:
+    - vendor/larastan/larastan/extension.neon
+
+parameters:
+    paths:
+        - app
+    level: 6
+    # The @var ignore pattern below is intentionally kept for later tasks that add
+    # models and actions; it matches nothing while app/ is still scaffold-only.
+    reportUnmatchedIgnoredErrors: false
+    ignoreErrors:
+        - '#PHPDoc tag @var#'
+    parallel:
+        maximumNumberOfProcesses: 1
