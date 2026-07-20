@@ -4,10 +4,20 @@ declare(strict_types=1);
 
 namespace App\Policies;
 
+use App\Models\Role;
 use Illuminate\Auth\Access\HandlesAuthorization;
 use Illuminate\Foundation\Auth\User as AuthUser;
-use Spatie\Permission\Models\Role;
 
+/**
+ * Authorization for the Role resource.
+ *
+ * The super_admin row is the anchor every rank check resolves against, so its
+ * destructive operations are refused here for everyone as defence in depth.
+ * The binding enforcement is on App\Models\Role itself — Shield's role pages
+ * write straight through Eloquent, so a policy alone would not hold — but
+ * denying the controls here keeps the Delete/Replicate buttons from offering an
+ * action that can only ever fail.
+ */
 class RolePolicy
 {
     use HandlesAuthorization;
@@ -34,6 +44,10 @@ class RolePolicy
 
     public function delete(AuthUser $authUser, Role $role): bool
     {
+        if ($role->isSuperAdmin()) {
+            return false;
+        }
+
         return $authUser->can('delete_role');
     }
 
@@ -49,6 +63,10 @@ class RolePolicy
 
     public function forceDelete(AuthUser $authUser, Role $role): bool
     {
+        if ($role->isSuperAdmin()) {
+            return false;
+        }
+
         return $authUser->can('force_delete_role');
     }
 

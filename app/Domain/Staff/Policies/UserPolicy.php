@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Staff\Policies;
 
+use App\Models\Role;
 use App\Models\User;
 
 /**
@@ -30,6 +31,11 @@ use App\Models\User;
  * `is_super_admin` ability that duplicates the role and can be granted
  * directly with givePermissionTo(), which is precisely the escalation these
  * guards exist to prevent. The role is the boundary, so the role is checked.
+ *
+ * Rank is resolved through User::isSuperAdmin(), which compares the super-admin
+ * role's immutable primary key against the account's live role pivot — never a
+ * mutable, possibly-stale role name. See App\Models\Role for why identity is
+ * keyed on the id and why the name/row are frozen.
  *
  * A reviewer applying the permission-only rule mechanically should read this as
  * intentional, not an oversight. Every other check in this class is
@@ -84,7 +90,7 @@ class UserPolicy
             return false;
         }
 
-        return $role !== 'super_admin' || $actor->hasRole('super_admin');
+        return $role !== Role::SUPER_ADMIN || $actor->isSuperAdmin();
     }
 
     /**
@@ -114,7 +120,7 @@ class UserPolicy
      */
     private function outranks(User $actor, User $target): bool
     {
-        if ($target->hasRole('super_admin') && ! $actor->hasRole('super_admin')) {
+        if ($target->isSuperAdmin() && ! $actor->isSuperAdmin()) {
             return false;
         }
 
