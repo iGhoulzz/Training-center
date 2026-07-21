@@ -6,6 +6,7 @@ namespace App\Domain\Staff\Actions;
 
 use App\Models\Role;
 use App\Models\User;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\Gate;
 
 /**
@@ -30,6 +31,14 @@ final class UpdateRolePermissionsAction
      */
     public function execute(User $actor, Role $role, array $permissions): void
     {
+        // Guard 4 is checked explicitly rather than left to the policy alone.
+        // RolePolicy::update() also requires assign_role, but stating it here
+        // keeps the Action's contract self-evident: changing what a role can do
+        // is a role-management operation, not an incidental record edit.
+        if (! $actor->can('assign_role')) {
+            throw new AuthorizationException(__('staff.escalation.requires_assign_role'));
+        }
+
         Gate::forUser($actor)->authorize('update', $role);
 
         $role->syncPermissions(array_values(array_unique($permissions)));

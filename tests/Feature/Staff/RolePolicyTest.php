@@ -46,8 +46,13 @@ it('allows a super admin to edit and delete a role they do not hold', function (
 it('forbids an actor from editing or deleting a role they hold', function () {
     // A bespoke role that carries the role-management permissions, so the only
     // thing standing between the holder and editing it is the held-role guard.
+    // assign_role is included deliberately: guard 4 (P1-T04d) requires it for
+    // any role write, and without it the final assertion below would pass for
+    // the wrong reason — proving guard 4 rather than the held-role rule.
     $manager = Role::findOrCreate('manager', 'web');
-    $manager->syncPermissions(['update_role', 'delete_role', 'view_role', 'view_any_role']);
+    $manager->syncPermissions([
+        'update_role', 'delete_role', 'view_role', 'view_any_role', 'assign_role',
+    ]);
 
     $holder = User::factory()->create();
     $holder->assignRole('manager');

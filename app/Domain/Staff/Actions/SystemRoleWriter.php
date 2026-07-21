@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Staff\Actions;
 
+use App\Domain\Staff\Services\SuperAdminInvariantService;
 use App\Models\Role;
 use App\Models\User;
 use Illuminate\Support\Collection;
@@ -20,10 +21,17 @@ use Spatie\Permission\Contracts\Permission;
  * IS no principal — provisioning a fresh install, building a fixture — those
  * Actions are the wrong tool, and this is the right one.
  *
- * Everything here bypasses every escalation guard by design. It is named,
- * namespaced, and documented so that its use in application request code would
- * be obviously wrong on sight and is caught by the architecture tests, which
- * allow the raw Spatie writers ONLY here and in the request-path Actions.
+ * This bypasses the ACTOR-RELATIVE guards (1, 2 and 4) by design — they cannot
+ * mean anything without a principal to authorize. It does NOT bypass guard 3:
+ * the last active super admin is a system invariant, and a seeder is no more
+ * entitled to destroy it than a request is. syncRoles() below engages
+ * SuperAdminInvariantService whenever it would actually remove the role.
+ *
+ * The class is named, namespaced, and documented so that its use in application
+ * request code would be obviously wrong on sight, and is caught by the
+ * architecture tests, which allow the raw Spatie writers ONLY here and in the
+ * request-path Actions, and allow this class itself to be called only from
+ * seeders, factories and console setup.
  *
  * DO NOT call this from a controller, a Filament page, a policy, a job that
  * runs on behalf of a user, or anywhere an authenticated actor exists. Use the
@@ -31,6 +39,10 @@ use Spatie\Permission\Contracts\Permission;
  */
 final class SystemRoleWriter
 {
+    public function __construct(
+        private readonly SuperAdminInvariantService $invariant,
+    ) {}
+
     /**
      * Assign roles to a user with no authorization. For seeders and factories.
      *
@@ -42,13 +54,34 @@ final class SystemRoleWriter
     }
 
     /**
-     * Replace a user's entire role set with no authorization.
+     * Replace a user's entire role set, with no AUTHORIZATION — but guard 3
+     * still applies.
+     *
+     * Guards 1, 2 and 4 are actor-relative and cannot mean anything without a
+     * principal, so they are genuinely exempt here. Guard 3 is not: it is a
+     * system invariant, and losing the last active super admin locks the
+     * install out of role management permanently. A seeder is no more entitled
+     * to cause that than a request is.
+     *
+     * The invariant is engaged only when this write actually removes the
+     * super_admin role from a user who currently holds it. Bootstrapping a
+     * fresh database — where no super admin exists yet — must not be blocked by
+     * a rule about the *last* one.
      *
      * @param  array<int, string>  $roles
      */
     public function syncRoles(User $user, array $roles): void
     {
-        $user->syncRoles($roles);
+        $removesSuperAdmin = $user->isSuperAdmin()
+            && ! in_array(Role::SUPER_ADMIN, $roles, true);
+
+        if (! $removesSuperAdmin) {
+            $user->syncRoles($roles);
+
+            return;
+        }
+
+        $this->invariant->protect(fn () => $user->syncRoles($roles));
     }
 
     /**

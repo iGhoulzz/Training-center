@@ -44,12 +44,12 @@ class RolePolicy
 
     public function create(AuthUser $authUser): bool
     {
-        return $authUser->can('create_role');
+        return $authUser->can('create_role') && $authUser->can('assign_role');
     }
 
     public function update(AuthUser $authUser, Role $role): bool
     {
-        if (! $authUser->can('update_role')) {
+        if (! $authUser->can('update_role') || ! $authUser->can('assign_role')) {
             return false;
         }
 
@@ -65,9 +65,23 @@ class RolePolicy
         return ! $this->isProtectedFrom($authUser, $role);
     }
 
+    /**
+     * Bulk deletion is refused outright, for everyone.
+     *
+     * Filament authorizes a DeleteBulkAction ONCE against deleteAny() and never
+     * consults delete() for the individual selected records. That made bulk
+     * delete a clean bypass of the super_admin protection in delete(): the role
+     * could not be deleted on its own, but could be deleted as part of a
+     * selection. A per-record rule cannot be expressed here — deleteAny()
+     * receives no records — so the only safe answer is no.
+     *
+     * Roles are a handful of rows managed deliberately; there is no legitimate
+     * need to remove several at once. Delete them individually, where delete()
+     * applies the protection.
+     */
     public function deleteAny(AuthUser $authUser): bool
     {
-        return $authUser->can('delete_any_role');
+        return false;
     }
 
     public function restore(AuthUser $authUser, Role $role): bool
@@ -84,19 +98,31 @@ class RolePolicy
         return ! $this->isProtectedFrom($authUser, $role);
     }
 
+    /** Refused for the same reason as deleteAny(). */
     public function forceDeleteAny(AuthUser $authUser): bool
     {
-        return $authUser->can('force_delete_any_role');
+        return false;
     }
 
+    /** Refused for the same reason as deleteAny(). */
     public function restoreAny(AuthUser $authUser): bool
     {
-        return $authUser->can('restore_any_role');
+        return false;
     }
 
+    /**
+     * Replicating the super_admin role would produce an unprotected clone
+     * holding every permission but a different primary key — so it would not be
+     * recognised as super_admin by any rank check, while conferring the same
+     * power. That is an escalation path, so the anchor may not be copied.
+     */
     public function replicate(AuthUser $authUser, Role $role): bool
     {
-        return $authUser->can('replicate_role');
+        if (! $authUser->can('replicate_role')) {
+            return false;
+        }
+
+        return ! $this->isProtectedFrom($authUser, $role);
     }
 
     public function reorder(AuthUser $authUser): bool

@@ -138,6 +138,60 @@ it('does not change role or user permissions outside UpdateRolePermissionsAction
     );
 });
 
+it('does not let a Filament field persist roles or permissions via relationship()', function () {
+    // THE most important rule here. Select::make('roles')->relationship('roles')
+    // persists by calling the relation's sync()/detach(), reaching around every
+    // Action — and unlike raw SQL, it is reachable from the UI. The generic
+    // attach/detach/sync rule above cannot see it, because the bypass is a
+    // string argument to relationship(), not a method call on the relation.
+    $offenders = filesMatching('/->\s*relationship\s*\(\s*[\'"](roles|permissions)[\'"]/');
+
+    expect($offenders)->toBeEmpty(
+        'Filament relationship() persistence for roles/permissions bypasses the Actions; '
+        .'make the field dehydrated(false) and write through an Action: '.implode(', ', $offenders),
+    );
+});
+
+it('does not call the trusted system writer from application code', function () {
+    // SystemRoleWriter performs unauthorized writes on purpose. It belongs to
+    // seeders, factories and console setup — never to anything serving a
+    // request, where an actor exists and the Actions apply.
+    $offenders = filesMatching('/\bSystemRoleWriter\b/', ['SystemRoleWriter']);
+
+    expect($offenders)->toBeEmpty(
+        'SystemRoleWriter is for seeders/factories/console setup only, never application code: '
+        .implode(', ', $offenders),
+    );
+});
+
+it('does not delete or deactivate users outside the sanctioned Actions', function () {
+    // Deleting a user or flipping is_active can remove the last super admin, so
+    // both belong to DeleteUserAction / DeactivateUserAction where the invariant
+    // service runs.
+    $offenders = filesMatching(
+        '/->\s*(delete|forceDelete)\s*\(\s*\)|[\'"]is_active[\'"]\s*=>\s*(false|0)\b/',
+        ['DeleteUserAction', 'DeactivateUserAction'],
+    );
+
+    expect($offenders)->toBeEmpty(
+        'User deletion and deactivation must go through DeleteUserAction / DeactivateUserAction: '
+        .implode(', ', $offenders),
+    );
+});
+
+it('does not create, update, or delete Role records outside the sanctioned paths', function () {
+    // Creating a role, renaming one, or deleting one all mutate the
+    // authorization graph and must pass through the policy-gated pages/Actions.
+    $offenders = filesMatching(
+        '/\bRole::(create|updateOrCreate|firstOrCreate|findOrCreate)\s*\(/',
+        ['SystemRoleWriter', 'UpdateRolePermissionsAction', 'Role'],
+    );
+
+    expect($offenders)->toBeEmpty(
+        'Role creation/mutation belongs to the policy-gated pages and Actions: '.implode(', ', $offenders),
+    );
+});
+
 it('keeps no write-guard method overrides on the User model', function () {
     // The whole point of P1-T04c: the model holds configuration, not guarded
     // write overrides. None of these method declarations may reappear.

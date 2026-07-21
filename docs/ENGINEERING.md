@@ -131,7 +131,17 @@ Rank resolves through `User::isSuperAdmin()` / `Role::isSuperAdmin()`, comparing
 
 ### Guards and the CLI path
 
-Guards 1, 2, and 4 are actor-relative, so they do not apply where there is no actor — that is what `SystemRoleWriter` is for, and its use is confined to seeding and setup. **Guard 3 has no exemption**: `SuperAdminInvariantService` applies to system writes too, because losing the last super admin is unrecoverable.
+Guards 1, 2, and 4 are actor-relative, so they do not apply where there is no actor — that is what `SystemRoleWriter` is for, and its use is confined to seeding and setup. **Guard 3 has no exemption**: `SystemRoleWriter::syncRoles()` engages `SuperAdminInvariantService` whenever the write would actually remove the role, because losing the last super admin is unrecoverable and a seeder is no more entitled to cause that than a request is. The invariant engages only on removal, so bootstrapping a fresh install is never blocked.
+
+### Bulk actions cannot be authorized per record
+
+Filament authorizes a bulk action **once**, against the `*Any` policy method, and never consults the per-record method for the selected rows. `deleteAny()` receives no records, so it cannot express "unless one of them is protected."
+
+That made bulk delete a clean bypass: the `super_admin` role could not be deleted individually, but could be deleted as part of a selection. `RolePolicy::deleteAny()`, `forceDeleteAny()`, and `restoreAny()` therefore return **`false` unconditionally**. Roles are a handful of deliberately-managed rows; delete them one at a time, where the protection applies.
+
+Apply the same reasoning to any future resource whose per-record policy has a protected case — a `*Any` method that merely checks a permission silently discards that protection.
+
+`replicate()` is guarded too: copying `super_admin` would produce a role holding every permission under a different primary key, which no rank check would recognise as super admin while conferring the same power.
 
 ### One config value that must not change
 

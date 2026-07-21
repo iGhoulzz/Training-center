@@ -1226,31 +1226,56 @@ Task 4c moved every security-sensitive write behind explicit Actions that receiv
 
 Do not filter the options list as the security control. Hiding `super_admin` from a dropdown is a UX affordance, not a boundary — a crafted Livewire payload can submit any value. The Action is the boundary; the option list is cosmetics.
 
-**Save-hook flow.** On both the Create and Edit pages, capture the roles out of the form state before save and apply them through the Action afterwards:
+**Read the roles from the live form state, not from `$data`.** Because the field is `dehydrated(false)`, it is *excluded* from the array passed to `mutateFormDataBeforeSave()` — reading `$data['roles']` there yields `[]` and would silently wipe every role. Read `$this->form->getRawState()` instead:
 
 ```php
 // app/Domain/Staff/Filament/Resources/UserResource/Pages/EditUser.php
-protected array $submittedRoles = [];
-
-protected function mutateFormDataBeforeSave(array $data): array
-{
-    $this->submittedRoles = $data['roles'] ?? [];
-    unset($data['roles']);
-
-    return $data;
-}
-
 protected function afterSave(): void
 {
+    // getRawState() includes non-dehydrated fields; $data does not.
+    $roles = $this->form->getRawState()['roles'] ?? [];
+
     app(SyncUserRolesAction::class)->execute(
         auth()->user(),          // the actor — never omit
         $this->getRecord(),
-        $this->submittedRoles,
+        is_array($roles) ? $roles : [],
     );
 }
 ```
 
-Use `mutateFormDataBeforeCreate()` / `afterCreate()` on the Create page. Deactivation and deletion go through `DeactivateUserAction` and `DeleteUserAction` from the corresponding hooks — never `$record->delete()` directly.
+Use `afterCreate()` on the Create page, with the same `getRawState()` read.
+
+**Wrap the save so a rejected role write rolls back the attribute write.** Filament does not wrap create/update in a transaction by default, so an `afterSave()` that throws would leave the name/email changes committed while the roles were refused — a partial save. Opt in:
+
+```php
+protected function getFormActionsAlignment(): string { return 'start'; }   // unrelated, keep existing
+
+// Wrap the whole save, so afterSave() failures undo the record update.
+protected bool $hasDatabaseTransactions = true;
+```
+
+Verify the property name against the installed Filament v5 page class before relying on it; if it differs, override `save()` and wrap `parent::save()` in `DB::transaction()`.
+
+**`is_active` must not be model-bound.** A plain `Toggle::make('is_active')` writes the column directly and skips `DeactivateUserAction`, so deactivating the last super admin would bypass the invariant — and the architecture test now fails the build for a direct `is_active` write. Make the toggle `dehydrated(false)` too and route the change through `DeactivateUserAction` (add a matching activate path, or handle both directions in the Action).
+
+Deletion goes through `DeleteUserAction` from the delete hook — never `$record->delete()`.
+
+**Creating a user needs a password.** The `password` column is non-nullable. The create form must set one — generate a temporary password and set `must_change_password = true`, reusing the same flow as the reset-password action rather than inventing a second one.
+
+**The reset-password action needs an actor and a gate check.** `UserPolicy::resetPassword` exists; call it. An action that resets a password without authorizing the actor is an account-takeover path:
+
+```php
+Action::make('resetPassword')
+    ->visible(fn (User $record): bool => auth()->user()->can('resetPassword', $record))
+    ->action(function (User $record): void {
+        Gate::authorize('resetPassword', $record);   // re-check on execute, not just visibility
+        // ... generate + persist temporary password
+    });
+```
+
+Visibility alone is not authorization — a crafted Livewire call can invoke a hidden action.
+
+**Import `App\Models\Role`, never `Spatie\Permission\Models\Role`.** The architecture test fails the build on the vendor import.
 
 `AuthorizationException` renders as 403 and `LastSuperAdminException` as 422; catch them in the page and surface a Filament notification rather than letting the request 500.
 
@@ -1402,7 +1427,9 @@ use Filament\Schemas\Schema;
 use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
-use Spatie\Permission\Models\Role;
+// App\Models\Role, never the vendor model — the architecture test fails the
+// build on a Spatie\Permission\Models\Role import outside app/Models/Role.php.
+use App\Models\Role;
 
 class UserResource extends Resource
 {
@@ -1425,7 +1452,13 @@ class UserResource extends Resource
                 ->options(['en' => 'English', 'ar' => 'العربية'])
                 ->default('en')->required(),
 
-            Toggle::make('is_active')->label(__('staff.is_active'))->default(true),
+            // NOT model-bound: a direct is_active write skips DeactivateUserAction
+            // and its last-super-admin invariant, and the architecture test fails
+            // the build on it. Route the change through the Action.
+            Toggle::make('is_active')
+                ->label(__('staff.is_active'))
+                ->dehydrated(false)
+                ->default(true),
 
             // NOTE: no ->relationship('roles'). See "The roles field" below —
             // relationship() persists via the relation's sync()/detach(), which
@@ -3976,6 +4009,7 @@ return [
     // these keys must exist or the errors surface as raw key strings.
     'escalation' => [
         'last_super_admin' => 'The last active super admin cannot be removed or deactivated.',
+        'requires_assign_role' => 'Managing roles and permissions requires the role-assignment permission.',
     ],
     'employment_type' => [
         'instructor' => 'Instructor',
