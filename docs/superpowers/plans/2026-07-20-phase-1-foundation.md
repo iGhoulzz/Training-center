@@ -1324,13 +1324,21 @@ uses(Illuminate\Foundation\Testing\RefreshDatabase::class);
 
 beforeEach(function () {
     $this->seed(Database\Seeders\RolePermissionSeeder::class);
+
+    // Roles are assigned through the trusted system path in tests — the
+    // request-path Actions require an actor and would refuse here.
+    $this->system = app(App\Domain\Staff\Actions\SystemRoleWriter::class);
 });
 
 it('generates a temporary password and flags the user', function () {
+    $actor = User::factory()->create(['is_active' => true]);
+    $this->system->assignRoles($actor, 'admin');
+
     $target = User::factory()->create(['must_change_password' => false]);
     $original = $target->password;
 
-    $plain = app(ResetUserPasswordAction::class)->execute($target);
+    // Two arguments: the Action authorizes the actor before touching anything.
+    $plain = app(ResetUserPasswordAction::class)->execute($actor, $target);
 
     $target->refresh();
 
@@ -1340,9 +1348,27 @@ it('generates a temporary password and flags the user', function () {
         ->and(Hash::check($plain, $target->password))->toBeTrue();
 });
 
+it('refuses a password reset that the actor is not authorized to perform', function () {
+    // Resetting a super admin's password would let a lesser actor log in as
+    // them, defeating every rank guard. UserPolicy::resetPassword refuses it.
+    $admin = User::factory()->create(['is_active' => true]);
+    $this->system->assignRoles($admin, 'admin');
+
+    $superAdmin = User::factory()->create(['is_active' => true]);
+    $this->system->assignRoles($superAdmin, 'super_admin');
+
+    $originalPassword = $superAdmin->password;
+
+    expect(fn () => app(ResetUserPasswordAction::class)->execute($admin, $superAdmin))
+        ->toThrow(Illuminate\Auth\Access\AuthorizationException::class);
+
+    expect($superAdmin->fresh()->password)->toBe($originalPassword)
+        ->and($superAdmin->fresh()->must_change_password)->toBeFalse();
+});
+
 it('denies staff access to the user list', function () {
     $staff = User::factory()->create(['is_active' => true]);
-    $staff->assignRole('staff');
+    $this->system->assignRoles($staff, 'staff');
 
     $this->actingAs($staff)
         ->get('/admin/users')
@@ -1351,7 +1377,7 @@ it('denies staff access to the user list', function () {
 
 it('allows an admin to see the user list', function () {
     $admin = User::factory()->create(['is_active' => true]);
-    $admin->assignRole('admin');
+    $this->system->assignRoles($admin, 'admin');
 
     $this->actingAs($admin)
         ->get('/admin/users')

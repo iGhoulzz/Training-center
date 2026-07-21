@@ -9,6 +9,7 @@ use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Livewire\Livewire;
+use PHPUnit\Framework\ExpectationFailedException;
 
 /**
  * Drives the real role table component instead of pattern-matching source.
@@ -50,8 +51,10 @@ it('leaves every role intact when a bulk delete is invoked directly', function (
     $countBefore = Role::count();
 
     // A hidden action is not merely absent from the markup — invoking it the
-    // way a crafted Livewire payload would must also fail. Filament refuses to
-    // call an action that is not visible.
+    // way a crafted Livewire payload would must also fail. Filament's helper
+    // asserts visibility first, so the refusal surfaces as an expectation
+    // failure. Catch ONLY that: a broader catch would swallow a genuine error
+    // and let this test pass for the wrong reason.
     try {
         Livewire::actingAs($this->superAdmin)
             ->test(ListRoles::class)
@@ -59,8 +62,10 @@ it('leaves every role intact when a bulk delete is invoked directly', function (
                 $superAdminRole->getKey(),
                 $staffRole->getKey(),
             ]);
-    } catch (Throwable) {
-        // Refusal is the expected outcome; the assertion that matters is below.
+
+        $this->fail('The bulk delete action was invokable; it must be refused.');
+    } catch (ExpectationFailedException) {
+        // Expected: Filament refused to call a non-visible action.
     }
 
     expect(Role::where('name', Role::SUPER_ADMIN)->exists())->toBeTrue()
