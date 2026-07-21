@@ -86,16 +86,59 @@ it('refuses a role permission change by an actor without assign_role', function 
     expect($after)->toBe($before);
 });
 
-it('refuses role creation and editing to an actor without assign_role', function () {
+/**
+ * Guard 4 must hold for EVERY role mutation.
+ *
+ * The first pass added assign_role to create() and update() only; a probe then
+ * deleted the staff role with delete_role alone, and the tests stayed green
+ * because they only covered the two abilities that had been fixed. This case
+ * enumerates every mutating ability so an omission cannot hide again.
+ */
+it('refuses every role mutation to an actor holding the operation permission but not assign_role', function (
+    string $ability,
+    string $permission,
+    bool $needsRecord,
+) {
     $actor = User::factory()->create();
     $limited = Role::findOrCreate('limited_role_editor', 'web');
-    $this->system->syncRolePermissions($limited, ['update_role', 'create_role']);
+    $this->system->syncRolePermissions($limited, [$permission]);
     $this->system->assignRoles($actor, 'limited_role_editor');
 
     $target = Role::where('name', 'staff')->firstOrFail();
+    $subject = $needsRecord ? $target : Role::class;
 
-    expect(Gate::forUser($actor)->allows('create', Role::class))->toBeFalse()
-        ->and(Gate::forUser($actor)->allows('update', $target))->toBeFalse();
+    expect(Gate::forUser($actor)->allows($ability, $subject))->toBeFalse(
+        "{$ability} must require assign_role, not just {$permission}",
+    );
+
+    // The role is still there — a denied check must not have side effects.
+    expect(Role::where('name', 'staff')->exists())->toBeTrue();
+})->with([
+    'create' => ['create', 'create_role', false],
+    'update' => ['update', 'update_role', true],
+    'delete' => ['delete', 'delete_role', true],
+    'forceDelete' => ['forceDelete', 'force_delete_role', true],
+    'restore' => ['restore', 'restore_role', true],
+    'replicate' => ['replicate', 'replicate_role', true],
+    'reorder' => ['reorder', 'reorder_role', false],
+]);
+
+it('still allows every role mutation to an actor who does hold assign_role', function () {
+    // The mirror of the above: guard 4 must not have become a blanket refusal.
+    $actor = User::factory()->create();
+    $manager = Role::findOrCreate('full_role_manager', 'web');
+    $this->system->syncRolePermissions($manager, [
+        'create_role', 'update_role', 'delete_role', 'force_delete_role',
+        'restore_role', 'replicate_role', 'reorder_role', 'assign_role',
+    ]);
+    $this->system->assignRoles($actor, 'full_role_manager');
+
+    $target = Role::where('name', 'staff')->firstOrFail();
+
+    expect(Gate::forUser($actor)->allows('create', Role::class))->toBeTrue()
+        ->and(Gate::forUser($actor)->allows('update', $target))->toBeTrue()
+        ->and(Gate::forUser($actor)->allows('delete', $target))->toBeTrue()
+        ->and(Gate::forUser($actor)->allows('reorder', Role::class))->toBeTrue();
 });
 
 it('still lets a super admin manage a role they do not hold', function () {

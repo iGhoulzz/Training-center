@@ -108,6 +108,10 @@ Filament must call these Actions explicitly from its create/update/delete hooks.
 
 Allowlists are narrow and explicit. Each rule has been mutation-tested — injecting a violation makes the corresponding rule fail and name the offending file. If you add a legitimate new write path, extend the allowlist deliberately; do not weaken a rule.
 
+**Know what these tests are worth.** They scan for known-bad *code shapes*, which is inherently a game of catch-up: `->relationship(name: 'roles')` with a named argument, a declarative `DeleteAction::make()`, an instance-level `$role->delete()`, or a call from a route closure can all behave identically at runtime while reading differently to a regex. Treat the architecture tests as a fast early warning that points at the offending file — **not as proof that a bypass is impossible.**
+
+The proof is behavioural. Where a protection matters, drive the real component and assert the outcome: `RoleResourceLivewireTest` invokes the actual bulk-delete action through Livewire and asserts the roles survive, which holds no matter how the bypass is spelled. Prefer adding a behavioural test over inventing a sixth regex.
+
 ### The trust boundary, stated honestly
 
 **Model events do not protect against arbitrary database access, and we no longer claim they do.** Raw SQL, manual `tinker`, query-builder bulk writes (`User::query()->update(...)`), and quiet saves bypass the application layer entirely. These are **trusted administrative operations**. True database-wide enforcement would require MySQL triggers and is deliberately out of scope.

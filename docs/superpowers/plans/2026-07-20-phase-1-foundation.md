@@ -1251,10 +1251,12 @@ Use `afterCreate()` on the Create page, with the same `getRawState()` read.
 protected function getFormActionsAlignment(): string { return 'start'; }   // unrelated, keep existing
 
 // Wrap the whole save, so afterSave() failures undo the record update.
-protected bool $hasDatabaseTransactions = true;
+// The type MUST be ?bool. Filament declares it as
+// `protected ?bool $hasDatabaseTransactions = null;` in
+// Filament\Pages\Concerns\CanUseDatabaseTransactions — redeclaring it as
+// `bool` is a fatal "type of property must be compatible" error.
+protected ?bool $hasDatabaseTransactions = true;
 ```
-
-Verify the property name against the installed Filament v5 page class before relying on it; if it differs, override `save()` and wrap `parent::save()` in `DB::transaction()`.
 
 **`is_active` must not be model-bound.** A plain `Toggle::make('is_active')` writes the column directly and skips `DeactivateUserAction`, so deactivating the last super admin would bypass the invariant — and the architecture test now fails the build for a direct `is_active` write. Make the toggle `dehydrated(false)` too and route the change through `DeactivateUserAction` (add a matching activate path, or handle both directions in the Action).
 
@@ -1374,6 +1376,7 @@ declare(strict_types=1);
 namespace App\Domain\Staff\Actions;
 
 use App\Models\User;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 
@@ -1382,13 +1385,21 @@ class ResetUserPasswordAction
     /**
      * Generate a temporary password, store its hash, and force a change at next login.
      *
+     * Takes the actor and authorizes, like every other request-path Action.
+     * Resetting a password is an account-takeover primitive: without this an
+     * admin could reset a super admin's password and simply log in as them,
+     * defeating every rank guard in the system. UserPolicy::resetPassword()
+     * already refuses that; this is what makes it binding.
+     *
      * @return string The plaintext password, shown once to the administrator.
      */
-    public function execute(User $user): string
+    public function execute(User $actor, User $target): string
     {
+        Gate::forUser($actor)->authorize('resetPassword', $target);
+
         $plain = Str::password(16, symbols: false);
 
-        $user->forceFill([
+        $target->forceFill([
             'password' => Hash::make($plain),
             'must_change_password' => true,
         ])->save();
@@ -1491,9 +1502,11 @@ class UserResource extends Resource
                     ->label(__('staff.reset_password'))
                     ->icon('heroicon-o-key')
                     ->requiresConfirmation()
+                    // visible() is UX only — a crafted Livewire call can invoke
+                    // a hidden action. The Action re-authorizes on execute.
                     ->visible(fn (User $record): bool => auth()->user()->can('resetPassword', $record))
                     ->action(function (User $record, ResetUserPasswordAction $action): void {
-                        $plain = $action->execute($record);
+                        $plain = $action->execute(auth()->user(), $record);
 
                         Notification::make()
                             ->title(__('staff.temp_password_generated'))

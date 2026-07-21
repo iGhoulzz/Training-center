@@ -44,25 +44,17 @@ class RolePolicy
 
     public function create(AuthUser $authUser): bool
     {
-        return $authUser->can('create_role') && $authUser->can('assign_role');
+        return $this->mayMutate($authUser, 'create_role');
     }
 
     public function update(AuthUser $authUser, Role $role): bool
     {
-        if (! $authUser->can('update_role') || ! $authUser->can('assign_role')) {
-            return false;
-        }
-
-        return ! $this->isProtectedFrom($authUser, $role);
+        return $this->mayMutate($authUser, 'update_role', $role);
     }
 
     public function delete(AuthUser $authUser, Role $role): bool
     {
-        if (! $authUser->can('delete_role')) {
-            return false;
-        }
-
-        return ! $this->isProtectedFrom($authUser, $role);
+        return $this->mayMutate($authUser, 'delete_role', $role);
     }
 
     /**
@@ -86,16 +78,12 @@ class RolePolicy
 
     public function restore(AuthUser $authUser, Role $role): bool
     {
-        return $authUser->can('restore_role');
+        return $this->mayMutate($authUser, 'restore_role', $role);
     }
 
     public function forceDelete(AuthUser $authUser, Role $role): bool
     {
-        if (! $authUser->can('force_delete_role')) {
-            return false;
-        }
-
-        return ! $this->isProtectedFrom($authUser, $role);
+        return $this->mayMutate($authUser, 'force_delete_role', $role);
     }
 
     /** Refused for the same reason as deleteAny(). */
@@ -118,16 +106,34 @@ class RolePolicy
      */
     public function replicate(AuthUser $authUser, Role $role): bool
     {
-        if (! $authUser->can('replicate_role')) {
-            return false;
-        }
-
-        return ! $this->isProtectedFrom($authUser, $role);
+        return $this->mayMutate($authUser, 'replicate_role', $role);
     }
 
     public function reorder(AuthUser $authUser): bool
     {
-        return $authUser->can('reorder_role');
+        return $this->mayMutate($authUser, 'reorder_role');
+    }
+
+    /**
+     * The single gate every role mutation passes through.
+     *
+     * Guard 4 (`assign_role`) applies to EVERY role mutation, not just the ones
+     * that happen to be top of mind. An earlier fix added it to create() and
+     * update() only, and a probe promptly deleted the `staff` role with
+     * `delete_role` alone. Funnelling all mutations through one helper makes
+     * that class of omission structurally impossible: a new mutation method
+     * that forgets to call this is visibly different from its neighbours.
+     *
+     * @param  string  $ability  The Shield permission for this specific operation.
+     * @param  Role|null  $role  Omitted for record-less operations (create, reorder).
+     */
+    private function mayMutate(AuthUser $authUser, string $ability, ?Role $role = null): bool
+    {
+        if (! $authUser->can($ability) || ! $authUser->can('assign_role')) {
+            return false;
+        }
+
+        return $role === null || ! $this->isProtectedFrom($authUser, $role);
     }
 
     /**
