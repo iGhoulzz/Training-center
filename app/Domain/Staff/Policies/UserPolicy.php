@@ -8,16 +8,24 @@ use App\Models\Role;
 use App\Models\User;
 
 /**
- * Authorization for staff account management, including the three escalation
- * guards from section 5 of the design spec:
+ * Authorization for staff account management. This policy answers the
+ * authorization questions behind the escalation guards from section 5 of the
+ * design spec:
  *
  *   1. An admin cannot create, edit, or delete a super admin.
  *   2. No user can modify their own roles or permissions.
- *   3. The last active super admin cannot be deleted or deactivated.
+ *   4. A role or permission write requires the assign_role ability.
  *
- * Guard 3 is NOT enforced here. A policy only covers code paths that ask it,
- * so it would be bypassed by seeders, tinker, queued jobs and bulk actions.
- * It lives on the User model instead — see User::assertNotLastSuperAdmin().
+ * The request-path Actions (SyncUserRolesAction, DeleteUserAction,
+ * DeactivateUserAction) authorize through these methods via
+ * Gate::forUser($actor) before performing any write, so the policy's answer is
+ * binding on every request-path mutation.
+ *
+ * Guard 3 (never lose the last active super admin) is NOT an authorization
+ * question — the actor may be fully entitled, yet the operation must still be
+ * refused. It is a system invariant enforced by
+ * App\Domain\Staff\Services\SuperAdminInvariantService, which the Actions
+ * delegate to for any population-reducing write.
  *
  * DELIBERATE EXCEPTION TO THE PERMISSION-ONLY RULE
  * ------------------------------------------------

@@ -1218,6 +1218,61 @@ Keep the branch. **Task 15 reviews this diff first, before any other task**, and
 
 ## Task 5: Staff account management UI
 
+### REVISED after P1-T04c — read this before writing any code
+
+Task 4c moved every security-sensitive write behind explicit Actions that receive the acting user and authorize themselves. Task 5 is the first consumer of that boundary, and the architecture tests in `tests/Feature/Staff/ActionBoundaryArchTest.php` will fail the build if this resource writes roles any other way.
+
+**The roles field must not persist itself.** `Select::make('roles')->relationship('roles')` writes through the relation's `sync()`/`detach()`, reaching around every guard — and unlike the raw-SQL cases, this one *is* reachable from the UI. The field below is display-only (`->dehydrated(false)`), and `SyncUserRolesAction` performs the write from a save hook.
+
+Do not filter the options list as the security control. Hiding `super_admin` from a dropdown is a UX affordance, not a boundary — a crafted Livewire payload can submit any value. The Action is the boundary; the option list is cosmetics.
+
+**Save-hook flow.** On both the Create and Edit pages, capture the roles out of the form state before save and apply them through the Action afterwards:
+
+```php
+// app/Domain/Staff/Filament/Resources/UserResource/Pages/EditUser.php
+protected array $submittedRoles = [];
+
+protected function mutateFormDataBeforeSave(array $data): array
+{
+    $this->submittedRoles = $data['roles'] ?? [];
+    unset($data['roles']);
+
+    return $data;
+}
+
+protected function afterSave(): void
+{
+    app(SyncUserRolesAction::class)->execute(
+        auth()->user(),          // the actor — never omit
+        $this->getRecord(),
+        $this->submittedRoles,
+    );
+}
+```
+
+Use `mutateFormDataBeforeCreate()` / `afterCreate()` on the Create page. Deactivation and deletion go through `DeactivateUserAction` and `DeleteUserAction` from the corresponding hooks — never `$record->delete()` directly.
+
+`AuthorizationException` renders as 403 and `LastSuperAdminException` as 422; catch them in the page and surface a Filament notification rather than letting the request 500.
+
+**Required test — crafted Livewire state.** A filtered dropdown proves nothing. Task 5 must include a test that drives the real Livewire component and submits a role the actor may not grant, asserting the exact exception and that the database is unchanged:
+
+```php
+it('refuses a crafted super_admin submission from an admin', function () {
+    $admin = User::factory()->create(); /* assign admin via SystemRoleWriter */
+    $target = User::factory()->create();
+
+    Livewire::actingAs($admin)
+        ->test(EditUser::class, ['record' => $target->getKey()])
+        ->fillForm(['roles' => ['super_admin']])   // never offered in the UI
+        ->call('save')
+        ->assertHasErrors();                        // or assertForbidden(), per handler
+
+    expect($target->fresh()->roles()->pluck('name'))->not->toContain('super_admin');
+});
+```
+
+
+
 **Branch:** `p1/t05-staff-accounts`
 
 **Files:**
@@ -1372,21 +1427,18 @@ class UserResource extends Resource
 
             Toggle::make('is_active')->label(__('staff.is_active'))->default(true),
 
+            // NOTE: no ->relationship('roles'). See "The roles field" below —
+            // relationship() persists via the relation's sync()/detach(), which
+            // reaches around every guard and IS reachable from the UI. This field
+            // is display-only; SyncUserRolesAction performs the write.
             Select::make('roles')
                 ->label(__('staff.roles'))
-                ->relationship('roles', 'name')
                 ->multiple()
-                ->preload()
-                // Guard 1: a non-super-admin cannot see or grant super_admin.
-                ->options(fn (): array => Role::query()
-                    ->when(
-                        ! auth()->user()->hasRole('super_admin'),
-                        fn ($q) => $q->where('name', '!=', 'super_admin'),
-                    )
-                    ->pluck('name', 'name')
-                    ->all())
-                // Guard 2: nobody edits their own roles.
-                ->disabled(fn (?User $record): bool => $record !== null && auth()->user()->is($record)),
+                ->dehydrated(false)
+                ->options(fn (): array => Role::query()->pluck('name', 'name')->all())
+                ->afterStateHydrated(fn (Select $component, ?User $record) => $component->state(
+                    $record?->roles()->pluck('name')->all() ?? [],
+                )),
         ]);
     }
 
@@ -3920,6 +3972,11 @@ return [
     'system' => 'System',
     'from' => 'From',
     'until' => 'Until',
+    // Added by P1-T04c. The escalation exceptions translate their messages, so
+    // these keys must exist or the errors surface as raw key strings.
+    'escalation' => [
+        'last_super_admin' => 'The last active super admin cannot be removed or deactivated.',
+    ],
     'employment_type' => [
         'instructor' => 'Instructor',
         'administrative' => 'Administrative',

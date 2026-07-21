@@ -119,17 +119,22 @@ The payment split is deliberate. Front-desk administrators must be able to recor
 
 ### Escalation guards
 
-These are the three failure modes that break role systems in practice, and each is enforced and tested:
+These are the failure modes that break role systems in practice, and each is enforced and tested:
 
-1. An admin cannot create, edit, or delete a super admin.
+1. A non-super-admin cannot create, edit, or delete a super admin, nor add or remove the `super_admin` role.
 2. No user can modify their own roles or permissions.
-3. The system refuses to delete or deactivate the last active super admin.
+3. The system refuses to delete, deactivate, or strip the role from the last active super admin.
+4. An authenticated role or permission write requires the `assign_role` ability.
 
-Enforcement lives in `UserPolicy` **and** at the model layer, because a policy only runs when something chooses to consult it — Spatie's `assignRole()` answers to no gate, so a Filament form could otherwise grant `super_admin` without the policy ever executing.
+Guard 3 was extended during implementation to cover role *removal* as well as deletion and deactivation: stripping `super_admin` from the last super admin reaches the identical end state — nobody able to manage roles — and the guard as originally specified said nothing about it. Guard 4 was added after a review found a staff account could assign `admin` to another user.
 
-Guard 3 was extended during implementation to cover role *removal* as well as deletion and deactivation: `removeRole('super_admin')` or `syncRoles([])` on the last super admin reaches the identical end state — nobody able to manage roles — and the guard as originally specified said nothing about it.
+**Enforcement architecture.** Security-sensitive writes go through explicit domain Actions that receive the acting user and authorize themselves via `Gate::forUser($actor)`. A `SuperAdminInvariantService` owns guard 3, holding a row lock and running the check and the mutation in one transaction. Architecture tests prevent application code from reaching around the Actions.
 
-Guards 1 and 2 skip when no user is authenticated, since seeders and console commands legitimately assign roles with no principal; they protect the request path, not the CLI path. Guard 3 has no exemption and holds everywhere. `docs/ENGINEERING.md` records the writes that bypass model events and must not be used on `User`.
+This replaced an earlier design that enforced the guards by overriding Spatie's write methods on the models. Two review rounds kept finding fresh bypass methods, and the approach contradicted the project's own "no business logic in models" rule. The lesson is recorded because it is easy to re-derive the wrong answer: **a policy only runs when something consults it, and patching each write method is an unbounded game — so the fix is to make one narrow write path and enforce that nothing else exists.**
+
+**Trust boundary, stated plainly.** Model events do not protect against raw SQL, manual `tinker`, or query-builder writes, and the system does not claim they do. Those are trusted administrative operations; database-wide enforcement would require MySQL triggers and is out of scope. What is guaranteed is that every write reachable through application code is authorized.
+
+Guards 1, 2, and 4 are actor-relative and do not apply where there is no actor — seeders and setup use a separately named trusted path (`SystemRoleWriter`). Guard 3 has no exemption and applies to system writes too. `docs/ENGINEERING.md` holds the full detail.
 
 ---
 

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Database\Seeders;
 
+use App\Domain\Staff\Actions\SystemRoleWriter;
 use App\Models\Role;
 use Illuminate\Database\Seeder;
 use Spatie\Permission\Models\Permission;
@@ -58,6 +59,12 @@ class RolePermissionSeeder extends Seeder
     {
         app(PermissionRegistrar::class)->forgetCachedPermissions();
 
+        // Role and permission writes here run with no authenticated actor, so
+        // they go through the trusted system-setup path rather than the
+        // request-path Actions (which require and authorize an actor). See
+        // App\Domain\Staff\Actions\SystemRoleWriter.
+        $writer = app(SystemRoleWriter::class);
+
         foreach (self::RESOURCES as $resource) {
             foreach (self::ACTIONS as $action) {
                 Permission::findOrCreate("{$action}_{$resource}", 'web');
@@ -68,10 +75,12 @@ class RolePermissionSeeder extends Seeder
             Permission::findOrCreate($ability, 'web');
         }
 
-        $superAdmin = Role::findOrCreate('super_admin', 'web');
-        $superAdmin->syncPermissions(Permission::all());
+        $writer->syncRolePermissions(
+            Role::findOrCreate('super_admin', 'web'),
+            Permission::all(),
+        );
 
-        Role::findOrCreate('admin', 'web')->syncPermissions([
+        $writer->syncRolePermissions(Role::findOrCreate('admin', 'web'), [
             ...$this->crudFor('student'),
             ...$this->crudFor('course'),
             ...$this->crudFor('batch'),
@@ -84,7 +93,7 @@ class RolePermissionSeeder extends Seeder
             'assign_instructor',
         ]);
 
-        Role::findOrCreate('staff', 'web')->syncPermissions([
+        $writer->syncRolePermissions(Role::findOrCreate('staff', 'web'), [
             'view_any_student', 'view_student',
             'view_any_course', 'view_course',
             'view_any_batch', 'view_batch',
@@ -94,7 +103,7 @@ class RolePermissionSeeder extends Seeder
         ]);
 
         // Students reach the portal in phase 3, never the admin panel.
-        Role::findOrCreate('student', 'web')->syncPermissions([]);
+        $writer->syncRolePermissions(Role::findOrCreate('student', 'web'), []);
     }
 
     /** @return array<int, string> */

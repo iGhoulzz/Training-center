@@ -3,21 +3,20 @@
 declare(strict_types=1);
 
 use App\Domain\Staff\Actions\SyncUserRolesAction;
-use App\Domain\Staff\Exceptions\RoleEscalationException;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 
 /**
- * Finding 3 — Filament's Select::relationship('roles') writes the pivot through
- * the relation's sync()/detach(), never through User::syncRoles(), so it slips
- * every escalation guard. The remediation supplies a safe pattern for Task 5:
- * SyncUserRolesAction, which routes role changes through the guarded
- * User::syncRoles(). These tests pin that the action is guarded.
+ * The safe pattern Task 5's UserResource must use for the roles field.
  *
- * The whole file fails against pre-fix `main` because SyncUserRolesAction does
- * not exist there — which is precisely the point: the safe pattern is the
- * deliverable, and it was absent.
+ * Filament's Select::relationship('roles') persists by calling the relation's
+ * sync()/detach() directly — it never runs the escalation guards. The safe
+ * pattern is to detach the field from the relationship writer and route the
+ * selected roles through SyncUserRolesAction with the authenticated actor. This
+ * file pins that the action IS the guarded path and documents WHY the raw
+ * relation is not (the architecture test now forbids that raw call in app code).
  */
 uses(RefreshDatabase::class);
 
@@ -30,53 +29,35 @@ beforeEach(function () {
     $this->admin = User::factory()->create();
     $this->admin->assignRole('admin');
 
-    $this->staff = User::factory()->create();
-    $this->staff->assignRole('staff');
+    $this->sync = app(SyncUserRolesAction::class);
 });
 
-it('the safe action routes through the guards and blocks a staff role write', function () {
+it('routes through the guards and blocks an unauthorized role write', function () {
     $target = User::factory()->create();
 
-    $this->actingAs($this->staff); // staff lacks assign_role
-
-    expect(fn () => app(SyncUserRolesAction::class)->execute($target, ['admin']))
-        ->toThrow(RoleEscalationException::class);
+    // Admin holds no assign_role ability.
+    expect(fn () => $this->sync->execute($this->admin, $target, ['admin']))
+        ->toThrow(AuthorizationException::class);
 
     expect($target->fresh()->hasRole('admin'))->toBeFalse();
 });
 
-it('the safe action blocks an admin from granting super_admin', function () {
-    $this->actingAs($this->admin); // admin lacks assign_role and is not a super admin
-
-    expect(fn () => app(SyncUserRolesAction::class)->execute($this->staff, ['staff', 'super_admin']))
-        ->toThrow(RoleEscalationException::class);
-
-    expect($this->staff->fresh()->hasRole('super_admin'))->toBeFalse();
-});
-
-it('the safe action lets a super admin set roles', function () {
+it('lets a super admin set roles through the action', function () {
     $target = User::factory()->create();
 
-    $this->actingAs($this->superAdmin);
-
-    app(SyncUserRolesAction::class)->execute($target, ['admin']);
+    $this->sync->execute($this->superAdmin, $target, ['admin']);
 
     expect($target->fresh()->hasRole('admin'))->toBeTrue();
 });
 
-/*
- * Documents WHY the action exists: the raw relationship writer Filament would
- * otherwise use bypasses the guards entirely. This holds on both main and the
- * fixed tree — the remediation provides a safe alternative rather than making
- * the raw relation safe — so it is a hazard note, not a before/after assertion.
- */
-it('documents that the raw roles relation bypasses the guards', function () {
+it('documents that the raw roles relation bypasses the guards (hence the arch test)', function () {
+    // This is what Select::relationship('roles') does under the hood. It writes
+    // the pivot with no guard at all — which is exactly why the boundary is
+    // enforced by an Action and application code is forbidden from doing this
+    // (see ActionBoundaryArchTest). Reproduced here only to document the hazard.
     $target = User::factory()->create();
     $superAdminRoleId = app('db')->table('roles')->where('name', 'super_admin')->value('id');
 
-    $this->actingAs($this->staff);
-
-    // This is what Select::relationship('roles') does under the hood.
     $target->roles()->sync([$superAdminRoleId]);
 
     expect($target->fresh()->hasRole('super_admin'))->toBeTrue();

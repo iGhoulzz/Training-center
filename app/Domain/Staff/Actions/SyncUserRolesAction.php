@@ -4,44 +4,74 @@ declare(strict_types=1);
 
 namespace App\Domain\Staff\Actions;
 
+use App\Domain\Staff\Services\SuperAdminInvariantService;
+use App\Models\Role;
 use App\Models\User;
+use Illuminate\Support\Facades\Gate;
 
 /**
- * The safe way to set a staff account's roles from the UI.
+ * The single sanctioned path for setting a staff account's roles from the
+ * request path (Task 5's UserResource calls this).
  *
- * READ THIS BEFORE BUILDING THE UserResource (Task 5, P1-T05)
- * -----------------------------------------------------------
- * Filament's `Select::make('roles')->relationship('roles')` persists by calling
- * the relation's sync()/detach() directly. That path writes the model_has_roles
- * pivot straight through Eloquent and NEVER calls User::syncRoles(), so every
- * escalation guard — guard 1 (only a super admin grants super_admin), guard 2
- * (no self-edits), guard 3 (keep one super admin), guard 4 (assign_role
- * required) — is bypassed. This was confirmed finding 3 of the security review.
+ * It receives the acting user explicitly and authorizes every escalation guard
+ * through the gate, then performs the write — routing a super-admin removal
+ * through SuperAdminInvariantService so the last-super-admin invariant holds
+ * atomically. It never assigns roles without an actor; the trusted, actorless
+ * counterpart for seeders and factories is SystemRoleWriter.
  *
- * The UserResource role field must therefore be detached from the relationship
- * writer and routed through this action instead. The shape Task 5 should use:
- *
- *     Select::make('roles')
- *         ->multiple()
- *         ->relationship('roles', 'name') // for options + hydration only
- *         ->dehydrated(false)             // do NOT let Filament persist it
- *         ->saveRelationshipsUsing(null); // and do NOT sync the relation
- *
- * then, in the resource's handleRecordCreation / handleRecordUpdate (or an
- * after-save hook), collect the selected role names and call:
- *
- *     app(SyncUserRolesAction::class)->execute($user, $selectedRoleNames);
- *
- * Because this routes through User::syncRoles(), the guards fire exactly as
- * they do everywhere else, and a rejected change surfaces as a 403.
+ * Guards enforced (all via Gate::forUser($actor)):
+ *   - update          : the actor may administer this target account, and a
+ *                       non-super-admin may not touch a super admin (guard 1,
+ *                       target side).
+ *   - modifyOwnRoles  : nobody edits their own roles (guard 2).
+ *   - assignRole      : every changed role requires the assign_role ability
+ *                       (guard 4), and super_admin may be granted or revoked
+ *                       only by a super admin (guard 1, role side).
+ *   - invariant       : removing super_admin from the last active super admin
+ *                       is refused by SuperAdminInvariantService (guard 3, 422).
  */
 final class SyncUserRolesAction
 {
+    public function __construct(
+        private readonly SuperAdminInvariantService $invariant,
+    ) {}
+
     /**
-     * @param  array<int, string>  $roles  Role names to become the account's exact set.
+     * @param  array<int, string>  $roles  Role names the account should hold, exactly.
      */
-    public function execute(User $user, array $roles): void
+    public function execute(User $actor, User $target, array $roles): void
     {
-        $user->syncRoles($roles);
+        $desired = array_values(array_unique($roles));
+        $current = $target->roles()->pluck('name')->all();
+
+        $adding = array_values(array_diff($desired, $current));
+        $removing = array_values(array_diff($current, $desired));
+
+        // A no-op change authorizes nothing and touches nothing — this is what
+        // lets an unchanged self-save through.
+        if ($adding === [] && $removing === []) {
+            return;
+        }
+
+        Gate::forUser($actor)->authorize('update', $target);
+
+        // Guard 2: nobody edits their own roles, regardless of rank. Returns
+        // true (no-op) when the actor is not the target.
+        Gate::forUser($actor)->authorize('modifyOwnRoles', $target);
+
+        // Guards 4 and 1: authorize each role entering or leaving the set.
+        foreach ([...$adding, ...$removing] as $role) {
+            Gate::forUser($actor)->authorize('assignRole', [User::class, $role]);
+        }
+
+        // Guard 3: only a super-admin removal can shrink the population, so only
+        // that write needs the locked, atomic invariant check.
+        if (in_array(Role::SUPER_ADMIN, $removing, true)) {
+            $this->invariant->protect(fn () => $target->syncRoles($desired));
+
+            return;
+        }
+
+        $target->syncRoles($desired);
     }
 }
