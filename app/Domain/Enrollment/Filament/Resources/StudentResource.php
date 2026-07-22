@@ -1,0 +1,181 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Enrollment\Filament\Resources;
+
+use App\Domain\Enrollment\Enums\StudentStatus;
+use App\Domain\Enrollment\Filament\Resources\StudentResource\Pages\CreateStudent;
+use App\Domain\Enrollment\Filament\Resources\StudentResource\Pages\EditStudent;
+use App\Domain\Enrollment\Filament\Resources\StudentResource\Pages\ListStudents;
+use App\Domain\Enrollment\Filament\Resources\StudentResource\Pages\ViewStudent;
+use App\Domain\Enrollment\Models\Student;
+use BackedEnum;
+use Filament\Forms\Components\DatePicker;
+use Filament\Forms\Components\Select;
+use Filament\Forms\Components\Textarea;
+use Filament\Forms\Components\TextInput;
+use Filament\Resources\Resource;
+use Filament\Schemas\Schema;
+use Filament\Support\Icons\Heroicon;
+use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Table;
+
+/**
+ * The student register (P1-T07).
+ *
+ * FULL PAGES, NOT MODAL ACTIONS
+ * -----------------------------
+ * List, create, view and edit are all real pages. Nothing here has a save hook
+ * today, but Filament's modal CreateAction/EditAction persist with a bare
+ * create()/update() that never runs a page hook, so a resource built on modals
+ * quietly breaks the moment one is added. The list page's create button is a
+ * plain link Action for the same reason as UserResource's: CreateAction keeps a
+ * mountable server-side handler even when ->url() is set.
+ *
+ * NO BULK ACTIONS
+ * ---------------
+ * Filament authorizes a bulk action once against the *Any policy method and
+ * never consults the per-record one. StudentPolicy defines no deleteAny(), so a
+ * bulk delete added later fails closed rather than inheriting a rule nobody
+ * decided. Delete students one at a time, from the edit page.
+ *
+ * user_id IS NOT ON THE FORM
+ * --------------------------
+ * Linking a student to a portal login is phase 3's job and belongs to whatever
+ * flow issues that account. Exposing the column here would let an administrator
+ * point a student row at an arbitrary user account by hand.
+ */
+class StudentResource extends Resource
+{
+    protected static ?string $model = Student::class;
+
+    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedAcademicCap;
+
+    protected static ?string $recordTitleAttribute = 'student_code';
+
+    public static function getModelLabel(): string
+    {
+        return __('enrollment.student');
+    }
+
+    public static function getPluralModelLabel(): string
+    {
+        return __('enrollment.students');
+    }
+
+    public static function getNavigationLabel(): string
+    {
+        return __('enrollment.students');
+    }
+
+    public static function form(Schema $schema): Schema
+    {
+        return $schema->components([
+            TextInput::make('student_code')
+                ->label(__('enrollment.student_code'))
+                ->required()
+                ->maxLength(30)
+                // The code is quoted at the desk and printed on paperwork, so a
+                // duplicate is a real-world ambiguity, not just a broken index.
+                ->unique(ignoreRecord: true),
+
+            Select::make('status')
+                ->label(__('enrollment.status'))
+                ->options(fn (): array => collect(StudentStatus::cases())
+                    ->mapWithKeys(fn (StudentStatus $case): array => [$case->value => $case->label()])
+                    ->all())
+                ->default(StudentStatus::Prospective->value)
+                ->required(),
+
+            TextInput::make('first_name')
+                ->label(__('enrollment.first_name'))
+                ->required()
+                ->maxLength(100),
+
+            TextInput::make('last_name')
+                ->label(__('enrollment.last_name'))
+                ->required()
+                ->maxLength(100),
+
+            TextInput::make('email')
+                ->label(__('enrollment.email'))
+                ->email()
+                ->maxLength(255),
+
+            TextInput::make('phone')
+                ->label(__('enrollment.phone'))
+                ->tel()
+                ->maxLength(30),
+
+            TextInput::make('national_id')
+                ->label(__('enrollment.national_id'))
+                ->maxLength(50),
+
+            DatePicker::make('date_of_birth')
+                ->label(__('enrollment.date_of_birth'))
+                ->maxDate(now()),
+
+            Select::make('gender')
+                ->label(__('enrollment.gender'))
+                ->options([
+                    'male' => __('enrollment.gender_male'),
+                    'female' => __('enrollment.gender_female'),
+                ]),
+
+            Textarea::make('address')
+                ->label(__('enrollment.address'))
+                ->rows(3)
+                ->columnSpanFull(),
+
+            Textarea::make('notes')
+                ->label(__('enrollment.notes'))
+                ->rows(3)
+                ->columnSpanFull(),
+        ]);
+    }
+
+    public static function table(Table $table): Table
+    {
+        return $table
+            ->columns([
+                TextColumn::make('student_code')
+                    ->label(__('enrollment.student_code'))
+                    ->searchable()
+                    ->sortable(),
+
+                // full_name is an accessor, not a column, so the search has to
+                // name the two real columns behind it — and it cannot be
+                // sorted at all. Order by last name instead; that is what the
+                // (last_name, first_name) index exists for.
+                TextColumn::make('full_name')
+                    ->label(__('enrollment.full_name'))
+                    ->searchable(['first_name', 'last_name']),
+
+                TextColumn::make('phone')
+                    ->label(__('enrollment.phone'))
+                    ->searchable()
+                    ->placeholder(__('enrollment.no_phone')),
+
+                TextColumn::make('status')
+                    ->label(__('enrollment.status'))
+                    ->badge()
+                    ->formatStateUsing(fn (StudentStatus $state): string => $state->label())
+                    ->sortable(),
+            ])
+            // Surname order: the register is a list of people, and the desk
+            // looks someone up by name far more often than by when they were
+            // added. The composite index serves this sort directly.
+            ->defaultSort('last_name');
+    }
+
+    public static function getPages(): array
+    {
+        return [
+            'index' => ListStudents::route('/'),
+            'create' => CreateStudent::route('/create'),
+            'view' => ViewStudent::route('/{record}'),
+            'edit' => EditStudent::route('/{record}/edit'),
+        ];
+    }
+}

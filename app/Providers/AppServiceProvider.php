@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Providers;
 
+use App\Domain\Enrollment\Models\Student;
+use App\Domain\Enrollment\Policies\StudentPolicy;
 use App\Domain\Staff\Models\StaffCertificate;
 use App\Domain\Staff\Models\StaffProfile;
 use App\Domain\Staff\Policies\StaffCertificatePolicy;
@@ -38,6 +40,7 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(User::class, UserPolicy::class);
         Gate::policy(StaffProfile::class, StaffProfilePolicy::class);
         Gate::policy(StaffCertificate::class, StaffCertificatePolicy::class);
+        Gate::policy(Student::class, StudentPolicy::class);
 
         /*
          * saveQuietly() is deliberate: P1-T12 adds activity logging, and a login
