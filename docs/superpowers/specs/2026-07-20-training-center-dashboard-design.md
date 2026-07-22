@@ -159,9 +159,31 @@ Guards 1, 2, and 4 are actor-relative and do not apply where there is no actor �
 `id, name, email (unique), password, locale, is_active, must_change_password, last_login_at, timestamps, softDeletes`
 
 **`staff_profiles`** — optional 1:1 with `users`
-`id, user_id (unique FK), phone, job_title, hire_date, employment_type, timestamps`
+`id, user_id (unique FK), phone, job_title, hire_date, employment_type, qualifications, profile_photo_path, timestamps`
 
 Employment attributes describe a person's job, not their login. A super admin may have no employment record; a departed instructor retains theirs after deactivation.
+
+`employment_type` distinguishes the two kinds of staff the centre actually has: **instructors**, who teach courses, and **administrative** or **support** staff, who work shifts at the centre. It drives who can be assigned to a batch.
+
+`qualifications` is a single free-text field — e.g. "PhD in Applied Linguistics, University of Tripoli". Deliberately not an enum: the centre records credentials for reference, not for filtering or reporting, and prose accommodates the range of real qualifications without a migration each time one does not fit.
+
+`profile_photo_path` stores a **path only**. There is no default image row per user; the UI renders initials when the column is null.
+
+**`staff_certificates`** — one row per uploaded credential
+`id, staff_profile_id (FK), title, issued_on (nullable), expires_on (nullable), original_filename, disk, path, timestamps`
+
+A separate table rather than columns on the profile, because a certificate carries business metadata of its own — what it is, when it was issued, and when it expires — and one person holds several. `expires_on` matters operationally: some teaching accreditations lapse.
+
+### File storage
+
+Applies to every file the system stores, now and later.
+
+- **Binary content never goes in the database.** Rows hold metadata and a path; the bytes live on a filesystem disk.
+- **Uploads go to a private disk**, not a web-served one. Staff certificates carry personal data — full names, national ID numbers, dates of birth — and a public disk gives every file a permanent URL that needs no login and cannot be recalled once it leaks.
+- **Files are served only through policy-authorized downloads or temporary signed URLs.** Authorization is checked per request, at the point of serving.
+- **The private disk is included in backups** (see section 11). A database dump alone would restore rows pointing at files that no longer exist.
+
+Phase 2's payment receipts, phase 3's student certificates, and generated report PDFs reuse this same storage infrastructure. They do **not** reuse this domain model: each gets its own model, its own policy, and its own retention rules. A student's certificate and an instructor's credential are different things with different lifetimes and different audiences, and collapsing them into one table would force a single retention policy onto both.
 
 **`students`** — a record, not necessarily a user
 `id, user_id (nullable unique FK), student_code (unique), first_name, last_name, email (nullable), phone, national_id, date_of_birth, gender, address, status, notes, timestamps, softDeletes`
@@ -232,7 +254,7 @@ Staff compensation is per person and may combine types — the center employs bo
 ### Relationships
 
 ```
-users ──1:1── staff_profiles
+users ──1:1── staff_profiles ──1:N── staff_certificates
 users ──M:N── batches                (via batch_instructor, with assigned_hours)
 users ──1:N── staff_compensation     (effective-dated)
 courses ──1:N── batches ──1:N── enrollments ──N:1── students
@@ -297,7 +319,7 @@ Feature tests are the priority, because the risk in this system is in how the pi
 
 ## 11. Operations
 
-- **Backups from day one.** `spatie/laravel-backup`, dumping the database daily to off-server storage. This is set up in phase 1, before there is anything valuable to lose, because that is the only point at which anyone reliably remembers to do it. A training center's payment history is not reconstructible.
+- **Backups from day one.** `spatie/laravel-backup`, dumping the database **and the private uploads disk** daily to off-server storage. Both are required: restoring rows whose files are missing leaves staff certificates permanently unrecoverable, and the database records only their paths. This is set up in phase 1, before there is anything valuable to lose, because that is the only point at which anyone reliably remembers to do it. A training center's payment history is not reconstructible.
 - Queue workers via Redis, managed by the hosting panel.
 - Laravel's scheduler on a one-minute cron entry.
 - Deployment on git push via Ploi or Forge.

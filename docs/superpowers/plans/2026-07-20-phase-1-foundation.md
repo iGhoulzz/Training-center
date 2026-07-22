@@ -1567,13 +1567,47 @@ git commit -m "feat(staff): add user management resource with password reset [P1
 
 **Branch:** `p1/t06-staff-profiles`
 
+### SCOPE EXPANDED 2026-07-22 — read before implementing
+
+The centre employs two kinds of staff: **instructors** who teach courses, and **administrative/support** staff who work shifts at the centre. `employment_type` already distinguishes them. Added after review:
+
+- `qualifications` — a single free-text field ("PhD in Applied Linguistics, University of Tripoli"). Deliberately not an enum: credentials are recorded for reference, not filtered or reported on.
+- `profile_photo_path` — a **path only**. No default image is stored per user; the UI renders initials when null.
+- **`staff_certificates`** — a separate table, because a certificate carries its own business metadata (title, issued date, **expiry** date, original filename, disk, path) and one person holds several. Expiry matters: some teaching accreditations lapse.
+
+**File storage rules (spec section 6, "File storage"):**
+
+- Binary content **never** goes in the database — rows hold metadata and a path.
+- Uploads go to a **private disk**, never a web-served one. Certificates carry personal data (full name, national ID, date of birth); a public disk gives every file a permanent URL needing no login, which cannot be recalled once leaked.
+- Files are served **only** through policy-authorized downloads or temporary signed URLs, with authorization checked per request.
+- The private disk must be **included in backups** — a database dump alone restores rows pointing at files that no longer exist. Task 13 must cover it.
+
+Phase 2 receipts, phase 3 student certificates, and generated PDFs reuse this storage infrastructure but get their **own models, policies, and retention rules**. Do not generalise `staff_certificates` into a shared attachments table.
+
 **Files:**
-- Create: `database/migrations/2026_07_20_000200_create_staff_profiles_table.php`
+- Create: `database/migrations/*_create_staff_profiles_table.php`
+- Create: `database/migrations/*_create_staff_certificates_table.php`
 - Create: `app/Domain/Staff/Models/StaffProfile.php`
+- Create: `app/Domain/Staff/Models/StaffCertificate.php`
 - Create: `app/Domain/Staff/Enums/EmploymentType.php`
-- Create: `database/factories/StaffProfileFactory.php`
-- Create: `tests/Feature/Staff/StaffProfileTest.php`
-- Modify: `app/Models/User.php`
+- Create: `app/Domain/Staff/Policies/StaffProfilePolicy.php`, `StaffCertificatePolicy.php`
+- Create: `database/factories/StaffProfileFactory.php`, `StaffCertificateFactory.php`
+- Create: `tests/Feature/Staff/StaffProfileTest.php`, `StaffCertificateTest.php`
+- Modify: `app/Models/User.php`, `config/filesystems.php`
+
+**Schema:**
+
+```
+staff_profiles     id, user_id (unique FK), phone, job_title, hire_date,
+                   employment_type, qualifications (text, nullable),
+                   profile_photo_path (nullable), timestamps
+
+staff_certificates id, staff_profile_id (FK, cascade), title,
+                   issued_on (nullable date), expires_on (nullable date),
+                   original_filename, disk, path, timestamps
+```
+
+Deferred to a later task, not built here: the Filament resource and the authorized download route. This task delivers the models, migrations, policies, factories, and tests.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -3880,7 +3914,13 @@ In `config/backup.php`:
 ```php
 'source' => [
     'files' => [
-        'include' => [base_path('storage/app/public')],
+        // storage/app/private holds staff certificates and profile photos
+        // (Task 6). It MUST be backed up: the database stores only paths, so a
+        // database-only restore leaves every uploaded credential unrecoverable.
+        'include' => [
+            base_path('storage/app/public'),
+            base_path('storage/app/private'),
+        ],
         'exclude' => [base_path('vendor'), base_path('node_modules')],
     ],
     'databases' => ['mysql'],
