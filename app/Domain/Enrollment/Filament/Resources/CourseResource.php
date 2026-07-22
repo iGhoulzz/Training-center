@@ -14,12 +14,15 @@ use Filament\Actions\DeleteAction;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
+use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
+use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\DB;
 
 /**
  * The course catalogue (P1-T08).
@@ -147,10 +150,11 @@ class CourseResource extends Resource
                     ->searchable(['name_en', 'name_ar'])
                     ->sortable(),
 
+                // Not sortable: no index on total_hours, and the catalogue is
+                // looked through by code or name, never by length.
                 TextColumn::make('total_hours')
                     ->label(__('enrollment.total_hours'))
-                    ->numeric()
-                    ->sortable(),
+                    ->numeric(),
 
                 // How many times this course has actually been run. Counted
                 // rather than stored: a cached count is a derived value that
@@ -181,9 +185,57 @@ class CourseResource extends Resource
             // that a crafted Livewire mount ignores, whereas authorize() runs
             // CoursePolicy::delete() against this record on the server.
             ->recordActions([
-                DeleteAction::make()
-                    ->authorize('delete'),
+                self::deleteAction(),
             ]);
+    }
+
+    /**
+     * The one delete action, shared by the table row and the edit page.
+     *
+     * `batches.course_id` is restrictOnDelete, so deleting a course that still
+     * has batches is refused by the database — correctly, since the alternative
+     * is silently destroying their enrolment history. But an unhandled
+     * QueryException reaches the user as a 500, which reads as "the system is
+     * broken" rather than "this course is still in use".
+     *
+     * The pre-check turns the common case into a readable refusal. The
+     * try/catch stays because the pre-check is not race-safe: a batch can be
+     * created between the check and the delete, and the foreign key is what
+     * actually guarantees the invariant. Both surfaces call this so the two
+     * cannot drift apart.
+     */
+    public static function deleteAction(): DeleteAction
+    {
+        return DeleteAction::make()
+            ->authorize('delete')
+            ->action(function (Course $record, DeleteAction $action): void {
+                if ($record->batches()->exists()) {
+                    Notification::make()
+                        ->title(__('enrollment.course_in_use'))
+                        ->body(__('enrollment.course_in_use_hint'))
+                        ->danger()
+                        ->send();
+
+                    $action->halt();
+                }
+
+                try {
+                    // Wrapped in a transaction so the foreign key violation is
+                    // a declared throw rather than an undeclared one — Eloquent
+                    // delete() carries no @throws, so static analysis cannot
+                    // otherwise see that the catch below is reachable.
+                    DB::transaction(fn () => $record->delete());
+                } catch (QueryException) {
+                    // Lost the race: a batch appeared after the check above.
+                    Notification::make()
+                        ->title(__('enrollment.course_in_use'))
+                        ->body(__('enrollment.course_in_use_hint'))
+                        ->danger()
+                        ->send();
+
+                    $action->halt();
+                }
+            });
     }
 
     public static function getPages(): array

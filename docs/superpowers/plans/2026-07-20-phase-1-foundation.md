@@ -2141,10 +2141,6 @@ class Student extends Model
         return $this->belongsTo(User::class);
     }
 
-    public function enrollments(): HasMany
-    {
-        return $this->hasMany(Enrollment::class);
-    }
 
     protected function fullName(): Attribute
     {
@@ -2434,10 +2430,10 @@ class Course extends Model
         ];
     }
 
-    public function batches(): HasMany
-    {
-        return $this->hasMany(Batch::class);
-    }
+    // NOTE: batches() ships with TASK 9, not here. A hasMany() to a class that
+    // does not exist yet fails static analysis, so Task 8's commit could not be
+    // independently green with it. Task 9 adds the relation and the counted
+    // column together with the Batch side.
 
     public function scopeActive(Builder $query): void
     {
@@ -2770,12 +2766,9 @@ class Batch extends Model
         return $this->hasMany(Enrollment::class);
     }
 
-    public function instructors(): BelongsToMany
-    {
-        return $this->belongsToMany(User::class, 'batch_instructor')
-            ->withPivot('assigned_hours')
-            ->withTimestamps();
-    }
+    // instructors() belongs to TASK 10 and enrollments() to TASK 11, together
+    // with the tables behind them. Declaring either here would reference a
+    // migration that has not run.
 
     /** Falls back to the parent course rather than copying its value. */
     protected function effectiveTotalHours(): Attribute
@@ -2899,7 +2892,11 @@ class BatchPolicy
 
     public function delete(User $user, Batch $batch): bool
     {
-        return $user->can('delete_batch') && $batch->enrollments()->doesntExist();
+        // Permission only. The "not while it has enrolments" rule belongs to
+        // TASK 11, and belongs in the FOREIGN KEY rather than here: a policy
+        // check is not race-safe, and restrictOnDelete is what actually
+        // guarantees the enrolment history survives.
+        return $user->can('delete_batch');
     }
 
     public function assignInstructor(User $user, Batch $batch): bool

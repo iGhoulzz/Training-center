@@ -113,10 +113,39 @@ class BatchResource extends Resource
             Select::make('course_id')
                 ->label(__('enrollment.course'))
                 ->required()
-                // Only courses the centre still offers. A retired course keeps
-                // its existing batches but should not receive new ones.
-                ->options(fn (): array => Course::query()
-                    ->active()
+                /*
+                 * The parent course is chosen once, at creation, and is then
+                 * IMMUTABLE.
+                 *
+                 * Re-parenting silently rewrites what the batch inherits — its
+                 * total_hours, and from phase 2 its price — and from Task 10
+                 * and 11 it would strand instructor hour allocations and
+                 * enrolments against a course those people never taught or
+                 * enrolled on. A completed batch could be moved to an entirely
+                 * different course with no error at all.
+                 *
+                 * disabled() alone is a UX affordance; dehydrated(false) on
+                 * edit is what stops a crafted payload writing the column,
+                 * because a disabled field's state is still submitted.
+                 *
+                 * If the centre ever genuinely needs to re-parent a batch, that
+                 * is a deliberate Action with its own authorization and its own
+                 * handling of the dependent rows — not an ordinary edit.
+                 */
+                ->disabled(fn (?Batch $record): bool => $record !== null)
+                ->dehydrated(fn (?Batch $record): bool => $record === null)
+                /*
+                 * Only courses the centre still offers — EXCEPT the one this
+                 * batch already belongs to. Without that exception, retiring a
+                 * course makes every existing batch of it unsaveable: the
+                 * current value is absent from the options, so validation
+                 * rejects it as invalid and an unrelated edit to the batch
+                 * cannot be saved at all.
+                 */
+                ->options(fn (?Batch $record): array => Course::query()
+                    ->where(fn (Builder $query) => $query
+                        ->active()
+                        ->orWhere('id', $record?->course_id))
                     ->orderBy('code')
                     ->pluck('code', 'id')
                     ->all())
@@ -156,7 +185,20 @@ class BatchResource extends Resource
                 ->minValue(0)
                 // unsignedSmallInteger: 65535 is the column's ceiling.
                 ->maxValue(65535)
-                ->default(0),
+                ->default(0)
+                /*
+                 * Required, because the column is NOT NULL. Clearing the box
+                 * previously sent an empty string, which reached MySQL as NULL
+                 * and surfaced as a raw QueryException rather than a field
+                 * error. A blank capacity is also ambiguous in a way the other
+                 * optional fields are not: it reads as "no limit", while the
+                 * column can only store a number.
+                 *
+                 * Zero is the explicit way to say "no limit set" — the hint
+                 * says so — so requiring a value costs nothing and removes the
+                 * crash.
+                 */
+                ->required(),
 
             // Deliberately optional, with NO default. Empty means inherit from
             // the course; a zero here would look like a decision and would stop
@@ -201,16 +243,20 @@ class BatchResource extends Resource
                     ->placeholder(__('enrollment.no_date'))
                     ->sortable(),
 
+                // Not sortable: there is no index on end_date, and
+                // docs/ENGINEERING.md requires one for any column ordered on.
+                // "What finishes soonest" is not a question this list is asked,
+                // so an index would be dead weight rather than a fix.
                 TextColumn::make('end_date')
                     ->label(__('enrollment.end_date'))
                     ->date()
-                    ->placeholder(__('enrollment.no_date'))
-                    ->sortable(),
+                    ->placeholder(__('enrollment.no_date')),
 
+                // Not sortable, for the same reason. Ordering a schedule by
+                // room size is not a use case.
                 TextColumn::make('capacity')
                     ->label(__('enrollment.capacity'))
-                    ->numeric()
-                    ->sortable(),
+                    ->numeric(),
 
                 // The INHERITED figure, not the raw column: a batch with a null
                 // total_hours shows its course's hours, which is what anyone
@@ -222,9 +268,20 @@ class BatchResource extends Resource
 
                 // DELIBERATELY ABSENT: price. Phase 2 owns it.
             ])
-            // Soonest first, and batches with no date yet last: the question
-            // this list answers is "what is starting next".
-            ->defaultSort('start_date')
+            /*
+             * Soonest first, undated last.
+             *
+             * defaultSort('start_date') alone does NOT do that: MySQL orders
+             * NULL before every value ascending, so a batch with no date yet
+             * came first and pushed the one starting next down the page — the
+             * exact opposite of what this list is for. The raw expression sorts
+             * on "is it null" first, which puts undated batches at the end
+             * regardless of the database's null collation.
+             */
+            ->defaultSort(fn (Builder $query): Builder => $query
+                ->orderByRaw('start_date IS NULL ASC')
+                ->orderBy('start_date')
+                ->orderBy('code'))
             // Delete belongs on the row, not only on the edit page.
             //
             // EditRecord::authorizeAccess() requires update_batch to open the

@@ -168,10 +168,23 @@ it('does not delete or deactivate users outside the sanctioned Actions', functio
     // Deleting a user or flipping is_active can remove the last super admin, so
     // both belong to DeleteUserAction / DeactivateUserAction where the invariant
     // service runs.
-    $offenders = filesMatching(
-        '/->\s*(delete|forceDelete)\s*\(\s*\)|[\'"]is_active[\'"]\s*=>\s*(false|0)\b/',
-        ['DeleteUserAction', 'DeactivateUserAction'],
-    );
+    //
+    // Scoped to files that actually touch the User model. The bare pattern
+    // matches ANY ->delete(), which caught CourseResource deleting a course —
+    // a correct match for the regex and a wrong one for the rule, since no
+    // invariant hangs off a course. Widening the allowlist instead would have
+    // eroded the rule one resource at a time; narrowing it to the model it
+    // protects keeps it sharp. A file deleting users necessarily names User.
+    $offenders = array_values(array_filter(
+        filesMatching(
+            '/->\s*(delete|forceDelete)\s*\(\s*\)|[\'"]is_active[\'"]\s*=>\s*(false|0)\b/',
+            ['DeleteUserAction', 'DeactivateUserAction'],
+        ),
+        fn (string $path): bool => (bool) preg_match(
+            '/\bUser\b/',
+            appSourceWithoutComments(base_path($path)),
+        ),
+    ));
 
     expect($offenders)->toBeEmpty(
         'User deletion and deactivation must go through DeleteUserAction / DeactivateUserAction: '

@@ -138,17 +138,17 @@ it('stores default_price as decimal with three places, not two and not float', f
 });
 
 it('round-trips a three-decimal price without losing a dirham', function () {
-    // 1250.750 LYD is one thousand two hundred fifty dinars and 750 dirham.
+    // 1250.751 LYD is one thousand two hundred fifty dinars and 751 dirham.
     // Under decimal(12,2) this comes back as 1250.75 — the same number to look
     // at, a different value to reconcile.
-    $course = Course::factory()->create(['default_price' => 1250.750]);
+    $course = Course::factory()->create(['default_price' => '1250.751']);
 
-    expect((string) $course->fresh()?->default_price)->toBe('1250.750');
+    expect((string) $course->fresh()?->default_price)->toBe('1250.751');
 
     // Asserted at the storage layer too, past the model's decimal:3 cast, so a
     // cast that happened to format correctly could not hide a truncated column.
     expect(DB::table('courses')->where('id', $course->getKey())->value('default_price'))
-        ->toBe('1250.750');
+        ->toBe('1250.751');
 });
 
 it('defaults default_price to zero rather than null', function () {

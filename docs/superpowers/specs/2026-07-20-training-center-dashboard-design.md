@@ -200,6 +200,10 @@ The nullable `user_id` is deliberate: a student exists whether or not they ever 
 
 Nullable fields inherit from the parent course when null, rather than being copied at creation. Copying would leave stale duplicates the moment someone edits the course.
 
+**`price` inheritance is phase 2 work.** The column is nullable now so phase 2 never has to alter a table holding production data, and `total_hours` proves the inheritance pattern works, but no price is read, displayed, or inherited anywhere in phase 1. Phase 2 decides what a null price means once the charge model exists — in particular whether an already-issued charge keeps the price it was raised at when the course price later changes. Do not implement price inheritance before that decision.
+
+**`course_id` is immutable after creation.** Re-parenting a batch silently rewrites what it inherits and, once instructor hours and enrolments exist, strands them against a course those people never taught or enrolled on. The form disables and de-hydrates the field on edit. If the centre ever needs to re-parent a batch, that is a deliberate Action with its own authorization and its own handling of the dependent rows, not an ordinary edit.
+
 **`batch_instructor`** — many-to-many with an attribute
 `id, batch_id (FK), user_id (FK), assigned_hours, unique(batch_id, user_id)`
 

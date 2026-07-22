@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\Domain\Enrollment\Filament\Resources\CourseResource\Pages;
 
 use App\Domain\Enrollment\Filament\Resources\CourseResource;
-use Filament\Actions\DeleteAction;
 use Filament\Resources\Pages\EditRecord;
 
 /**
@@ -43,8 +42,9 @@ class EditCourse extends EditRecord
     protected function getHeaderActions(): array
     {
         return [
-            DeleteAction::make()
-                ->authorize('delete')
+            // The same action the table row uses, so the readable
+            // "still in use" refusal cannot drift between the two surfaces.
+            CourseResource::deleteAction()
                 ->successRedirectUrl(fn (): string => CourseResource::getUrl('index')),
         ];
     }
