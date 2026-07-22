@@ -137,6 +137,14 @@ Rank resolves through `User::isSuperAdmin()` / `Role::isSuperAdmin()`, comparing
 
 Guards 1, 2, and 4 are actor-relative, so they do not apply where there is no actor — that is what `SystemRoleWriter` is for, and its use is confined to seeding and setup. **Guard 3 has no exemption**: `SystemRoleWriter::syncRoles()` engages `SuperAdminInvariantService` whenever the write would actually remove the role, because losing the last super admin is unrecoverable and a seeder is no more entitled to cause that than a request is. The invariant engages only on removal, so bootstrapping a fresh install is never blocked.
 
+### Creating an account requires permission to issue its credential
+
+Creating a staff account requires **both** `create_user` and `reset_user_password`. That is deliberate, not an accidental coupling: the form has no password field (an administrator typing someone else's password is a credential they then know), so creation issues a temporary password through `ResetUserPasswordAction`. Being able to create an account with a password you can see is the same capability as resetting one, so it is gated by the same permission. Both `admin` and `super_admin` hold it.
+
+### Filament modal actions bypass the save hooks
+
+`CreateAction` and `EditAction` in their **modal** form persist with a bare `$model::create($data)` / `$record->update($data)`, which never reaches a page's `afterCreate()` / `afterSave()`. For any resource whose writes must route through an Action, that silently does nothing — roles and `is_active` would appear to save and not. `UserResource` therefore links rows to the full edit page and gives `CreateAction` an explicit `->url()`, rather than using the modal variants.
+
 ### Bulk actions cannot be authorized per record
 
 Filament authorizes a bulk action **once**, against the `*Any` policy method, and never consults the per-record method for the selected rows. `deleteAny()` receives no records, so it cannot express "unless one of them is protected."
