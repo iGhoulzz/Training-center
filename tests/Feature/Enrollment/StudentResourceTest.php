@@ -105,14 +105,33 @@ it('refuses a delete mounted directly on the server by an editor who may not del
 
     $student = Student::factory()->create();
 
+    // FIRST: prove the action is resolvable for someone allowed to use it.
+    // InteractsWithActions::mountAction() unmounts and returns null in three
+    // different cases — unresolvable name, disabled, and unauthorized — so a
+    // probe that only asserts "nothing happened" cannot tell a refusal from a
+    // typo. Without this control the test below is vacuous.
+    $admin = ($this->makeUser)('admin');
+
+    $control = Livewire::actingAs($admin)
+        ->test(EditStudent::class, ['record' => $student->getKey()]);
+    $control->call('mountAction', 'delete');
+    expect($control->get('mountedActions'))->not->toBeEmpty(
+        'The delete action did not resolve even for an admin — the probe below would prove nothing.'
+    );
+
+    // NOW the real probe, with the same action name on the same page.
     $component = Livewire::actingAs($editor->fresh())
         ->test(EditStudent::class, ['record' => $student->getKey()]);
 
-    // Hidden in the UI...
     $component->assertActionHidden('delete');
 
-    // ...and refused on the server when mounted anyway.
     $component->call('mountAction', 'delete');
+
+    // Refused at mount: nothing is on the stack to execute.
+    expect($component->get('mountedActions'))->toBeEmpty();
+
+    // Call it anyway, the way a crafted client would after a failed mount.
+    $component->call('callMountedAction');
 
     expect(Student::whereKey($student->getKey())->exists())->toBeTrue()
         ->and(Student::withTrashed()->whereKey($student->getKey())->first()->trashed())->toBeFalse();
@@ -137,16 +156,33 @@ it('lets an actor with delete but not update remove a student from the table', f
 });
 
 it('refuses a table delete mounted directly by an actor without the delete grant', function () {
+    $student = Student::factory()->create();
+
+    // A table action only resolves with table context and the record key —
+    // mountAction('delete') alone silently fails to resolve on a list page,
+    // which would make this probe pass for the wrong reason.
+    $context = ['table' => true, 'recordKey' => (string) $student->getKey()];
+
+    // Control: the action resolves for an actor who may delete.
+    $control = Livewire::actingAs(($this->makeUser)('admin'))
+        ->test(ListStudents::class);
+    $control->call('mountAction', 'delete', [], $context);
+    expect($control->get('mountedActions'))->not->toBeEmpty(
+        'The table delete action did not resolve even for an admin — the probe below would prove nothing.'
+    );
+
     $viewer = User::factory()->create(['is_active' => true]);
     $viewer->givePermissionTo('access_admin_panel', 'view_any_student', 'view_student');
 
-    $student = Student::factory()->create();
+    $component = Livewire::actingAs($viewer->fresh())->test(ListStudents::class);
+    $component->call('mountAction', 'delete', [], $context);
 
-    Livewire::actingAs($viewer->fresh())
-        ->test(ListStudents::class)
-        ->call('mountAction', 'delete', ['record' => $student->getKey()]);
+    expect($component->get('mountedActions'))->toBeEmpty();
 
-    expect(Student::whereKey($student->getKey())->exists())->toBeTrue();
+    $component->call('callMountedAction');
+
+    expect(Student::whereKey($student->getKey())->exists())->toBeTrue()
+        ->and(Student::withTrashed()->whereKey($student->getKey())->first()->trashed())->toBeFalse();
 });
 
 it('lets staff create a student but refuses them the edit page', function () {
@@ -185,4 +221,108 @@ it('lets an admin delete a student from the edit page', function () {
     expect(Student::count())->toBe(0)
         // Soft deleted: the row leaves the register, not the database.
         ->and(Student::withTrashed()->count())->toBe(1);
+});
+
+it('lets staff actually submit the create form, not merely open it', function () {
+    // A 200 on GET /create only proves the page renders. The grant is real
+    // only if the submission persists.
+    Livewire::actingAs(($this->makeUser)('staff'))
+        ->test(CreateStudent::class)
+        ->fillForm([
+            'student_code' => 'STU-STAFF-0001',
+            'first_name' => 'Walk',
+            'last_name' => 'In',
+            'status' => 'prospective',
+        ])
+        ->call('create')
+        ->assertHasNoFormErrors();
+
+    expect(Student::where('student_code', 'STU-STAFF-0001')->exists())->toBeTrue();
+});
+
+it('ignores a user_id smuggled into the create payload', function () {
+    // user_id is not on the form: linking a login is phase 3's job, and a
+    // client-supplied value would let a student record be attached to any
+    // account — including an administrator's.
+    $victim = User::factory()->create();
+
+    Livewire::actingAs(($this->makeUser)('admin'))
+        ->test(CreateStudent::class)
+        ->fillForm([
+            'student_code' => 'STU-CRAFTED-0001',
+            'first_name' => 'Crafted',
+            'last_name' => 'Payload',
+            'status' => 'prospective',
+            'user_id' => $victim->getKey(),
+        ])
+        ->call('create');
+
+    $student = Student::where('student_code', 'STU-CRAFTED-0001')->first();
+
+    expect($student)->not->toBeNull()
+        ->and($student->user_id)->toBeNull();
+});
+
+it('ignores a user_id smuggled into an edit payload', function () {
+    $victim = User::factory()->create();
+    $student = Student::factory()->create(['user_id' => null]);
+
+    Livewire::actingAs(($this->makeUser)('admin'))
+        ->test(EditStudent::class, ['record' => $student->getKey()])
+        ->fillForm(['user_id' => $victim->getKey()])
+        ->call('save');
+
+    expect($student->fresh()->user_id)->toBeNull();
+});
+
+it('saves a real edit made by an admin', function () {
+    // The refusal paths are covered above; this is the positive control that
+    // proves the edit page is not simply broken for everyone.
+    $student = Student::factory()->create([
+        'first_name' => 'Amal',
+        'last_name' => 'Ibrahim',
+    ]);
+
+    Livewire::actingAs(($this->makeUser)('admin'))
+        ->test(EditStudent::class, ['record' => $student->getKey()])
+        ->fillForm([
+            'first_name' => 'Amel',
+            'status' => 'active',
+        ])
+        ->call('save')
+        ->assertHasNoFormErrors();
+
+    $student->refresh();
+
+    expect($student->first_name)->toBe('Amel')
+        ->and($student->last_name)->toBe('Ibrahim')
+        ->and($student->status->value)->toBe('active');
+});
+
+it('gates each resource page on its own permission', function () {
+    // The four pages are separate grants. An actor holding only view must not
+    // reach create or edit, and each refusal must come from the page itself.
+    $student = Student::factory()->create();
+
+    $viewer = User::factory()->create(['is_active' => true]);
+    $viewer->givePermissionTo('access_admin_panel', 'view_any_student', 'view_student');
+
+    $creator = User::factory()->create(['is_active' => true]);
+    $creator->givePermissionTo('access_admin_panel', 'view_any_student', 'view_student', 'create_student');
+
+    $editor = User::factory()->create(['is_active' => true]);
+    $editor->givePermissionTo('access_admin_panel', 'view_any_student', 'view_student', 'update_student');
+
+    $key = $student->getKey();
+
+    $this->actingAs($viewer->fresh())->get('/admin/students')->assertSuccessful();
+    $this->actingAs($viewer->fresh())->get("/admin/students/{$key}")->assertSuccessful();
+    $this->actingAs($viewer->fresh())->get('/admin/students/create')->assertForbidden();
+    $this->actingAs($viewer->fresh())->get("/admin/students/{$key}/edit")->assertForbidden();
+
+    $this->actingAs($creator->fresh())->get('/admin/students/create')->assertSuccessful();
+    $this->actingAs($creator->fresh())->get("/admin/students/{$key}/edit")->assertForbidden();
+
+    $this->actingAs($editor->fresh())->get("/admin/students/{$key}/edit")->assertSuccessful();
+    $this->actingAs($editor->fresh())->get('/admin/students/create')->assertForbidden();
 });

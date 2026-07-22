@@ -1837,6 +1837,8 @@ Nothing here is optional cleanup: as it stands, a certificate row can be created
 - Create: `app/Domain/Staff/Actions/{UploadStaffCertificateAction,DeleteStaffCertificateAction,UpdateStaffPhotoAction,DeleteStaffPhotoAction,DeleteStaffProfileAction}.php`
 - Create: `app/Domain/Staff/Filament/Resources/StaffProfileResource.php` + pages, and a certificates relation manager
 - Create: `app/Http/Controllers/Staff/StaffCertificateDownloadController.php` (or a signed-route equivalent)
+- Create: `database/migrations/*_create_pending_file_deletions_table.php`
+- Create: `app/Domain/Staff/Jobs/PurgeDeletedFileJob.php`
 - Modify: `routes/web.php`
 - Create: `tests/Feature/Staff/StaffCertificateUploadTest.php`, `StaffCertificateDownloadTest.php`, `StaffProfileResourceTest.php`
 
@@ -1860,13 +1862,19 @@ The database stores paths; nothing deletes bytes unless told to.
 
 **Filesystem operations do not participate in database transactions.** An earlier draft of this task said to delete the file "inside the same transaction boundary as the row removal" — that is not a thing that exists. `Storage::delete()` inside `DB::transaction()` still deletes immediately, and if the transaction then rolls back you have a row pointing at a file you already destroyed. That is worse than an orphan: the orphan is recoverable, the missing file is not.
 
-The correct order is therefore **commit first, delete after**:
+The correct order is therefore **commit first, delete after**, and the deletion must be **durably recorded before it is attempted** so a lost worker cannot lose the file forever:
 
-1. Remove the row (or rows) in a transaction and commit.
-2. Delete the bytes **after commit**, via `DB::afterCommit()` or a queued job.
-3. If the delete fails, **the operation still succeeded** — the row is gone, which is what the user asked for. Record the orphan for retry rather than throwing.
+1. In one transaction: write a `pending_file_deletions` row (`disk`, `path`, `attempts`, `last_error`, timestamps) for each file, remove the owning row(s), and commit.
+2. **After commit**, dispatch `PurgeDeletedFileJob` for each pending row.
+3. The job deletes the bytes and then removes its `pending_file_deletions` row. **On storage failure it throws** — it does not swallow, does not log-and-return. Throwing is what makes Laravel retry it.
+4. The job declares `public int $tries` and a backoff. A transient disk or S3 error retries on its own; a permanently failed job lands in `failed_jobs`, visible.
+5. Anything still in `pending_file_deletions` past a threshold is a reconcilable orphan — a scheduled sweep can re-dispatch it. **This table is the durability guarantee**: without it, a worker crashing between commit and delete loses the file silently and forever.
 
-Failures must be retryable, not silent. Use a queued job with `tries` and backoff, so a transient disk or S3 error retries on its own, and a permanently failed job lands in `failed_jobs` where it is visible.
+**Storage failures throw.** Do not catch a `Storage::delete()` or `Storage::put()` failure to keep a request "successful". A silent failure here means a document the centre is no longer entitled to hold stays on disk with nothing recording that fact. The only place a failure is tolerated is *inside the retrying job*, where throwing is precisely the retry mechanism.
+
+**No bulk bypass.** Filament authorizes a bulk action once against the `*Any` policy method and never consults the per-record method, so a bulk delete would skip both the per-profile certificate-grant check and the pending-deletion bookkeeping. `StaffProfileResource` and the certificates relation manager register **no bulk actions**, and `deleteAny()` returns `false` on both policies. A test asserts no bulk action is registered on either.
+
+**Storage identity fields are server-owned.** `disk`, `path`, and `original_filename` are set by `UploadStaffCertificateAction` from the `UploadedFile`, never from request input. `path` is a generated name; `original_filename` is the client's name stored as *data* and never used to build a filesystem path. None of the three appears as a writable form field, and a test asserts that crafting them into the payload does not change what is stored — a client-supplied `path` is a path-traversal and overwrite primitive.
 
 The consequences to cover:
 
@@ -1905,7 +1913,7 @@ Test each of these by asserting the file is *gone from disk*, not merely that th
 - `view_staff_certificate` **without** `update_staff_profile` — certificates are readable without the ability to amend the profile.
 - `create_staff_certificate` **without** `delete_staff_certificate` — upload succeeds, delete is refused.
 - `delete_staff_certificate` **without** `update_staff_profile` — the grant must be reachable in the UI. If deletion lives only on a page gated by `update_staff_profile`, this permission is unreachable and the split is fiction. The student resource hit exactly this: put the action where the grant can reach it, or the seeder is lying.
-- `delete_staff_profile` **without** `delete_staff_certificate` — decide and pin the behaviour: deleting a profile removes its certificates by cascade, so state explicitly whether that requires the certificate grant too.
+- `delete_staff_profile` **without** `delete_staff_certificate` — **decided: refused when the profile has certificates.** Deleting a profile destroys its certificate rows by cascade, so allowing it on the profile grant alone would let an actor delete documents they have no permission to delete. `DeleteStaffProfileAction` therefore requires `delete_staff_certificate` **as well** whenever `certificates()->exists()`. A profile with no certificates needs only `delete_staff_profile`. Test both branches, and assert the refusal leaves rows *and files* untouched.
 
 Each negative case must assert **database and disk state unchanged**, and drive the real component — a refusal proven only by a hidden button proves nothing.
 
@@ -1984,12 +1992,16 @@ it('soft deletes rather than removing the row', function () {
 });
 
 // Permission boundaries — negative assertions matter as much as positive ones.
-it('lets staff view students but not create them', function () {
+it('lets staff view and register students but not amend them', function () {
+    // Staff hold view + create, deliberately without update or delete:
+    // registering a walk-in is front-desk work, amending or removing an
+    // existing record is administrative. See spec section 5.
     $staff = User::factory()->create(['is_active' => true]);
-    $staff->assignRole('staff');
+    $this->system->assignRoles($staff, 'staff');
 
     expect($staff->can('viewAny', Student::class))->toBeTrue()
-        ->and($staff->can('create', Student::class))->toBeFalse()
+        ->and($staff->can('create', Student::class))->toBeTrue()
+        ->and($staff->can('update', Student::factory()->create()))->toBeFalse()
         ->and($staff->can('delete', Student::factory()->create()))->toBeFalse();
 });
 

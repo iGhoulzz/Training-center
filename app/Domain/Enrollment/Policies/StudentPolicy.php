@@ -18,11 +18,14 @@ use App\Models\User;
  * decision the centre confirmed, not an accident:
  *
  *   - super_admin, admin: the full set.
- *   - staff:              view_any_student and view_student, and nothing else.
+ *   - staff:              view_any_student, view_student and create_student.
  *                         Front-desk staff answer questions about any student
  *                         who walks in, so the read is deliberately unscoped —
- *                         it is NOT limited to the batches they teach. They may
- *                         not create, edit or delete a record.
+ *                         it is NOT limited to the batches they teach, and they
+ *                         register walk-ins themselves. They may NOT update or
+ *                         delete: create without update is the deliberate part,
+ *                         because amending or removing an existing record is an
+ *                         administrative act rather than front-desk work.
  *   - student:            nothing. The portal (phase 3) is a separate panel
  *                         with a separate guard, and this policy governs the
  *                         staff dashboard only.
