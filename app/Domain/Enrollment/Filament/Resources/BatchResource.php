@@ -118,11 +118,11 @@ class BatchResource extends Resource
                  * IMMUTABLE.
                  *
                  * Re-parenting silently rewrites what the batch inherits — its
-                 * total_hours, and from phase 2 its price — and from Task 10
-                 * and 11 it would strand instructor hour allocations and
-                 * enrolments against a course those people never taught or
-                 * enrolled on. A completed batch could be moved to an entirely
-                 * different course with no error at all.
+                 * total_hours — and from Task 10 and 11 it would strand
+                 * instructor hour allocations and enrolments against a course
+                 * those people never taught or enrolled on. A completed batch
+                 * could be moved to an entirely different course with no error
+                 * at all.
                  *
                  * disabled() alone is a UX affordance; dehydrated(false) on
                  * edit is what stops a crafted payload writing the column,
