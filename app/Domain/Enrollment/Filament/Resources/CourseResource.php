@@ -152,6 +152,14 @@ class CourseResource extends Resource
                     ->numeric()
                     ->sortable(),
 
+                // How many times this course has actually been run. Counted
+                // rather than stored: a cached count is a derived value that
+                // drifts, and the catalogue list is the only place it is read.
+                TextColumn::make('batches_count')
+                    ->label(__('enrollment.batches'))
+                    ->counts('batches')
+                    ->numeric(),
+
                 IconColumn::make('is_active')
                     ->label(__('enrollment.is_active'))
                     ->boolean()

@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
  * A catalogue template: what the centre offers, not what it is currently
@@ -16,10 +17,7 @@ use Illuminate\Database\Eloquent\Model;
  *
  * Batches are the running instances. A course is edited in place — correcting
  * its hours or its description changes what every inheriting batch reports,
- * which is the point of keeping the definition in one row. The batches()
- * relation is added by P1-T09, which introduces the Batch model; a relation
- * pointing at a class that does not exist yet is a fatal error waiting for the
- * first eager load, and it would fail static analysis today.
+ * which is the point of keeping the definition in one row.
  *
  * Configuration only — casts, one relationship, one scope, one display helper.
  * No business logic and no write guards; see App\Models\User for why that
@@ -43,6 +41,21 @@ class Course extends Model
 {
     /** @use HasFactory<CourseFactory> */
     use HasFactory;
+
+    /**
+     * Every intake of this course, past and present.
+     *
+     * NOT a cascade path. batches.course_id is restrictOnDelete, so a course
+     * with batches cannot be deleted at all and the teaching history hanging
+     * off those batches survives. Deleting through this relation is refused by
+     * the database, not merely discouraged here.
+     *
+     * @return HasMany<Batch, $this>
+     */
+    public function batches(): HasMany
+    {
+        return $this->hasMany(Batch::class);
+    }
 
     /**
      * Limit a query to courses the centre still offers.
