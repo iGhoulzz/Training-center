@@ -104,7 +104,7 @@ Authorization is **permission-based, never role-based, in code**. Always `$user-
 
 | Capability | Super Admin | Admin | Staff | Student |
 |---|---|---|---|---|
-| Students | full | full | view all, edit own batches | own record (P3) |
+| Students | full | full | view all, create | own record (P3) |
 | Courses and batches | full | full | view | own (P3) |
 | Enrollments | full | full | create/edit in own batches | own (P3) |
 | Staff accounts | full | all except super admins | none | none |
@@ -116,6 +116,8 @@ Authorization is **permission-based, never role-based, in code**. Always `$user-
 | Edit/reverse payments (P2) | full | none | none | none |
 | Compensation and payroll (P2) | full | view | none | none |
 | Financial reports (P2) | full | view and export | none | own balance (P3) |
+
+The students row previously read "view all, edit own batches", which conflated two different things: a student **record**, and the **enrolments** that place a student in a batch. Staff scope applies to the latter. On student records staff hold **view and create** — they register walk-ins and see the whole register — but not update or delete, because correcting or removing an existing record is an administrative act. Create without update is deliberate; the two are separate grants and are tested as such.
 
 The "roles and permissions" row originally read `none` for admins while the row above granted them staff-account management. Those are incompatible once creating an account requires giving it a role: an admin could only ever produce an account that rolled back or could reach no panel. Admins therefore hold `assign_role`, and **guard 1 — not the absence of the permission — is the boundary**. Admins cannot manage the roles themselves (creating, renaming, deleting a role, or changing its permissions remains super-admin-only via `RolePolicy`); they can only assign existing roles below `super_admin` to users.
 

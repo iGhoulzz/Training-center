@@ -107,7 +107,11 @@ class RolePermissionSeeder extends Seeder
         ]);
 
         $writer->syncRolePermissions(Role::findOrCreate('staff', 'web'), [
-            'view_any_student', 'view_student',
+            // Staff register walk-in students and see the whole register, but do
+            // not amend or remove existing records: correcting a name or
+            // deleting a student is an administrative act. create without
+            // update is deliberate, not an oversight.
+            'view_any_student', 'view_student', 'create_student',
             'view_any_course', 'view_course',
             'view_any_batch', 'view_batch',
             'view_any_enrollment', 'view_enrollment',

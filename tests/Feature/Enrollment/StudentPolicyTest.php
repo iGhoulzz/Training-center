@@ -55,13 +55,16 @@ it('lets an admin fully manage students', function () {
         ->and($this->admin->can('delete', $this->record))->toBeTrue();
 });
 
-it('lets staff read every student but change none of them', function () {
+it('lets staff read every student and register new ones, but amend none', function () {
     // The read is deliberately unscoped: front-desk staff answer questions
     // about whoever walks in, so it is NOT limited to the batches they teach.
-    // The write side is the whole of the restriction.
+    //
+    // create WITHOUT update is the deliberate part. Registering a walk-in is
+    // front-desk work; correcting or removing an existing record is an
+    // administrative act, and the two are separate grants.
     expect($this->staff->can('viewAny', Student::class))->toBeTrue()
         ->and($this->staff->can('view', $this->record))->toBeTrue()
-        ->and($this->staff->can('create', Student::class))->toBeFalse()
+        ->and($this->staff->can('create', Student::class))->toBeTrue()
         ->and($this->staff->can('update', $this->record))->toBeFalse()
         ->and($this->staff->can('delete', $this->record))->toBeFalse();
 });

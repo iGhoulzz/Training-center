@@ -19,6 +19,32 @@ use Illuminate\Support\Facades\Storage;
  */
 uses(RefreshDatabase::class);
 
+/**
+ * Do two directories overlap — identical, or one containing the other?
+ *
+ * Exact equality is not sufficient when comparing a private root against a
+ * web-served one. A served directory that is an ANCESTOR of the private root
+ * reaches every file beneath it; a served directory INSIDE the private root
+ * exposes part of it. Either way the documents become reachable, so both
+ * directions count as overlap.
+ *
+ * Both arguments must already be realpath()-resolved, so that a symlink or a
+ * "..\" segment cannot make two names for one directory look distinct.
+ */
+function pathsOverlap(string $a, string $b): bool
+{
+    if ($a === '' || $b === '') {
+        return false;
+    }
+
+    $a = rtrim($a, DIRECTORY_SEPARATOR);
+    $b = rtrim($b, DIRECTORY_SEPARATOR);
+
+    return $a === $b
+        || str_starts_with($a, $b.DIRECTORY_SEPARATOR)
+        || str_starts_with($b, $a.DIRECTORY_SEPARATOR);
+}
+
 it('lets one profile hold several certificates', function () {
     $profile = StaffProfile::factory()->create();
 
@@ -134,10 +160,11 @@ it('stores certificates on a disk that is private and outside the public directo
     $publicRoot = realpath(public_path());
 
     expect($root)->not->toBeFalse('The private disk root does not exist.')
-        ->and(str_starts_with((string) $root, (string) $publicRoot))->toBeFalse(
-            'The private disk root is inside public/, so the web server serves it directly.'
+        ->and(pathsOverlap((string) $root, (string) $publicRoot))->toBeFalse(
+            'The private disk root overlaps public/, so the web server can reach it.'
         )
-        ->and($disk['root'])->not->toBe(config('filesystems.disks.public.root'));
+        ->and(pathsOverlap((string) $root, (string) realpath((string) config('filesystems.disks.public.root'))))
+        ->toBeFalse('The private disk root overlaps the public disk root.');
 });
 
 it('does not share its root with any disk the framework serves over HTTP', function () {
@@ -167,9 +194,15 @@ it('does not share its root with any disk the framework serves over HTTP', funct
 
         $servedRoot = realpath((string) ($disk['root'] ?? ''));
 
-        expect($servedRoot)->not->toBe(
-            $privateRoot,
-            "The '{$name}' disk is served over HTTP and shares the private disk's root."
+        if ($servedRoot === false) {
+            continue;
+        }
+
+        // Equality is not enough. A served disk rooted at an ANCESTOR of the
+        // private root reaches every certificate beneath it, and a served disk
+        // rooted INSIDE the private root exposes part of it. Both are overlap.
+        expect(pathsOverlap((string) $privateRoot, $servedRoot))->toBeFalse(
+            "The '{$name}' disk is served over HTTP and its root overlaps the private disk root."
         );
     }
 });
@@ -199,17 +232,13 @@ it('gives the private disk no public url and no symlink into public', function (
     foreach ($links as $link => $target) {
         $resolvedTarget = realpath((string) $target);
 
-        expect($resolvedTarget)->not->toBe(
-            $privateRoot,
-            "storage:link maps {$link} onto the private disk root."
-        );
-
-        // A link to an ancestor directory would expose the private root too.
-        if ($resolvedTarget !== false) {
-            expect(str_starts_with((string) $privateRoot, $resolvedTarget.DIRECTORY_SEPARATOR))->toBeFalse(
-                "storage:link maps {$link} onto an ancestor of the private disk root."
-            );
+        if ($resolvedTarget === false) {
+            continue;
         }
+
+        expect(pathsOverlap((string) $privateRoot, $resolvedTarget))->toBeFalse(
+            "storage:link maps {$link} onto the private disk root, an ancestor of it, or a directory inside it."
+        );
     }
 });
 

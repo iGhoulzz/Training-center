@@ -164,3 +164,20 @@ it('nulls user_id when a soft deleted account is later purged', function () {
     expect($student->fresh()?->user_id)->toBeNull()
         ->and($student->fresh()?->trashed())->toBeFalse();
 });
+
+it('allows only one student per portal account', function () {
+    // user_id is unique: a login belongs to exactly one student record. Without
+    // this, phase 3's portal could not resolve which student is signed in.
+    $user = User::factory()->create();
+
+    Student::factory()->create(['user_id' => $user->id]);
+    Student::factory()->create(['user_id' => $user->id]);
+})->throws(UniqueConstraintViolationException::class);
+
+it('allows many students with no portal account', function () {
+    // The unique index must not treat repeated NULLs as duplicates — most
+    // students never get a login, so this is the common case, not an edge one.
+    Student::factory()->count(3)->create(['user_id' => null]);
+
+    expect(Student::whereNull('user_id')->count())->toBe(3);
+});

@@ -11,6 +11,7 @@ use App\Domain\Enrollment\Filament\Resources\StudentResource\Pages\ListStudents;
 use App\Domain\Enrollment\Filament\Resources\StudentResource\Pages\ViewStudent;
 use App\Domain\Enrollment\Models\Student;
 use BackedEnum;
+use Filament\Actions\DeleteAction;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
@@ -166,7 +167,23 @@ class StudentResource extends Resource
             // Surname order: the register is a list of people, and the desk
             // looks someone up by name far more often than by when they were
             // added. The composite index serves this sort directly.
-            ->defaultSort('last_name');
+            ->defaultSort('last_name')
+            // Delete belongs on the row, not only on the edit page.
+            //
+            // EditRecord::authorizeAccess() requires update_student to open the
+            // page at all, so an actor holding delete_student WITHOUT
+            // update_student could never reach a delete action placed there —
+            // the grant would be unreachable, and the two permissions are
+            // separate on purpose. From the table it is reachable with view +
+            // delete alone.
+            //
+            // authorize() rather than visible(): visible() is a UX affordance
+            // that a crafted Livewire mount ignores, whereas authorize() runs
+            // StudentPolicy::delete() against this record on the server.
+            ->recordActions([
+                DeleteAction::make()
+                    ->authorize('delete'),
+            ]);
     }
 
     public static function getPages(): array

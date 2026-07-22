@@ -1834,7 +1834,7 @@ Keep the branch. Task 15 reviews it.
 Nothing here is optional cleanup: as it stands, a certificate row can be created but never uploaded, viewed, or removed, and deleting a row leaves its file on disk forever.
 
 **Files:**
-- Create: `app/Domain/Staff/Actions/{UploadStaffCertificateAction,DeleteStaffCertificateAction,UpdateStaffPhotoAction,DeleteStaffPhotoAction}.php`
+- Create: `app/Domain/Staff/Actions/{UploadStaffCertificateAction,DeleteStaffCertificateAction,UpdateStaffPhotoAction,DeleteStaffPhotoAction,DeleteStaffProfileAction}.php`
 - Create: `app/Domain/Staff/Filament/Resources/StaffProfileResource.php` + pages, and a certificates relation manager
 - Create: `app/Http/Controllers/Staff/StaffCertificateDownloadController.php` (or a signed-route equivalent)
 - Modify: `routes/web.php`
@@ -1849,17 +1849,34 @@ UploadStaffCertificateAction::execute(User $actor, StaffProfile $profile, Upload
 DeleteStaffCertificateAction::execute(User $actor, StaffCertificate $certificate): void
 UpdateStaffPhotoAction::execute(User $actor, StaffProfile $profile, UploadedFile $file): void
 DeleteStaffPhotoAction::execute(User $actor, StaffProfile $profile): void
+DeleteStaffProfileAction::execute(User $actor, StaffProfile $profile): void
 ```
+
+`DeleteStaffProfileAction` exists because the database cascade removes certificate *rows* and leaves their *bytes*. Deleting a profile through Eloquent alone silently orphans every file that profile owned.
 
 ### Physical file lifecycle — the part most easily missed
 
 The database stores paths; nothing deletes bytes unless told to.
 
-- **Deleting a certificate row must delete its file**, on the disk named in `disk`, inside the same transaction boundary as the row removal. Orphaned files accumulate silently and are personal data the centre no longer has a reason to hold.
-- **Deleting a staff profile must remove every certificate file and the profile photo**, not merely cascade the rows. The DB cascade removes records and leaves the bytes.
-- **Replacing a photo must delete the file it replaced.**
-- **A failed upload must leave nothing behind** — no row without a file, no file without a row.
-- Write a test that asserts the file is *gone from disk* after each of these, using `Storage::fake()` where appropriate and a real disk assertion where not.
+**Filesystem operations do not participate in database transactions.** An earlier draft of this task said to delete the file "inside the same transaction boundary as the row removal" — that is not a thing that exists. `Storage::delete()` inside `DB::transaction()` still deletes immediately, and if the transaction then rolls back you have a row pointing at a file you already destroyed. That is worse than an orphan: the orphan is recoverable, the missing file is not.
+
+The correct order is therefore **commit first, delete after**:
+
+1. Remove the row (or rows) in a transaction and commit.
+2. Delete the bytes **after commit**, via `DB::afterCommit()` or a queued job.
+3. If the delete fails, **the operation still succeeded** — the row is gone, which is what the user asked for. Record the orphan for retry rather than throwing.
+
+Failures must be retryable, not silent. Use a queued job with `tries` and backoff, so a transient disk or S3 error retries on its own, and a permanently failed job lands in `failed_jobs` where it is visible.
+
+The consequences to cover:
+
+- **Deleting a certificate row deletes its file**, on the disk named in its `disk` column — after commit.
+- **Deleting a staff profile removes every certificate file and the profile photo.** Collect the paths *before* the cascade destroys the rows; afterwards there is nothing left to read them from.
+- **Replacing a photo deletes the file it replaced** — after the new path is committed, never before, or a failed save leaves the profile pointing at a file that is gone.
+- **A failed upload leaves nothing behind** — no row without a file, no file without a row. Write the file first, then the row; if the row write fails, remove the file.
+- **An orphaned file is a bug, not an acceptable outcome.** These documents are personal data the centre no longer has grounds to hold.
+
+Test each of these by asserting the file is *gone from disk*, not merely that the row went. Include a failure case: make the disk delete throw, and assert the row is still gone and the failure was recorded for retry rather than swallowed.
 
 ### Upload validation
 
@@ -1879,6 +1896,18 @@ The database stores paths; nothing deletes bytes unless told to.
 - Follows the Task 5 contract: no `->relationship()` auto-persistence for anything an Action owns, save hooks call the Actions with `auth()->user()`, and `protected ?bool $hasDatabaseTransactions = true`.
 - The photo field is `dehydrated(false)`; `UpdateStaffPhotoAction` performs the write.
 - Certificates are managed through a relation manager whose create/delete route through the Actions.
+
+### Split-permission tests — every grant reachable, none implied by another
+
+`staff_profile` and `staff_certificate` carry **separate** permission sets, because a job title and a scanned national ID are different sensitivity levels. That separation is only real if each grant is independently reachable and independently refused. Test with actors built from individual permissions, not role fixtures:
+
+- `view_staff_profile` **without** `view_staff_certificate` — the profile opens; the certificate list and every download are refused.
+- `view_staff_certificate` **without** `update_staff_profile` — certificates are readable without the ability to amend the profile.
+- `create_staff_certificate` **without** `delete_staff_certificate` — upload succeeds, delete is refused.
+- `delete_staff_certificate` **without** `update_staff_profile` — the grant must be reachable in the UI. If deletion lives only on a page gated by `update_staff_profile`, this permission is unreachable and the split is fiction. The student resource hit exactly this: put the action where the grant can reach it, or the seeder is lying.
+- `delete_staff_profile` **without** `delete_staff_certificate` — decide and pin the behaviour: deleting a profile removes its certificates by cascade, so state explicitly whether that requires the certificate grant too.
+
+Each negative case must assert **database and disk state unchanged**, and drive the real component — a refusal proven only by a hidden button proves nothing.
 
 ### Access
 
