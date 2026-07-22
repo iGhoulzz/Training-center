@@ -166,7 +166,10 @@ it('rolls the attribute changes back when the role change is refused', function 
         ->test(EditUser::class, ['record' => $target->getKey()])
         ->fillForm([
             'name' => 'Renamed By Admin',
-            'roles' => ['staff', 'admin'],
+            // super_admin, because admins may now assign lesser roles freely
+            // (P1-T05b). Guard 1 is what refuses this, and the refusal must
+            // take the rename with it.
+            'roles' => ['staff', 'super_admin'],
         ])
         ->call('save')
         ->assertNotified(__('staff.save_refused_unauthorized'));
@@ -228,13 +231,8 @@ it('does not offer the delete action for a super admin self-deletion', function 
 
     $component->assertTableActionHidden('delete', $superAdmin);
 
-    try {
-        $component->callTableAction('delete', $superAdmin);
-
-        $this->fail('The delete action was invokable on the actor themselves; it must be refused.');
-    } catch (ExpectationFailedException) {
-        // Expected: Filament refused to call a non-visible action.
-    }
+    expect(fn () => $component->callTableAction('delete', $superAdmin))
+        ->toThrow(ExpectationFailedException::class);
 
     expect(User::find($superAdmin->getKey()))->not->toBeNull();
 });
@@ -255,13 +253,8 @@ it('refuses a password reset of a super admin invoked from the table', function 
 
     $component->assertTableActionHidden('resetPassword', $superAdmin);
 
-    try {
-        $component->callTableAction('resetPassword', $superAdmin);
-
-        $this->fail('The reset-password action was invokable against a super admin.');
-    } catch (ExpectationFailedException) {
-        // Expected: the action is not visible to this actor.
-    }
+    expect(fn () => $component->callTableAction('resetPassword', $superAdmin))
+        ->toThrow(ExpectationFailedException::class);
 
     expect($superAdmin->fresh()->password)->toBe($originalPassword)
         ->and($superAdmin->fresh()->must_change_password)->toBeFalse();

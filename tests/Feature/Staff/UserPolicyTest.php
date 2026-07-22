@@ -69,10 +69,17 @@ it('forbids an admin from deleting their own account', function () {
     expect($this->admin->can('delete', $this->admin))->toBeFalse();
 });
 
-// Guard 4: only holders of assign_role may manage roles — admins may not.
-it('forbids an admin from assigning even a lesser role', function () {
-    // Admins manage staff accounts but not roles: assign_role is super-admin-only.
-    expect($this->admin->can('assignRole', [User::class, 'staff']))->toBeFalse();
+// Guard 4: only holders of assign_role may manage roles. Admins hold it
+// (P1-T05b) so they can onboard staff — an admin who could create an account
+// but never give it a role would only ever produce unreachable accounts.
+it('forbids an actor without assign_role from assigning even a lesser role', function () {
+    expect($this->staff->can('assignRole', [User::class, 'staff']))->toBeFalse();
+});
+
+it('lets an admin assign a lesser role but never super_admin', function () {
+    // Guard 1, not the absence of assign_role, is the boundary for admins.
+    expect($this->admin->can('assignRole', [User::class, 'staff']))->toBeTrue()
+        ->and($this->admin->can('assignRole', [User::class, 'super_admin']))->toBeFalse();
 });
 
 // Rank is resolved by role, never by a directly granted permission.

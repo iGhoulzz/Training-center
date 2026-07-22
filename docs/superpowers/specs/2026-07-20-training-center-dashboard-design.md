@@ -80,7 +80,9 @@ Filament's native authentication. No Breeze, Fortify, or Jetstream — Filament 
 
 - **No public registration.** Registration routes are not enabled on either panel.
 - **Identity:** email and password.
-- **Account creation:** super admin creates staff accounts; staff create student records and, from phase 3, issue portal credentials.
+- **Account creation:** super admins and admins create staff accounts, and both may assign roles — but **only a super admin may grant or revoke `super_admin`**, or create an account holding it. Staff create student records and, from phase 3, issue portal credentials.
+
+  Creating an account requires `create_user` **and** `reset_user_password`: the form has no password field (an administrator typing someone else's password is a credential they then know), so creation issues a temporary one. Being able to create an account whose password you can see is the same capability as resetting one. At least one role is required, since panel access comes from a role and a roleless account is one nobody can sign in to.
 - **Password reset (phase 1):** an administrator opens the user record and generates a temporary password, displayed once. The `must_change_password` flag forces a change at next login.
 - **Notifications** are implemented as Laravel Notification classes with the mail driver set to `log`. Enabling welcome and password-reset emails later requires configuring a provider, not rewriting code.
 - **Sessions:** database-backed, 8-hour idle timeout.
@@ -106,7 +108,7 @@ Authorization is **permission-based, never role-based, in code**. Always `$user-
 | Courses and batches | full | full | view | own (P3) |
 | Enrollments | full | full | create/edit in own batches | own (P3) |
 | Staff accounts | full | all except super admins | none | none |
-| Roles and permissions | full | none | none | none |
+| Roles and permissions | full | assign roles below super_admin | none | none |
 | Activity log | full | view | none | none |
 | System settings | full | none | none | none |
 | Course pricing (P2) | full | view | none | none |
@@ -114,6 +116,8 @@ Authorization is **permission-based, never role-based, in code**. Always `$user-
 | Edit/reverse payments (P2) | full | none | none | none |
 | Compensation and payroll (P2) | full | view | none | none |
 | Financial reports (P2) | full | view and export | none | own balance (P3) |
+
+The "roles and permissions" row originally read `none` for admins while the row above granted them staff-account management. Those are incompatible once creating an account requires giving it a role: an admin could only ever produce an account that rolled back or could reach no panel. Admins therefore hold `assign_role`, and **guard 1 — not the absence of the permission — is the boundary**. Admins cannot manage the roles themselves (creating, renaming, deleting a role, or changing its permissions remains super-admin-only via `RolePolicy`); they can only assign existing roles below `super_admin` to users.
 
 The payment split is deliberate. Front-desk administrators must be able to record incoming money without a super admin present, but corrections and reversals are a separate, restricted capability — that boundary is what makes the audit trail meaningful.
 

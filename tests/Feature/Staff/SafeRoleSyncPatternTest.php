@@ -35,11 +35,12 @@ beforeEach(function () {
 it('routes through the guards and blocks an unauthorized role write', function () {
     $target = User::factory()->create();
 
-    // Admin holds no assign_role ability.
-    expect(fn () => $this->sync->execute($this->admin, $target, ['admin']))
+    // Admins hold assign_role since P1-T05b, so the boundary they hit is
+    // guard 1: they may set lesser roles but never super_admin.
+    expect(fn () => $this->sync->execute($this->admin, $target, ['super_admin']))
         ->toThrow(AuthorizationException::class);
 
-    expect($target->fresh()->hasRole('admin'))->toBeFalse();
+    expect($target->fresh()->hasRole('super_admin'))->toBeFalse();
 });
 
 it('lets a super admin set roles through the action', function () {

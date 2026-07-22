@@ -82,13 +82,24 @@ it('forbids an admin from granting super_admin (guards 4 and 1)', function () {
     expect($target->fresh()->hasRole('super_admin'))->toBeFalse();
 });
 
-it('forbids an admin from assigning even a lesser role (guard 4)', function () {
+// Guard 4 targets an actor genuinely lacking assign_role. Admins hold it
+// deliberately (P1-T05b) so they can onboard staff; guard 1 is what stops them
+// reaching super_admin, and the case above proves that.
+it('forbids an actor without assign_role from assigning even a lesser role (guard 4)', function () {
     $target = User::factory()->create();
 
-    expect(fn () => $this->sync->execute($this->admin, $target, ['staff']))
+    expect(fn () => $this->sync->execute($this->staff, $target, ['staff']))
         ->toThrow(AuthorizationException::class);
 
     expect($target->fresh()->hasRole('staff'))->toBeFalse();
+});
+
+it('lets an admin assign a lesser role, which is the point of granting them assign_role', function () {
+    $target = User::factory()->create();
+
+    $this->sync->execute($this->admin, $target, ['staff']);
+
+    expect($target->fresh()->roles()->pluck('name')->all())->toBe(['staff']);
 });
 
 it('forbids an admin from removing super_admin from one of two super admins (guard 1 rank refusal, not last-admin)', function () {

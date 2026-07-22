@@ -61,9 +61,21 @@ class UserPolicy
         return $actor->can('view_user');
     }
 
+    /**
+     * Creating an account issues its first credential, so it requires
+     * permission to do that as well as permission to create the row.
+     *
+     * The create form has no password field on purpose — an administrator
+     * typing someone else's password is a credential they then know — so
+     * CreateUser generates a temporary one through ResetUserPasswordAction.
+     * Being able to create an account whose password you can see is the same
+     * capability as resetting one, so it is gated the same way. Stating it
+     * here means the UI hides "New user" from an actor who would only hit an
+     * authorization failure at save time.
+     */
     public function create(User $actor): bool
     {
-        return $actor->can('create_user');
+        return $actor->can('create_user') && $actor->can('reset_user_password');
     }
 
     public function update(User $actor, User $target): bool

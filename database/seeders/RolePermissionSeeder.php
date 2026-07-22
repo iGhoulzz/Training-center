@@ -91,6 +91,13 @@ class RolePermissionSeeder extends Seeder
             'access_admin_panel',
             'reset_user_password',
             'assign_instructor',
+            // Admins onboard staff, so they need to assign roles. The boundary
+            // is guard 1, not the absence of this permission: only a super
+            // admin may grant or revoke super_admin, enforced in
+            // SyncUserRolesAction and UserPolicy. Without assign_role an admin
+            // could create an account but never give it a role, producing an
+            // account that cannot reach any panel.
+            'assign_role',
         ]);
 
         $writer->syncRolePermissions(Role::findOrCreate('staff', 'web'), [

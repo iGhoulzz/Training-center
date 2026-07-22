@@ -141,9 +141,11 @@ Guards 1, 2, and 4 are actor-relative, so they do not apply where there is no ac
 
 Creating a staff account requires **both** `create_user` and `reset_user_password`. That is deliberate, not an accidental coupling: the form has no password field (an administrator typing someone else's password is a credential they then know), so creation issues a temporary password through `ResetUserPasswordAction`. Being able to create an account with a password you can see is the same capability as resetting one, so it is gated by the same permission. Both `admin` and `super_admin` hold it.
 
-### Filament modal actions bypass the save hooks
+### Filament modal actions bypass the save hooks — and `->url()` does not disable them
 
-`CreateAction` and `EditAction` in their **modal** form persist with a bare `$model::create($data)` / `$record->update($data)`, which never reaches a page's `afterCreate()` / `afterSave()`. For any resource whose writes must route through an Action, that silently does nothing — roles and `is_active` would appear to save and not. `UserResource` therefore links rows to the full edit page and gives `CreateAction` an explicit `->url()`, rather than using the modal variants.
+`CreateAction` and `EditAction` in their **modal** form persist with a bare `$model::create($data)` / `$record->update($data)`, which never reaches a page's `afterCreate()` / `afterSave()`. For any resource whose writes must route through an Action, that silently does nothing — roles and `is_active` would appear to save and not.
+
+**Setting `->url()` is not a fix.** It replaces the browser click behaviour, but the server-side create/edit handler stays registered and mountable, so a crafted Livewire mount can still reach it. Use a **plain `Action::make('create')->url(...)`** instead — it has no handler to reach, because none was ever registered — and gate it explicitly with the resource's `canCreate()`, since a plain Action carries no resource-aware authorization of its own. `UserResource` does this, and a test asserts the registered action is not a `CreateAction`.
 
 ### Bulk actions cannot be authorized per record
 

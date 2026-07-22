@@ -128,6 +128,12 @@ class UserResource extends Resource
                 ->label(__('staff.roles'))
                 ->multiple()
                 ->dehydrated(false)
+                // At least one role is required. Panel access comes from the
+                // access_admin_panel permission, which is granted through a
+                // role — so a roleless account is one nobody can ever sign in
+                // to, silently created and needing a second edit to fix.
+                ->required()
+                ->minItems(1)
                 ->options(fn (): array => Role::query()->pluck('name', 'name')->all())
                 ->afterStateHydrated(fn (Select $component, ?User $record) => $component->state(
                     $record?->roles()->pluck('name')->all() ?? [],

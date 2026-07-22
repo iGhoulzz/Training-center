@@ -55,18 +55,16 @@ it('leaves every role intact when a bulk delete is invoked directly', function (
     // asserts visibility first, so the refusal surfaces as an expectation
     // failure. Catch ONLY that: a broader catch would swallow a genuine error
     // and let this test pass for the wrong reason.
-    try {
-        Livewire::actingAs($this->superAdmin)
-            ->test(ListRoles::class)
-            ->callTableBulkAction('delete', [
-                $superAdminRole->getKey(),
-                $staffRole->getKey(),
-            ]);
-
-        $this->fail('The bulk delete action was invokable; it must be refused.');
-    } catch (ExpectationFailedException) {
-        // Expected: Filament refused to call a non-visible action.
-    }
+    // Stated as an explicit expectation rather than try/catch: the previous
+    // form needed the reader to know that ExpectationFailedException is a
+    // SUBclass of the AssertionFailedError that fail() throws, so the guard
+    // could not swallow itself. Correct, but not worth the reasoning.
+    expect(fn () => Livewire::actingAs($this->superAdmin)
+        ->test(ListRoles::class)
+        ->callTableBulkAction('delete', [
+            $superAdminRole->getKey(),
+            $staffRole->getKey(),
+        ]))->toThrow(ExpectationFailedException::class);
 
     expect(Role::where('name', Role::SUPER_ADMIN)->exists())->toBeTrue()
         ->and(Role::where('name', 'staff')->exists())->toBeTrue()
