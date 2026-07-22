@@ -169,25 +169,31 @@ it('does not delete or deactivate users outside the sanctioned Actions', functio
     // both belong to DeleteUserAction / DeactivateUserAction where the invariant
     // service runs.
     //
-    // Scoped to files that actually touch the User model. The bare pattern
-    // matches ANY ->delete(), which caught CourseResource deleting a course —
-    // a correct match for the regex and a wrong one for the rule, since no
-    // invariant hangs off a course. Widening the allowlist instead would have
-    // eroded the rule one resource at a time; narrowing it to the model it
-    // protects keeps it sharp. A file deleting users necessarily names User.
-    $offenders = array_values(array_filter(
-        filesMatching(
-            '/->\s*(delete|forceDelete)\s*\(\s*\)|[\'"]is_active[\'"]\s*=>\s*(false|0)\b/',
-            ['DeleteUserAction', 'DeactivateUserAction'],
-        ),
-        fn (string $path): bool => (bool) preg_match(
-            '/\bUser\b/',
-            appSourceWithoutComments(base_path($path)),
-        ),
-    ));
+    // The detector is DELIBERATELY BROAD: any ->delete(), on anything.
+    //
+    // A previous version filtered to files naming the User model, to stop it
+    // matching CourseResource. That filter was unsound — it is case sensitive
+    // and matches a class name, so `$request->user()->delete()` sails straight
+    // past it while deleting exactly the model the rule protects. A detector
+    // with a hole is worse than none, because it reads as coverage.
+    //
+    // The allowlist is the right lever: it names the Actions sanctioned to
+    // delete a record, each of which owns its own invariant. Adding to it is a
+    // deliberate act, visible in review, whereas a cleverer regex silently
+    // stops catching things.
+    $offenders = filesMatching(
+        '/->\s*(delete|forceDelete)\s*\(\s*\)|[\'"]is_active[\'"]\s*=>\s*(false|0)\b/',
+        [
+            // Users: the last-super-admin invariant lives behind these.
+            'DeleteUserAction',
+            'DeactivateUserAction',
+            // Courses: refuses while batches reference the course.
+            'DeleteCourseAction',
+        ],
+    );
 
     expect($offenders)->toBeEmpty(
-        'User deletion and deactivation must go through DeleteUserAction / DeactivateUserAction: '
+        'Record deletion and user deactivation must go through a sanctioned Action: '
         .implode(', ', $offenders),
     );
 });

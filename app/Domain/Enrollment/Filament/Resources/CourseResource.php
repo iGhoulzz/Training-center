@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Domain\Enrollment\Filament\Resources;
 
+use App\Domain\Enrollment\Actions\DeleteCourseAction;
+use App\Domain\Enrollment\Exceptions\CourseInUseException;
 use App\Domain\Enrollment\Filament\Resources\CourseResource\Pages\CreateCourse;
 use App\Domain\Enrollment\Filament\Resources\CourseResource\Pages\EditCourse;
 use App\Domain\Enrollment\Filament\Resources\CourseResource\Pages\ListCourses;
@@ -21,8 +23,6 @@ use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
-use Illuminate\Database\QueryException;
-use Illuminate\Support\Facades\DB;
 
 /**
  * The course catalogue (P1-T08).
@@ -141,9 +141,28 @@ class CourseResource extends Resource
                     ->searchable()
                     ->sortable(),
 
-                // Shows the localized name but sorts and searches the real
-                // columns behind it — Course::name() is a locale-dependent
-                // method, not an attribute, so it cannot be ordered on.
+                /*
+                 * Shows the localized name but sorts and searches the real
+                 * columns behind it — Course::name() is a locale-dependent
+                 * method, not an attribute, so it cannot be ordered on.
+                 *
+                 * name_en is indexed because it is SORTED on (defaultSort and
+                 * this column). name_ar is deliberately NOT indexed, and that
+                 * is not an oversight:
+                 *
+                 * Filament's search builds `LIKE %term%`. A leading wildcard
+                 * cannot use a B-tree index at all — the index is ordered by
+                 * prefix, and a search with no known prefix has nothing to seek
+                 * on, so MySQL scans regardless. An index on name_ar would cost
+                 * writes and disk while never once being used, which is exactly
+                 * the "ineffective index" ENGINEERING.md warns against.
+                 *
+                 * If Arabic search ever becomes slow enough to matter, the fix
+                 * is a FULLTEXT index with MATCH ... AGAINST, or a search
+                 * engine — not a B-tree. Revisit when the catalogue is large
+                 * enough for it to be measurable; a training centre's course
+                 * list is not.
+                 */
                 TextColumn::make('name_en')
                     ->label(__('enrollment.course_name'))
                     ->formatStateUsing(fn (Course $record): string => $record->name())
@@ -209,24 +228,12 @@ class CourseResource extends Resource
         return DeleteAction::make()
             ->authorize('delete')
             ->action(function (Course $record, DeleteAction $action): void {
-                if ($record->batches()->exists()) {
-                    Notification::make()
-                        ->title(__('enrollment.course_in_use'))
-                        ->body(__('enrollment.course_in_use_hint'))
-                        ->danger()
-                        ->send();
-
-                    $action->halt();
-                }
-
                 try {
-                    // Wrapped in a transaction so the foreign key violation is
-                    // a declared throw rather than an undeclared one — Eloquent
-                    // delete() carries no @throws, so static analysis cannot
-                    // otherwise see that the catch below is reachable.
-                    DB::transaction(fn () => $record->delete());
-                } catch (QueryException) {
-                    // Lost the race: a batch appeared after the check above.
+                    // The Action owns the rule and re-authorizes the actor.
+                    // authorize('delete') above is the UI gate; this is what
+                    // makes the answer binding for every other caller too.
+                    app(DeleteCourseAction::class)->execute(auth()->user(), $record);
+                } catch (CourseInUseException) {
                     Notification::make()
                         ->title(__('enrollment.course_in_use'))
                         ->body(__('enrollment.course_in_use_hint'))

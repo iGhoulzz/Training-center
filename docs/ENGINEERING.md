@@ -50,6 +50,7 @@ app/Domain/Enrollment/
 
 - Every foreign key gets a real constraint with explicit `onDelete`: `restrictOnDelete()` for anything financial, `cascadeOnDelete()` only for genuine child records.
 - Index every foreign key, and every column used in `WHERE` or `ORDER BY`. Composite indexes for common query pairs.
+- **Do not index a column only searched with a leading wildcard.** Filament's `searchable()` builds `LIKE %term%`, and a B-tree index is ordered by prefix — a search with no known prefix has nothing to seek on, so MySQL scans whatever you do. Such an index costs writes and disk while never being used. `courses.name_ar` is searched but deliberately unindexed for this reason, while `name_en` is indexed because it is also *sorted* on. If wildcard search ever becomes measurably slow, the answer is a `FULLTEXT` index with `MATCH … AGAINST`, or a search engine — not a B-tree.
 - Money is `decimal(12, 3)`. **Never float, never `decimal(12,2)`.** The currency is LYD, which subdivides into 1000 dirham per ISO 4217. Two decimal places would silently round dirham-precision amounts and break reconciliation. Display precision is a UI concern, not a storage one.
 - Status columns are `string(30)` with a `default`, an index, and a backed enum cast.
 - Explicit nullability on every column.

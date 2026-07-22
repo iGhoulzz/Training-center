@@ -2,7 +2,9 @@
 
 declare(strict_types=1);
 
+use App\Domain\Enrollment\Actions\DeleteCourseAction;
 use App\Domain\Enrollment\Enums\BatchStatus;
+use App\Domain\Enrollment\Exceptions\CourseInUseException;
 use App\Domain\Enrollment\Filament\Resources\BatchResource\Pages\CreateBatch;
 use App\Domain\Enrollment\Filament\Resources\BatchResource\Pages\EditBatch;
 use App\Domain\Enrollment\Filament\Resources\BatchResource\Pages\ListBatches;
@@ -14,8 +16,10 @@ use App\Domain\Enrollment\Models\Course;
 use App\Domain\Staff\Actions\SystemRoleWriter;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Livewire\Livewire;
 
 /**
@@ -339,4 +343,57 @@ it('rejects total hours beyond the column ceiling', function () {
         ->assertHasFormErrors(['total_hours']);
 
     expect(Course::where('code', 'HUGE-1')->exists())->toBeFalse();
+});
+
+/*
+|--------------------------------------------------------------------------
+| DeleteCourseAction — actor-first, typed refusal
+|--------------------------------------------------------------------------
+*/
+
+it('refuses course deletion to an unauthorized actor', function () {
+    $viewer = User::factory()->create(['is_active' => true]);
+    $viewer->givePermissionTo('access_admin_panel', 'view_any_course', 'view_course');
+
+    $course = Course::factory()->create();
+
+    expect(fn () => app(DeleteCourseAction::class)->execute($viewer->fresh(), $course))
+        ->toThrow(AuthorizationException::class);
+
+    expect(Course::whereKey($course->getKey())->exists())->toBeTrue();
+});
+
+it('throws a typed CourseInUseException rather than a raw database error', function () {
+    // Callers need to tell "still in use" apart from "the database is down".
+    $course = Course::factory()->create();
+    Batch::factory()->for($course)->create();
+
+    expect(fn () => app(DeleteCourseAction::class)->execute($this->admin, $course))
+        ->toThrow(CourseInUseException::class);
+
+    expect(Course::whereKey($course->getKey())->exists())->toBeTrue();
+});
+
+it('deletes a course with no batches through the action', function () {
+    $course = Course::factory()->create();
+
+    app(DeleteCourseAction::class)->execute($this->admin, $course);
+
+    expect(Course::whereKey($course->getKey())->exists())->toBeFalse();
+});
+
+it('rethrows a database error that is not a foreign key restriction', function () {
+    // Only MySQL 1451 means "still in use". Converting every QueryException
+    // would report an outage as a friendly message about batches.
+    $course = Course::factory()->create();
+
+    // A syntax error stands in for any non-1451 failure.
+    DB::listen(function ($query): void {
+        if (str_contains($query->sql, 'delete from `courses`')) {
+            throw new QueryException('mysql', 'delete from `courses`', [], new RuntimeException('server has gone away'));
+        }
+    });
+
+    expect(fn () => app(DeleteCourseAction::class)->execute($this->admin, $course))
+        ->toThrow(QueryException::class);
 });
