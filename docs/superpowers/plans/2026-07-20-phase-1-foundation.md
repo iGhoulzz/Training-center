@@ -1827,6 +1827,65 @@ Keep the branch. Task 15 reviews it.
 
 ---
 
+## Task 6b: Staff profile UI, uploads, downloads, and file lifecycle
+
+**Must land before Task 10**, which assigns instructors to batches and needs the staff register to exist. Task 6 delivered models, migrations, policies, factories, and tests; it deliberately deferred everything that touches a file or a screen. This task closes that gap.
+
+Nothing here is optional cleanup: as it stands, a certificate row can be created but never uploaded, viewed, or removed, and deleting a row leaves its file on disk forever.
+
+**Files:**
+- Create: `app/Domain/Staff/Actions/{UploadStaffCertificateAction,DeleteStaffCertificateAction,UpdateStaffPhotoAction,DeleteStaffPhotoAction}.php`
+- Create: `app/Domain/Staff/Filament/Resources/StaffProfileResource.php` + pages, and a certificates relation manager
+- Create: `app/Http/Controllers/Staff/StaffCertificateDownloadController.php` (or a signed-route equivalent)
+- Modify: `routes/web.php`
+- Create: `tests/Feature/Staff/StaffCertificateUploadTest.php`, `StaffCertificateDownloadTest.php`, `StaffProfileResourceTest.php`
+
+### Actions, each taking the actor
+
+Every write goes through an Action that authorizes itself, per the boundary in `docs/ENGINEERING.md`:
+
+```php
+UploadStaffCertificateAction::execute(User $actor, StaffProfile $profile, UploadedFile $file, array $metadata): StaffCertificate
+DeleteStaffCertificateAction::execute(User $actor, StaffCertificate $certificate): void
+UpdateStaffPhotoAction::execute(User $actor, StaffProfile $profile, UploadedFile $file): void
+DeleteStaffPhotoAction::execute(User $actor, StaffProfile $profile): void
+```
+
+### Physical file lifecycle — the part most easily missed
+
+The database stores paths; nothing deletes bytes unless told to.
+
+- **Deleting a certificate row must delete its file**, on the disk named in `disk`, inside the same transaction boundary as the row removal. Orphaned files accumulate silently and are personal data the centre no longer has a reason to hold.
+- **Deleting a staff profile must remove every certificate file and the profile photo**, not merely cascade the rows. The DB cascade removes records and leaves the bytes.
+- **Replacing a photo must delete the file it replaced.**
+- **A failed upload must leave nothing behind** — no row without a file, no file without a row.
+- Write a test that asserts the file is *gone from disk* after each of these, using `Storage::fake()` where appropriate and a real disk assertion where not.
+
+### Upload validation
+
+- Certificates: PDF and common image types only, with an explicit maximum size. Validate the real MIME type, not the client-supplied extension.
+- Photos: images only, with a maximum size and dimension bound.
+- Store with a generated filename; keep the user-supplied name only in `original_filename`. A user-controlled name written to disk is a path-traversal and overwrite risk.
+
+### Download route
+
+- Serves from the **private** disk (`storage/app/secure`), which has no URL and no route of its own.
+- Authorizes **per request** through `StaffCertificatePolicy` — a signed URL is not authorization, it only proves the link was not tampered with.
+- Streams the file; never redirects to a storage path.
+- Tests: an authorized actor gets the bytes; an unauthorized actor gets 403; an unauthenticated request gets redirected or 403; and a path-traversal attempt in the parameter cannot escape the disk root.
+
+### Filament resource
+
+- Follows the Task 5 contract: no `->relationship()` auto-persistence for anything an Action owns, save hooks call the Actions with `auth()->user()`, and `protected ?bool $hasDatabaseTransactions = true`.
+- The photo field is `dehydrated(false)`; `UpdateStaffPhotoAction` performs the write.
+- Certificates are managed through a relation manager whose create/delete route through the Actions.
+
+### Access
+
+`staff` remains denied profile and certificate access, per the current seeder and the Task 6 decision. Do not add a grant here; if the centre later wants instructors to see the register, that is a spec change first.
+
+---
+
 ## Task 7: Students
 
 **Branch:** `p1/t07-students`

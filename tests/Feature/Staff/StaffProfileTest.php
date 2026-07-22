@@ -85,6 +85,38 @@ it('keeps the profile when the user is only soft deleted', function () {
         ->and(User::withTrashed()->count())->toBe(1);
 });
 
+it('still resolves the account behind a profile after the user is soft deleted', function () {
+    // Surviving the delete is not enough: without withTrashed() on the relation
+    // the SoftDeletes global scope resolves user() to null, leaving a profile
+    // nobody can attribute — the register cannot show whose it is, and
+    // initials() reads the account name, so the avatar placeholder breaks too.
+    $user = User::factory()->create(['name' => 'Departed Instructor']);
+    $profile = StaffProfile::factory()->for($user)->create();
+
+    $user->delete();
+
+    $profile = $profile->fresh();
+
+    expect($profile->user)->not->toBeNull()
+        ->and($profile->user->name)->toBe('Departed Instructor')
+        ->and($profile->user->trashed())->toBeTrue()
+        ->and($profile->initials())->toBe('DI');
+});
+
+it('eager loads the account of a soft deleted user too', function () {
+    // with() takes a different code path to lazy loading, so it needs its own
+    // assertion — an eager load that drops trashed users would blank the
+    // register wherever it is listed.
+    $user = User::factory()->create(['name' => 'Gone Away']);
+    StaffProfile::factory()->for($user)->create();
+    $user->delete();
+
+    $profile = StaffProfile::with('user')->firstOrFail();
+
+    expect($profile->user)->not->toBeNull()
+        ->and($profile->user->name)->toBe('Gone Away');
+});
+
 it('stores qualifications as free text and allows them to be absent', function () {
     $prose = 'PhD in Applied Linguistics, University of Tripoli; '
         .'CELTA (Cambridge, 2019); first aid certified.';

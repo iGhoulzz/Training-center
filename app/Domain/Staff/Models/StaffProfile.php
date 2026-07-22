@@ -38,11 +38,20 @@ class StaffProfile extends Model
     use HasFactory;
 
     /**
+     * withTrashed() is required, not a convenience.
+     *
+     * Users soft delete, profiles do not — a departed instructor keeps their
+     * employment record. Without this the relation applies the SoftDeletes
+     * global scope and resolves to null the moment the account is deleted,
+     * leaving a profile nobody can attribute: the register cannot show whose
+     * it is, and initials() derives from the account name, so the avatar
+     * placeholder breaks too.
+     *
      * @return BelongsTo<User, $this>
      */
     public function user(): BelongsTo
     {
-        return $this->belongsTo(User::class);
+        return $this->belongsTo(User::class)->withTrashed();
     }
 
     /**

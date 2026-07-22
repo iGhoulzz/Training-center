@@ -56,7 +56,11 @@ class StaffCertificate extends Model
      */
     public function scopeExpired(Builder $query): void
     {
-        $query->whereNotNull('expires_on')->whereDate('expires_on', '<', today());
+        // Plain where(), not whereDate(): expires_on is already a DATE column,
+        // so wrapping it in SQL DATE() adds nothing and makes the comparison
+        // non-sargable, discarding the index on the column.
+        $query->whereNotNull('expires_on')
+            ->where('expires_on', '<', today()->toDateString());
     }
 
     /**
@@ -72,7 +76,7 @@ class StaffCertificate extends Model
     {
         $query->where(function (Builder $query): void {
             $query->whereNull('expires_on')
-                ->orWhereDate('expires_on', '>=', today());
+                ->orWhere('expires_on', '>=', today()->toDateString());
         });
     }
 

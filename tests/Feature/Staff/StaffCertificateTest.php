@@ -182,10 +182,35 @@ it('gives the private disk no public url and no symlink into public', function (
     // 'serve' false: Laravel registers no route for this disk (see
     // Illuminate\Filesystem\FilesystemServiceProvider::serveFiles).
     expect($disk)->not->toHaveKey('url')
-        ->and($disk['serve'])->toBeFalse()
-        // php artisan storage:link must never expose this disk.
-        ->and(array_values((array) config('filesystems.links')))
-        ->not->toContain(storage_path('app/private'));
+        ->and($disk['serve'])->toBeFalse();
+
+    // php artisan storage:link must never expose this disk. Read the root from
+    // config rather than naming a path: an earlier version of this test checked
+    // a hardcoded storage/app/private, which stopped matching the moment the
+    // disk moved and would have passed while the real root sat symlinked into
+    // public/.
+    $privateRoot = realpath((string) $disk['root']);
+
+    expect($privateRoot)->not->toBeFalse('The private disk root does not exist.');
+
+    /** @var array<string, string> $links */
+    $links = (array) config('filesystems.links');
+
+    foreach ($links as $link => $target) {
+        $resolvedTarget = realpath((string) $target);
+
+        expect($resolvedTarget)->not->toBe(
+            $privateRoot,
+            "storage:link maps {$link} onto the private disk root."
+        );
+
+        // A link to an ancestor directory would expose the private root too.
+        if ($resolvedTarget !== false) {
+            expect(str_starts_with((string) $privateRoot, $resolvedTarget.DIRECTORY_SEPARATOR))->toBeFalse(
+                "storage:link maps {$link} onto an ancestor of the private disk root."
+            );
+        }
+    }
 });
 
 it('refuses an unauthenticated web request for a stored certificate file', function () {
