@@ -2876,9 +2876,25 @@ class BatchPolicy
         return $user->can('create_batch');
     }
 
+    /**
+     * CORRECTED 2026-07-22. This originally read:
+     *
+     *     return $user->can('update_batch') && $batch->acceptsEnrollments();
+     *
+     * which was stricter than the spec and self-defeating. Spec section 6 says
+     * completed and cancelled batches "reject new enrollments and instructor
+     * changes" — an enumeration of two operations, not a general freeze. The
+     * status gate belongs on assignInstructor() and on the enrollment path,
+     * not on update().
+     *
+     * Freezing update() would make a closed batch permanently uneditable
+     * INCLUDING its own status column, so a mis-clicked "completed" could
+     * never be undone through the application, and a typo in a finished
+     * batch's dates would need raw SQL.
+     */
     public function update(User $user, Batch $batch): bool
     {
-        return $user->can('update_batch') && $batch->acceptsEnrollments();
+        return $user->can('update_batch');
     }
 
     public function delete(User $user, Batch $batch): bool

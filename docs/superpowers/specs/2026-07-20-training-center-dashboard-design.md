@@ -225,7 +225,9 @@ Defined here so they are not invented inconsistently during implementation:
 | `payments.method` (P2) | `cash`, `bank_transfer`, `card`, `other` |
 | `staff_compensation.type` (P2) | `salary`, `hourly`, `per_student` |
 
-A batch's status gates what may be edited: `completed` and `cancelled` batches reject new enrollments and instructor changes.
+A batch's status gates two specific operations, and only those two: `completed` and `cancelled` batches reject **new enrollments** and **instructor changes**.
+
+It is deliberately not a general edit freeze. Blocking all updates on a closed batch would make its own `status` column uneditable, so a mis-clicked "completed" could never be undone through the application and a typo in a finished batch's dates would need raw SQL. `BatchPolicy::update()` therefore checks the permission alone; the status gate lives on `assignInstructor()` and on the enrollment path.
 
 ### Note on price columns in phase 1
 
