@@ -9,10 +9,10 @@ use Illuminate\Support\Facades\Schema;
 /**
  * A batch is a course actually running: the January intake, the March intake.
  *
- * The nullable columns are the load-bearing part of this table. `total_hours`
- * and `price` are null by default and INHERIT from the parent course at read
- * time — see Batch::$effective_total_hours. They are not copied at creation,
- * deliberately: a copy is a second source of truth that goes stale the moment
+ * `total_hours` is the load-bearing nullable column. It is null by default and
+ * INHERITS from the parent course at read time — see
+ * Batch::$effective_total_hours. It is not copied at creation, deliberately:
+ * a copy is a second source of truth that goes stale the moment
  * someone corrects the course, and nothing would ever tell you it had.
  *
  * The literal 'planned' default is deliberately not BatchStatus::Planned->value.
@@ -65,7 +65,9 @@ return new class extends Migration
              * until then: it appears in no form, no table column and no report.
              * BatchTest pins both the precision and the invisibility.
              *
-             * Null means inherit from the course, exactly like total_hours.
+             * Nullable, but NOTHING inherits it in phase 1 — no code reads
+             * this column at all. What a null price means is phase 2's
+             * decision, taken once the charge model exists.
              *
              * decimal(12, 3), never float and never two places. The currency is
              * LYD, which subdivides into 1000 dirham per ISO 4217, so two

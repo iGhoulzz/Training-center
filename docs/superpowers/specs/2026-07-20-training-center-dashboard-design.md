@@ -198,7 +198,7 @@ The nullable `user_id` is deliberate: a student exists whether or not they ever 
 **`batches`** — a course actually running
 `id, course_id (FK), code (unique), start_date, end_date, capacity, total_hours (nullable), price (nullable), status, timestamps`
 
-Nullable fields inherit from the parent course when null, rather than being copied at creation. Copying would leave stale duplicates the moment someone edits the course.
+`total_hours` inherits from the parent course when null, rather than being copied at creation. Copying would leave stale duplicates the moment someone edits the course. **`price` does not inherit — nothing reads it in phase 1**; the column is nullable only so phase 2 need not alter a populated table.
 
 **`price` inheritance is phase 2 work.** The column is nullable now so phase 2 never has to alter a table holding production data, and `total_hours` proves the inheritance pattern works, but no price is read, displayed, or inherited anywhere in phase 1. Phase 2 decides what a null price means once the charge model exists — in particular whether an already-issued charge keeps the price it was raised at when the course price later changes. Do not implement price inheritance before that decision.
 

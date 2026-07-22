@@ -397,3 +397,58 @@ it('rethrows a database error that is not a foreign key restriction', function (
     expect(fn () => app(DeleteCourseAction::class)->execute($this->admin, $course))
         ->toThrow(QueryException::class);
 });
+
+it('converts a delete-time 1451 violation into CourseInUseException', function () {
+    // The precheck catches the ordinary case and returns before the try block,
+    // so it does NOT exercise the catch. That branch only runs when a batch is
+    // created between the check and the delete — the race the foreign key
+    // exists to cover. Without this test, breaking isForeignKeyRestriction()
+    // leaves the whole suite green.
+    $course = Course::factory()->create();
+
+    // Simulate the delete losing the race: a real MySQL foreign key
+    // restriction, errorInfo ['23000', 1451, ...].
+    $violation = new QueryException(
+        'mysql',
+        'delete from `courses` where `id` = ?',
+        [$course->getKey()],
+        new PDOException('SQLSTATE[23000]: Integrity constraint violation: 1451 Cannot delete or update a parent row'),
+    );
+    $violation->errorInfo = ['23000', 1451, 'Cannot delete or update a parent row'];
+
+    DB::listen(function ($query) use ($violation): void {
+        if (str_starts_with($query->sql, 'delete from `courses`')) {
+            throw $violation;
+        }
+    });
+
+    expect(fn () => app(DeleteCourseAction::class)->execute($this->admin, $course))
+        ->toThrow(CourseInUseException::class);
+
+    expect(Course::whereKey($course->getKey())->exists())->toBeTrue();
+});
+
+it('rethrows a delete-time violation that is not 1451', function () {
+    // 1452 is "cannot ADD or update a child row" — an integrity violation, but
+    // not this one. Anything other than 1451 must surface as itself.
+    $course = Course::factory()->create();
+
+    $other = new QueryException(
+        'mysql',
+        'delete from `courses` where `id` = ?',
+        [$course->getKey()],
+        new PDOException('SQLSTATE[23000]: Integrity constraint violation: 1452'),
+    );
+    $other->errorInfo = ['23000', 1452, 'Cannot add or update a child row'];
+
+    DB::listen(function ($query) use ($other): void {
+        if (str_starts_with($query->sql, 'delete from `courses`')) {
+            throw $other;
+        }
+    });
+
+    expect(fn () => app(DeleteCourseAction::class)->execute($this->admin, $course))
+        ->toThrow(QueryException::class);
+
+    expect(Course::whereKey($course->getKey())->exists())->toBeTrue();
+});

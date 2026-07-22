@@ -246,8 +246,10 @@ it('stores price as decimal with three places, not two and not float', function 
     expect($column)->not->toBeNull('batches.price does not exist.')
         ->and($column['type_name'])->toBe('decimal')
         ->and($column['type'])->toBe('decimal(12,3)')
-        // Nullable, because null means inherit from the course — exactly like
-        // total_hours. A NOT NULL default of 0 would be a real price of zero.
+        // Nullable so phase 2 can decide what a null price means once the
+        // charge model exists. It does NOT inherit today — nothing in phase 1
+        // reads this column. A NOT NULL default of 0 would be a real price of
+        // zero, which is why it is nullable rather than defaulted.
         ->and($column['nullable'])->toBeTrue();
 });
 

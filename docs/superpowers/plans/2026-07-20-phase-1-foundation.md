@@ -2409,7 +2409,6 @@ namespace App\Domain\Enrollment\Models;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Course extends Model
 {
@@ -2695,7 +2694,8 @@ return new class extends Migration
             $table->unsignedSmallInteger('capacity')->default(0);
             // Null means inherit from the parent course.
             $table->unsignedSmallInteger('total_hours')->nullable();
-            // Phase 2 column, unused in phase 1. Null means inherit.
+            // Phase 2 column, unused in phase 1. Nullable so phase 2 need
+            // not alter a populated table; nothing inherits it today.
             $table->decimal('price', 12, 3)->nullable();
             $table->string('status', 30)->default('planned')->index();
             $table->timestamps();

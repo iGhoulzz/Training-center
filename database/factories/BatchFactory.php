@@ -38,9 +38,10 @@ class BatchFactory extends Factory
             'total_hours' => null,
 
             /*
-             * Also null — inherit. price is a phase 2 column that phase 1
-             * neither displays nor uses, so there is deliberately no state here
-             * named after pricing behaviour. Tests that care pass their own.
+             * Null, but NOT "inherit" — nothing reads price in phase 1. It
+             * is a phase 2 column that phase 1 neither displays nor uses, so
+             * there is deliberately no state here named after pricing
+             * behaviour. Tests that care pass their own value.
              */
             'price' => null,
 
