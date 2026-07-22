@@ -140,6 +140,40 @@ it('stores certificates on a disk that is private and outside the public directo
         ->and($disk['root'])->not->toBe(config('filesystems.disks.public.root'));
 });
 
+it('does not share its root with any disk the framework serves over HTTP', function () {
+    // Laravel's default `local` disk ships with serve => true, registering
+    // GET /storage/{path} over its root. If the private disk shared that root,
+    // the framework would hold a route capable of returning a staff
+    // certificate, gated only by a URL signature — and a signature proves the
+    // link was not tampered with, not that its holder is authorized.
+    //
+    // Asserting non-overlap against EVERY served disk, rather than naming
+    // `local`, so a future served disk cannot quietly reintroduce the overlap.
+    $privateRoot = realpath((string) config('filesystems.disks.private.root'));
+
+    expect($privateRoot)->not->toBeFalse('The private disk root does not exist.');
+
+    /** @var array<string, array<string, mixed>> $disks */
+    $disks = config('filesystems.disks');
+
+    foreach ($disks as $name => $disk) {
+        if ($name === 'private' || ($disk['driver'] ?? null) !== 'local') {
+            continue;
+        }
+
+        if (! ($disk['serve'] ?? false)) {
+            continue;
+        }
+
+        $servedRoot = realpath((string) ($disk['root'] ?? ''));
+
+        expect($servedRoot)->not->toBe(
+            $privateRoot,
+            "The '{$name}' disk is served over HTTP and shares the private disk's root."
+        );
+    }
+});
+
 it('gives the private disk no public url and no symlink into public', function () {
     /** @var array<string, mixed> $disk */
     $disk = config('filesystems.disks.private');

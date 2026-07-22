@@ -3914,12 +3914,16 @@ In `config/backup.php`:
 ```php
 'source' => [
     'files' => [
-        // storage/app/private holds staff certificates and profile photos
-        // (Task 6). It MUST be backed up: the database stores only paths, so a
-        // database-only restore leaves every uploaded credential unrecoverable.
+        // storage/app/secure holds staff certificates and profile photos
+        // (Task 6) — the 'private' disk. It MUST be backed up: the database
+        // stores only paths, so a database-only restore leaves every uploaded
+        // credential unrecoverable.
+        //
+        // Note the path: it is deliberately NOT storage/app/private, which is
+        // the framework's default `local` disk root and is served over HTTP.
         'include' => [
             base_path('storage/app/public'),
-            base_path('storage/app/private'),
+            base_path('storage/app/secure'),
         ],
         'exclude' => [base_path('vendor'), base_path('node_modules')],
     ],

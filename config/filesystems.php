@@ -89,7 +89,21 @@ return [
          */
         'private' => [
             'driver' => 'local',
-            'root' => storage_path('app/private'),
+            /*
+             * Deliberately NOT storage_path('app/private').
+             *
+             * Laravel's default `local` disk uses that exact path AND ships
+             * with serve => true, which registers GET /storage/{path} over it.
+             * Sharing the root would mean the framework has a route capable of
+             * serving staff certificates, gated only by a URL signature — and a
+             * signature proves the URL was not tampered with, not that whoever
+             * holds it is authorized. Anyone who obtained such a link could
+             * read a national ID document.
+             *
+             * A separate root removes the overlap outright, rather than relying
+             * on `local.serve` staying false. Keep these paths distinct.
+             */
+            'root' => storage_path('app/secure'),
             'visibility' => 'private',
             'serve' => false,
             'throw' => false,
