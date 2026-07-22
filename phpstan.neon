@@ -12,3 +12,13 @@ parameters:
         - '#PHPDoc tag @var#'
     parallel:
         maximumNumberOfProcesses: 1
+    # Larastan defaults this off, in which case it reads only the legacy $casts
+    # property. Every model here declares casts through the modern casts()
+    # method, so with it off larastan silently falls back to the raw column type
+    # from the migration — a `date` column reads as `string`, and calling any
+    # Carbon method on a cast attribute is reported as an error on a correct
+    # line. Turning it on makes the cast visible: StaffCertificate::$expires_on
+    # resolves to Carbon, and a genuinely undefined Carbon method on it is still
+    # caught (verified by mutation). Added in P1-T06, the first task to call a
+    # method on a cast date.
+    parseModelCastsMethod: true

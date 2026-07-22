@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace App\Providers;
 
+use App\Domain\Staff\Models\StaffCertificate;
+use App\Domain\Staff\Models\StaffProfile;
+use App\Domain\Staff\Policies\StaffCertificatePolicy;
+use App\Domain\Staff\Policies\StaffProfilePolicy;
 use App\Domain\Staff\Policies\UserPolicy;
 use App\Models\User;
 use Illuminate\Auth\Events\Login;
@@ -27,11 +31,13 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         /*
-         * UserPolicy lives outside app/Policies, so Laravel's convention-based
-         * policy discovery will not find it. Without this line every user
-         * management check silently falls through to false.
+         * These policies live outside app/Policies, so Laravel's
+         * convention-based discovery will not find them. Without these lines
+         * every check against them silently falls through to false.
          */
         Gate::policy(User::class, UserPolicy::class);
+        Gate::policy(StaffProfile::class, StaffProfilePolicy::class);
+        Gate::policy(StaffCertificate::class, StaffCertificatePolicy::class);
 
         /*
          * saveQuietly() is deliberate: P1-T12 adds activity logging, and a login

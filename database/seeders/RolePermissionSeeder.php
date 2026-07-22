@@ -21,8 +21,8 @@ class RolePermissionSeeder extends Seeder
      * role does NOT have it.
      */
     private const RESOURCES = [
-        'user', 'staff_profile', 'student', 'course', 'batch', 'enrollment',
-        'activity', 'role',
+        'user', 'staff_profile', 'staff_certificate', 'student', 'course',
+        'batch', 'enrollment', 'activity', 'role',
     ];
 
     private const ACTIONS = ['view_any', 'view', 'create', 'update', 'delete'];
@@ -86,6 +86,12 @@ class RolePermissionSeeder extends Seeder
             ...$this->crudFor('batch'),
             ...$this->crudFor('enrollment'),
             ...$this->crudFor('staff_profile'),
+            // Certificates are permissioned separately from the profile that
+            // owns them: the scanned document carries a national ID number and
+            // a date of birth, so "may see who teaches what" and "may open
+            // everyone's identity documents" are kept as two grants. Admin
+            // holds both; staff and student hold neither.
+            ...$this->crudFor('staff_certificate'),
             ...$this->crudFor('user'),
             'view_any_activity', 'view_activity',
             'access_admin_panel',
