@@ -4300,10 +4300,25 @@ git branch --list 'p1/*' | xargs -r git branch -D
 Per `docs/WORKFLOW.md`, documentation is updated as part of the milestone, not afterward.
 
 **Files:**
-- Modify: `docs/ENGINEERING.md`, `CLAUDE.md`, `AGENTS.md`
+- Modify: `docs/ENGINEERING.md`, `docs/WORKFLOW.md`, `CLAUDE.md`, `AGENTS.md`
 - Modify: `docs/superpowers/specs/2026-07-20-training-center-dashboard-design.md`
 - Create: `docs/CHANGELOG.md`
 - Modify: this plan file
+
+### Also required: write up the Task 4 retrospective as process rules
+
+Decided 2026-07-22, deferred to here so it did not interrupt tasks 6–14. Task 4 needed five rounds (T04 → T04e) because the **plan** specified an unsound enforcement architecture — guards implemented as overrides of Spatie's write methods — and every later round inherited it. These rules exist to stop that recurring in phases 2–4. Phase 2 is financials, which has the same shape: hard invariants over an unbounded write surface.
+
+Write into `docs/WORKFLOW.md`:
+
+1. **Codex reviews every phase plan before implementation begins**, not only the code afterwards. The model-override approach was visible in the written plan; one review round there replaces several rounds of code remediation. Add it to the task lifecycle as a step preceding implementation.
+
+Write into `docs/ENGINEERING.md`:
+
+2. **Any spec or plan section touching money or permissions must name its write boundary explicitly** — which Actions perform the writes, which service owns the invariant, what is prohibited, and the test that proves it. Not "enforce X."
+3. **Test the surface, not the instance.** When fixing a rule, enumerate the complete surface (every policy method, every write path) as a dataset so an omission fails rather than hides. Guard 4 was fixed on `create`/`update` and tested on exactly those two, leaving five methods open and the suite green.
+4. **Every security claim in documentation needs a test named after it.** Three claims in `ENGINEERING.md` asserted properties the code did not have. If a sentence asserts a property, a test asserts the same property, or the sentence does not go in.
+5. **Verification probes run inside a rolled-back transaction** (or after `migrate:fresh --seed`). Committing probe setup into the dev database produced both false positives and false all-clears.
 
 - [ ] **Step 1: Correct the permission format in all three standards documents**
 
