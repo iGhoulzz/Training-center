@@ -189,6 +189,14 @@ it('does not delete or deactivate users outside the sanctioned Actions', functio
             'DeactivateUserAction',
             // Courses: refuses while batches reference the course.
             'DeleteCourseAction',
+            // Staff files (P1-T06b): each removes a record AND owns the durable
+            // commit-first/delete-after file lifecycle. The certificate and
+            // profile Actions authorize the actor and write a
+            // pending_file_deletions receipt in the same transaction as the row
+            // removal; the purge job removes that receipt once the bytes are gone.
+            'DeleteStaffCertificateAction',
+            'DeleteStaffProfileAction',
+            'PurgeDeletedFileJob',
         ],
     );
 
