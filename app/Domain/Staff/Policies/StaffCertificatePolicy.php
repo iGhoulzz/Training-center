@@ -51,11 +51,20 @@ class StaffCertificatePolicy
     }
 
     /**
-     * See StaffProfilePolicy::deleteAny() for why a *Any method is answered
-     * explicitly rather than left to fall through.
+     * Bulk delete is closed outright (P1-T06b), mirroring
+     * StaffProfilePolicy::deleteAny().
+     *
+     * Deleting a certificate is no longer a plain row removal:
+     * DeleteStaffCertificateAction writes a pending_file_deletions receipt in the
+     * same transaction as the delete and schedules the bytes for removal. Filament
+     * authorizes a bulk delete once against this method and never runs the
+     * per-record path, so a bulk delete would drop the rows and orphan every
+     * certificate file on disk. Returning false unconditionally keeps that
+     * impossible even if a bulk action were mistakenly registered; the
+     * certificates relation manager registers none.
      */
     public function deleteAny(User $actor): bool
     {
-        return $actor->can('delete_staff_certificate');
+        return false;
     }
 }

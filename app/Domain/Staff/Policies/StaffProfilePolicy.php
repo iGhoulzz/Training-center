@@ -53,18 +53,25 @@ class StaffProfilePolicy
     }
 
     /**
-     * Filament authorizes a bulk action once, against this method, and never
-     * consults delete() for the selected rows — so a *Any method that merely
-     * repeats a permission check silently discards any per-record protection
-     * delete() applies. delete() has none to discard here, so the permission is
-     * the whole answer.
+     * Bulk delete is closed outright (P1-T06b).
      *
-     * If a per-record rule is ever added to delete(), this method must be
-     * revisited in the same edit. See docs/ENGINEERING.md, "Bulk actions cannot
-     * be authorized per record", for the incident that established the rule.
+     * Filament authorizes a bulk delete once against this method and never
+     * consults delete() for the selected rows. Deleting a staff profile is no
+     * longer a plain row removal: DeleteStaffProfileAction collects each
+     * certificate and photo path, writes a pending_file_deletions receipt in the
+     * same transaction as the delete, requires delete_staff_certificate whenever
+     * the profile owns certificates, and schedules the bytes for removal. A bulk
+     * delete would bypass every part of that — orphaning certificate files on
+     * disk and skipping the per-profile certificate grant.
+     *
+     * So this returns false unconditionally rather than the permission: even were
+     * a bulk action mistakenly registered, Filament would render none.
+     * StaffProfileResource registers none regardless. Delete one profile at a
+     * time, through the Action. See docs/ENGINEERING.md, "Bulk actions cannot be
+     * authorized per record".
      */
     public function deleteAny(User $actor): bool
     {
-        return $actor->can('delete_staff_profile');
+        return false;
     }
 }

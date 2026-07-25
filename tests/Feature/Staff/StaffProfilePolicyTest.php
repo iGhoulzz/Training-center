@@ -50,7 +50,10 @@ it('lets a super admin manage staff profiles', function () {
         ->and($this->superAdmin->can('create', StaffProfile::class))->toBeTrue()
         ->and($this->superAdmin->can('update', $this->profile))->toBeTrue()
         ->and($this->superAdmin->can('delete', $this->profile))->toBeTrue()
-        ->and($this->superAdmin->can('deleteAny', StaffProfile::class))->toBeTrue();
+        // Bulk delete is closed outright in P1-T06b — a bulk delete bypasses
+        // DeleteStaffProfileAction and orphans every certificate file — so even a
+        // super admin is denied deleteAny. Single deletes go through the Action.
+        ->and($this->superAdmin->can('deleteAny', StaffProfile::class))->toBeFalse();
 });
 
 it('lets an admin manage staff profiles', function () {
@@ -59,7 +62,8 @@ it('lets an admin manage staff profiles', function () {
         ->and($this->admin->can('create', StaffProfile::class))->toBeTrue()
         ->and($this->admin->can('update', $this->profile))->toBeTrue()
         ->and($this->admin->can('delete', $this->profile))->toBeTrue()
-        ->and($this->admin->can('deleteAny', StaffProfile::class))->toBeTrue();
+        // Closed for every role in P1-T06b; see the super-admin case above.
+        ->and($this->admin->can('deleteAny', StaffProfile::class))->toBeFalse();
 });
 
 it('forbids staff from creating, editing, or deleting a staff profile', function () {
@@ -89,7 +93,9 @@ it('lets a super admin manage staff certificates', function () {
         ->and($this->superAdmin->can('create', StaffCertificate::class))->toBeTrue()
         ->and($this->superAdmin->can('update', $this->certificate))->toBeTrue()
         ->and($this->superAdmin->can('delete', $this->certificate))->toBeTrue()
-        ->and($this->superAdmin->can('deleteAny', StaffCertificate::class))->toBeTrue();
+        // Bulk delete is closed outright in P1-T06b — a bulk delete drops the
+        // rows and orphans their files — so deleteAny is denied for every role.
+        ->and($this->superAdmin->can('deleteAny', StaffCertificate::class))->toBeFalse();
 });
 
 it('lets an admin manage staff certificates', function () {
@@ -98,7 +104,8 @@ it('lets an admin manage staff certificates', function () {
         ->and($this->admin->can('create', StaffCertificate::class))->toBeTrue()
         ->and($this->admin->can('update', $this->certificate))->toBeTrue()
         ->and($this->admin->can('delete', $this->certificate))->toBeTrue()
-        ->and($this->admin->can('deleteAny', StaffCertificate::class))->toBeTrue();
+        // Closed for every role in P1-T06b; see the super-admin case above.
+        ->and($this->admin->can('deleteAny', StaffCertificate::class))->toBeFalse();
 });
 
 it('forbids staff and students from reaching a certificate document', function () {
