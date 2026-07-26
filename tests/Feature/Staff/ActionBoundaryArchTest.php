@@ -115,15 +115,30 @@ it('does not call the Spatie role-side pivot helpers anywhere in app', function 
     );
 });
 
-it('does not write role/permission/user relations directly via attach/detach/sync', function () {
+it('does not write a guarded pivot relation directly via attach/detach/sync', function () {
     // Filament's Select::relationship('roles') and any hand-written
     // $user->roles()->sync(...) bypass every guard. Forbidden in app code.
+    //
+    // The relation list is deliberately explicit rather than "any relation":
+    // plenty of pivots carry no invariant and need no Action. Each name here
+    // guards something —
+    //
+    //   roles, permissions, users : the escalation guards (P1-T04c)
+    //   instructors               : hour allocations that phase 2 pays wages
+    //                               from, plus the closed-batch status gate
+    //
+    // ADD A NAME WHENEVER A NEW PIVOT GAINS AN INVARIANT. This rule was
+    // originally written for the three role relations, which left
+    // $batch->instructors()->attach() statically unguarded when P1-T10 landed
+    // — the rule read as covering relationship writes in general while
+    // covering three names.
     $offenders = filesMatching(
-        '/->\s*(roles|permissions|users)\s*\(\s*\)\s*->\s*(attach|detach|sync|syncWithoutDetaching|toggle)\s*\(/',
+        '/->\s*(roles|permissions|users|instructors)\s*\(\s*\)\s*->\s*(attach|detach|sync|syncWithoutDetaching|toggle|updateExistingPivot)\s*\(/',
+        ['AssignInstructorAction', 'RemoveInstructorAction'],
     );
 
     expect($offenders)->toBeEmpty(
-        'Direct role/permission/user relationship writes are forbidden; route through an Action: '.implode(', ', $offenders),
+        'Direct guarded-pivot writes are forbidden; route through an Action: '.implode(', ', $offenders),
     );
 });
 
