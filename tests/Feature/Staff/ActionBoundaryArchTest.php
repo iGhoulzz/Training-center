@@ -22,6 +22,17 @@ use Illuminate\Support\Facades\File;
  * list that file and fail. This was demonstrated during P1-T04c verification.
  */
 
+/*
+ * Every BelongsToMany writer that can create, change, or remove a pivot row.
+ *
+ * attach/detach/sync were the obvious three; attachOrFail(), save(), saveMany(),
+ * create(), and toggle() reach the same rows by other names, and a detector
+ * that names only the obvious three reads as coverage while leaving the rest
+ * open. Each is mutation-tested in this file.
+ */
+const KNOWN_PIVOT_MUTATORS = '(attach|attachOrFail|detach|detachOrFail|sync|syncWithoutDetaching'
+    .'|toggle|updateExistingPivot|save|saveMany|saveQuietly|create|createMany|createQuietly|push)';
+
 /**
  * @return array<int, string> Absolute paths of every PHP file under app/.
  */
@@ -119,26 +130,41 @@ it('does not write a guarded pivot relation directly via attach/detach/sync', fu
     // Filament's Select::relationship('roles') and any hand-written
     // $user->roles()->sync(...) bypass every guard. Forbidden in app code.
     //
-    // The relation list is deliberately explicit rather than "any relation":
-    // plenty of pivots carry no invariant and need no Action. Each name here
-    // guards something —
+    // ONE RULE PER GUARDED RELATION GROUP, EACH WITH ITS OWN ALLOWLIST.
     //
-    //   roles, permissions, users : the escalation guards (P1-T04c)
-    //   instructors               : hour allocations that phase 2 pays wages
-    //                               from, plus the closed-batch status gate
+    // P1-T10a merged the RBAC relations and `instructors` into a single rule
+    // and allowlisted the two instructor Actions on it. Because an allowlist
+    // exempts a FILE from the WHOLE rule, that silently permitted
+    // $user->roles()->attach() inside AssignInstructorAction — the RBAC
+    // protection was traded away to add a new relation. Verified: the merged
+    // rule passed with exactly that call injected.
     //
-    // ADD A NAME WHENEVER A NEW PIVOT GAINS AN INVARIANT. This rule was
-    // originally written for the three role relations, which left
-    // $batch->instructors()->attach() statically unguarded when P1-T10 landed
-    // — the rule read as covering relationship writes in general while
-    // covering three names.
+    // Keep them separate. A file allowlisted for instructor writes is still
+    // fully bound by the RBAC rule below.
     $offenders = filesMatching(
-        '/->\s*(roles|permissions|users|instructors)\s*\(\s*\)\s*->\s*(attach|detach|sync|syncWithoutDetaching|toggle|updateExistingPivot)\s*\(/',
+        '/->\s*(roles|permissions|users)\s*\(\s*\)\s*->\s*'
+        .KNOWN_PIVOT_MUTATORS.'\s*\(/',
+    );
+
+    expect($offenders)->toBeEmpty(
+        'Direct role/permission/user relationship writes are forbidden; route through an Action: '.implode(', ', $offenders),
+    );
+});
+
+it('does not write the instructor pivot outside the sanctioned Actions', function () {
+    // Hours on batch_instructor are what phase 2 pays wages from, and the
+    // closed-batch status gate lives in AssignInstructorAction. A raw pivot
+    // write bypasses both.
+    //
+    // Separate from the RBAC rule above precisely so this allowlist cannot
+    // weaken that one.
+    $offenders = filesMatching(
+        '/->\s*instructors\s*\(\s*\)\s*->\s*'.KNOWN_PIVOT_MUTATORS.'\s*\(/',
         ['AssignInstructorAction', 'RemoveInstructorAction'],
     );
 
     expect($offenders)->toBeEmpty(
-        'Direct guarded-pivot writes are forbidden; route through an Action: '.implode(', ', $offenders),
+        'Instructor pivot writes must go through AssignInstructorAction / RemoveInstructorAction: '.implode(', ', $offenders),
     );
 });
 
@@ -153,13 +179,13 @@ it('does not change role or user permissions outside UpdateRolePermissionsAction
     );
 });
 
-it('does not let a Filament field persist roles or permissions via relationship()', function () {
+it('does not let a Filament field persist a guarded relation via relationship()', function () {
     // THE most important rule here. Select::make('roles')->relationship('roles')
     // persists by calling the relation's sync()/detach(), reaching around every
     // Action — and unlike raw SQL, it is reachable from the UI. The generic
     // attach/detach/sync rule above cannot see it, because the bypass is a
     // string argument to relationship(), not a method call on the relation.
-    $offenders = filesMatching('/->\s*relationship\s*\(\s*[\'"](roles|permissions)[\'"]/');
+    $offenders = filesMatching('/->\s*relationship\s*\(\s*[\'"](roles|permissions|instructors)[\'"]/');
 
     expect($offenders)->toBeEmpty(
         'Filament relationship() persistence for roles/permissions bypasses the Actions; '
