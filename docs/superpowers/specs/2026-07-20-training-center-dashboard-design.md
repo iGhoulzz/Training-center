@@ -277,6 +277,18 @@ Issued rows are never deleted. Their enrollment, reference, printed snapshot, is
 
 `IssueStudentCertificateAction`, `ReplaceStudentCertificateAction`, and `RevokeStudentCertificateAction` are actor-first and self-authorizing. Each transition runs in one transaction that locks the enrollment and its current certificate rows before checking status and writing. That shared lock is the anti-race boundary: two concurrent issue or replacement requests cannot both decide that no valid certificate exists. The Action tests must exercise the invariant from both directions, not merely hide unavailable buttons.
 
+**"At most one valid certificate per enrollment" is also a database constraint, not only a lock.** `docs/ENGINEERING.md` requires that validation which matters is mirrored in the database, because a lock protects the application path and nothing else — a seeder, a console command, or a repair script writing a second `valid` row would corrupt the register silently, and the verifier would then have two answers for one enrollment.
+
+MySQL has no partial unique index, but the rule is expressible as a stored generated column carrying the `enrollment_id` only while the row is `valid`, and NULL otherwise, with a unique index over it. Unique indexes do not collide on NULL, so any number of `replaced` and `revoked` rows coexist while a second `valid` row is refused:
+
+```sql
+valid_enrollment_id BIGINT UNSIGNED
+    GENERATED ALWAYS AS (CASE WHEN status = 'valid' THEN enrollment_id ELSE NULL END) STORED,
+UNIQUE KEY uniq_valid_certificate_per_enrollment (valid_enrollment_id)
+```
+
+Verified against this project's MySQL 8.4 during the phase 1 review: one `valid` plus several non-`valid` rows for the same enrollment insert cleanly, and a second `valid` row raises a unique-constraint violation. The lock stays — it is what turns a race into a clean refusal rather than a database error — but the constraint is what makes the invariant true.
+
 The public verifier is an exact-reference lookup such as `/verify/certificates/{reference}`; there is no browsable certificate register, partial search, or autocomplete. Public exact-reference verification does not grant access to the internal register and is separate from the permission matrix above. It is rate-limited and displays only the certificate status, printed student name, course name, completion date, issue date, and center confirmation. It never exposes date of birth, national ID, contact details, portal account data, or financial information.
 
 Because the reference appears in the URL and unlocks the printed name and course, verification responses send `Cache-Control: private, no-store`, `Referrer-Policy: no-referrer`, and `X-Robots-Tag: noindex, nofollow, noarchive`. The page loads no third-party scripts, fonts, analytics, images, or styles that could receive the reference through a request or referrer; required assets are self-hosted. A QR code may encode this same verification URL for the external printer to place on the physical certificate, but generating the certificate layout remains outside the application.

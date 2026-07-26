@@ -3411,7 +3411,11 @@ return new class extends Migration
             $table->timestamp('enrolled_at');
             $table->string('status', 30)->default('active')->index();
             $table->timestamp('completed_at')->nullable();
-            $table->timestamp('certificate_issued_at')->nullable();
+            // NO certificate_issued_at. Phase 3 records each issued physical
+            // certificate as its own immutable student_certificates row, so
+            // that revocation and replacement history survives. A timestamp
+            // here could record only the most recent issuance and would erase
+            // the previous one on reissue. See spec section 6.
             $table->timestamps();
 
             $table->unique(['student_id', 'batch_id']);
@@ -3451,7 +3455,7 @@ class Enrollment extends Model
 
     protected $fillable = [
         'student_id', 'batch_id', 'enrolled_at', 'status',
-        'completed_at', 'certificate_issued_at',
+        'completed_at',
     ];
 
     protected function casts(): array
@@ -3459,7 +3463,6 @@ class Enrollment extends Model
         return [
             'enrolled_at' => 'datetime',
             'completed_at' => 'datetime',
-            'certificate_issued_at' => 'datetime',
             'status' => EnrollmentStatus::class,
         ];
     }
@@ -3587,7 +3590,6 @@ class EnrollmentFactory extends Factory
             'enrolled_at' => now(),
             'status' => EnrollmentStatus::Active,
             'completed_at' => null,
-            'certificate_issued_at' => null,
         ];
     }
 }
