@@ -121,6 +121,14 @@ class BatchResource extends Resource
              * here is `users` — a table with no assigned_hours column at all, so
              * the list dies with "unknown column users.assigned_hours". The hours
              * live on the relationship, and the SUM has to say so.
+             *
+             * Departed instructors are counted here as well as in the panel.
+             * That is not automatic and not obvious: withSum() builds its
+             * sub-select from a FRESH query on the related model, but then calls
+             * mergeConstraintsFrom($relation->getQuery()), which re-applies the
+             * scopes the relation removed — so Batch::instructors()'s
+             * withTrashed() reaches this aggregate too. Drop it there and the
+             * badge silently stops counting hours the panel still lists.
              */
             ->withSum('instructors as '.Batch::ASSIGNED_HOURS_SUM, 'batch_instructor.assigned_hours');
     }

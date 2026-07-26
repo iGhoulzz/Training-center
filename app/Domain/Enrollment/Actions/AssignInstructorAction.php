@@ -54,8 +54,9 @@ final class AssignInstructorAction
 {
     /**
      * @throws BatchClosedException if the batch is completed or cancelled.
-     * @throws InstructorNotEligibleException if the account is inactive, is not
-     *                                        an instructor, or has no staff profile.
+     * @throws InstructorNotEligibleException if the account is soft-deleted, is
+     *                                        inactive, is not an instructor, or
+     *                                        has no staff profile.
      */
     public function execute(User $actor, AssignInstructorData $data): Batch
     {
@@ -64,7 +65,22 @@ final class AssignInstructorAction
 
             $this->authorize($actor, $batch);
 
-            $instructor = User::query()->lockForUpdate()->findOrFail($data->instructorId);
+            /*
+             * withTrashed() so that a departed account is REFUSED rather than
+             * merely not found. The two are different answers: findOrFail on a
+             * scoped query reports a soft-deleted instructor as a nonexistent
+             * one, which reads as a bad id and tells the caller nothing about
+             * why the write will not happen. The eligibility check below names
+             * the actual reason.
+             *
+             * lockForUpdate() on this row is not decoration either. The
+             * eligibility decision READS is_active, deleted_at and the
+             * employment type; reading them unlocked is the same race the batch
+             * lock exists to prevent — a deactivation committed between this
+             * read and the pivot write would leave hours assigned to somebody
+             * the system had already stood down.
+             */
+            $instructor = User::query()->withTrashed()->lockForUpdate()->findOrFail($data->instructorId);
 
             $this->assertEligible($instructor);
 
@@ -99,7 +115,14 @@ final class AssignInstructorAction
     }
 
     /**
-     * Only an active account that actually teaches here may be assigned.
+     * Only a live, active account that actually teaches here may be assigned.
+     *
+     * trashed() is checked alongside is_active because a departed account and a
+     * deactivated one are the same answer to the question this asks: not
+     * somebody who can be put down as teaching a batch from now on. Batch's
+     * instructors() relation deliberately still LISTS the departed, because the
+     * hours they were already assigned are history phase 2 pays from; that is a
+     * read, and this is a write.
      *
      * The staff profile is read through the relation query rather than the
      * loaded relation, so a stale in-memory copy on the passed instance cannot
@@ -109,7 +132,11 @@ final class AssignInstructorAction
     {
         $profile = $instructor->staffProfile()->first();
 
-        if (! $instructor->is_active || $profile?->employment_type !== EmploymentType::Instructor) {
+        if (
+            $instructor->trashed()
+            || ! $instructor->is_active
+            || $profile?->employment_type !== EmploymentType::Instructor
+        ) {
             throw new InstructorNotEligibleException((int) $instructor->getKey());
         }
     }

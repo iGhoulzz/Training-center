@@ -29,6 +29,14 @@ use Illuminate\Support\Facades\Gate;
  * Detaching only the named pair is the point: a batch co-taught by Sara and Omar
  * loses one row when Omar leaves it, never both. detach() with an explicit key
  * does that; a bare detach() would empty the batch.
+ *
+ * A DEPARTED INSTRUCTOR IS STILL REMOVABLE FROM AN OPEN BATCH
+ * -----------------------------------------------------------
+ * Nothing here consults the instructor's own state, and that is deliberate. A
+ * soft-deleted account that was mis-assigned in the first place must be
+ * removable, or the mistake is permanent; the only gate is the batch's status,
+ * which is where the spec puts it. detach() addresses the pivot table directly
+ * and so is unaffected by the SoftDeletes scope on users either way.
  */
 final class RemoveInstructorAction
 {

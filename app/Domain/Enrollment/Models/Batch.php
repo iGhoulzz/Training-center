@@ -86,19 +86,28 @@ class Batch extends Model
      * RemoveInstructorAction, which authorize the actor against the freshly
      * locked batch. A bare $batch->instructors()->attach() reaches around that.
      *
-     * Soft-deleted accounts fall out of this relation, and so out of the hour
-     * sum, because the SoftDeletes global scope applies to the related model.
-     * That is the phase 1 reading — the relation answers "who teaches this
-     * batch", and a departed account does not. What phase 2 owes for teaching
-     * already delivered is phase 2's decision to make against the pivot rows,
-     * which survive: the foreign key refuses to hard-delete an instructor who
-     * holds allocations, so the history is still there to be read.
+     * withTrashed() IS LOAD-BEARING — DO NOT REMOVE IT
+     * ------------------------------------------------
+     * Without it the SoftDeletes global scope on the related model drops a
+     * departed instructor out of the relation while their pivot row survives,
+     * because the foreign key is restrictOnDelete. The allocation would then be
+     * invisible to totalAssignedHours(), to the schedule's hour badge and to the
+     * instructors panel, and phase 2 would pay wages from rows the UI says do
+     * not exist. This relation is ALLOCATION HISTORY, not a staff directory: it
+     * answers "whose hours are recorded against this batch", and a departed
+     * person's are.
+     *
+     * Keeping them here does not make them assignable. AssignInstructorAction
+     * refuses a trashed account exactly as it refuses a deactivated one, and the
+     * instructors panel's Select never offers one. Reading and writing are
+     * separate questions, and only the read includes the departed.
      *
      * @return BelongsToMany<User, $this>
      */
     public function instructors(): BelongsToMany
     {
         return $this->belongsToMany(User::class, 'batch_instructor')
+            ->withTrashed()
             ->withPivot('assigned_hours')
             ->withTimestamps();
     }
@@ -139,6 +148,10 @@ class Batch extends Model
      * a batch with no instructors aggregates to NULL, and `?? null` would send
      * exactly those rows back to the database one at a time — an N+1 that only
      * appears on the rows nobody thinks to check.
+     *
+     * Both paths count departed instructors: the relation is withTrashed() and
+     * so is the aggregate's sub-query. Anything else would make the two
+     * disagree depending on how the row happened to be loaded.
      */
     public function totalAssignedHours(): int
     {

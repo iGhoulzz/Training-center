@@ -15,6 +15,7 @@ use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Database\QueryException;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -57,6 +58,41 @@ beforeEach(function () {
 
     $this->assign = app(AssignInstructorAction::class);
     $this->remove = app(RemoveInstructorAction::class);
+
+    /*
+     * Start recording every statement that takes a row lock.
+     *
+     * An ArrayObject rather than an array because the listener has to keep
+     * filling the same collection after this closure has returned, and a
+     * returned array would be a copy.
+     */
+    $this->captureLocks = function (): ArrayObject {
+        $locking = new ArrayObject;
+
+        DB::listen(function (QueryExecuted $query) use ($locking): void {
+            $sql = strtolower($query->sql);
+
+            if (str_contains($sql, ' for update')) {
+                $locking->append($sql);
+            }
+        });
+
+        return $locking;
+    };
+
+    /** Which tables those statements locked — `select ... from `batches` ... for update`. */
+    $this->lockedTables = fn (ArrayObject $locking): array => collect($locking)
+        ->map(function (string $sql): string {
+            preg_match('/ from `(\w+)`/', $sql, $matches);
+
+            return $matches[1] ?? '';
+        })
+        ->all();
+
+    /** The statements themselves, for a failure message that says what DID run. */
+    $this->describeLocks = fn (ArrayObject $locking): string => $locking->count() === 0
+        ? 'none'
+        : implode(' | ', (array) $locking);
 });
 
 /*
@@ -347,6 +383,46 @@ it('refuses an account with no staff profile at all', function () {
     expect(DB::table('batch_instructor')->count())->toBe(0);
 });
 
+it('refuses a departed account', function () {
+    // A soft-deleted instructor is refused NEW hours exactly as a deactivated
+    // one is — and refused with the same typed exception, not reported as a
+    // missing record. The account is genuinely still there: Batch::instructors()
+    // is withTrashed() so the hours already recorded against it survive.
+    $sara = ($this->makeInstructor)('Sara');
+    $sara->delete();
+
+    expect($sara->trashed())->toBeTrue()
+        // Still findable, which is the whole reason this is a refusal rather
+        // than a ModelNotFoundException.
+        ->and(User::withTrashed()->whereKey($sara->getKey())->exists())->toBeTrue()
+        ->and(User::whereKey($sara->getKey())->exists())->toBeFalse();
+
+    expect(fn () => $this->assign->execute($this->admin, new AssignInstructorData(
+        (int) $this->batch->getKey(),
+        (int) $sara->getKey(),
+        30,
+    )))->toThrow(InstructorNotEligibleException::class);
+
+    expect(DB::table('batch_instructor')->count())->toBe(0);
+});
+
+it('refuses to change the hours of an instructor who has since departed', function () {
+    // The allocation stays; it just cannot be rewritten. Phase 2 pays from this
+    // row, and "Sara left, so her 18 hours became 40" is not a correction.
+    $sara = ($this->makeInstructor)('Sara');
+    $this->assign->execute($this->admin, new AssignInstructorData((int) $this->batch->getKey(), (int) $sara->getKey(), 18));
+
+    $sara->delete();
+
+    expect(fn () => $this->assign->execute($this->admin, new AssignInstructorData(
+        (int) $this->batch->getKey(),
+        (int) $sara->getKey(),
+        40,
+    )))->toThrow(InstructorNotEligibleException::class);
+
+    expect((int) DB::table('batch_instructor')->value('assigned_hours'))->toBe(18);
+});
+
 it('refuses an instructor id that matches no account', function () {
     // Distinct from ineligibility: nothing was named, so nothing is refused —
     // the lookup itself fails.
@@ -394,6 +470,62 @@ it('removes only the named instructor, leaving the co-teacher in place', functio
         ->and(DB::table('batch_instructor')->count())->toBe(1);
 });
 
+it('removes a departed instructor from an open batch', function () {
+    // A person who left and should never have been on this batch must still be
+    // removable, or the mistake is permanent. Only the batch's status gates the
+    // removal; the instructor's own state does not enter into it.
+    $sara = ($this->makeInstructor)('Sara');
+    $omar = ($this->makeInstructor)('Omar');
+
+    $this->assign->execute($this->admin, new AssignInstructorData((int) $this->batch->getKey(), (int) $sara->getKey(), 18));
+    $this->assign->execute($this->admin, new AssignInstructorData((int) $this->batch->getKey(), (int) $omar->getKey(), 12));
+
+    $sara->delete();
+
+    $this->remove->execute($this->admin, $this->batch, $sara);
+
+    $batch = $this->batch->fresh();
+
+    expect(DB::table('batch_instructor')->count())->toBe(1)
+        ->and($batch->totalAssignedHours())->toBe(12)
+        ->and($batch->instructors->pluck('id')->all())->toBe([$omar->getKey()])
+        // The account itself is untouched: removing an allocation is not a
+        // second deletion.
+        ->and(User::withTrashed()->whereKey($sara->getKey())->exists())->toBeTrue();
+});
+
+it('refuses to remove a departed instructor from a closed batch', function () {
+    // Departed or not, a finished batch is history. Erasing an allocation from
+    // it erases what phase 2 owes.
+    $sara = ($this->makeInstructor)('Sara');
+    $this->assign->execute($this->admin, new AssignInstructorData((int) $this->batch->getKey(), (int) $sara->getKey(), 30));
+
+    $sara->delete();
+    $this->batch->update(['status' => 'completed']);
+
+    expect(fn () => $this->remove->execute($this->admin, $this->batch->fresh(), $sara))
+        ->toThrow(BatchClosedException::class);
+
+    expect(DB::table('batch_instructor')->count())->toBe(1)
+        ->and($this->batch->fresh()->totalAssignedHours())->toBe(30);
+});
+
+it('refuses to assign a departed instructor to a closed batch', function () {
+    // Both refusals apply; the batch's is asked first, because the status gate
+    // lives in the policy and runs before eligibility.
+    $closed = Batch::factory()->for($this->course)->completed()->create();
+    $sara = ($this->makeInstructor)('Sara');
+    $sara->delete();
+
+    expect(fn () => $this->assign->execute($this->admin, new AssignInstructorData(
+        (int) $closed->getKey(),
+        (int) $sara->getKey(),
+        30,
+    )))->toThrow(BatchClosedException::class);
+
+    expect(DB::table('batch_instructor')->count())->toBe(0);
+});
+
 it('leaves the same instructor on other batches when removed from one', function () {
     $sara = ($this->makeInstructor)('Sara');
     $other = Batch::factory()->for($this->course)->active()->create();
@@ -405,6 +537,133 @@ it('leaves the same instructor on other batches when removed from one', function
 
     expect($this->batch->fresh()->instructors)->toHaveCount(0)
         ->and($other->fresh()->instructors)->toHaveCount(1);
+});
+
+/*
+|--------------------------------------------------------------------------
+| Departed instructors stay in the allocation history
+|--------------------------------------------------------------------------
+|
+| Batch::instructors() is withTrashed() ON PURPOSE. The pivot row survives a
+| soft delete — user_id is restrictOnDelete, so it must — and phase 2 pays wages
+| from it. A relation that dropped the row's owner would make those hours
+| invisible to the panel, to the badge and to every total, while the money still
+| came out of them. If a change makes the tests below fail, the change is wrong.
+*/
+
+it('keeps a departed instructor in the relation and in the hour total', function () {
+    $sara = ($this->makeInstructor)('Sara');
+    $omar = ($this->makeInstructor)('Omar');
+
+    $this->assign->execute($this->admin, new AssignInstructorData((int) $this->batch->getKey(), (int) $sara->getKey(), 18));
+    $this->assign->execute($this->admin, new AssignInstructorData((int) $this->batch->getKey(), (int) $omar->getKey(), 12));
+
+    $omar->delete();
+
+    $batch = $this->batch->fresh();
+
+    expect($batch->instructors)->toHaveCount(2)
+        ->and($batch->instructors->pluck('id')->sort()->values()->all())
+        ->toBe(collect([$sara->getKey(), $omar->getKey()])->sort()->values()->all())
+        ->and($batch->instructors->firstWhere('id', $omar->getKey())->trashed())->toBeTrue()
+        ->and((int) $batch->instructors->firstWhere('id', $omar->getKey())->pivot->assigned_hours)->toBe(12)
+        // The whole point: the hours still count.
+        ->and($batch->totalAssignedHours())->toBe(30)
+        ->and($batch->hasHourMismatch())->toBeFalse();
+});
+
+it('counts a departed instructor in the eager hour aggregate too', function () {
+    /*
+     * The listing path, not the relation path. BatchResource selects the SUM as
+     * a sub-query and totalAssignedHours() reads that alias instead of querying,
+     * so the two can disagree without anything failing: the panel would list
+     * Omar's twelve hours while the schedule's badge quietly dropped them.
+     *
+     * withSum() does inherit the relation's withTrashed() — it calls
+     * mergeConstraintsFrom($relation->getQuery()), which re-applies the scopes
+     * the relation removed — but that is a Laravel internal, not a promise. This
+     * test is what turns it into one.
+     */
+    $sara = ($this->makeInstructor)('Sara');
+    $omar = ($this->makeInstructor)('Omar');
+
+    $this->assign->execute($this->admin, new AssignInstructorData((int) $this->batch->getKey(), (int) $sara->getKey(), 18));
+    $this->assign->execute($this->admin, new AssignInstructorData((int) $this->batch->getKey(), (int) $omar->getKey(), 12));
+
+    $omar->delete();
+
+    $listed = Batch::query()
+        ->withSum('instructors as '.Batch::ASSIGNED_HOURS_SUM, 'batch_instructor.assigned_hours')
+        ->whereKey($this->batch->getKey())
+        ->firstOrFail();
+
+    // Read from the alias, so this is the aggregate and not a fallback query.
+    expect($listed->getAttributes())->toHaveKey(Batch::ASSIGNED_HOURS_SUM)
+        ->and($listed->totalAssignedHours())->toBe(30)
+        // And it agrees with the relation, which is the property that matters.
+        ->and($listed->totalAssignedHours())->toBe($this->batch->fresh()->totalAssignedHours());
+});
+
+/*
+|--------------------------------------------------------------------------
+| The row locks, proven from the SQL that was actually emitted
+|--------------------------------------------------------------------------
+|
+| "Authorizes against the freshly locked batch" above proves the Action
+| RE-QUERIES; it does not prove the query takes a lock, and a re-query without
+| one loses every race it was written to win. These read the emitted SQL.
+*/
+
+it('locks the batch row while assigning', function () {
+    $sara = ($this->makeInstructor)('Sara');
+
+    $locked = ($this->captureLocks)();
+
+    $this->assign->execute($this->admin, new AssignInstructorData(
+        (int) $this->batch->getKey(),
+        (int) $sara->getKey(),
+        18,
+    ));
+
+    expect(in_array('batches', ($this->lockedTables)($locked), true))->toBeTrue(
+        'AssignInstructorAction re-read the batch without lockForUpdate(). Locking statements seen: '
+        .($this->describeLocks)($locked),
+    );
+});
+
+it('locks the instructor row while assigning', function () {
+    // The eligibility decision READS the instructor's is_active, deleted_at and
+    // employment type. Reading them unlocked is the same race the batch lock
+    // exists to prevent: a deactivation or departure committed between that read
+    // and the pivot write leaves hours against somebody already stood down.
+    $sara = ($this->makeInstructor)('Sara');
+
+    $locked = ($this->captureLocks)();
+
+    $this->assign->execute($this->admin, new AssignInstructorData(
+        (int) $this->batch->getKey(),
+        (int) $sara->getKey(),
+        18,
+    ));
+
+    expect(in_array('users', ($this->lockedTables)($locked), true))->toBeTrue(
+        'AssignInstructorAction read the instructor without lockForUpdate(). Locking statements seen: '
+        .($this->describeLocks)($locked),
+    );
+});
+
+it('locks the batch row while removing', function () {
+    $sara = ($this->makeInstructor)('Sara');
+    $this->assign->execute($this->admin, new AssignInstructorData((int) $this->batch->getKey(), (int) $sara->getKey(), 18));
+
+    $locked = ($this->captureLocks)();
+
+    $this->remove->execute($this->admin, $this->batch, $sara);
+
+    expect(in_array('batches', ($this->lockedTables)($locked), true))->toBeTrue(
+        'RemoveInstructorAction re-read the batch without lockForUpdate(). Locking statements seen: '
+        .($this->describeLocks)($locked),
+    );
 });
 
 /*

@@ -97,6 +97,32 @@ class InstructorsRelationManager extends RelationManager
                     ->label(__('staff.job_title'))
                     ->placeholder(__('enrollment.no_job_title')),
 
+                /*
+                 * Whether this allocation belongs to somebody who still works
+                 * here.
+                 *
+                 * Batch::instructors() is withTrashed(), so a departed
+                 * instructor's hours stay listed and stay counted — phase 2 pays
+                 * from those rows and hiding them would mean paying against
+                 * records the UI denies exist. This column is what stops that
+                 * being confusing: the row is history, and it says so.
+                 *
+                 * Both states are labelled rather than only the departed one. A
+                 * badge that appears on some rows and not others reads as an
+                 * annotation somebody forgot to fill in; two badges read as an
+                 * answer.
+                 */
+                TextColumn::make('employment_state')
+                    ->label(__('enrollment.instructor_employment_state'))
+                    ->state(fn (User $record): string => $record->trashed()
+                        ? __('enrollment.instructor_departed')
+                        : __('enrollment.instructor_current'))
+                    ->badge()
+                    ->color(fn (User $record): string => $record->trashed() ? 'danger' : 'success')
+                    ->tooltip(fn (User $record): ?string => $record->trashed()
+                        ? __('enrollment.instructor_departed_hint')
+                        : null),
+
                 // The pivot value, which is the entire point of this panel: the
                 // hours belong to the pair, not to the batch and not to the
                 // account.
@@ -168,6 +194,14 @@ class InstructorsRelationManager extends RelationManager
      *
      * Routes through the same Action as assignment, for the same reason: an
      * EditAction here would write the pivot through the relation.
+     *
+     * DELIBERATELY STILL OFFERED ON A DEPARTED ROW. AssignInstructorAction
+     * refuses a soft-deleted account, so this button fails on one — with the
+     * translated "not eligible" message, and without moving the stored figure.
+     * Hiding it instead would leave a row that visibly cannot be edited and no
+     * statement of why, and the why is worth saying: those hours are what phase
+     * 2 pays somebody who has left, so rewriting them rewrites a wage. A refusal
+     * that explains itself beats a control that quietly is not there.
      */
     private function editHoursAction(): Action
     {
@@ -216,7 +250,7 @@ class InstructorsRelationManager extends RelationManager
                 try {
                     app(RemoveInstructorAction::class)->execute($actor, $batch, $record);
                 } catch (BatchClosedException|AuthorizationException $exception) {
-                    self::refuse($exception->getMessage());
+                    self::refuse($exception);
                 }
             });
     }
@@ -245,26 +279,52 @@ class InstructorsRelationManager extends RelationManager
                 assignedHours: $assignedHours,
             ));
         } catch (BatchClosedException|InstructorNotEligibleException|AuthorizationException $exception) {
-            self::refuse($exception->getMessage());
+            self::refuse($exception);
         }
     }
 
-    private static function refuse(string $message): void
+    /**
+     * Turn a refusal into a notification the reader can actually read.
+     *
+     * BatchClosedException and InstructorNotEligibleException are constructed
+     * with __() messages of their own, so their text is already translatable and
+     * is passed through.
+     *
+     * AuthorizationException IS NOT. Its message comes from Laravel — "This
+     * action is unauthorized." — hardcoded English that would appear verbatim in
+     * an Arabic panel from phase 4, and that says nothing useful about instructor
+     * allocation in any language. It is mapped to a key of this domain's own
+     * instead. Task 14 supplies lang/, so until then this renders AS the key,
+     * which is the intended and visible state rather than a fallback to English.
+     */
+    private static function refuse(BatchClosedException|InstructorNotEligibleException|AuthorizationException $exception): void
     {
         Notification::make()
-            ->title($message)
+            ->title($exception instanceof AuthorizationException
+                ? __('enrollment.instructor_change_denied')
+                : $exception->getMessage())
             ->danger()
             ->persistent()
             ->send();
     }
 
     /**
-     * Active accounts whose staff profile says they teach.
+     * Live, active accounts whose staff profile says they teach.
      *
      * scopeInstructors() on StaffProfile is the single expression of "this
      * person teaches"; driving the subquery from StaffProfile rather than
      * repeating the enum comparison in a whereHas closure keeps the offered list
      * and the profile register answering the same question.
+     *
+     * Departed accounts are excluded by User's SoftDeletes global scope, which
+     * is left in place here ON PURPOSE — this query is the opposite end of the
+     * one on Batch::instructors(), which removes that scope so history survives.
+     * Listing somebody's past hours and offering them new ones are different
+     * questions, and only the second is answered here. The Action refuses a
+     * trashed account regardless; a Select's options are a suggestion.
+     *
+     * ORDER BY users.name is indexed — see the add_name_index_to_users_table
+     * migration.
      *
      * @return array<int, string>
      */

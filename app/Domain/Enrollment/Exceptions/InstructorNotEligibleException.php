@@ -9,9 +9,10 @@ use RuntimeException;
 /**
  * The account named cannot be assigned to teach a batch.
  *
- * Three cases produce this, and they are deliberately one exception rather than
- * three:
+ * Four cases produce this, and they are deliberately one exception rather than
+ * four:
  *
+ *   - the account has been soft-deleted (the person has left);
  *   - the account is deactivated (`is_active` false);
  *   - the account has a staff profile whose employment_type is administrative
  *     or support rather than instructor;
@@ -22,6 +23,12 @@ use RuntimeException;
  * tell a caller which accounts exist and what they do. Phase 2 pays wages from
  * these rows, so the front-desk clerk's account appearing on a batch is not a
  * cosmetic error; it is a person who gets paid for teaching they never did.
+ *
+ * The soft-deleted case is a REFUSAL, not a "no such user". Batch::instructors()
+ * is withTrashed() so that hours already recorded against a departed instructor
+ * stay visible, which means the account is genuinely findable — it simply may
+ * not be given new hours. Reporting that as a missing record would misdescribe
+ * both the account and the reason.
  *
  * The exception is NOT the whole boundary. It refuses a name the application
  * offers; the eligible-instructor query is what stops the name being offered.
