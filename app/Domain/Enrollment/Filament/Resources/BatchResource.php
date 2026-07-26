@@ -9,6 +9,7 @@ use App\Domain\Enrollment\Filament\Resources\BatchResource\Pages\CreateBatch;
 use App\Domain\Enrollment\Filament\Resources\BatchResource\Pages\EditBatch;
 use App\Domain\Enrollment\Filament\Resources\BatchResource\Pages\ListBatches;
 use App\Domain\Enrollment\Filament\Resources\BatchResource\Pages\ViewBatch;
+use App\Domain\Enrollment\Filament\Resources\BatchResource\RelationManagers\InstructorsRelationManager;
 use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Course;
 use BackedEnum;
@@ -95,16 +96,33 @@ class BatchResource extends Resource
     }
 
     /**
-     * Eager-load the course on every read.
+     * Eager-load the course, and aggregate the instructor hours, on every read.
      *
-     * effective_total_hours reaches through the relation, and the table renders
-     * it per row — without this the list is a textbook N+1.
+     * effective_total_hours reaches through the course relation and the table
+     * renders it per row — without with('course') the list is a textbook N+1.
+     *
+     * withSum() is the same problem one table further out. The hour-allocation
+     * column asks every row for its total assigned hours; resolved per row that
+     * is one SELECT per batch, which is invisible on a seeded database and
+     * ruinous on a real one. Selected as a sub-query it is part of the single
+     * list query, and Batch::totalAssignedHours() reads the alias instead of
+     * querying. BatchInstructorResourceTest counts the queries that touch
+     * batch_instructor and fails if there is more than one.
      *
      * @return Builder<Batch>
      */
     public static function getEloquentQuery(): Builder
     {
-        return parent::getEloquentQuery()->with('course');
+        return parent::getEloquentQuery()
+            ->with('course')
+            /*
+             * The column is qualified with the pivot table on purpose. withSum()
+             * qualifies a bare column name with the RELATED model's table, which
+             * here is `users` — a table with no assigned_hours column at all, so
+             * the list dies with "unknown column users.assigned_hours". The hours
+             * live on the relationship, and the SUM has to say so.
+             */
+            ->withSum('instructors as '.Batch::ASSIGNED_HOURS_SUM, 'batch_instructor.assigned_hours');
     }
 
     public static function form(Schema $schema): Schema
@@ -266,6 +284,32 @@ class BatchResource extends Resource
                 TextColumn::make('effective_total_hours')
                     ->label(__('enrollment.total_hours')),
 
+                /*
+                 * Assigned hours against the batch total — "18 / 30".
+                 *
+                 * A WARNING, NOT AN ERROR. Amber means the two figures differ,
+                 * and that is a legitimate state in both directions: 20 of 30
+                 * assigned means ten hours nobody is down as teaching, while
+                 * 60 of 30 means two instructors co-teaching every hour, which
+                 * is exactly the arrangement the spec says must not be blocked.
+                 * The badge exists so a real mistake is noticed, not so a real
+                 * arrangement is prevented.
+                 *
+                 * Both closures read Batch::totalAssignedHours(), which returns
+                 * the withSum() alias selected in getEloquentQuery() — no query
+                 * per row. Not sortable: it is a sub-query alias, not a column
+                 * with an index behind it.
+                 */
+                TextColumn::make('hour_allocation')
+                    ->label(__('enrollment.hour_allocation'))
+                    ->state(fn (Batch $record): string => $record->totalAssignedHours()
+                        .' / '.$record->effective_total_hours)
+                    ->badge()
+                    ->color(fn (Batch $record): string => $record->hasHourMismatch() ? 'warning' : 'success')
+                    ->tooltip(fn (Batch $record): ?string => $record->hasHourMismatch()
+                        ? __('enrollment.hour_mismatch_hint')
+                        : null),
+
                 // DELIBERATELY ABSENT: price. Phase 2 owns it.
             ])
             /*
@@ -296,6 +340,21 @@ class BatchResource extends Resource
                 DeleteAction::make()
                     ->authorize('delete'),
             ]);
+    }
+
+    /**
+     * The instructor allocation panel, shown on the view and edit pages.
+     *
+     * Its own visibility is authorized against this batch rather than the User
+     * model — see InstructorsRelationManager::canViewForRecord().
+     *
+     * @return array<class-string>
+     */
+    public static function getRelations(): array
+    {
+        return [
+            InstructorsRelationManager::class,
+        ];
     }
 
     public static function getPages(): array

@@ -1,0 +1,68 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Enrollment\Actions;
+
+use App\Domain\Enrollment\Exceptions\BatchClosedException;
+use App\Domain\Enrollment\Models\Batch;
+use App\Models\User;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
+
+/**
+ * Take an instructor off a batch.
+ *
+ * The sibling of AssignInstructorAction and gated identically: the spec's
+ * "completed and cancelled batches reject instructor changes" covers removals
+ * as much as additions — taking a name off a finished batch is the same
+ * rewriting of history as putting one on, and from phase 2 it erases what
+ * somebody is owed.
+ *
+ * The gate is expressed by asking BatchPolicy::assignInstructor() about the
+ * freshly locked row, exactly as the assign path does, so the RULE lives in one
+ * place and cannot drift between the two Actions. Only the translation of a
+ * denial into a typed refusal is repeated, and it is repeated rather than shared
+ * because a base class or trait holding six lines of gate would be a third place
+ * to look for the rule that is in fact in the policy.
+ *
+ * Detaching only the named pair is the point: a batch co-taught by Sara and Omar
+ * loses one row when Omar leaves it, never both. detach() with an explicit key
+ * does that; a bare detach() would empty the batch.
+ */
+final class RemoveInstructorAction
+{
+    /**
+     * @throws BatchClosedException if the batch is completed or cancelled.
+     */
+    public function execute(User $actor, Batch $batch, User $instructor): void
+    {
+        DB::transaction(function () use ($actor, $batch, $instructor): void {
+            // Re-read under a lock rather than trusting the instance handed in:
+            // the caller's copy may have been read before the batch closed, and
+            // authorizing that copy would let a closed batch accept the change.
+            $locked = Batch::query()->lockForUpdate()->findOrFail($batch->getKey());
+
+            $this->authorize($actor, $locked);
+
+            $locked->instructors()->detach($instructor->getKey());
+        });
+    }
+
+    /**
+     * See AssignInstructorAction::authorize() for why a denial is re-examined
+     * rather than surfaced as a bare 403.
+     */
+    private function authorize(User $actor, Batch $batch): void
+    {
+        if (Gate::forUser($actor)->allows('assignInstructor', $batch)) {
+            return;
+        }
+
+        if ($actor->can('assign_instructor') && ! $batch->acceptsEnrollments()) {
+            throw new BatchClosedException((int) $batch->getKey());
+        }
+
+        Gate::forUser($actor)->authorize('assignInstructor', $batch);
+    }
+}
