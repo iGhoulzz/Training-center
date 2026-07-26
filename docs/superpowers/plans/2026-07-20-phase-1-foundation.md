@@ -3219,18 +3219,252 @@ git commit -m "feat(enrollment): add instructor hour allocation with mismatch wa
 
 **Branch:** `p1/t11-enrollments`
 
-**Files:**
-- Create: `database/migrations/2026_07_20_000700_create_enrollments_table.php`
+**Rewritten 2026-07-27.** The original section was drafted 2026-07-20, before the
+P1-T04c Actions refactor and the P1-T09/T10 hardening, and had drifted from the
+code in eight material ways: the Action took no actor and never authorized, the
+policy branched on `hasAnyRole()`, the model carried a write method, `Batch::
+enrollments()` was used by a step that never added it, `isOverCapacity()`
+reintroduced an N+1 that P1-T10 had removed, the model used `$fillable` rather
+than `#[Fillable]` and omitted `newFactory()`, the Filament step was a bare
+generator call, and "Expected: 7 passed" covered no authorization negative, no
+race, and no foreign key.
+
+### Decisions settled by review before implementation
+
+Recorded here because each was a fork the earlier draft resolved wrongly or not
+at all.
+
+1. **Two permissions, no role checks.** `update_enrollment` is unrestricted.
+   `update_assigned_batch_enrollment` is the staff grant and is restricted to
+   batches the actor is assigned to teach. **Never** branch on a role name or on
+   `employment_type`. Creation is unscoped for anyone holding
+   `create_enrollment` — spec line 15 requires a front-desk staffer to enrol a
+   walk-in, and a batch-scoped create would make that impossible for someone who
+   teaches nothing.
+2. **No completion path in phase 1.** Spec line 71 assigns *completion marking*
+   to phase 3 explicitly. `EnrollmentStatus::Completed` is therefore unreachable
+   from the application in phase 1 by design, and `completed_at` exists as a
+   column (spec line 215) that nothing writes yet.
+3. **Withdrawal is the only status transition.** `Active → Withdrawn`,
+   idempotent, and terminal: nothing un-withdraws in phase 1. No generic status
+   editing anywhere in the UI, and **no `withdrawn_at` column**.
+4. **`Enrollment::student()` is `withTrashed()`.** Students soft-delete, so
+   without it a deleted student's enrolment history resolves to a null student
+   and phase 2 would bill against rows the UI says have no owner.
+5. **Both foreign keys stay `restrictOnDelete`.**
+6. **Batch deletion routes through an actor-first `DeleteBatchAction`** that
+   converts **only** MySQL 1451, exactly as `DeleteCourseAction` does.
+
+**Declared file scope.** Expanded beyond the original list with explicit
+authorization, because the permission decision above cannot be implemented
+inside the original scope:
+
+- Create: `database/migrations/2026_07_27_000100_create_enrollments_table.php`
 - Create: `app/Domain/Enrollment/Models/Enrollment.php`
 - Create: `app/Domain/Enrollment/Enums/EnrollmentStatus.php`
-- Create: `app/Domain/Enrollment/Actions/EnrollStudentAction.php`
 - Create: `app/Domain/Enrollment/Data/EnrollStudentData.php`
+- Create: `app/Domain/Enrollment/Actions/EnrollStudentAction.php`
+- Create: `app/Domain/Enrollment/Actions/WithdrawEnrollmentAction.php`
+- Create: `app/Domain/Enrollment/Actions/DeleteBatchAction.php`
 - Create: `app/Domain/Enrollment/Exceptions/DuplicateEnrollmentException.php`
+- Create: `app/Domain/Enrollment/Exceptions/StudentNotEnrollableException.php`
+- Create: `app/Domain/Enrollment/Exceptions/EnrollmentNotWithdrawableException.php`
+- Create: `app/Domain/Enrollment/Exceptions/BatchInUseException.php`
 - Create: `app/Domain/Enrollment/Policies/EnrollmentPolicy.php`
+- Create: `app/Domain/Enrollment/Filament/Resources/BatchResource/RelationManagers/EnrollmentsRelationManager.php`
 - Create: `database/factories/EnrollmentFactory.php`
 - Create: `tests/Feature/Enrollment/EnrollmentTest.php`
+- Create: `tests/Feature/Enrollment/EnrollmentPolicyTest.php`
+- Create: `tests/Feature/Enrollment/EnrollmentsRelationManagerTest.php`
+- Modify: `app/Domain/Enrollment/Models/Batch.php` — add `enrollments()`, `isOverCapacity()`, `ACTIVE_ENROLLMENTS_COUNT`
+- Modify: `app/Domain/Enrollment/Models/Student.php` — add `enrollments()`
+- Modify: `app/Domain/Enrollment/Filament/Resources/BatchResource.php` — register the relation manager, route delete through the Action
+- Modify: `app/Domain/Enrollment/Filament/Resources/BatchResource/Pages/EditBatch.php` — route delete through the Action
+- **Modify (authorized expansion):** `database/seeders/RolePermissionSeeder.php` — add `update_assigned_batch_enrollment`, swap it in for staff's `update_enrollment`
+- **Modify (authorized expansion):** `tests/Feature/Staff/RolePermissionSeederTest.php` — assert the new grant shape
+- **Modify (authorized expansion):** `tests/Feature/Staff/ActionBoundaryArchTest.php` — allowlist `DeleteBatchAction` on the deletion rule
+- **Modify (authorized expansion):** `tests/Pest.php` — extract the transaction-depth capture helpers
+- **Modify (authorized expansion):** `tests/Feature/Enrollment/InstructorHoursTest.php` — consume the extracted helpers
+- **Modify (authorized expansion):** the spec, per the corrections listed in Step 16
 
-- [ ] **Step 1: Write the failing test**
+---
+
+- [ ] **Step 1: Create the worktree**
+
+```bash
+git worktree add ../Training-center-worktrees/P1-T11 -b p1/t11-enrollments
+```
+
+A new worktree needs its own dependencies and environment. Copy `.env` without
+reading it — it holds the database password.
+
+```bash
+cd ../Training-center-worktrees/P1-T11
+cp ../../Training-center/.env .env
+composer install
+```
+
+- [ ] **Step 2: Extract the transaction-depth capture helpers**
+
+P1-T10d established that asserting `for update` appears in the SQL proves
+nothing, because `RefreshDatabase` already holds a transaction open — an Action
+with its `DB::transaction()` deleted still emits the lock and still passes. The
+depth is what distinguishes them, and T11's three Actions need the same
+assertions, so the helpers move out of `InstructorHoursTest` rather than being
+copied into a second file.
+
+Add to `tests/Pest.php`, after the expectations block:
+
+```php
+/*
+|--------------------------------------------------------------------------
+| Statement capture, for proving locks and transactions
+|--------------------------------------------------------------------------
+|
+| RefreshDatabase wraps every test in a transaction, so a lockForUpdate()
+| emits "for update" whether or not the Action under test opened a
+| transaction of its own. Asserting the SQL alone therefore passes for an
+| Action that takes no lock that survives its own return. These helpers
+| record the DEPTH each statement ran at, so a test can assert baseline + 1.
+|
+| See P1-T10d: with DB::transaction() deleted from AssignInstructorAction,
+| every lock test still passed.
+*/
+
+/**
+ * Begin recording every statement with the transaction depth it executed at.
+ *
+ * An ArrayObject rather than an array because the listener keeps filling the
+ * same collection after this function returns, and an array would be a copy.
+ */
+function captureStatements(): ArrayObject
+{
+    $statements = new ArrayObject;
+
+    Illuminate\Support\Facades\DB::listen(
+        function (Illuminate\Database\Events\QueryExecuted $query) use ($statements): void {
+            $statements->append([
+                'sql' => strtolower($query->sql),
+                'bindings' => $query->bindings,
+                'level' => Illuminate\Support\Facades\DB::transactionLevel(),
+            ]);
+        },
+    );
+
+    return $statements;
+}
+
+/**
+ * The locking reads taken against $table.
+ *
+ * @return array<int, array{sql: string, bindings: array<int, mixed>, level: int}>
+ */
+function locksOn(ArrayObject $statements, string $table): array
+{
+    return collect($statements)
+        ->filter(fn (array $statement): bool => str_contains($statement['sql'], ' for update')
+            && str_contains($statement['sql'], "from `{$table}`"))
+        ->values()
+        ->all();
+}
+
+/**
+ * The statements that wrote $table — insert, update or delete.
+ *
+ * All three count: a test watching only for inserts stops meaning anything the
+ * first time a row is changed rather than created.
+ *
+ * @return array<int, array{sql: string, bindings: array<int, mixed>, level: int}>
+ */
+function writesTo(ArrayObject $statements, string $table): array
+{
+    return collect($statements)
+        ->filter(fn (array $statement): bool => preg_match(
+            '/^(insert into|update|delete from) `'.preg_quote($table, '/').'`/',
+            $statement['sql'],
+        ) === 1)
+        ->values()
+        ->all();
+}
+
+/** Every statement with its depth, for a failure message that says what DID run. */
+function describeStatements(ArrayObject $statements): string
+{
+    return $statements->count() === 0
+        ? 'none'
+        : collect($statements)
+            ->map(fn (array $statement): string => "[level {$statement['level']}] {$statement['sql']}")
+            ->implode(' | ');
+}
+
+/**
+ * Assert a statement ran exactly one transaction level deeper than the caller,
+ * against the expected row.
+ *
+ * THE DELTA, NOT THE ABSOLUTE LEVEL. Under RefreshDatabase the caller sits at
+ * level 1 and in production at level 0; asserting `level === 1` would pass for
+ * an Action that opens no transaction at all, which is precisely the bug this
+ * exists to catch. baseline + 1 means the same thing in both places.
+ *
+ * @param  array{sql: string, bindings: array<int, mixed>, level: int}  $statement
+ */
+function expectOneLevelDeeper(array $statement, int $baseline, int $rowId, string $what): void
+{
+    expect($statement['level'])->toBe(
+        $baseline + 1,
+        "{$what} ran at transaction level {$statement['level']}, expected ".($baseline + 1)
+        .' — one deeper than the caller. At the caller\'s own level the Action opened no '
+        .'transaction, so the lock releases immediately and guards nothing. SQL: '.$statement['sql'],
+    );
+
+    // Only the integer-ish bindings: a write also binds timestamps, and
+    // array_map('intval', ...) over a Carbon instance is a TypeError. in_array()
+    // rather than expect()->toContain(), which is variadic and would read a
+    // failure message as a second expected value.
+    $ids = array_values(array_filter(array_map(
+        fn (mixed $binding): ?int => is_int($binding) || (is_string($binding) && ctype_digit($binding))
+            ? (int) $binding
+            : null,
+        $statement['bindings'],
+    ), fn (?int $binding): bool => $binding !== null));
+
+    expect(in_array($rowId, $ids, true))->toBeTrue(
+        "{$what} did not bind row id {$rowId}, so it addressed something other than the row under "
+        .'test. Integer bindings seen: '.($ids === [] ? 'none' : implode(', ', $ids))
+        .'. SQL: '.$statement['sql'],
+    );
+}
+```
+
+Then delete the equivalent closures from `InstructorHoursTest`'s `beforeEach`
+(`$this->captureStatements`, `$this->locksOn`, `$this->pivotWrites`,
+`$this->describe`, `$this->expectOneLevelDeeper`) and update its five call sites
+to the free functions — `($this->locksOn)($s, 'batches')` becomes
+`locksOn($s, 'batches')`, and `($this->pivotWrites)($s)` becomes
+`writesTo($s, 'batch_instructor')`.
+
+- [ ] **Step 3: Run the instructor suite to prove the extraction changed nothing**
+
+Run: `php artisan test --filter=InstructorHoursTest`
+Expected: 42 passed.
+
+Then prove the moved helpers still bite. Temporarily replace
+`return DB::transaction(function () use ($actor, $data): Batch {` in
+`AssignInstructorAction` with `return (function () use ($actor, $data): Batch {`
+and its closing `});` with `})();`, and re-run.
+
+Expected: 4 failures naming "ran at transaction level 1, expected 2". Restore the
+Action afterwards and confirm 42 pass again.
+
+- [ ] **Step 4: Commit the extraction**
+
+```bash
+vendor/bin/pint && vendor/bin/phpstan analyse --memory-limit=1G && php artisan test
+git add -A
+git commit -m "test: extract the transaction-depth capture helpers [P1-T11]"
+```
+
+- [ ] **Step 5: Write the failing enrollment test**
 
 Create `tests/Feature/Enrollment/EnrollmentTest.php`:
 
@@ -3240,52 +3474,119 @@ Create `tests/Feature/Enrollment/EnrollmentTest.php`:
 declare(strict_types=1);
 
 use App\Domain\Enrollment\Actions\EnrollStudentAction;
+use App\Domain\Enrollment\Actions\WithdrawEnrollmentAction;
 use App\Domain\Enrollment\Data\EnrollStudentData;
 use App\Domain\Enrollment\Enums\EnrollmentStatus;
 use App\Domain\Enrollment\Exceptions\BatchClosedException;
 use App\Domain\Enrollment\Exceptions\DuplicateEnrollmentException;
+use App\Domain\Enrollment\Exceptions\EnrollmentNotWithdrawableException;
+use App\Domain\Enrollment\Exceptions\StudentNotEnrollableException;
 use App\Domain\Enrollment\Models\Batch;
+use App\Domain\Enrollment\Models\Course;
 use App\Domain\Enrollment\Models\Enrollment;
 use App\Domain\Enrollment\Models\Student;
+use App\Domain\Staff\Actions\SystemRoleWriter;
 use App\Models\User;
+use Database\Seeders\RolePermissionSeeder;
+use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Database\QueryException;
+use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 
-uses(Illuminate\Foundation\Testing\RefreshDatabase::class);
+uses(RefreshDatabase::class);
 
 beforeEach(function () {
-    $this->seed(Database\Seeders\RolePermissionSeeder::class);
+    $this->seed(RolePermissionSeeder::class);
 
-    $this->batch = Batch::factory()->active()->create(['capacity' => 2]);
-    $this->action = app(EnrollStudentAction::class);
+    $this->system = app(SystemRoleWriter::class);
+
+    $this->admin = User::factory()->create(['is_active' => true]);
+    $this->system->assignRoles($this->admin, 'admin');
+    $this->admin->refresh();
+
+    $this->course = Course::factory()->create(['total_hours' => 30]);
+    $this->batch = Batch::factory()->for($this->course)->active()->create(['capacity' => 2]);
+
+    $this->enroll = app(EnrollStudentAction::class);
+    $this->withdraw = app(WithdrawEnrollmentAction::class);
 });
+
+/*
+|--------------------------------------------------------------------------
+| Enrolling
+|--------------------------------------------------------------------------
+*/
 
 it('enrolls a student into an open batch', function () {
     $student = Student::factory()->create();
 
-    $enrollment = $this->action->execute(new EnrollStudentData($student->id, $this->batch->id));
+    $enrollment = $this->enroll->execute($this->admin, new EnrollStudentData(
+        studentId: (int) $student->getKey(),
+        batchId: (int) $this->batch->getKey(),
+    ));
 
     expect($enrollment->status)->toBe(EnrollmentStatus::Active)
-        ->and($enrollment->enrolled_at)->not->toBeNull();
+        ->and($enrollment->enrolled_at)->not->toBeNull()
+        ->and($enrollment->completed_at)->toBeNull()
+        ->and((int) $enrollment->student_id)->toBe((int) $student->getKey())
+        ->and((int) $enrollment->batch_id)->toBe((int) $this->batch->getKey());
 });
 
-it('rejects a duplicate enrollment', function () {
+it('refuses a duplicate enrollment with a typed exception', function () {
     $student = Student::factory()->create();
 
-    $this->action->execute(new EnrollStudentData($student->id, $this->batch->id));
-    $this->action->execute(new EnrollStudentData($student->id, $this->batch->id));
+    $data = new EnrollStudentData((int) $student->getKey(), (int) $this->batch->getKey());
+
+    $this->enroll->execute($this->admin, $data);
+    $this->enroll->execute($this->admin, $data);
 })->throws(DuplicateEnrollmentException::class);
 
-it('rejects enrollment into a completed batch', function () {
-    $closed = Batch::factory()->completed()->create();
+it('refuses enrollment into a completed batch', function () {
+    $closed = Batch::factory()->for($this->course)->completed()->create();
     $student = Student::factory()->create();
 
-    $this->action->execute(new EnrollStudentData($student->id, $closed->id));
+    $this->enroll->execute($this->admin, new EnrollStudentData(
+        (int) $student->getKey(),
+        (int) $closed->getKey(),
+    ));
 })->throws(BatchClosedException::class);
 
+it('refuses enrollment into a cancelled batch', function () {
+    // Both closed states, not just the one. Spec section 6 names completed AND
+    // cancelled, and a test covering one of them proves nothing about the other.
+    $cancelled = Batch::factory()->for($this->course)->cancelled()->create();
+    $student = Student::factory()->create();
+
+    $this->enroll->execute($this->admin, new EnrollStudentData(
+        (int) $student->getKey(),
+        (int) $cancelled->getKey(),
+    ));
+})->throws(BatchClosedException::class);
+
+it('refuses to enroll a soft-deleted student', function () {
+    // A departed student is not somebody who can be put on a new batch. The
+    // student is read withTrashed() so this is a REFUSAL, not a "not found":
+    // findOrFail on a scoped query would report it as a bad id and say nothing
+    // about why the write will not happen.
+    $student = Student::factory()->create();
+    $student->delete();
+
+    $this->enroll->execute($this->admin, new EnrollStudentData(
+        (int) $student->getKey(),
+        (int) $this->batch->getKey(),
+    ));
+})->throws(StudentNotEnrollableException::class);
+
 it('permits exceeding capacity but reports it', function () {
-    // Capacity is 2; enroll 3.
-    foreach (range(1, 3) as $i) {
-        $student = Student::factory()->create();
-        $this->action->execute(new EnrollStudentData($student->id, $this->batch->id));
+    // THE DESIGN DECISION. Spec line 217: enrolling beyond capacity produces a
+    // warning, not a hard block — centres routinely squeeze in one more student.
+    // Capacity is 2; enrol 3.
+    foreach (range(1, 3) as $ignored) {
+        $this->enroll->execute($this->admin, new EnrollStudentData(
+            (int) Student::factory()->create()->getKey(),
+            (int) $this->batch->getKey(),
+        ));
     }
 
     $batch = $this->batch->fresh();
@@ -3294,36 +3595,301 @@ it('permits exceeding capacity but reports it', function () {
         ->and($batch->isOverCapacity())->toBeTrue();
 });
 
-it('marks an enrollment complete and stamps the date', function () {
-    $enrollment = Enrollment::factory()->create(['status' => EnrollmentStatus::Active]);
+it('does not report a batch filled exactly to capacity as over it', function () {
+    // The boundary, which "> capacity" gets right and ">= capacity" would not.
+    foreach (range(1, 2) as $ignored) {
+        $this->enroll->execute($this->admin, new EnrollStudentData(
+            (int) Student::factory()->create()->getKey(),
+            (int) $this->batch->getKey(),
+        ));
+    }
 
-    $enrollment->markCompleted();
-
-    expect($enrollment->fresh()->status)->toBe(EnrollmentStatus::Completed)
-        ->and($enrollment->fresh()->completed_at)->not->toBeNull();
+    expect($this->batch->fresh()->isOverCapacity())->toBeFalse();
 });
 
-it('enforces uniqueness at the database level', function () {
-    $student = Student::factory()->create();
-    Enrollment::factory()->create(['student_id' => $student->id, 'batch_id' => $this->batch->id]);
-    Enrollment::factory()->create(['student_id' => $student->id, 'batch_id' => $this->batch->id]);
-})->throws(Illuminate\Database\UniqueConstraintViolationException::class);
+it('does not count withdrawn enrollments towards capacity', function () {
+    // A withdrawn student has left the seat. Counting them would report a batch
+    // as full while it has room, and would refuse nothing — it would just lie.
+    foreach (range(1, 3) as $ignored) {
+        $enrollment = $this->enroll->execute($this->admin, new EnrollStudentData(
+            (int) Student::factory()->create()->getKey(),
+            (int) $this->batch->getKey(),
+        ));
+    }
 
-it('allows staff to create enrollments but not delete them', function () {
+    $this->withdraw->execute($this->admin, $enrollment);
+
+    expect($this->batch->fresh()->isOverCapacity())->toBeFalse();
+});
+
+/*
+|--------------------------------------------------------------------------
+| Withdrawing — the only status transition phase 1 has
+|--------------------------------------------------------------------------
+*/
+
+it('withdraws an active enrollment', function () {
+    $enrollment = $this->enroll->execute($this->admin, new EnrollStudentData(
+        (int) Student::factory()->create()->getKey(),
+        (int) $this->batch->getKey(),
+    ));
+
+    $withdrawn = $this->withdraw->execute($this->admin, $enrollment);
+
+    expect($withdrawn->status)->toBe(EnrollmentStatus::Withdrawn);
+});
+
+it('treats withdrawing an already-withdrawn enrollment as a no-op', function () {
+    // Idempotent by decision. A double-clicked button, or two staff acting on
+    // the same row, must not become an error the reader has to interpret.
+    $enrollment = $this->enroll->execute($this->admin, new EnrollStudentData(
+        (int) Student::factory()->create()->getKey(),
+        (int) $this->batch->getKey(),
+    ));
+
+    $this->withdraw->execute($this->admin, $enrollment);
+    $again = $this->withdraw->execute($this->admin, $enrollment->fresh());
+
+    expect($again->status)->toBe(EnrollmentStatus::Withdrawn)
+        ->and(Enrollment::query()->count())->toBe(1);
+});
+
+it('refuses to withdraw a completed enrollment', function () {
+    // Phase 1 cannot produce a completed enrollment — completion marking is
+    // phase 3, spec line 71 — but a seeded or phase-3 row can be one, and
+    // withdrawing it would invalidate a certificate that was issued against it.
+    $enrollment = Enrollment::factory()->completed()->create();
+
+    $this->withdraw->execute($this->admin, $enrollment);
+})->throws(EnrollmentNotWithdrawableException::class);
+
+/*
+|--------------------------------------------------------------------------
+| Authorization — negatives first, because those are the ones that matter
+|--------------------------------------------------------------------------
+*/
+
+it('refuses enrollment by an actor holding no create grant', function () {
+    $student = User::factory()->create(['is_active' => true]);
+    $this->system->assignRoles($student, 'student');
+
+    $this->enroll->execute($student->refresh(), new EnrollStudentData(
+        (int) Student::factory()->create()->getKey(),
+        (int) $this->batch->getKey(),
+    ));
+})->throws(AuthorizationException::class);
+
+it('lets staff enroll into any batch, not only ones they teach', function () {
+    // Creation is deliberately unscoped: spec line 15 requires a front-desk
+    // staffer to enrol a walk-in, and they teach nothing at all.
     $staff = User::factory()->create(['is_active' => true]);
-    $staff->assignRole('staff');
+    $this->system->assignRoles($staff, 'staff');
 
-    expect($staff->can('create', Enrollment::class))->toBeTrue()
-        ->and($staff->can('delete', Enrollment::factory()->create()))->toBeFalse();
+    $enrollment = $this->enroll->execute($staff->refresh(), new EnrollStudentData(
+        (int) Student::factory()->create()->getKey(),
+        (int) $this->batch->getKey(),
+    ));
+
+    expect($enrollment->status)->toBe(EnrollmentStatus::Active);
+});
+
+it('refuses to reveal a closed batch to an actor who may not enroll at all', function () {
+    // Ordering matters: the ability is checked BEFORE the batch's status, so a
+    // refusal never tells an unentitled actor what state the batch is in.
+    $student = User::factory()->create(['is_active' => true]);
+    $this->system->assignRoles($student, 'student');
+
+    $closed = Batch::factory()->for($this->course)->completed()->create();
+
+    $this->enroll->execute($student->refresh(), new EnrollStudentData(
+        (int) Student::factory()->create()->getKey(),
+        (int) $closed->getKey(),
+    ));
+})->throws(AuthorizationException::class);
+
+/*
+|--------------------------------------------------------------------------
+| The locks, and the transaction they must live in
+|--------------------------------------------------------------------------
+*/
+
+it('locks the batch row while enrolling, inside a transaction it opened itself', function () {
+    $student = Student::factory()->create();
+
+    $baseline = DB::transactionLevel();
+    $statements = captureStatements();
+
+    $this->enroll->execute($this->admin, new EnrollStudentData(
+        (int) $student->getKey(),
+        (int) $this->batch->getKey(),
+    ));
+
+    $locks = locksOn($statements, 'batches');
+
+    expect($locks)->not->toBeEmpty(
+        'EnrollStudentAction read the batch without lockForUpdate(). Statements seen: '
+        .describeStatements($statements),
+    );
+
+    expectOneLevelDeeper($locks[0], $baseline, (int) $this->batch->getKey(), 'The batch lock');
+});
+
+it('locks the student row while enrolling, inside a transaction it opened itself', function () {
+    $student = Student::factory()->create();
+
+    $baseline = DB::transactionLevel();
+    $statements = captureStatements();
+
+    $this->enroll->execute($this->admin, new EnrollStudentData(
+        (int) $student->getKey(),
+        (int) $this->batch->getKey(),
+    ));
+
+    $locks = locksOn($statements, 'students');
+
+    expect($locks)->not->toBeEmpty(
+        'EnrollStudentAction read the student without lockForUpdate(), so the deleted-student '
+        .'refusal was decided from an unlocked row. Statements seen: '.describeStatements($statements),
+    );
+
+    expectOneLevelDeeper($locks[0], $baseline, (int) $student->getKey(), 'The student lock');
+});
+
+it('writes the enrollment inside the same transaction as the locks', function () {
+    $student = Student::factory()->create();
+
+    $baseline = DB::transactionLevel();
+    $statements = captureStatements();
+
+    $this->enroll->execute($this->admin, new EnrollStudentData(
+        (int) $student->getKey(),
+        (int) $this->batch->getKey(),
+    ));
+
+    $writes = writesTo($statements, 'enrollments');
+
+    expect($writes)->not->toBeEmpty(
+        'No write to enrollments was observed. Statements seen: '.describeStatements($statements),
+    );
+
+    expectOneLevelDeeper($writes[0], $baseline, (int) $student->getKey(), 'The enrollment insert');
+});
+
+it('locks the enrollment row while withdrawing, inside a transaction it opened itself', function () {
+    $enrollment = $this->enroll->execute($this->admin, new EnrollStudentData(
+        (int) Student::factory()->create()->getKey(),
+        (int) $this->batch->getKey(),
+    ));
+
+    $baseline = DB::transactionLevel();
+    $statements = captureStatements();
+
+    $this->withdraw->execute($this->admin, $enrollment);
+
+    $locks = locksOn($statements, 'enrollments');
+
+    expect($locks)->not->toBeEmpty(
+        'WithdrawEnrollmentAction re-read the enrollment without lockForUpdate(), so the status '
+        .'transition was decided from a stale copy. Statements seen: '.describeStatements($statements),
+    );
+
+    expectOneLevelDeeper($locks[0], $baseline, (int) $enrollment->getKey(), 'The enrollment lock');
+});
+
+/*
+|--------------------------------------------------------------------------
+| What the database itself guarantees
+|--------------------------------------------------------------------------
+*/
+
+it('enforces one enrollment per student per batch at the database level', function () {
+    // The unique index is the real guarantee. The Action's exists() check is
+    // serialized by the batch lock and produces the readable message; this is
+    // what holds when something writes around the Action entirely.
+    $student = Student::factory()->create();
+
+    Enrollment::factory()->create([
+        'student_id' => $student->getKey(),
+        'batch_id' => $this->batch->getKey(),
+    ]);
+
+    Enrollment::factory()->create([
+        'student_id' => $student->getKey(),
+        'batch_id' => $this->batch->getKey(),
+    ]);
+})->throws(UniqueConstraintViolationException::class);
+
+it('converts a lost duplicate race into the typed exception', function () {
+    // The branch that only fires when the unique index refuses an insert the
+    // exists() check had cleared. Reached here by inserting the conflicting row
+    // directly, which is what a concurrent request would have done.
+    $student = Student::factory()->create();
+
+    DB::table('enrollments')->insert([
+        'student_id' => $student->getKey(),
+        'batch_id' => $this->batch->getKey(),
+        'enrolled_at' => now(),
+        'status' => EnrollmentStatus::Active->value,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $this->enroll->execute($this->admin, new EnrollStudentData(
+        (int) $student->getKey(),
+        (int) $this->batch->getKey(),
+    ));
+})->throws(DuplicateEnrollmentException::class);
+
+it('refuses at the foreign key to hard-delete a student holding enrollments', function () {
+    // restrictOnDelete on student_id. Students soft-delete, so this constraint
+    // only ever fires on forceDelete — which is exactly when it matters, because
+    // that is the operation that would otherwise destroy phase 2's billing history.
+    $student = Student::factory()->create();
+
+    $this->enroll->execute($this->admin, new EnrollStudentData(
+        (int) $student->getKey(),
+        (int) $this->batch->getKey(),
+    ));
+
+    try {
+        $student->forceDelete();
+        $thrown = null;
+    } catch (QueryException $exception) {
+        $thrown = $exception;
+    }
+
+    expect($thrown)->toBeInstanceOf(QueryException::class)
+        // 1451 exactly, not merely "something threw": a NOT NULL violation or a
+        // lost connection would also be a QueryException and would prove nothing
+        // about the restriction.
+        ->and($thrown->errorInfo[1] ?? null)->toBe(1451)
+        ->and(Student::withTrashed()->whereKey($student->getKey())->exists())->toBeTrue();
+});
+
+it('keeps a soft-deleted student resolvable from their enrollment', function () {
+    // Enrollment::student() is withTrashed(). Without it the relation resolves to
+    // null once the student is deleted, and phase 2 would bill rows whose owner
+    // the UI says does not exist.
+    $student = Student::factory()->create();
+
+    $enrollment = $this->enroll->execute($this->admin, new EnrollStudentData(
+        (int) $student->getKey(),
+        (int) $this->batch->getKey(),
+    ));
+
+    $student->delete();
+
+    expect($enrollment->fresh()->student)->not->toBeNull()
+        ->and((int) $enrollment->fresh()->student->getKey())->toBe((int) $student->getKey());
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [ ] **Step 6: Run the test to verify it fails**
 
 Run: `php artisan test --filter=EnrollmentTest`
-Expected: FAIL — class not found.
+Expected: FAIL — `Class "App\Domain\Enrollment\Enums\EnrollmentStatus" not found`.
 
-- [ ] **Step 3: Write the enum, exception, and DTO**
+- [ ] **Step 7: Write the enum, DTO and exceptions**
 
 Create `app/Domain/Enrollment/Enums/EnrollmentStatus.php`:
 
@@ -3334,37 +3900,30 @@ declare(strict_types=1);
 
 namespace App\Domain\Enrollment\Enums;
 
+/**
+ * Where a student stands on one batch.
+ *
+ * COMPLETED IS UNREACHABLE IN PHASE 1, AND THAT IS DELIBERATE.
+ * ------------------------------------------------------------
+ * Spec line 71 assigns completion marking to phase 3, alongside the student
+ * portal and certificate issuance. Phase 1 therefore ships no path to this case
+ * at all: there is no CompleteEnrollmentAction and no status field in any form.
+ * The case is declared now because the column's value set is fixed by the spec
+ * (line 231) and because WithdrawEnrollmentAction has to refuse a completed row.
+ *
+ * Do not add a completion path here to "finish" the enum. Phase 3 owns it, and
+ * it arrives with the certificate rules that depend on it.
+ */
 enum EnrollmentStatus: string
 {
     case Active = 'active';
     case Completed = 'completed';
     case Withdrawn = 'withdrawn';
 
+    /** The translated label for display. Task 14 supplies lang/. */
     public function label(): string
     {
         return __("enrollment.enrollment_status.{$this->value}");
-    }
-}
-```
-
-Create `app/Domain/Enrollment/Exceptions/DuplicateEnrollmentException.php`:
-
-```php
-<?php
-
-declare(strict_types=1);
-
-namespace App\Domain\Enrollment\Exceptions;
-
-use RuntimeException;
-
-class DuplicateEnrollmentException extends RuntimeException
-{
-    public function __construct(
-        public readonly int $studentId,
-        public readonly int $batchId,
-    ) {
-        parent::__construct("Student {$studentId} is already enrolled in batch {$batchId}.");
     }
 }
 ```
@@ -3387,9 +3946,106 @@ final class EnrollStudentData
 }
 ```
 
-- [ ] **Step 4: Write the migration**
+Create `app/Domain/Enrollment/Exceptions/DuplicateEnrollmentException.php`:
 
-Create `database/migrations/2026_07_20_000700_create_enrollments_table.php`:
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Enrollment\Exceptions;
+
+use RuntimeException;
+
+/**
+ * This student is already on this batch.
+ *
+ * The message goes through __() because it reaches the panel as a notification.
+ * See BatchClosedException for the full reasoning.
+ */
+final class DuplicateEnrollmentException extends RuntimeException
+{
+    public function __construct(
+        public readonly int $studentId,
+        public readonly int $batchId,
+    ) {
+        parent::__construct(__('enrollment.duplicate_enrollment'));
+    }
+}
+```
+
+Create `app/Domain/Enrollment/Exceptions/StudentNotEnrollableException.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Enrollment\Exceptions;
+
+use RuntimeException;
+
+/** The student record is soft-deleted and cannot take new enrolments. */
+final class StudentNotEnrollableException extends RuntimeException
+{
+    public function __construct(public readonly int $studentId)
+    {
+        parent::__construct(__('enrollment.student_not_enrollable'));
+    }
+}
+```
+
+Create `app/Domain/Enrollment/Exceptions/EnrollmentNotWithdrawableException.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Enrollment\Exceptions;
+
+use RuntimeException;
+
+/**
+ * Only an active enrolment can be withdrawn.
+ *
+ * Withdrawing an already-withdrawn row is a no-op rather than this exception —
+ * see WithdrawEnrollmentAction. This is raised for a COMPLETED row, where
+ * phase 3 may have issued a certificate against the completion.
+ */
+final class EnrollmentNotWithdrawableException extends RuntimeException
+{
+    public function __construct(public readonly int $enrollmentId)
+    {
+        parent::__construct(__('enrollment.enrollment_not_withdrawable'));
+    }
+}
+```
+
+Create `app/Domain/Enrollment/Exceptions/BatchInUseException.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Enrollment\Exceptions;
+
+use RuntimeException;
+
+/** The batch still has enrolments, so deleting it would destroy them. */
+final class BatchInUseException extends RuntimeException
+{
+    public function __construct(public readonly int $batchId)
+    {
+        parent::__construct(__('enrollment.batch_in_use'));
+    }
+}
+```
+
+- [ ] **Step 8: Write the migration**
+
+Create `database/migrations/2026_07_27_000100_create_enrollments_table.php`:
 
 ```php
 <?php
@@ -3406,19 +4062,56 @@ return new class extends Migration
     {
         Schema::create('enrollments', function (Blueprint $table): void {
             $table->id();
+
+            /*
+             * BOTH FOREIGN KEYS RESTRICT, AND NEITHER CASCADES.
+             *
+             * From phase 2 an enrolment carries charges and payments; cascading
+             * either delete would destroy financial history as a side effect of
+             * tidying up a student or a batch. Restricting turns that into a
+             * refusal the application can explain.
+             *
+             * students soft-delete, so student_id's restriction only fires on
+             * forceDelete — which is the operation that would actually lose the
+             * rows, and therefore the one worth stopping. batches do not soft
+             * delete, so batch_id's restriction is what DeleteBatchAction
+             * converts into BatchInUseException.
+             */
             $table->foreignId('student_id')->constrained()->restrictOnDelete();
             $table->foreignId('batch_id')->constrained()->restrictOnDelete();
+
             $table->timestamp('enrolled_at');
             $table->string('status', 30)->default('active')->index();
+
+            /*
+             * Written by phase 3, never by phase 1. Spec line 71 assigns
+             * completion marking to phase 3; the column exists now because the
+             * spec's schema (line 215) names it and adding it later would be a
+             * migration against a table phase 2 is already billing from.
+             *
+             * There is deliberately NO withdrawn_at. Withdrawal is terminal and
+             * unambiguous from the status alone, and a second timestamp would be
+             * a value that has to be kept consistent with it forever.
+             */
             $table->timestamp('completed_at')->nullable();
-            // NO certificate_issued_at. Phase 3 records each issued physical
-            // certificate as its own immutable student_certificates row, so
-            // that revocation and replacement history survives. A timestamp
-            // here could record only the most recent issuance and would erase
-            // the previous one on reissue. See spec section 6.
+
+            /*
+             * NO certificate_issued_at. Phase 3 records each issued physical
+             * certificate as its own immutable student_certificates row, so that
+             * revocation and replacement history survives. A timestamp here could
+             * record only the most recent issuance and would erase the previous
+             * one on reissue. See spec section 6.
+             */
+
             $table->timestamps();
 
+            // The rule that "a student is on a batch once", enforced where it
+            // cannot be raced. The Action's own check produces the readable
+            // message; this is what holds when something writes around it.
             $table->unique(['student_id', 'batch_id']);
+
+            // Serves Batch::isOverCapacity() and the relation manager's listing,
+            // both of which filter by batch and then by status.
             $table->index(['batch_id', 'status']);
         });
     }
@@ -3430,9 +4123,7 @@ return new class extends Migration
 };
 ```
 
-Both foreign keys are `restrictOnDelete()`. In phase 2 an enrollment carries charges; cascading a delete would destroy financial history.
-
-- [ ] **Step 5: Write the model**
+- [ ] **Step 9: Write the model and factory**
 
 Create `app/Domain/Enrollment/Models/Enrollment.php`:
 
@@ -3444,20 +4135,89 @@ declare(strict_types=1);
 namespace App\Domain\Enrollment\Models;
 
 use App\Domain\Enrollment\Enums\EnrollmentStatus;
+use Database\Factories\EnrollmentFactory;
+use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
+/**
+ * One student on one batch.
+ *
+ * Configuration only — casts, two relations, one scope. No business logic and no
+ * write guards; see App\Models\User for why that architecture was removed in
+ * P1-T04c. In particular there is NO markCompleted() and no status setter: the
+ * single status transition phase 1 has belongs to WithdrawEnrollmentAction,
+ * which authorizes the actor against the freshly locked row.
+ *
+ * The association is immutable in practice because nothing offers an edit path
+ * for student_id or batch_id — re-parenting an enrolment would strand the
+ * charges phase 2 hangs off it against a batch the student never attended.
+ * EnrollmentsRelationManagerTest proves a crafted submission cannot move either.
+ */
+#[Fillable([
+    'student_id',
+    'batch_id',
+    'enrolled_at',
+    'status',
+    'completed_at',
+])]
 class Enrollment extends Model
 {
+    /** @use HasFactory<EnrollmentFactory> */
     use HasFactory;
 
-    protected $fillable = [
-        'student_id', 'batch_id', 'enrolled_at', 'status',
-        'completed_at',
-    ];
+    /**
+     * The person enrolled.
+     *
+     * withTrashed() IS LOAD-BEARING. Students soft-delete, and the foreign key
+     * is restrictOnDelete, so a deleted student's enrolment rows survive them.
+     * Without withTrashed() the SoftDeletes global scope resolves this relation
+     * to null on exactly those rows, and phase 2 would be billing against an
+     * enrolment whose owner the application says does not exist.
+     *
+     * Reading and writing are separate questions, as they are on
+     * Batch::instructors(). EnrollStudentAction refuses a trashed student, so
+     * listing them here does not make them enrollable.
+     *
+     * @return BelongsTo<Student, $this>
+     */
+    public function student(): BelongsTo
+    {
+        return $this->belongsTo(Student::class)->withTrashed();
+    }
 
+    /**
+     * The intake attended.
+     *
+     * No withTrashed(): batches do not soft-delete, and batch_id is
+     * restrictOnDelete, so a batch with enrolments cannot go away underneath
+     * this relation at all.
+     *
+     * @return BelongsTo<Batch, $this>
+     */
+    public function batch(): BelongsTo
+    {
+        return $this->belongsTo(Batch::class);
+    }
+
+    /**
+     * Limit a query to enrolments that still occupy a seat.
+     *
+     * Withdrawn students have left theirs, which is why capacity counts read
+     * through this scope rather than counting rows.
+     *
+     * @param  Builder<self>  $query
+     */
+    public function scopeActive(Builder $query): void
+    {
+        $query->where('status', EnrollmentStatus::Active);
+    }
+
+    /**
+     * @return array<string, string>
+     */
     protected function casts(): array
     {
         return [
@@ -3467,100 +4227,13 @@ class Enrollment extends Model
         ];
     }
 
-    public function student(): BelongsTo
+    /** See StaffProfile::newFactory() for why this is stated rather than guessed. */
+    protected static function newFactory(): EnrollmentFactory
     {
-        return $this->belongsTo(Student::class);
-    }
-
-    public function batch(): BelongsTo
-    {
-        return $this->belongsTo(Batch::class);
-    }
-
-    public function markCompleted(): void
-    {
-        $this->update([
-            'status' => EnrollmentStatus::Completed,
-            'completed_at' => now(),
-        ]);
-    }
-
-    public function scopeActive(Builder $query): void
-    {
-        $query->where('status', EnrollmentStatus::Active);
+        return EnrollmentFactory::new();
     }
 }
 ```
-
-- [ ] **Step 6: Write the action**
-
-Create `app/Domain/Enrollment/Actions/EnrollStudentAction.php`:
-
-```php
-<?php
-
-declare(strict_types=1);
-
-namespace App\Domain\Enrollment\Actions;
-
-use App\Domain\Enrollment\Data\EnrollStudentData;
-use App\Domain\Enrollment\Enums\EnrollmentStatus;
-use App\Domain\Enrollment\Exceptions\BatchClosedException;
-use App\Domain\Enrollment\Exceptions\DuplicateEnrollmentException;
-use App\Domain\Enrollment\Models\Batch;
-use App\Domain\Enrollment\Models\Enrollment;
-use Illuminate\Support\Facades\DB;
-
-class EnrollStudentAction
-{
-    public function execute(EnrollStudentData $data): Enrollment
-    {
-        return DB::transaction(function () use ($data): Enrollment {
-            $batch = Batch::query()->lockForUpdate()->findOrFail($data->batchId);
-
-            if (! $batch->acceptsEnrollments()) {
-                throw new BatchClosedException($batch->id);
-            }
-
-            $exists = Enrollment::query()
-                ->where('student_id', $data->studentId)
-                ->where('batch_id', $data->batchId)
-                ->exists();
-
-            if ($exists) {
-                throw new DuplicateEnrollmentException($data->studentId, $data->batchId);
-            }
-
-            // Capacity is intentionally not enforced. Over-enrollment is surfaced
-            // via Batch::isOverCapacity() as a warning, per spec section 6.
-            return Enrollment::create([
-                'student_id' => $data->studentId,
-                'batch_id' => $data->batchId,
-                'enrolled_at' => now(),
-                'status' => EnrollmentStatus::Active,
-            ]);
-        });
-    }
-}
-```
-
-- [ ] **Step 7: Add the capacity helper to Batch**
-
-In `app/Domain/Enrollment/Models/Batch.php`:
-
-```php
-/**
- * Over-capacity is a warning state, never a block — centers routinely
- * squeeze in one more student.
- */
-public function isOverCapacity(): bool
-{
-    return $this->capacity > 0
-        && $this->enrollments()->active()->count() > $this->capacity;
-}
-```
-
-- [ ] **Step 8: Write the factory and policy**
 
 Create `database/factories/EnrollmentFactory.php`:
 
@@ -3582,6 +4255,9 @@ class EnrollmentFactory extends Factory
 {
     protected $model = Enrollment::class;
 
+    /**
+     * @return array<string, mixed>
+     */
     public function definition(): array
     {
         return [
@@ -3592,8 +4268,317 @@ class EnrollmentFactory extends Factory
             'completed_at' => null,
         ];
     }
+
+    public function withdrawn(): static
+    {
+        return $this->state(fn (): array => ['status' => EnrollmentStatus::Withdrawn]);
+    }
+
+    /**
+     * A completed enrolment, which PHASE 1 CANNOT PRODUCE.
+     *
+     * The application has no completion path — spec line 71 puts completion
+     * marking in phase 3 — so this state exists only so tests can construct the
+     * row WithdrawEnrollmentAction has to refuse. It is not a hint that a
+     * completion feature is missing.
+     */
+    public function completed(): static
+    {
+        return $this->state(fn (): array => [
+            'status' => EnrollmentStatus::Completed,
+            'completed_at' => now(),
+        ]);
+    }
 }
 ```
+
+- [ ] **Step 10: Add the relations and the capacity helper**
+
+In `app/Domain/Enrollment/Models/Batch.php`, replace the class docblock line
+reading "P1-T11 adds enrollments(), deliberately absent rather than stubbed…"
+with a note that it now exists, then add the constant, relation and predicate:
+
+```php
+    /**
+     * The alias BatchResource selects the active-enrolment COUNT into.
+     *
+     * Named here for the same reason ASSIGNED_HOURS_SUM is: a typo at either end
+     * silently reinstates the per-row query the aggregate exists to remove, and
+     * nothing fails when it does.
+     */
+    public const ACTIVE_ENROLLMENTS_COUNT = 'active_enrollments_count';
+
+    /**
+     * Everyone enrolled on this intake, withdrawn students included.
+     *
+     * NOT A WRITE PATH. Every insert goes through EnrollStudentAction and every
+     * status change through WithdrawEnrollmentAction, both of which authorize the
+     * actor against the freshly locked batch. A bare $batch->enrollments()->create()
+     * reaches around both.
+     *
+     * @return HasMany<Enrollment, $this>
+     */
+    public function enrollments(): HasMany
+    {
+        return $this->hasMany(Enrollment::class);
+    }
+
+    /**
+     * Are more students holding seats than this batch has?
+     *
+     * A WARNING CONDITION, NEVER A BLOCK. Spec line 217: enrolling beyond
+     * capacity produces a warning, because centres routinely squeeze in one more
+     * student. Do not "fix" this into a constraint — the centre's own answer,
+     * recorded in the spec, is that it is allowed.
+     *
+     * Counts ACTIVE enrolments only. A withdrawn student has left their seat, and
+     * counting them would report a full batch that in fact has room.
+     *
+     * Reads the eager aggregate when the row was loaded through a query that
+     * selected it, and only falls back to its own count when it was not.
+     * array_key_exists rather than a null coalesce is load-bearing: a batch with
+     * no enrolments aggregates to NULL, and `?? null` would send exactly those
+     * rows back to the database one at a time — an N+1 that appears only on the
+     * rows nobody thinks to check. Same reasoning as totalAssignedHours().
+     *
+     * capacity > 0 guards a batch with no stated ceiling, which cannot be over it.
+     */
+    public function isOverCapacity(): bool
+    {
+        $attributes = $this->getAttributes();
+
+        $active = array_key_exists(self::ACTIVE_ENROLLMENTS_COUNT, $attributes)
+            ? (int) $attributes[self::ACTIVE_ENROLLMENTS_COUNT]
+            : (int) $this->enrollments()->active()->count();
+
+        return $this->capacity > 0 && $active > $this->capacity;
+    }
+```
+
+Add `use App\Domain\Enrollment\Models\Enrollment;` is unnecessary (same
+namespace); add `use Illuminate\Database\Eloquent\Relations\HasMany;`.
+
+In `app/Domain/Enrollment/Models/Student.php`, add the mirror relation and its
+`HasMany` import, replacing the docblock line that says the relation is
+deliberately absent:
+
+```php
+    /**
+     * Every batch this student has been placed on.
+     *
+     * Survives the student's own soft delete, because enrollments.student_id is
+     * restrictOnDelete and the rows outlive the scope on this model.
+     *
+     * NOT A WRITE PATH — see Batch::enrollments().
+     *
+     * @return HasMany<Enrollment, $this>
+     */
+    public function enrollments(): HasMany
+    {
+        return $this->hasMany(Enrollment::class);
+    }
+```
+
+- [ ] **Step 11: Write EnrollStudentAction**
+
+Create `app/Domain/Enrollment/Actions/EnrollStudentAction.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Enrollment\Actions;
+
+use App\Domain\Enrollment\Data\EnrollStudentData;
+use App\Domain\Enrollment\Enums\EnrollmentStatus;
+use App\Domain\Enrollment\Exceptions\BatchClosedException;
+use App\Domain\Enrollment\Exceptions\DuplicateEnrollmentException;
+use App\Domain\Enrollment\Exceptions\StudentNotEnrollableException;
+use App\Domain\Enrollment\Models\Batch;
+use App\Domain\Enrollment\Models\Enrollment;
+use App\Domain\Enrollment\Models\Student;
+use App\Models\User;
+use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
+
+/**
+ * Put a student on a batch.
+ *
+ * Actor first and self-authorizing, like every other request-path Action here: a
+ * policy only runs when something chooses to consult it, so the check lives
+ * inside the Action and is binding for the relation manager, a console command
+ * and any future API alike.
+ *
+ * THE ABILITY IS CHECKED BEFORE THE BATCH'S STATUS
+ * ------------------------------------------------
+ * Unlike AssignInstructorAction, the create ability is record-independent, so no
+ * denial has to be re-examined: authorize() runs first and an actor without
+ * create_enrollment learns nothing about the batch. Only once they are entitled
+ * does the closed-batch refusal become visible to them.
+ *
+ * CREATION IS NOT SCOPED TO BATCHES THE ACTOR TEACHES
+ * ---------------------------------------------------
+ * Deliberate, and it differs from the update rule. Spec line 15 requires a
+ * front-desk staffer to enrol a walk-in, and front-desk staff teach nothing at
+ * all; scoping creation would make the system's stated purpose unreachable for
+ * the people it was written for. Editing an existing enrolment IS scoped — see
+ * EnrollmentPolicy::update().
+ *
+ * EVERYTHING THE DECISION READS IS LOCKED
+ * ---------------------------------------
+ * The batch's status and the student's deleted state are both read inside the
+ * transaction under lockForUpdate(), because a batch closed or a student deleted
+ * between an unlocked read and the insert would commit anyway. P1-T10d is the
+ * cautionary tale: locking one row says nothing about another table's.
+ */
+final class EnrollStudentAction
+{
+    /**
+     * @throws BatchClosedException if the batch is completed or cancelled.
+     * @throws StudentNotEnrollableException if the student record is soft-deleted.
+     * @throws DuplicateEnrollmentException if the student is already on the batch.
+     */
+    public function execute(User $actor, EnrollStudentData $data): Enrollment
+    {
+        return DB::transaction(function () use ($actor, $data): Enrollment {
+            Gate::forUser($actor)->authorize('create', Enrollment::class);
+
+            $batch = Batch::query()->lockForUpdate()->findOrFail($data->batchId);
+
+            if (! $batch->acceptsEnrollments()) {
+                throw new BatchClosedException((int) $batch->getKey());
+            }
+
+            /*
+             * withTrashed() so a departed student is REFUSED rather than merely
+             * not found: findOrFail on a scoped query reports a soft-deleted
+             * student as a bad id, which tells the caller nothing about why the
+             * write will not happen.
+             */
+            $student = Student::query()->withTrashed()->lockForUpdate()->findOrFail($data->studentId);
+
+            if ($student->trashed()) {
+                throw new StudentNotEnrollableException((int) $student->getKey());
+            }
+
+            $exists = Enrollment::query()
+                ->where('student_id', $data->studentId)
+                ->where('batch_id', $data->batchId)
+                ->exists();
+
+            if ($exists) {
+                throw new DuplicateEnrollmentException($data->studentId, $data->batchId);
+            }
+
+            /*
+             * Capacity is intentionally not enforced. Over-enrolment surfaces
+             * through Batch::isOverCapacity() as a warning, per spec line 217.
+             */
+            try {
+                return Enrollment::create([
+                    'student_id' => $data->studentId,
+                    'batch_id' => $data->batchId,
+                    'enrolled_at' => now(),
+                    'status' => EnrollmentStatus::Active,
+                ]);
+            } catch (UniqueConstraintViolationException) {
+                /*
+                 * Lost the race. The batch lock serializes two requests enrolling
+                 * into the SAME batch, so this is reachable by a write that did
+                 * not take that lock — a seeder, a console command, a repair
+                 * script. Converted rather than surfaced, so every caller sees one
+                 * refusal for one condition instead of a driver error for some of
+                 * them.
+                 */
+                throw new DuplicateEnrollmentException($data->studentId, $data->batchId);
+            }
+        });
+    }
+}
+```
+
+- [ ] **Step 12: Write WithdrawEnrollmentAction**
+
+Create `app/Domain/Enrollment/Actions/WithdrawEnrollmentAction.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Enrollment\Actions;
+
+use App\Domain\Enrollment\Enums\EnrollmentStatus;
+use App\Domain\Enrollment\Exceptions\EnrollmentNotWithdrawableException;
+use App\Domain\Enrollment\Models\Enrollment;
+use App\Models\User;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
+
+/**
+ * Take a student off a batch.
+ *
+ * THE ONLY STATUS TRANSITION PHASE 1 HAS.
+ * ---------------------------------------
+ * Active → Withdrawn, and nothing else. Completion marking belongs to phase 3
+ * (spec line 71), so no CompleteEnrollmentAction exists and no form anywhere
+ * offers a status field. If a later task appears to need generic status editing,
+ * that is a signal to check the spec rather than to add a setter.
+ *
+ * IDEMPOTENT, AND TERMINAL
+ * ------------------------
+ * Withdrawing an already-withdrawn enrolment returns it unchanged rather than
+ * throwing: a double-clicked button, or two staff acting on the same row, must
+ * not become an error somebody has to interpret. Nothing un-withdraws in phase 1
+ * — reinstating a student is a new enrolment, which the unique index would
+ * refuse, and that is a phase 2 conversation about what happens to the charges.
+ *
+ * A COMPLETED ENROLMENT IS REFUSED
+ * --------------------------------
+ * Phase 1 cannot produce one, but a phase 3 row can be one, and phase 3 issues
+ * certificates against completion. Withdrawing such a row would invalidate a
+ * physical certificate already in somebody's hands.
+ */
+final class WithdrawEnrollmentAction
+{
+    /**
+     * @throws EnrollmentNotWithdrawableException if the enrolment is completed.
+     */
+    public function execute(User $actor, Enrollment $enrollment): Enrollment
+    {
+        return DB::transaction(function () use ($actor, $enrollment): Enrollment {
+            /*
+             * Re-read under a lock rather than trusting the instance handed in.
+             * The caller's copy may have been read before somebody else withdrew
+             * it, and deciding the transition from that copy would write a status
+             * based on a state that no longer holds. The lock also serializes two
+             * concurrent withdrawals of the same row.
+             */
+            $locked = Enrollment::query()->lockForUpdate()->findOrFail($enrollment->getKey());
+
+            // Authorized against the LOCKED row, because EnrollmentPolicy::update()
+            // reads the batch's instructor list to decide the staff case.
+            Gate::forUser($actor)->authorize('update', $locked);
+
+            if ($locked->status === EnrollmentStatus::Withdrawn) {
+                return $locked;
+            }
+
+            if ($locked->status !== EnrollmentStatus::Active) {
+                throw new EnrollmentNotWithdrawableException((int) $locked->getKey());
+            }
+
+            $locked->update(['status' => EnrollmentStatus::Withdrawn]);
+
+            return $locked;
+        });
+    }
+}
+```
+
+- [ ] **Step 13: Write the policy and seed the new permission**
 
 Create `app/Domain/Enrollment/Policies/EnrollmentPolicy.php`:
 
@@ -3607,66 +4592,885 @@ namespace App\Domain\Enrollment\Policies;
 use App\Domain\Enrollment\Models\Enrollment;
 use App\Models\User;
 
+/**
+ * Authorization for enrolments.
+ *
+ * TWO UPDATE PERMISSIONS, AND NOT A ROLE CHECK ANYWHERE
+ * -----------------------------------------------------
+ * Spec line 110 grants staff "create/edit in own batches" while admins edit
+ * everything. The obvious implementation — branch on hasAnyRole(['super_admin',
+ * 'admin']) — is forbidden by spec line 100 and by CLAUDE.md's first
+ * non-negotiable: role membership is data, and adding a fifth role must not
+ * require a code change.
+ *
+ * So the distinction is carried by two permissions:
+ *
+ *   - update_enrollment                    unrestricted. Held by super_admin
+ *                                          and admin.
+ *   - update_assigned_batch_enrollment     restricted to batches the actor is
+ *                                          assigned to teach. Held by staff.
+ *
+ * Anyone holding the first edits anything. Anyone holding only the second edits
+ * an enrolment when — and only when — they appear on that batch's instructor
+ * list. Someone holding neither edits nothing. A sixth role wanting either
+ * behaviour is a seeder change, not a code change.
+ *
+ * WHY ASSIGNMENT AND NOT EMPLOYMENT TYPE
+ * --------------------------------------
+ * "Own batches" is answered by the batch_instructor pivot, never by
+ * staff_profiles.employment_type. Employment type says what somebody is; the
+ * pivot says what they were actually put on. A front-desk administrator assigned
+ * to teach one batch may edit that batch's enrolments, and an instructor
+ * assigned to nothing may edit none — both correct, and neither expressible
+ * through employment type.
+ *
+ * CREATION IS UNSCOPED
+ * --------------------
+ * create() checks the permission alone. Spec line 15 requires a front-desk
+ * staffer to enrol a walk-in, and they teach nothing; scoping creation the way
+ * update() is scoped would make that impossible. The asymmetry is deliberate and
+ * matches the spec's own reasoning at line 122 — registering somebody is a
+ * front-desk act, amending an existing record is not.
+ *
+ * There is no deleteAny(): the relation manager registers no bulk actions.
+ * Filament authorizes a bulk action once against the *Any method and never
+ * consults the per-record one, so leaving it undefined makes any bulk delete
+ * added later fail closed. See docs/ENGINEERING.md.
+ */
 class EnrollmentPolicy
 {
-    public function viewAny(User $user): bool
+    public function viewAny(User $actor): bool
     {
-        return $user->can('view_any_enrollment');
+        return $actor->can('view_any_enrollment');
     }
 
-    public function view(User $user, Enrollment $enrollment): bool
+    public function view(User $actor, Enrollment $enrollment): bool
     {
-        return $user->can('view_enrollment');
+        return $actor->can('view_enrollment');
     }
 
-    public function create(User $user): bool
+    public function create(User $actor): bool
     {
-        return $user->can('create_enrollment');
+        return $actor->can('create_enrollment');
     }
 
     /**
-     * Staff may only edit enrollments in batches they teach, per spec section 5.
+     * Withdrawal is the only update phase 1 performs.
+     *
+     * The unrestricted grant is checked first so the common administrative case
+     * never runs the instructor query at all.
      */
-    public function update(User $user, Enrollment $enrollment): bool
+    public function update(User $actor, Enrollment $enrollment): bool
     {
-        if (! $user->can('update_enrollment')) {
-            return false;
-        }
-
-        if ($user->hasAnyRole(['super_admin', 'admin'])) {
+        if ($actor->can('update_enrollment')) {
             return true;
         }
 
-        return $enrollment->batch->instructors()->whereKey($user->id)->exists();
+        if (! $actor->can('update_assigned_batch_enrollment')) {
+            return false;
+        }
+
+        return $enrollment->batch
+            ->instructors()
+            ->whereKey($actor->getKey())
+            ->exists();
     }
 
-    public function delete(User $user, Enrollment $enrollment): bool
+    public function delete(User $actor, Enrollment $enrollment): bool
     {
-        return $user->can('delete_enrollment');
+        return $actor->can('delete_enrollment');
     }
 }
 ```
 
-Register with `Gate::policy(Enrollment::class, EnrollmentPolicy::class);`.
+Register it in `AppServiceProvider::boot()` alongside the others:
 
-- [ ] **Step 9: Add the enrollments relation manager**
-
-```bash
-php artisan make:filament-relation-manager BatchResource enrollments student.full_name --panel=admin
+```php
+Gate::policy(Enrollment::class, EnrollmentPolicy::class);
 ```
 
-- [ ] **Step 10: Run tests to verify they pass**
+In `database/seeders/RolePermissionSeeder.php`, add the ability to `CUSTOM`:
+
+```php
+    private const CUSTOM = [
+        'access_admin_panel',
+        'assign_role',
+        'reset_user_password',
+        'assign_instructor',
+        'manage_settings',
+        // "May edit enrolments, but only on batches this actor is assigned to
+        // teach." Separate from update_enrollment, which is unrestricted, so that
+        // the scope distinction in spec line 110 is carried by permissions rather
+        // than by a role check. See EnrollmentPolicy::update().
+        'update_assigned_batch_enrollment',
+    ];
+```
+
+and change the staff grant — **`update_enrollment` must be removed**, or staff
+would hold the unrestricted ability and the scoping would never run:
+
+```php
+            'view_any_enrollment', 'view_enrollment',
+            // Creation is unscoped: a front-desk staffer enrols walk-ins into
+            // any open batch. Editing is not — the scoped ability below is
+            // restricted to batches this actor teaches. Deliberately NOT
+            // update_enrollment, which is the unrestricted grant.
+            'create_enrollment', 'update_assigned_batch_enrollment',
+```
+
+- [ ] **Step 14: Run the tests to verify they pass**
 
 Run: `php artisan test --filter=EnrollmentTest`
-Expected: 7 passed.
+Expected: 22 passed.
 
-- [ ] **Step 11: Commit**
+If `refuses to reveal a closed batch` fails, `authorize()` is running after the
+status check — move it to the first line inside the transaction.
+
+- [ ] **Step 15: Prove the new guards actually fail**
+
+A passing test proves nothing until it has been seen to fail. Perform each
+mutation, confirm the named test fails, restore, and confirm green again.
+
+| Mutation | Test that must fail |
+|---|---|
+| Delete `DB::transaction(...)` from `EnrollStudentAction`, keeping the body | the three "inside a transaction it opened itself" tests |
+| Drop `lockForUpdate()` from the student read | `locks the student row while enrolling` |
+| Drop `->withTrashed()` from `Enrollment::student()` | `keeps a soft-deleted student resolvable` |
+| Change `isOverCapacity()` to `>=` | `does not report a batch filled exactly to capacity` |
+| Change `isOverCapacity()` to count all rows, not `active()` | `does not count withdrawn enrollments towards capacity` |
+| Drop the `unique(['student_id','batch_id'])` index | `enforces one enrollment per student per batch` |
+| Move `authorize()` below the status check in `EnrollStudentAction` | `refuses to reveal a closed batch` |
+| Give staff `update_enrollment` in the seeder | `denies a staff actor who does not teach the batch` (Step 17) |
+
+- [ ] **Step 16: Commit the domain layer**
 
 ```bash
-vendor/bin/pint && vendor/bin/phpstan analyse && php artisan test
+vendor/bin/pint && vendor/bin/phpstan analyse --memory-limit=1G && php artisan test
 git add -A
-git commit -m "feat(enrollment): add enrollments with duplicate and closed-batch guards [P1-T11]"
+git commit -m "feat(enrollment): add enrollments with duplicate, closed-batch and withdrawal rules [P1-T11]"
 ```
+
+- [ ] **Step 17: Write the policy test**
+
+Create `tests/Feature/Enrollment/EnrollmentPolicyTest.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+use App\Domain\Enrollment\Models\Batch;
+use App\Domain\Enrollment\Models\Enrollment;
+use App\Domain\Enrollment\Policies\EnrollmentPolicy;
+use App\Domain\Staff\Actions\SystemRoleWriter;
+use App\Domain\Staff\Models\StaffProfile;
+use App\Models\User;
+use Database\Seeders\RolePermissionSeeder;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Gate;
+use Spatie\Permission\Models\Permission;
+
+uses(RefreshDatabase::class);
+
+beforeEach(function () {
+    $this->seed(RolePermissionSeeder::class);
+
+    $this->system = app(SystemRoleWriter::class);
+
+    $this->actorWith = function (string $role): User {
+        $user = User::factory()->create(['is_active' => true]);
+        $this->system->assignRoles($user, $role);
+
+        return $user->refresh();
+    };
+});
+
+it('lets an admin edit any enrollment', function () {
+    $admin = ($this->actorWith)('admin');
+
+    expect(Gate::forUser($admin)->allows('update', Enrollment::factory()->create()))->toBeTrue();
+});
+
+it('lets staff edit an enrollment on a batch they are assigned to teach', function () {
+    $staff = ($this->actorWith)('staff');
+    StaffProfile::factory()->for($staff)->instructor()->create();
+
+    $batch = Batch::factory()->active()->create();
+    $batch->instructors()->attach($staff->getKey(), ['assigned_hours' => 10]);
+
+    $enrollment = Enrollment::factory()->for($batch)->create();
+
+    expect(Gate::forUser($staff)->allows('update', $enrollment))->toBeTrue();
+});
+
+it('denies a staff actor who does not teach the batch', function () {
+    // THE NEGATIVE THAT MATTERS. Staff hold update_assigned_batch_enrollment,
+    // so a policy that forgot the assignment check would pass this.
+    $staff = ($this->actorWith)('staff');
+
+    $enrollment = Enrollment::factory()->create();
+
+    expect(Gate::forUser($staff)->allows('update', $enrollment))->toBeFalse();
+});
+
+it('denies a staff actor assigned to a DIFFERENT batch', function () {
+    // Narrower than the test above: proves the check is per-record and not
+    // "is this actor an instructor anywhere".
+    $staff = ($this->actorWith)('staff');
+    StaffProfile::factory()->for($staff)->instructor()->create();
+
+    $theirs = Batch::factory()->active()->create();
+    $theirs->instructors()->attach($staff->getKey(), ['assigned_hours' => 10]);
+
+    $someoneElses = Enrollment::factory()->for(Batch::factory()->active()->create())->create();
+
+    expect(Gate::forUser($staff)->allows('update', $someoneElses))->toBeFalse();
+});
+
+it('does not grant staff the unrestricted update ability', function () {
+    // If staff ever hold update_enrollment, the scoping above stops running and
+    // every test in this file still passes. This is what catches that.
+    $staff = ($this->actorWith)('staff');
+
+    expect($staff->can('update_enrollment'))->toBeFalse()
+        ->and($staff->can('update_assigned_batch_enrollment'))->toBeTrue();
+});
+
+it('denies an actor holding neither update ability', function () {
+    $student = ($this->actorWith)('student');
+
+    expect(Gate::forUser($student)->allows('update', Enrollment::factory()->create()))->toBeFalse();
+});
+
+it('lets staff create an enrollment on any batch', function () {
+    $staff = ($this->actorWith)('staff');
+
+    expect(Gate::forUser($staff)->allows('create', Enrollment::class))->toBeTrue();
+});
+
+it('does not let staff delete an enrollment', function () {
+    $staff = ($this->actorWith)('staff');
+
+    expect(Gate::forUser($staff)->allows('delete', Enrollment::factory()->create()))->toBeFalse();
+});
+
+it('references only permissions the seeder actually creates', function () {
+    // The drift test. Spatie throws PermissionDoesNotExist for an unknown name
+    // rather than returning false, so a policy naming an unseeded permission
+    // fails closed for everybody — including super_admin — and does it at
+    // runtime rather than here.
+    $referenced = ['view_any_enrollment', 'view_enrollment', 'create_enrollment',
+        'update_enrollment', 'update_assigned_batch_enrollment', 'delete_enrollment'];
+
+    $missing = collect($referenced)
+        ->reject(fn (string $name): bool => Permission::query()->where('name', $name)->exists())
+        ->all();
+
+    expect($missing)->toBeEmpty(
+        'EnrollmentPolicy references permissions RolePermissionSeeder does not create: '
+        .implode(', ', $missing),
+    );
+});
+```
+
+- [ ] **Step 18: Run the policy test**
+
+Run: `php artisan test --filter=EnrollmentPolicyTest`
+Expected: 9 passed.
+
+- [ ] **Step 19: Route batch deletion through an Action**
+
+Create `app/Domain/Enrollment/Actions/DeleteBatchAction.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Enrollment\Actions;
+
+use App\Domain\Enrollment\Exceptions\BatchInUseException;
+use App\Domain\Enrollment\Models\Batch;
+use App\Models\User;
+use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
+
+/**
+ * Delete a batch, refusing while any enrolment still references it.
+ *
+ * The sibling of DeleteCourseAction, and gated the same way for the same reason:
+ * BatchPolicy::delete() documents that the "refuse a batch that has enrolments"
+ * rule belongs in the FOREIGN KEY rather than in a policy check, because a policy
+ * check races an enrolment created between the check and the delete and a
+ * constraint cannot be raced.
+ *
+ * The pre-check below exists only to produce a readable message in the ordinary
+ * case. `enrollments.batch_id` being restrictOnDelete is what actually guarantees
+ * that an intake's enrolment history — and from phase 2, its charges — is never
+ * silently destroyed.
+ */
+final class DeleteBatchAction
+{
+    /**
+     * MySQL: "Cannot delete or update a parent row: a foreign key constraint
+     * fails". This specific code is the only database error that means "still in
+     * use" — everything else is a real failure and must surface as one.
+     */
+    private const FOREIGN_KEY_RESTRICTED = 1451;
+
+    /**
+     * @throws BatchInUseException if any enrolment still references the batch.
+     */
+    public function execute(User $actor, Batch $batch): void
+    {
+        Gate::forUser($actor)->authorize('delete', $batch);
+
+        if ($batch->enrollments()->exists()) {
+            throw new BatchInUseException((int) $batch->getKey());
+        }
+
+        try {
+            DB::transaction(fn () => $batch->delete());
+        } catch (QueryException $exception) {
+            // Lost the race: an enrolment appeared between the check and the
+            // delete.
+            //
+            // Only 1451 is converted. Catching QueryException wholesale would
+            // report a connection failure, a deadlock or a disk-full error as
+            // "this batch is still in use" — a reassuring message about a
+            // completely different problem, and the kind of mistranslation that
+            // hides an outage.
+            if (($exception->errorInfo[1] ?? null) === self::FOREIGN_KEY_RESTRICTED) {
+                throw new BatchInUseException((int) $batch->getKey());
+            }
+
+            throw $exception;
+        }
+    }
+}
+```
+
+Allowlist it on the deletion rule in `tests/Feature/Staff/ActionBoundaryArchTest.php`:
+
+```php
+            // Batches: refuses while enrolments reference the batch, and owns
+            // the 1451 conversion. See DeleteCourseAction for the same shape.
+            'DeleteBatchAction',
+```
+
+Then route both delete buttons through it. In
+`app/Domain/Enrollment/Filament/Resources/BatchResource.php` and
+`app/Domain/Enrollment/Filament/Resources/BatchResource/Pages/EditBatch.php`,
+replace `DeleteAction::make()->authorize('delete')` with:
+
+```php
+                DeleteAction::make()
+                    ->authorize('delete')
+                    /*
+                     * Filament's DeleteAction persists by calling $record->delete()
+                     * directly, which reaches around DeleteBatchAction and with it
+                     * the enrolment refusal and the 1451 conversion. using()
+                     * replaces that persistence; the button keeps its confirmation
+                     * modal and its authorize() gate.
+                     */
+                    ->using(function (Batch $record): void {
+                        /** @var User $actor */
+                        $actor = auth()->user();
+
+                        app(DeleteBatchAction::class)->execute($actor, $record);
+                    })
+                    ->failureNotificationTitle(__('enrollment.batch_in_use')),
+```
+
+- [ ] **Step 20: Write the relation manager**
+
+Create
+`app/Domain/Enrollment/Filament/Resources/BatchResource/RelationManagers/EnrollmentsRelationManager.php`,
+following `InstructorsRelationManager` exactly — plain `Action`s with their own
+handlers, never Filament's `CreateAction`/`EditAction`/`AttachAction`, which
+persist through the relation and reach around the Actions:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Enrollment\Filament\Resources\BatchResource\RelationManagers;
+
+use App\Domain\Enrollment\Actions\EnrollStudentAction;
+use App\Domain\Enrollment\Actions\WithdrawEnrollmentAction;
+use App\Domain\Enrollment\Data\EnrollStudentData;
+use App\Domain\Enrollment\Enums\EnrollmentStatus;
+use App\Domain\Enrollment\Exceptions\BatchClosedException;
+use App\Domain\Enrollment\Exceptions\DuplicateEnrollmentException;
+use App\Domain\Enrollment\Exceptions\EnrollmentNotWithdrawableException;
+use App\Domain\Enrollment\Exceptions\StudentNotEnrollableException;
+use App\Domain\Enrollment\Models\Batch;
+use App\Domain\Enrollment\Models\Enrollment;
+use App\Domain\Enrollment\Models\Student;
+use App\Models\User;
+use Filament\Actions\Action;
+use Filament\Forms\Components\Select;
+use Filament\Notifications\Notification;
+use Filament\Resources\RelationManagers\RelationManager;
+use Filament\Support\Icons\Heroicon;
+use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Table;
+use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Gate;
+
+/**
+ * Who is on this batch (P1-T11).
+ *
+ * EVERY WRITE ROUTES THROUGH AN ACTION — NONE THROUGH THE RELATION
+ * ---------------------------------------------------------------
+ * Filament's CreateAction, EditAction and AttachAction persist with a bare
+ * create()/update() on the relation, reaching around EnrollStudentAction and
+ * WithdrawEnrollmentAction and with them the closed-batch refusal, the duplicate
+ * refusal, the deleted-student refusal, the row locks and the actor check. None
+ * is registered here; the two buttons below are plain Actions with their own
+ * handlers, so there is no built-in persistence to reach in the first place.
+ *
+ * NO STATUS FIELD, ANYWHERE
+ * -------------------------
+ * The only transition phase 1 has is withdrawal, and it has a button of its own.
+ * A status Select would let a crafted submission set `completed` — a state spec
+ * line 71 reserves for phase 3, and one phase 3 issues certificates against.
+ *
+ * THE ASSOCIATION IS NOT EDITABLE
+ * -------------------------------
+ * No edit form exists, so student_id and batch_id cannot be moved. Re-parenting
+ * an enrolment would strand the charges phase 2 hangs off it against a batch the
+ * student never attended. EnrollmentsRelationManagerTest proves a crafted
+ * submission cannot do it either.
+ *
+ * NO BULK ACTIONS
+ * ---------------
+ * Filament authorizes a bulk action once against a *Any policy method and never
+ * consults the per-record one, so a bulk withdrawal could not express the
+ * assigned-batch rule at all. EnrollmentPolicy defines no deleteAny().
+ */
+class EnrollmentsRelationManager extends RelationManager
+{
+    protected static string $relationship = 'enrollments';
+
+    protected static ?string $relatedResource = null;
+
+    public static function getTitle(Model $ownerRecord, string $pageClass): string
+    {
+        return __('enrollment.enrollments');
+    }
+
+    /**
+     * Seeing who is on a batch requires both seeing the batch and holding the
+     * enrolment read grant.
+     */
+    public static function canViewForRecord(Model $ownerRecord, string $pageClass): bool
+    {
+        return Gate::allows('view', $ownerRecord)
+            && Gate::allows('viewAny', Enrollment::class);
+    }
+
+    public function table(Table $table): Table
+    {
+        return $table
+            ->recordTitleAttribute('id')
+            ->columns([
+                TextColumn::make('student.full_name')
+                    ->label(__('enrollment.student'))
+                    ->searchable()
+                    ->sortable(),
+
+                TextColumn::make('student.student_code')
+                    ->label(__('enrollment.student_code'))
+                    ->searchable(),
+
+                TextColumn::make('status')
+                    ->label(__('enrollment.status'))
+                    ->badge()
+                    ->formatStateUsing(fn (EnrollmentStatus $state): string => $state->label())
+                    ->color(fn (EnrollmentStatus $state): string => match ($state) {
+                        EnrollmentStatus::Active => 'success',
+                        EnrollmentStatus::Completed => 'info',
+                        EnrollmentStatus::Withdrawn => 'danger',
+                    }),
+
+                TextColumn::make('enrolled_at')
+                    ->label(__('enrollment.enrolled_at'))
+                    ->date()
+                    ->sortable(),
+            ])
+            ->headerActions([$this->enrollAction()])
+            ->recordActions([$this->withdrawAction()]);
+        // No bulk actions, deliberately. See the class docblock.
+    }
+
+    /**
+     * Put a student on this batch.
+     */
+    private function enrollAction(): Action
+    {
+        return Action::make('enroll')
+            ->label(__('enrollment.enroll_student'))
+            ->icon(Heroicon::OutlinedUserPlus)
+            ->modalHeading(__('enrollment.enroll_student'))
+            ->authorize(fn (): bool => Gate::allows('create', Enrollment::class))
+            ->schema([
+                Select::make('student_id')
+                    ->label(__('enrollment.student'))
+                    ->required()
+                    /*
+                     * Live students only. EnrollStudentAction re-checks this
+                     * server-side, because a Select's options are a suggestion and
+                     * the submitted value is user input.
+                     */
+                    ->options(fn (): array => Student::query()
+                        ->orderBy('first_name')
+                        ->get()
+                        ->mapWithKeys(fn (Student $student): array => [
+                            $student->getKey() => $student->full_name,
+                        ])
+                        ->all())
+                    ->searchable()
+                    ->preload(),
+            ])
+            ->action(function (array $data): void {
+                /** @var User $actor */
+                $actor = auth()->user();
+
+                /** @var Batch $batch */
+                $batch = $this->getOwnerRecord();
+
+                try {
+                    app(EnrollStudentAction::class)->execute($actor, new EnrollStudentData(
+                        studentId: (int) $data['student_id'],
+                        batchId: (int) $batch->getKey(),
+                    ));
+                } catch (BatchClosedException|DuplicateEnrollmentException
+                    |StudentNotEnrollableException|AuthorizationException $exception) {
+                    self::refuse($exception);
+
+                    return;
+                }
+
+                /*
+                 * Over-capacity WARNS and never blocks — spec line 217. The
+                 * enrolment has already committed; this tells the reader the batch
+                 * is now over its stated ceiling so they can act on it, rather than
+                 * refusing a decision the centre is entitled to make.
+                 */
+                if ($batch->fresh()->isOverCapacity()) {
+                    Notification::make()
+                        ->title(__('enrollment.over_capacity_warning'))
+                        ->warning()
+                        ->persistent()
+                        ->send();
+                }
+            });
+    }
+
+    /**
+     * Take a student off this batch.
+     *
+     * Hidden on a row that is already withdrawn: the Action is idempotent, so
+     * pressing it would silently do nothing, and a button that does nothing is
+     * worse than one that is not there. A completed row keeps the button and gets
+     * the typed refusal, because that refusal is worth stating.
+     */
+    private function withdrawAction(): Action
+    {
+        return Action::make('withdraw')
+            ->label(__('enrollment.withdraw'))
+            ->icon(Heroicon::OutlinedUserMinus)
+            ->color('danger')
+            ->requiresConfirmation()
+            ->modalHeading(__('enrollment.withdraw'))
+            ->hidden(fn (Enrollment $record): bool => $record->status === EnrollmentStatus::Withdrawn)
+            ->authorize(fn (Enrollment $record): bool => Gate::allows('update', $record))
+            ->action(function (Enrollment $record): void {
+                /** @var User $actor */
+                $actor = auth()->user();
+
+                try {
+                    app(WithdrawEnrollmentAction::class)->execute($actor, $record);
+                } catch (EnrollmentNotWithdrawableException|AuthorizationException $exception) {
+                    self::refuse($exception);
+                }
+            });
+    }
+
+    /**
+     * Turn a refusal into a notification the reader can actually read.
+     *
+     * The domain exceptions carry __() messages already. AuthorizationException
+     * does NOT — its message is Laravel's hardcoded English, which would appear
+     * verbatim in an Arabic panel from phase 4 — so it is mapped to a key of this
+     * domain's own. See InstructorsRelationManager::refuse().
+     */
+    private static function refuse(
+        BatchClosedException|DuplicateEnrollmentException|StudentNotEnrollableException
+        |EnrollmentNotWithdrawableException|AuthorizationException $exception,
+    ): void {
+        Notification::make()
+            ->title($exception instanceof AuthorizationException
+                ? __('enrollment.enrollment_change_denied')
+                : $exception->getMessage())
+            ->danger()
+            ->persistent()
+            ->send();
+    }
+}
+```
+
+Register it in `BatchResource::getRelations()` alongside the instructors panel,
+and add the eager count so the listing does not N+1:
+
+```php
+    public static function getRelations(): array
+    {
+        return [
+            InstructorsRelationManager::class,
+            EnrollmentsRelationManager::class,
+        ];
+    }
+```
+
+- [ ] **Step 21: Write the crafted-submission test**
+
+Create `tests/Feature/Enrollment/EnrollmentsRelationManagerTest.php`. These are
+server-side probes, so each needs an **authorized-actor control first** —
+`mountAction()` returns null identically for an unresolvable record, a disabled
+action and an unauthorized one, so a test asserting only null proves nothing.
+
+```php
+<?php
+
+declare(strict_types=1);
+
+use App\Domain\Enrollment\Enums\EnrollmentStatus;
+use App\Domain\Enrollment\Filament\Resources\BatchResource\Pages\ViewBatch;
+use App\Domain\Enrollment\Filament\Resources\BatchResource\RelationManagers\EnrollmentsRelationManager;
+use App\Domain\Enrollment\Models\Batch;
+use App\Domain\Enrollment\Models\Course;
+use App\Domain\Enrollment\Models\Enrollment;
+use App\Domain\Enrollment\Models\Student;
+use App\Domain\Staff\Actions\SystemRoleWriter;
+use App\Domain\Staff\Models\StaffProfile;
+use App\Models\User;
+use Database\Seeders\RolePermissionSeeder;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Livewire\Livewire;
+
+uses(RefreshDatabase::class);
+
+beforeEach(function () {
+    $this->seed(RolePermissionSeeder::class);
+
+    $this->system = app(SystemRoleWriter::class);
+
+    $this->makeUser = function (string $role): User {
+        $user = User::factory()->create(['is_active' => true]);
+        $this->system->assignRoles($user, $role);
+
+        return $user->refresh();
+    };
+
+    $this->course = Course::factory()->create(['total_hours' => 30]);
+    $this->batch = Batch::factory()->for($this->course)->active()->create(['capacity' => 2]);
+
+    /** Mount the relation manager on the batch's view page as the given actor. */
+    $this->mountPanel = fn (User $actor, ?Batch $batch = null) => Livewire::actingAs($actor)
+        ->test(EnrollmentsRelationManager::class, [
+            'ownerRecord' => $batch ?? $this->batch,
+            'pageClass' => ViewBatch::class,
+        ]);
+});
+
+it('enrolls a student through the panel', function () {
+    // THE AUTHORIZED CONTROL. Every negative below asserts a refusal, and
+    // mountAction() returns null identically for an unresolvable record, a
+    // disabled action and an unauthorized one — so without a positive proving the
+    // panel works at all, those negatives would pass for the wrong reason.
+    $student = Student::factory()->create();
+
+    ($this->mountPanel)(($this->makeUser)('admin'))
+        ->callAction('enroll', ['student_id' => $student->getKey()])
+        ->assertHasNoActionErrors();
+
+    expect(Enrollment::query()->count())->toBe(1)
+        ->and(Enrollment::query()->sole()->status)->toBe(EnrollmentStatus::Active);
+});
+
+it('refuses a crafted enrollment into a batch other than the one on screen', function () {
+    // batchId comes from the owner record and never from the payload. A
+    // submission naming another batch must land on the batch being viewed.
+    $other = Batch::factory()->for($this->course)->active()->create();
+    $student = Student::factory()->create();
+
+    ($this->mountPanel)(($this->makeUser)('admin'))
+        ->callAction('enroll', [
+            'student_id' => $student->getKey(),
+            'batch_id' => $other->getKey(),
+        ]);
+
+    expect((int) Enrollment::query()->sole()->batch_id)->toBe((int) $this->batch->getKey())
+        ->and($other->enrollments()->count())->toBe(0);
+});
+
+it('refuses a crafted status on enrollment', function () {
+    // There is no status field, and completion is phase 3. A payload naming one
+    // must not reach the column — EnrollStudentAction sets Active unconditionally.
+    $student = Student::factory()->create();
+
+    ($this->mountPanel)(($this->makeUser)('admin'))
+        ->callAction('enroll', [
+            'student_id' => $student->getKey(),
+            'status' => EnrollmentStatus::Completed->value,
+        ]);
+
+    expect(Enrollment::query()->sole()->status)->toBe(EnrollmentStatus::Active);
+});
+
+it('refuses a crafted enrollment into a completed batch', function () {
+    // The closed-batch gate, reached through the panel rather than the Action, so
+    // the refusal is proven at the surface a user can actually reach.
+    $closed = Batch::factory()->for($this->course)->completed()->create();
+    $student = Student::factory()->create();
+
+    ($this->mountPanel)(($this->makeUser)('admin'), $closed)
+        ->callAction('enroll', ['student_id' => $student->getKey()])
+        ->assertNotified(__('enrollment.batch_closed'));
+
+    expect(Enrollment::query()->count())->toBe(0);
+});
+
+it('does not let a staff actor withdraw from a batch they do not teach', function () {
+    $enrollment = Enrollment::factory()->for($this->batch)->create();
+
+    ($this->mountPanel)(($this->makeUser)('staff'))
+        ->assertActionHidden('withdraw', $enrollment);
+
+    expect($enrollment->fresh()->status)->toBe(EnrollmentStatus::Active);
+});
+
+it('lets a staff actor withdraw from a batch they do teach', function () {
+    // The positive half of the assigned-batch rule. Without it, a policy that
+    // denied everybody would pass the negative above.
+    $staff = ($this->makeUser)('staff');
+    StaffProfile::factory()->for($staff)->instructor()->create();
+    $this->batch->instructors()->attach($staff->getKey(), ['assigned_hours' => 30]);
+
+    $enrollment = Enrollment::factory()->for($this->batch)->create();
+
+    ($this->mountPanel)($staff)
+        ->callAction('withdraw', $enrollment)
+        ->assertHasNoActionErrors();
+
+    expect($enrollment->fresh()->status)->toBe(EnrollmentStatus::Withdrawn);
+});
+
+it('hides the withdraw button on an already-withdrawn row', function () {
+    $enrollment = Enrollment::factory()->for($this->batch)->withdrawn()->create();
+
+    ($this->mountPanel)(($this->makeUser)('admin'))
+        ->assertActionHidden('withdraw', $enrollment);
+});
+
+it('warns rather than refusing when a batch goes over capacity', function () {
+    // Capacity is 2; this is the third. It must SUCCEED and notify — spec line
+    // 217 makes over-enrolment a warning, never a block.
+    Enrollment::factory()->count(2)->for($this->batch)->create();
+
+    ($this->mountPanel)(($this->makeUser)('admin'))
+        ->callAction('enroll', ['student_id' => Student::factory()->create()->getKey()])
+        ->assertHasNoActionErrors()
+        ->assertNotified(__('enrollment.over_capacity_warning'));
+
+    expect($this->batch->enrollments()->count())->toBe(3);
+});
+
+it('registers no bulk actions on the enrollments panel', function () {
+    // Filament authorizes a bulk action ONCE against a *Any policy method and
+    // never consults the per-record one, so a bulk withdrawal could not express
+    // the assigned-batch rule and would write through the relation directly.
+    //
+    // Both collections are asserted: getFlatBulkActions() covers the row-selection
+    // actions and getToolbarActions() the header ones, and checking only one
+    // leaves the other free to reintroduce exactly what this forbids.
+    $table = ($this->mountPanel)(($this->makeUser)('super_admin'))
+        ->instance()
+        ->getTable();
+
+    expect($table->getFlatBulkActions())->toBeEmpty()
+        ->and($table->getToolbarActions())->toBeEmpty();
+});
+```
+
+- [ ] **Step 22: Run the whole suite**
+
+Run: `vendor/bin/pint --test && vendor/bin/phpstan analyse --memory-limit=1G && php artisan test`
+
+`phpstan` needs the explicit memory limit: the 128M default crashes a parallel
+worker on this codebase.
+
+Expected: Pint passes, PHPStan reports 0 errors, and every test passes —
+approximately 510 tests. Report the real numbers, not these.
+
+- [ ] **Step 23: Commit the UI layer**
+
+```bash
+git add -A
+git commit -m "feat(enrollment): add the enrollments panel and route batch deletion through an Action [P1-T11]"
+```
+
+- [ ] **Step 24: Correct the spec**
+
+The spec is a living record and must describe what was built. Update
+`docs/superpowers/specs/2026-07-20-training-center-dashboard-design.md`:
+
+1. **Section 5, after the permission matrix.** The matrix row "create/edit in own
+   batches" does not say how the scope is expressed. Add a paragraph recording
+   the two-permission design, that `update_enrollment` is unrestricted while
+   `update_assigned_batch_enrollment` is scoped to the `batch_instructor` pivot,
+   that creation is deliberately unscoped because line 15 requires a front-desk
+   staffer to enrol a walk-in, and that "own batches" is answered by assignment
+   and never by `employment_type`.
+
+2. **Section 6, at the enrollments table.** Record that phase 1 ships enrolment
+   and withdrawal only; that completion marking is phase 3 per line 71, so
+   `EnrollmentStatus::Completed` is unreachable from the application in phase 1
+   and `completed_at` is written by nothing yet; and that withdrawal is
+   idempotent and terminal with no `withdrawn_at` column.
+
+3. **Section 6, at the batch status rules.** Line 239 already says the status
+   gate "lives on `assignInstructor()` and on the enrollment path" — name
+   `EnrollStudentAction` as that path now that it exists.
+
+4. **Batch deletion.** Record that it routes through `DeleteBatchAction`, that
+   the refusal is carried by `enrollments.batch_id` being `restrictOnDelete`
+   rather than by a policy check, and that only MySQL 1451 is converted.
+
+- [ ] **Step 25: Commit the spec corrections**
+
+```bash
+git add -A
+git commit -m "docs: record the enrollment permission and status decisions [P1-T11]"
+```
+
+- [ ] **Step 26: Hand off for review**
+
+Do **not** merge. Per `docs/WORKFLOW.md`, no agent merges its own work
+unreviewed, and P1-T10 is the cautionary tale — it was merged on the
+implementer's own verification and came back with findings across three rounds.
+
+```bash
+git diff main...p1/t11-enrollments
+```
+
+Report the real gate output — Pint, PHPStan, and the test count with assertions —
+and wait for the review verdict.
 
 ---
 
