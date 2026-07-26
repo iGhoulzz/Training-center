@@ -11,9 +11,11 @@ use Illuminate\Database\Eloquent\Model;
 /**
  * A file whose owning row has been removed and whose bytes are still on disk.
  *
- * Written inside the transaction that removes the owning record; deleted by
- * PurgeDeletedFileJob once the bytes are actually gone. See the migration for
- * why the intent has to be committed before the unlink is attempted.
+ * For an ordinary deletion, written inside the transaction that removes the
+ * owning record. For a new upload, briefly used as a provisional write-ahead
+ * receipt until the owning transaction commits. PurgeDeletedFileJob removes the
+ * receipt only after the bytes are gone, or after proving a committed row owns
+ * them. See FileLifecycleService for both orderings.
  *
  * Configuration only — casts and one scope. The lifecycle lives in the Actions
  * that create these rows and the job that consumes them.

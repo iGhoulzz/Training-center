@@ -54,7 +54,9 @@ it('streams the file to an actor holding view_staff_certificate', function () {
 
     expect($response->streamedContent())->toBe($this->bytes)
         // The download header carries the stored original name, not the ULID path.
-        ->and($response->headers->get('content-disposition'))->toContain('my-diploma.pdf');
+        ->and($response->headers->get('content-disposition'))->toContain('my-diploma.pdf')
+        ->and($response->headers->get('cache-control'))->toContain('private')
+        ->and($response->headers->get('cache-control'))->toContain('no-store');
 });
 
 it('refuses an authenticated actor without view_staff_certificate', function () {
@@ -70,6 +72,15 @@ it('refuses an unauthenticated request', function () {
     // guest with 403 rather than redirecting to a login route that does not
     // exist in this application.
     $this->get($this->url)->assertForbidden();
+});
+
+it('refuses an inactive actor even when their retained permission allows viewing', function () {
+    $inactive = ($this->userWith)('view_staff_certificate');
+    $inactive->update(['is_active' => false]);
+
+    $this->actingAs($inactive->fresh())
+        ->get($this->url)
+        ->assertForbidden();
 });
 
 it('refuses an actor holding view_staff_profile but not view_staff_certificate', function () {

@@ -1835,9 +1835,10 @@ Nothing here is optional cleanup: as it stands, a certificate row can be created
 
 **Files:**
 - Create: `app/Domain/Staff/Actions/{UploadStaffCertificateAction,DeleteStaffCertificateAction,UpdateStaffPhotoAction,DeleteStaffPhotoAction,DeleteStaffProfileAction}.php`
+- Create: `app/Domain/Staff/Services/FileLifecycleService.php`
 - Create: `app/Domain/Staff/Filament/Resources/StaffProfileResource.php` + pages, and a certificates relation manager
-- Create: `app/Http/Controllers/Staff/StaffCertificateDownloadController.php` (or a signed-route equivalent)
-- Create: `database/migrations/*_create_pending_file_deletions_table.php`
+- Create: `app/Http/Controllers/Staff/{StaffCertificateDownloadController,StaffProfilePhotoController}.php`
+- Create: `database/migrations/*_create_pending_file_deletions_table.php` and an additive ownership-path index migration
 - Create: `app/Domain/Staff/Jobs/PurgeDeletedFileJob.php`
 - Modify: `routes/web.php`
 - Create: `tests/Feature/Staff/StaffCertificateUploadTest.php`, `StaffCertificateDownloadTest.php`, `StaffProfileResourceTest.php`
@@ -1870,6 +1871,8 @@ The correct order is therefore **commit first, delete after**, and the deletion 
 4. The job declares `public int $tries` and a backoff. A transient disk or S3 error retries on its own; a permanently failed job lands in `failed_jobs`, visible.
 5. Anything still in `pending_file_deletions` past a threshold is a reconcilable orphan — a scheduled sweep can re-dispatch it. **This table is the durability guarantee**: without it, a worker crashing between commit and delete loses the file silently and forever.
 
+New uploads use the same table as a **write-ahead compensation receipt**. Commit a provisional receipt through an independent database connection before writing bytes, write the file, then write its owning row. Cancel the receipt only after the outermost owning transaction commits. Every surrounding rollback boundary dispatches the receipt for purge, and a compensation job performs a current locking ownership check before unlinking so an ambiguous commit can never delete an owned file. If the queue driver is database-backed, its insert must also use an independent connection unless `DB_QUEUE_CONNECTION` already names a dedicated queue database.
+
 **Storage failures throw.** Do not catch a `Storage::delete()` or `Storage::put()` failure to keep a request "successful". A silent failure here means a document the centre is no longer entitled to hold stays on disk with nothing recording that fact. The only place a failure is tolerated is *inside the retrying job*, where throwing is precisely the retry mechanism.
 
 **No bulk bypass.** Filament authorizes a bulk action once against the `*Any` policy method and never consults the per-record method, so a bulk delete would skip both the per-profile certificate-grant check and the pending-deletion bookkeeping. `StaffProfileResource` and the certificates relation manager register **no bulk actions**, and `deleteAny()` returns `false` on both policies. A test asserts no bulk action is registered on either.
@@ -1881,7 +1884,7 @@ The consequences to cover:
 - **Deleting a certificate row deletes its file**, on the disk named in its `disk` column — after commit.
 - **Deleting a staff profile removes every certificate file and the profile photo.** Collect the paths *before* the cascade destroys the rows; afterwards there is nothing left to read them from.
 - **Replacing a photo deletes the file it replaced** — after the new path is committed, never before, or a failed save leaves the profile pointing at a file that is gone.
-- **A failed upload leaves nothing behind** — no row without a file, no file without a row. Write the file first, then the row; if the row write fails, remove the file.
+- **A failed upload leaves no untracked bytes** — no row without a file, and no file without either an owner or a durable cleanup receipt. Write the provisional receipt first, then the file, then the row; if the row write or an outer transaction fails, dispatch retryable cleanup without replacing the original failure.
 - **An orphaned file is a bug, not an acceptable outcome.** These documents are personal data the centre no longer has grounds to hold.
 
 Test each of these by asserting the file is *gone from disk*, not merely that the row went. Include a failure case: make the disk delete throw, and assert the row is still gone and the failure was recorded for retry rather than swallowed.

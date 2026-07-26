@@ -38,13 +38,21 @@ final class DeleteStaffCertificateAction
     {
         Gate::forUser($actor)->authorize('delete', $certificate);
 
-        $pendingIds = DB::transaction(function () use ($certificate): array {
+        $pendingIds = DB::transaction(function () use ($actor, $certificate): array {
+            // Read storage identity from the locked database row, not from a
+            // Livewire component's potentially stale model snapshot.
+            $lockedCertificate = StaffCertificate::query()
+                ->lockForUpdate()
+                ->findOrFail($certificate->getKey());
+
+            Gate::forUser($actor)->authorize('delete', $lockedCertificate);
+
             $ids = $this->files->record([[
-                'disk' => $certificate->disk,
-                'path' => $certificate->path,
+                'disk' => $lockedCertificate->disk,
+                'path' => $lockedCertificate->path,
             ]]);
 
-            $certificate->delete();
+            $lockedCertificate->delete();
 
             return $ids;
         });

@@ -3,14 +3,20 @@
 declare(strict_types=1);
 
 use App\Domain\Staff\Actions\SystemRoleWriter;
+use App\Domain\Staff\Enums\EmploymentType;
+use App\Domain\Staff\Filament\Resources\StaffProfileResource\Pages\CreateStaffProfile;
+use App\Domain\Staff\Filament\Resources\StaffProfileResource\Pages\EditStaffProfile;
 use App\Domain\Staff\Filament\Resources\StaffProfileResource\Pages\ListStaffProfiles;
 use App\Domain\Staff\Filament\Resources\StaffProfileResource\Pages\ViewStaffProfile;
 use App\Domain\Staff\Filament\Resources\StaffProfileResource\RelationManagers\CertificatesRelationManager;
 use App\Domain\Staff\Models\StaffCertificate;
 use App\Domain\Staff\Models\StaffProfile;
+use App\Domain\Staff\Services\FileLifecycleService;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
+use Filament\Tables\Columns\ImageColumn;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Livewire\Livewire;
 
@@ -43,6 +49,10 @@ beforeEach(function () {
     };
 });
 
+afterEach(function () {
+    DB::disconnect(FileLifecycleService::compensationConnectionName());
+});
+
 /*
 |--------------------------------------------------------------------------
 | Page access
@@ -70,7 +80,91 @@ it('denies a student the staff register', function () {
 
 /*
 |--------------------------------------------------------------------------
-| No bulk actions — the file-lifecycle bypass this resource must not offer
+| Profile form boundaries and avatar rendering
+|--------------------------------------------------------------------------
+*/
+
+it('keeps profile ownership immutable on a crafted edit while saving legitimate fields', function () {
+    $profile = StaffProfile::factory()->create(['job_title' => 'Original title']);
+    $originalUserId = $profile->user_id;
+    $otherUser = User::factory()->create();
+
+    Livewire::actingAs(($this->makeRole)('admin'))
+        ->test(EditStaffProfile::class, ['record' => $profile->getKey()])
+        ->fillForm([
+            'user_id' => $otherUser->getKey(),
+            'job_title' => 'Updated title',
+        ])
+        ->call('save')
+        ->assertHasNoFormErrors();
+
+    $profile->refresh();
+
+    expect($profile->user_id)->toBe($originalUserId)
+        ->and($profile->job_title)->toBe('Updated title');
+});
+
+it('still persists profile ownership on creation', function () {
+    $staffUser = User::factory()->create();
+
+    Livewire::actingAs(($this->makeRole)('admin'))
+        ->test(CreateStaffProfile::class)
+        ->fillForm([
+            'user_id' => $staffUser->getKey(),
+            'job_title' => 'New instructor',
+            'employment_type' => EmploymentType::Instructor->value,
+        ])
+        ->call('create')
+        ->assertHasNoFormErrors();
+
+    expect(StaffProfile::where('user_id', $staffUser->getKey())->exists())->toBeTrue();
+});
+
+it('writes a real profile photo through the edit page save hook', function () {
+    $profile = StaffProfile::factory()->create(['profile_photo_path' => null]);
+
+    Livewire::actingAs(($this->makeRole)('admin'))
+        ->test(EditStaffProfile::class, ['record' => $profile->getKey()])
+        ->fillForm([
+            'profile_photo' => livewirePngUpload('avatar.png'),
+        ])
+        ->call('save')
+        ->assertHasNoFormErrors();
+
+    $path = $profile->fresh()->profile_photo_path;
+
+    expect($path)->toBeString()
+        ->and($path)->toStartWith('staff-photos/');
+    Storage::disk('private')->assertExists($path);
+});
+
+it('renders an authorized photo route and falls back to initials when no photo exists', function () {
+    $withPhoto = StaffProfile::factory()->create([
+        'profile_photo_path' => 'staff-photos/avatar.png',
+    ]);
+    $withoutPhoto = StaffProfile::factory()
+        ->for(User::factory()->state(['name' => 'Amal Ibrahim']), 'user')
+        ->create(['profile_photo_path' => null]);
+
+    Livewire::actingAs(($this->makeRole)('admin'))
+        ->test(ListStaffProfiles::class)
+        ->assertTableColumnStateSet(
+            'profile_photo_path',
+            route('staff.profiles.photo', $withPhoto),
+            $withPhoto,
+        )
+        ->assertTableColumnStateSet('profile_photo_path', null, $withoutPhoto)
+        ->assertTableColumnExists(
+            'profile_photo_path',
+            fn (ImageColumn $column): bool => $column->getPlaceholder() === $withoutPhoto->initials()
+                && $column->isCircular(),
+            $withoutPhoto,
+        );
+});
+
+/*
+|--------------------------------------------------------------------------
+| No bulk actions
 |--------------------------------------------------------------------------
 */
 
@@ -170,6 +264,81 @@ it('refuses a certificate delete mounted directly on the relation manager by an 
 
     expect(StaffCertificate::whereKey($certificate->getKey())->exists())->toBeTrue();
     Storage::disk('private')->assertExists($certificate->path);
+});
+
+/*
+|--------------------------------------------------------------------------
+| Split certificate permissions, driven through the real component
+|--------------------------------------------------------------------------
+*/
+
+it('lets a create-only certificate grant upload from the view page but refuses deletion', function () {
+    $profile = StaffProfile::factory()->create();
+    $actor = ($this->userWith)(
+        'access_admin_panel',
+        'view_any_staff_profile',
+        'view_staff_profile',
+        'view_any_staff_certificate',
+        'view_staff_certificate',
+        'create_staff_certificate',
+    );
+
+    $mount = fn () => Livewire::actingAs($actor)->test(CertificatesRelationManager::class, [
+        'ownerRecord' => $profile,
+        'pageClass' => ViewStaffProfile::class,
+    ]);
+
+    $mount()
+        ->callTableAction('create', null, [
+            'title' => 'Create-only credential',
+            'issued_on' => '2024-01-01',
+            'expires_on' => '2030-01-01',
+            'certificate_file' => livewirePngUpload('credential.png'),
+        ])
+        ->assertHasNoTableActionErrors();
+
+    $certificate = StaffCertificate::sole();
+    Storage::disk('private')->assertExists($certificate->path);
+
+    // Drive the raw server mount: a helper that first asserts action visibility
+    // would prove only that the test helper refused, not the Livewire endpoint.
+    $context = ['table' => true, 'recordKey' => (string) $certificate->getKey()];
+    $component = $mount();
+    $component->call('mountAction', 'delete', [], $context);
+    expect($component->get('mountedActions'))->toBeEmpty();
+    $component->call('callMountedAction');
+
+    expect(StaffCertificate::whereKey($certificate->getKey())->exists())->toBeTrue();
+    Storage::disk('private')->assertExists($certificate->path);
+});
+
+it('lets a delete-only certificate grant remove a certificate from the view page', function () {
+    $profile = StaffProfile::factory()->create();
+    $path = 'staff-certificates/delete-only.pdf';
+    Storage::disk('private')->put($path, 'private-bytes');
+    $certificate = StaffCertificate::factory()->for($profile, 'staffProfile')->create([
+        'disk' => 'private',
+        'path' => $path,
+    ]);
+
+    $actor = ($this->userWith)(
+        'access_admin_panel',
+        'view_any_staff_profile',
+        'view_staff_profile',
+        'view_any_staff_certificate',
+        'view_staff_certificate',
+        'delete_staff_certificate',
+    );
+
+    Livewire::actingAs($actor)
+        ->test(CertificatesRelationManager::class, [
+            'ownerRecord' => $profile,
+            'pageClass' => ViewStaffProfile::class,
+        ])
+        ->callTableAction('delete', $certificate);
+
+    expect(StaffCertificate::whereKey($certificate->getKey())->exists())->toBeFalse();
+    Storage::disk('private')->assertMissing($path);
 });
 
 /*

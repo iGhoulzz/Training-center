@@ -8,6 +8,7 @@ use App\Domain\Staff\Enums\EmploymentType;
 use App\Domain\Staff\Models\StaffProfile;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\Factory;
+use Illuminate\Support\Str;
 
 /**
  * @extends Factory<StaffProfile>
@@ -62,7 +63,7 @@ class StaffProfileFactory extends Factory
     public function withPhoto(): static
     {
         return $this->state(fn (): array => [
-            'profile_photo_path' => 'staff-photos/'.fake()->uuid().'.jpg',
+            'profile_photo_path' => 'staff-photos/'.Str::ulid()->toString().'.jpg',
         ]);
     }
 }

@@ -56,32 +56,45 @@ final class DeleteStaffProfileAction
     {
         Gate::forUser($actor)->authorize('delete', $profile);
 
-        $certificates = $profile->certificates()->get();
+        $pendingIds = DB::transaction(function () use ($actor, $profile): array {
+            /*
+             * Lock the parent before reading anything it owns. An upload must
+             * lock this same row before inserting a certificate, so it cannot
+             * appear between our authorization pass and the cascade delete.
+             */
+            $lockedProfile = StaffProfile::query()
+                ->lockForUpdate()
+                ->findOrFail($profile->getKey());
 
-        foreach ($certificates as $certificate) {
-            Gate::forUser($actor)->authorize('delete', $certificate);
-        }
+            Gate::forUser($actor)->authorize('delete', $lockedProfile);
 
-        $files = $certificates
-            ->map(fn (StaffCertificate $certificate): array => [
-                'disk' => $certificate->disk,
-                'path' => $certificate->path,
-            ])
-            ->all();
+            $certificates = $lockedProfile->certificates()
+                ->lockForUpdate()
+                ->get();
 
-        $photoPath = $profile->profile_photo_path;
+            foreach ($certificates as $certificate) {
+                Gate::forUser($actor)->authorize('delete', $certificate);
+            }
 
-        if (is_string($photoPath) && $photoPath !== '') {
-            $files[] = ['disk' => UpdateStaffPhotoAction::DISK, 'path' => $photoPath];
-        }
+            $files = $certificates
+                ->map(fn (StaffCertificate $certificate): array => [
+                    'disk' => $certificate->disk,
+                    'path' => $certificate->path,
+                ])
+                ->all();
 
-        $pendingIds = DB::transaction(function () use ($profile, $files): array {
+            $photoPath = $lockedProfile->profile_photo_path;
+
+            if (is_string($photoPath) && $photoPath !== '') {
+                $files[] = ['disk' => UpdateStaffPhotoAction::DISK, 'path' => $photoPath];
+            }
+
             $ids = $this->files->record($files);
 
             // Cascades to staff_certificates. The receipts above were written
             // first, so the intent to destroy those files is committed with the
             // same transaction that destroys their rows.
-            $profile->delete();
+            $lockedProfile->delete();
 
             return $ids;
         });

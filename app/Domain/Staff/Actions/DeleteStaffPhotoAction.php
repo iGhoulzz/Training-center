@@ -35,21 +35,29 @@ final class DeleteStaffPhotoAction
     {
         Gate::forUser($actor)->authorize('update', $profile);
 
-        $path = $profile->profile_photo_path;
+        $pendingIds = DB::transaction(function () use ($actor, $profile): array {
+            // The component may have hydrated this profile before another
+            // request replaced its photo. Delete what the row points at NOW.
+            $lockedProfile = StaffProfile::query()
+                ->lockForUpdate()
+                ->findOrFail($profile->getKey());
 
-        // Nothing to remove. Still authorized above: whether a profile happens
-        // to have a photo must not decide whether the caller was entitled to ask.
-        if (! is_string($path) || $path === '') {
-            return;
-        }
+            Gate::forUser($actor)->authorize('update', $lockedProfile);
 
-        $pendingIds = DB::transaction(function () use ($profile, $path): array {
+            $path = $lockedProfile->profile_photo_path;
+
+            // Nothing to remove. Authorization still happened above: whether a
+            // profile has a photo must not decide whether the caller may ask.
+            if (! is_string($path) || $path === '') {
+                return [];
+            }
+
             $ids = $this->files->record([[
                 'disk' => UpdateStaffPhotoAction::DISK,
                 'path' => $path,
             ]]);
 
-            $profile->update(['profile_photo_path' => null]);
+            $lockedProfile->update(['profile_photo_path' => null]);
 
             return $ids;
         });

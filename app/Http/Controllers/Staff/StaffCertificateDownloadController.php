@@ -49,7 +49,7 @@ final class StaffCertificateDownloadController extends Controller
     {
         $actor = $request->user();
 
-        if (! $actor instanceof User) {
+        if (! $actor instanceof User || ! $actor->is_active) {
             abort(403);
         }
 
@@ -79,6 +79,7 @@ final class StaffCertificateDownloadController extends Controller
         }
 
         return $disk->download($path, $certificate->original_filename, [
+            'Cache-Control' => 'private, no-store',
             // The stored types are PDF and raster images, but a browser that
             // sniffs its way to something else would be executing content the
             // centre uploaded on the centre's own origin.

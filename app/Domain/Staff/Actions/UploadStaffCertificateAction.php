@@ -7,16 +7,15 @@ namespace App\Domain\Staff\Actions;
 use App\Domain\Staff\Exceptions\FileStorageException;
 use App\Domain\Staff\Models\StaffCertificate;
 use App\Domain\Staff\Models\StaffProfile;
+use App\Domain\Staff\Services\FileLifecycleService;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\UploadedFile;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
-use Throwable;
 
 /**
  * Store an uploaded credential and record it against a staff profile.
@@ -46,11 +45,14 @@ use Throwable;
  * in its name. Renaming a PHP script to `certificate.pdf` therefore fails
  * validation. (`mimes:` would have trusted the extension; it is not used.)
  *
- * FILE FIRST, ROW SECOND
- * ----------------------
+ * RECEIPT FIRST, FILE SECOND, ROW THIRD
+ * -------------------------------------
  * A row without a file is a broken download; a file without a row is personal
- * data nobody can find or delete. The file is written first and removed again if
- * the row write fails, so neither survives a partial failure.
+ * data nobody can find or delete. A provisional durable cleanup receipt is
+ * committed before bytes are written, then cancelled only when the owning
+ * transaction commits. A storage/row failure or any surrounding rollback
+ * dispatches that receipt for retryable purge, so neither survives a partial
+ * failure.
  */
 final class UploadStaffCertificateAction
 {
@@ -89,6 +91,10 @@ final class UploadStaffCertificateAction
         'image/webp' => 'webp',
     ];
 
+    public function __construct(
+        private readonly FileLifecycleService $files,
+    ) {}
+
     /**
      * @param  array<string, mixed>  $metadata  title, issued_on, expires_on — nothing else is read.
      *
@@ -103,26 +109,35 @@ final class UploadStaffCertificateAction
         $attributes = $this->validateMetadata($metadata);
         $this->validateFile($file);
 
-        $path = $this->store($file);
+        $path = $this->pathFor($file);
 
-        try {
-            return DB::transaction(fn (): StaffCertificate => StaffCertificate::query()->create([
-                'staff_profile_id' => $profile->getKey(),
-                'title' => $attributes['title'],
-                'issued_on' => $attributes['issued_on'],
-                'expires_on' => $attributes['expires_on'],
-                'original_filename' => $this->displayName($file),
-                'disk' => self::DISK,
-                'path' => $path,
-            ]));
-        } catch (Throwable $exception) {
-            // No row was committed, so nothing points at these bytes and no
-            // pending_file_deletions receipt is needed — deleting immediately is
-            // safe here precisely because there is no row to roll back to.
-            Storage::disk(self::DISK)->delete($path);
+        return $this->files->persistNewFile(
+            self::DISK,
+            $path,
+            function () use ($file, $path): void {
+                $this->store($file, $path);
+            },
+            function () use ($profile, $attributes, $file, $path): StaffCertificate {
+                /*
+                 * Lock the parent before inserting. This serializes certificate
+                 * creation with DeleteStaffProfileAction: either this commits
+                 * first and deletion sees/authorizes the certificate, or profile
+                 * deletion wins and this insert fails cleanly.
+                 */
+                $lockedProfile = StaffProfile::query()
+                    ->lockForUpdate()
+                    ->findOrFail($profile->getKey());
 
-            throw $exception;
-        }
+                return $lockedProfile->certificates()->create([
+                    'title' => $attributes['title'],
+                    'issued_on' => $attributes['issued_on'],
+                    'expires_on' => $attributes['expires_on'],
+                    'original_filename' => $this->displayName($file),
+                    'disk' => self::DISK,
+                    'path' => $path,
+                ]);
+            },
+        );
     }
 
     /**
@@ -163,20 +178,28 @@ final class UploadStaffCertificateAction
     /**
      * @throws FileStorageException
      */
-    private function store(UploadedFile $file): string
+    private function pathFor(UploadedFile $file): string
     {
-        $name = Str::ulid()->toString().'.'.$this->extensionFor($file);
+        return self::DIRECTORY.'/'.Str::ulid()->toString().'.'.$this->extensionFor($file);
+    }
 
-        $path = Storage::disk(self::DISK)->putFileAs(self::DIRECTORY, $file, $name);
+    /**
+     * @throws FileStorageException
+     */
+    private function store(UploadedFile $file, string $path): void
+    {
+        $storedPath = Storage::disk(self::DISK)->putFileAs(
+            self::DIRECTORY,
+            $file,
+            basename($path),
+        );
 
         // The private disk is configured with throw => false, so a failed write
         // returns false. Returning "success" here would create a row pointing at
         // bytes that were never stored.
-        if ($path === false) {
-            throw FileStorageException::writeFailed(self::DISK, self::DIRECTORY.'/'.$name);
+        if ($storedPath === false || $storedPath !== $path) {
+            throw FileStorageException::writeFailed(self::DISK, $path);
         }
-
-        return $path;
     }
 
     private function extensionFor(UploadedFile $file): string

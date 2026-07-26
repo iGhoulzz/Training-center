@@ -12,11 +12,13 @@ use App\Domain\Staff\Jobs\PurgeDeletedFileJob;
 use App\Domain\Staff\Models\PendingFileDeletion;
 use App\Domain\Staff\Models\StaffCertificate;
 use App\Domain\Staff\Models\StaffProfile;
+use App\Domain\Staff\Services\FileLifecycleService;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -73,6 +75,10 @@ beforeEach(function () {
 
         return $user->fresh();
     };
+});
+
+afterEach(function () {
+    DB::disconnect(FileLifecycleService::compensationConnectionName());
 });
 
 /*
@@ -263,6 +269,36 @@ it('deletes the previous photo only after the replacement is committed', functio
     Storage::disk('private')->assertMissing($oldPath);
 });
 
+it('replaces the current database photo even when two requests hold stale profile snapshots', function () {
+    $originalPath = ($this->givePhoto)();
+    $firstRequest = $this->profile->fresh();
+    $secondRequest = $this->profile->fresh();
+
+    app(UpdateStaffPhotoAction::class)->execute(
+        $this->admin,
+        $firstRequest,
+        pngUpload('first-replacement.png'),
+    );
+    $firstReplacementPath = $this->profile->fresh()->profile_photo_path;
+
+    app(UpdateStaffPhotoAction::class)->execute(
+        $this->admin,
+        $secondRequest,
+        pngUpload('second-replacement.png'),
+    );
+    $secondReplacementPath = $this->profile->fresh()->profile_photo_path;
+
+    expect($firstReplacementPath)->not->toBe($originalPath)
+        ->and($secondReplacementPath)->not->toBe($firstReplacementPath)
+        ->and(PendingFileDeletion::count())->toBe(0);
+
+    // The second request must purge the photo that was current when it locked
+    // the row, not the original path captured in its stale model snapshot.
+    Storage::disk('private')->assertMissing($originalPath);
+    Storage::disk('private')->assertMissing($firstReplacementPath);
+    Storage::disk('private')->assertExists($secondReplacementPath);
+});
+
 it('leaves the existing photo untouched when a replacement upload is invalid', function () {
     // Below the minimum dimension: validation fails before anything is written,
     // so there is no orphan file and the profile still points at the old photo.
@@ -289,4 +325,93 @@ it('removes the photo file when a photo is deleted', function () {
     expect($this->profile->fresh()->profile_photo_path)->toBeNull()
         ->and(PendingFileDeletion::count())->toBe(0);
     Storage::disk('private')->assertMissing($path);
+});
+
+it('deletes the current photo when the delete request carries a stale profile snapshot', function () {
+    ($this->givePhoto)();
+    $staleDeleteRequest = $this->profile->fresh();
+
+    app(UpdateStaffPhotoAction::class)->execute(
+        $this->admin,
+        $this->profile->fresh(),
+        pngUpload('replacement-before-delete.png'),
+    );
+    $currentPath = $this->profile->fresh()->profile_photo_path;
+    Storage::disk('private')->assertExists($currentPath);
+
+    app(DeleteStaffPhotoAction::class)->execute($this->admin, $staleDeleteRequest);
+
+    expect($this->profile->fresh()->profile_photo_path)->toBeNull()
+        ->and(PendingFileDeletion::count())->toBe(0);
+    Storage::disk('private')->assertMissing($currentPath);
+});
+
+it('deletes current profile files when the delete request carries a stale profile snapshot', function () {
+    ($this->givePhoto)();
+    $staleDeleteRequest = $this->profile->fresh();
+
+    app(UpdateStaffPhotoAction::class)->execute(
+        $this->admin,
+        $this->profile->fresh(),
+        pngUpload('replacement-before-profile-delete.png'),
+    );
+    $currentPath = $this->profile->fresh()->profile_photo_path;
+    Storage::disk('private')->assertExists($currentPath);
+
+    app(DeleteStaffProfileAction::class)->execute($this->admin, $staleDeleteRequest);
+
+    expect(StaffProfile::whereKey($this->profile->getKey())->exists())->toBeFalse()
+        ->and(PendingFileDeletion::count())->toBe(0);
+    Storage::disk('private')->assertMissing($currentPath);
+});
+
+it('purges a newly stored photo when an outer transaction rolls back its database change', function () {
+    Queue::fake();
+
+    $originalPath = ($this->givePhoto)();
+    $startingLevel = DB::transactionLevel();
+    $newPath = null;
+
+    DB::beginTransaction();
+
+    try {
+        app(UpdateStaffPhotoAction::class)->execute(
+            $this->admin,
+            $this->profile->fresh(),
+            pngUpload('rolled-back-photo.png'),
+        );
+
+        $newPath = $this->profile->fresh()->profile_photo_path;
+        expect($newPath)->not->toBe($originalPath);
+        Storage::disk('private')->assertExists($newPath);
+
+        DB::rollBack();
+    } finally {
+        while (DB::transactionLevel() > $startingLevel) {
+            DB::rollBack();
+        }
+    }
+
+    expect($newPath)->toBeString()
+        ->and($this->profile->fresh()->profile_photo_path)->toBe($originalPath);
+    Storage::disk('private')->assertExists($originalPath);
+    Storage::disk('private')->assertExists($newPath);
+
+    // Rollback created a durable cleanup receipt for the now-unowned upload.
+    $pending = PendingFileDeletion::on(FileLifecycleService::compensationConnectionName())
+        ->where('path', $newPath)
+        ->sole();
+    Queue::assertPushed(
+        PurgeDeletedFileJob::class,
+        fn (PurgeDeletedFileJob $job): bool => $job->pendingFileDeletionId === (int) $pending->getKey()
+            && $job->usesCompensationConnection,
+    );
+
+    (new PurgeDeletedFileJob((int) $pending->getKey(), true))->handle();
+
+    Storage::disk('private')->assertMissing($newPath);
+    Storage::disk('private')->assertExists($originalPath);
+    expect(PendingFileDeletion::on(FileLifecycleService::compensationConnectionName())
+        ->whereKey($pending->getKey())
+        ->exists())->toBeFalse();
 });

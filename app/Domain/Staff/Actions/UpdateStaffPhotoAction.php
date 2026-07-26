@@ -10,13 +10,11 @@ use App\Domain\Staff\Services\FileLifecycleService;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\UploadedFile;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
-use Throwable;
 
 /**
  * Set or replace a staff member's profile photo.
@@ -87,11 +85,32 @@ final class UpdateStaffPhotoAction
 
         $this->validateFile($file);
 
-        $previousPath = $profile->profile_photo_path;
-        $path = $this->store($file);
+        $path = $this->pathFor($file);
 
-        try {
-            $pendingIds = DB::transaction(function () use ($profile, $path, $previousPath): array {
+        $pendingIds = $this->files->persistNewFile(
+            self::DISK,
+            $path,
+            function () use ($file, $path): void {
+                $this->store($file, $path);
+            },
+            function () use ($actor, $profile, $path): array {
+                /*
+                 * Never trust the caller's in-memory photo path. Two browser
+                 * requests can hold different snapshots of the same profile;
+                 * locking and reloading here makes the second replacement purge
+                 * the first replacement rather than purging the original twice.
+                 */
+                $lockedProfile = StaffProfile::query()
+                    ->lockForUpdate()
+                    ->findOrFail($profile->getKey());
+
+                // Re-authorize the row actually being changed. The first check
+                // fails fast; this one remains correct if a future policy starts
+                // consulting mutable profile state.
+                Gate::forUser($actor)->authorize('update', $lockedProfile);
+
+                $previousPath = $lockedProfile->profile_photo_path;
+
                 // The receipt for the file being replaced is written in the same
                 // transaction as the new path, so "the profile points here now"
                 // and "destroy what it pointed at before" commit together.
@@ -99,16 +118,11 @@ final class UpdateStaffPhotoAction
                     ? $this->files->record([['disk' => self::DISK, 'path' => $previousPath]])
                     : [];
 
-                $profile->update(['profile_photo_path' => $path]);
+                $lockedProfile->update(['profile_photo_path' => $path]);
 
                 return $ids;
-            });
-        } catch (Throwable $exception) {
-            // The new path never committed, so nothing references these bytes.
-            Storage::disk(self::DISK)->delete($path);
-
-            throw $exception;
-        }
+            },
+        );
 
         $this->files->dispatchPurges($pendingIds);
     }
@@ -135,17 +149,25 @@ final class UpdateStaffPhotoAction
     /**
      * @throws FileStorageException
      */
-    private function store(UploadedFile $file): string
+    private function pathFor(UploadedFile $file): string
     {
-        $name = Str::ulid()->toString().'.'.$this->extensionFor($file);
+        return self::DIRECTORY.'/'.Str::ulid()->toString().'.'.$this->extensionFor($file);
+    }
 
-        $path = Storage::disk(self::DISK)->putFileAs(self::DIRECTORY, $file, $name);
+    /**
+     * @throws FileStorageException
+     */
+    private function store(UploadedFile $file, string $path): void
+    {
+        $storedPath = Storage::disk(self::DISK)->putFileAs(
+            self::DIRECTORY,
+            $file,
+            basename($path),
+        );
 
-        if ($path === false) {
-            throw FileStorageException::writeFailed(self::DISK, self::DIRECTORY.'/'.$name);
+        if ($storedPath === false || $storedPath !== $path) {
+            throw FileStorageException::writeFailed(self::DISK, $path);
         }
-
-        return $path;
     }
 
     private function extensionFor(UploadedFile $file): string

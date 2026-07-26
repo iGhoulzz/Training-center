@@ -23,11 +23,17 @@ use Illuminate\Support\Facades\Schema;
  * delete is committed atomically with the deletion itself, and the actual
  * unlink is a retryable job that runs afterwards.
  *
- * A row that lingers here is a RECONCILABLE ORPHAN: the bytes still exist and
- * the record of what to do with them still exists, so a sweep can re-dispatch
- * it. That is the failure mode this design deliberately chooses, because the
- * alternative — an orphaned file nobody knows about — is personal data the
- * centre has no grounds to hold and no way to find.
+ * Uploads use the table in the opposite direction: a provisional receipt is
+ * committed independently before the bytes are written, then cancelled only
+ * after the owning row's outermost transaction commits. A rollback leaves the
+ * receipt available for retryable cleanup instead of silently orphaning the new
+ * bytes.
+ *
+ * A row that lingers here is RECONCILABLE: the bytes and the record of what to
+ * do with them both exist, so a sweep can re-dispatch it. The purge job checks
+ * whether a committed row owns provisional bytes before unlinking. That also
+ * makes a failed receipt cancellation safe: it removes only the stale receipt,
+ * never an owned file.
  *
  * Not staff-specific by design. Phase 2 receipts and phase 3 student
  * certificates reuse the same private disk and will reuse this table.

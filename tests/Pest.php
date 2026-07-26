@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Testing\File;
 use Illuminate\Http\UploadedFile;
 use Tests\TestCase;
 
@@ -113,6 +114,25 @@ function uploadWithBytes(string $clientName, string $bytes): UploadedFile
 function pngUpload(string $clientName = 'scan.png', int $width = 100, int $height = 100): UploadedFile
 {
     return uploadWithBytes($clientName, makePngBytes($width, $height));
+}
+
+/**
+ * A PNG shaped for Livewire's upload simulator.
+ *
+ * Livewire's test transport reads the public `name` property exposed by
+ * Illuminate\Http\Testing\File, which a normal UploadedFile intentionally does
+ * not have. The bytes are still a genuine PNG; direct Action tests use
+ * pngUpload() when they need to prove content-derived MIME validation.
+ */
+function livewirePngUpload(
+    string $clientName = 'scan.png',
+    int $width = 100,
+    int $height = 100,
+): File {
+    return UploadedFile::fake()->createWithContent(
+        $clientName,
+        makePngBytes($width, $height),
+    );
 }
 
 /** A real (tiny) PDF upload. */

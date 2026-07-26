@@ -148,6 +148,10 @@ class CertificatesRelationManager extends RelationManager
     public static function uploadAction(): CreateAction
     {
         return CreateAction::make()
+            // ViewRecord relation managers are read-only by default in Filament
+            // v5. The class-level policy check makes the independently granted
+            // create permission reachable without requiring profile update.
+            ->authorize('create')
             ->label(__('staff.upload_certificate'))
             ->icon(Heroicon::OutlinedArrowUpTray)
             ->modalHeading(__('staff.upload_certificate'))

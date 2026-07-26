@@ -4,10 +4,15 @@ declare(strict_types=1);
 
 namespace App\Domain\Staff\Jobs;
 
+use App\Domain\Staff\Actions\UpdateStaffPhotoAction;
 use App\Domain\Staff\Exceptions\FileStorageException;
 use App\Domain\Staff\Models\PendingFileDeletion;
+use App\Domain\Staff\Models\StaffCertificate;
+use App\Domain\Staff\Models\StaffProfile;
+use App\Domain\Staff\Services\FileLifecycleService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Throwable;
@@ -38,6 +43,13 @@ use Throwable;
  *
  * After $tries attempts the job lands in failed_jobs, where it is visible, and
  * its pending row is still present for a sweep to re-dispatch.
+ *
+ * PROVISIONAL UPLOAD RECEIPTS
+ * ---------------------------
+ * New uploads get a write-ahead receipt so an outer transaction rollback cannot
+ * orphan their bytes. Those jobs set $usesCompensationConnection and re-check
+ * whether a committed profile/certificate owns the generated path. If it does,
+ * only the stale receipt is removed; owned bytes are never touched.
  */
 class PurgeDeletedFileJob implements ShouldQueue
 {
@@ -53,6 +65,7 @@ class PurgeDeletedFileJob implements ShouldQueue
 
     public function __construct(
         public readonly int $pendingFileDeletionId,
+        public readonly bool $usesCompensationConnection = false,
     ) {}
 
     /**
@@ -67,11 +80,26 @@ class PurgeDeletedFileJob implements ShouldQueue
 
     public function handle(): void
     {
-        $pending = PendingFileDeletion::query()->find($this->pendingFileDeletionId);
+        $pending = $this->usesCompensationConnection
+            ? PendingFileDeletion::on(FileLifecycleService::compensationConnectionName())
+                ->find($this->pendingFileDeletionId)
+            : PendingFileDeletion::query()->find($this->pendingFileDeletionId);
 
         // Already purged — a duplicate dispatch or a retry that raced the
         // successful attempt. Nothing to do, and nothing to report.
         if (! $pending instanceof PendingFileDeletion) {
+            return;
+        }
+
+        /*
+         * A provisional upload receipt may outlive a successful commit if its
+         * after-commit cancellation failed or the database reported an
+         * ambiguous commit result. Generated paths are never reassigned, so an
+         * existing owner means this receipt is stale and the bytes must stay.
+         */
+        if ($this->usesCompensationConnection && $this->isOwned($pending)) {
+            $pending->delete();
+
             return;
         }
 
@@ -93,6 +121,38 @@ class PurgeDeletedFileJob implements ShouldQueue
 
         // Only now: the bytes are confirmed gone, so the receipt can go too.
         $pending->delete();
+    }
+
+    private function isOwned(PendingFileDeletion $pending): bool
+    {
+        $connection = FileLifecycleService::compensationConnectionName();
+
+        return DB::connection($connection)->transaction(function () use ($connection, $pending): bool {
+            /*
+             * These are current locking reads, not snapshot exists() checks.
+             * If the upload's owner transaction is still deciding whether to
+             * commit, the indexed lookup waits for that decision before this
+             * job is allowed to unlink the generated path.
+             */
+            $certificate = StaffCertificate::on($connection)
+                ->where('disk', $pending->disk)
+                ->where('path', $pending->path)
+                ->lockForUpdate()
+                ->first(['id']);
+
+            if ($certificate instanceof StaffCertificate) {
+                return true;
+            }
+
+            if ($pending->disk !== UpdateStaffPhotoAction::DISK) {
+                return false;
+            }
+
+            return StaffProfile::on($connection)
+                ->where('profile_photo_path', $pending->path)
+                ->lockForUpdate()
+                ->first(['id']) instanceof StaffProfile;
+        });
     }
 
     /**

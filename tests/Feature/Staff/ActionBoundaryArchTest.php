@@ -196,6 +196,9 @@ it('does not delete or deactivate users outside the sanctioned Actions', functio
             // removal; the purge job removes that receipt once the bytes are gone.
             'DeleteStaffCertificateAction',
             'DeleteStaffProfileAction',
+            // Cancels a provisional upload-cleanup receipt only after the
+            // owning transaction commits; it never deletes a domain record.
+            'FileLifecycleService',
             'PurgeDeletedFileJob',
         ],
     );

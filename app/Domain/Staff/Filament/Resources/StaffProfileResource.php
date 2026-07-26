@@ -25,6 +25,7 @@ use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
+use Filament\Tables\Columns\ImageColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -120,6 +121,14 @@ class StaffProfileResource extends Resource
                     ->all())
                 ->searchable()
                 ->required()
+                /*
+                 * An employment profile owns its photo and credentials. Letting
+                 * a generic edit change user_id silently transfers those private
+                 * documents to another person. Reassignment, if ever needed,
+                 * belongs in an explicit Action that states that consequence.
+                 */
+                ->disabled(fn (?StaffProfile $record): bool => $record !== null)
+                ->dehydrated(fn (?StaffProfile $record): bool => $record === null)
                 // One employment record per account, enforced by a unique index.
                 // Without this the form turns a duplicate into a 500.
                 ->unique(ignoreRecord: true),
@@ -170,12 +179,22 @@ class StaffProfileResource extends Resource
     {
         return $table
             ->columns([
-                // The avatar placeholder. Rendered from the linked account's
-                // name because no default image is stored per user (spec
-                // section 6), and photos live on the private disk with no URL.
-                TextColumn::make('initials')
-                    ->label(__('staff.initials'))
-                    ->state(fn (StaffProfile $record): string => $record->initials()),
+                /*
+                 * A real photo is served through a per-request policy check.
+                 * The private disk has no URL; feeding its path to ImageColumn
+                 * would make Filament fall back to Storage::url(), which is both
+                 * wrong and outside the authorization boundary.
+                 */
+                ImageColumn::make('profile_photo_path')
+                    ->label(__('staff.profile_photo'))
+                    ->state(fn (StaffProfile $record): ?string => (
+                        is_string($record->profile_photo_path)
+                        && $record->profile_photo_path !== ''
+                        && static::canView($record)
+                    ) ? route('staff.profiles.photo', $record) : null)
+                    ->placeholder(fn (StaffProfile $record): string => $record->initials())
+                    ->alt(fn (StaffProfile $record): string => $record->user->name)
+                    ->circular(),
 
                 TextColumn::make('user.name')
                     ->label(__('staff.name'))
