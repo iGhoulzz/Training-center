@@ -14,6 +14,7 @@ A web-based management system for a single training center. It replaces nothing 
 
 - Staff can enroll a student in a running course batch without touching a spreadsheet.
 - A super admin can answer "how much did we make in March, and what did we pay out in wages?" from the dashboard, and export the answer to Excel or PDF.
+- Anyone holding a physical student certificate can verify its reference without seeing unrelated student data.
 - Every change to student or financial data is attributable to a named user with a timestamp.
 - No user can see or do anything their role does not permit.
 
@@ -67,7 +68,7 @@ Each phase produces a usable system and gets its own spec and implementation pla
 
 - **Phase 1 — Foundation.** Auth, four roles, staff account management, activity log, student profiles, course templates, batches with instructor hour allocation, enrollments, automated backups. No money.
 - **Phase 2 — Financials.** Pricing, charges, payments, balances, compensation configuration, payroll, reports, Excel and PDF export.
-- **Phase 3 — Student portal and certificates.** Read-only student login, completion marking, certificate generation.
+- **Phase 3 — Student portal and certificates.** Read-only student login, completion marking, physical-certificate issuance records, and reference verification. Certificate design and printing happen outside the system.
 - **Phase 4 — Public site and Arabic.** Landing pages, course listings, contact, and the full bilingual pass.
 
 Internationalization structure is built from the first commit even though translations arrive in phase 4. Every user-facing string goes through `lang/` files, and all layout uses logical CSS properties (`margin-inline-start`, not `margin-left`). Retrofitting RTL onto a completed application is substantially more expensive than accommodating it from the start.
@@ -116,6 +117,7 @@ Authorization is **permission-based, never role-based, in code**. Always `$user-
 | Edit/reverse payments (P2) | full | none | none | none |
 | Compensation and payroll (P2) | full | view | none | none |
 | Financial reports (P2) | full | view and export | none | own balance (P3) |
+| Student certificates (P3) | full | view, issue, replace, revoke | view | own valid certificate |
 
 The students row previously read "view all, edit own batches", which conflated two different things: a student **record**, and the **enrolments** that place a student in a batch. Staff scope applies to the latter. On student records staff hold **view and create** — they register walk-ins and see the whole register — but not update or delete, because correcting or removing an existing record is an administrative act. Create without update is deliberate; the two are separate grants and are tested as such.
 
@@ -185,7 +187,7 @@ Applies to every file the system stores, now and later.
 - **Files are served only through policy-authorized downloads or temporary signed URLs.** Authorization is checked per request, at the point of serving.
 - **The private disk is included in backups** (see section 11). A database dump alone would restore rows pointing at files that no longer exist.
 
-Phase 2's payment receipts, phase 3's student certificates, and generated report PDFs reuse this same storage infrastructure. They do **not** reuse this domain model: each gets its own model, its own policy, and its own retention rules. A student's certificate and an instructor's credential are different things with different lifetimes and different audiences, and collapsing them into one table would force a single retention policy onto both.
+Phase 2's payment receipts and generated report PDFs reuse this storage infrastructure. Phase 3 student certificates do **not** create or store a certificate PDF: the physical template, visual design, and printing are handled outside the system. If scanned student-certificate copies are added later, that is a separate feature with its own model, policy, retention rule, and private storage path; it must not reuse `staff_certificates`.
 
 **`students`** — a record, not necessarily a user
 `id, user_id (nullable unique FK), student_code (unique), first_name, last_name, email (nullable), phone, national_id, date_of_birth, gender, address, status, notes, timestamps, softDeletes`
@@ -210,9 +212,11 @@ The nullable `user_id` is deliberate: a student exists whether or not they ever 
 Where two instructors share a course, the hours belong to the *relationship*, not to either side. One instructor assigned to a 30-hour batch receives all 30; two may split 18/12 or any other distribution. The system warns when assigned hours do not sum to the batch total but does not block it, because genuine co-teaching means both instructors are present for all hours.
 
 **`enrollments`** — associative entity
-`id, student_id (FK), batch_id (FK), enrolled_at, status, completed_at, certificate_issued_at, unique(student_id, batch_id)`
+`id, student_id (FK), batch_id (FK), enrolled_at, status, completed_at, unique(student_id, batch_id)`
 
 Enrolling beyond a batch's capacity produces a warning, not a hard block.
+
+Certificate issuance does not live as a boolean or timestamp on an enrollment. Phase 3 needs to preserve revocation and replacement history, so each issued physical certificate gets its own immutable issuance record.
 
 **`activity_log`** — Spatie's table, polymorphic
 
@@ -225,6 +229,7 @@ Defined here so they are not invented inconsistently during implementation:
 | `students.status` | `prospective`, `active`, `graduated`, `inactive` |
 | `batches.status` | `planned`, `active`, `completed`, `cancelled` |
 | `enrollments.status` | `active`, `completed`, `withdrawn` |
+| `student_certificates.status` (P3) | `valid`, `revoked`, `replaced` |
 | `charges.status` (P2) | `unpaid`, `partial`, `paid`, `waived` |
 | `payments.method` (P2) | `cash`, `bank_transfer`, `card`, `other` |
 | `staff_compensation.type` (P2) | `salary`, `hourly`, `per_student` |
@@ -259,6 +264,23 @@ Staff compensation is per person and may combine types — the center employs bo
 
 **`payroll_runs`** and **`payroll_lines`** — a payroll run freezes its computed lines, storing the rate and hours used at the moment of calculation. Historical payroll must not change because upstream data changed.
 
+### Phase 3 tables (designed now, built in phase 3)
+
+**`student_certificates`** — immutable issuance record for an externally printed certificate
+`id, enrollment_id (FK restrictOnDelete), reference_number (unique), student_name, course_name, completed_on, issued_at, issued_by (FK users restrictOnDelete), status, replaces_certificate_id (nullable unique self-FK restrictOnDelete), revoked_at (nullable), revoked_by (nullable FK users restrictOnDelete), revocation_reason (nullable), timestamps`
+
+The row records the certificate the center actually issued; it is not an uploaded instructor credential and it contains no PDF, template, image, disk, or path. `student_name`, `course_name`, and `completed_on` are an issuance snapshot matching the physical certificate. They deliberately do not change if a student record is corrected or a course is renamed later.
+
+Issuance requires a completed enrollment. The reference is generated server-side, normalized to uppercase, protected by a unique database index, and includes at least eight non-sequential random characters — for example `TC-2026-7K4M9Q2R`. It is never the database ID and never a predictable counter, because the public verifier must not make neighboring certificates enumerable.
+
+Issued rows are never deleted. Their enrollment, reference, printed snapshot, issue time, and issuing actor are immutable; only lifecycle fields (`status`, revocation metadata, and the replacement link created by a new row) may transition. Reprinting the same unchanged physical certificate may keep the same reference. Correcting or reissuing it creates a new row with a new reference, marks the old row `replaced`, and sets the **new row's** `replaces_certificate_id` to the immediately previous certificate. Revocation marks a row `revoked` with actor, time, and reason. At most one certificate for an enrollment may be `valid`. Every issuance, revocation, and replacement is activity-logged.
+
+`IssueStudentCertificateAction`, `ReplaceStudentCertificateAction`, and `RevokeStudentCertificateAction` are actor-first and self-authorizing. Each transition runs in one transaction that locks the enrollment and its current certificate rows before checking status and writing. That shared lock is the anti-race boundary: two concurrent issue or replacement requests cannot both decide that no valid certificate exists. The Action tests must exercise the invariant from both directions, not merely hide unavailable buttons.
+
+The public verifier is an exact-reference lookup such as `/verify/certificates/{reference}`; there is no browsable certificate register, partial search, or autocomplete. Public exact-reference verification does not grant access to the internal register and is separate from the permission matrix above. It is rate-limited and displays only the certificate status, printed student name, course name, completion date, issue date, and center confirmation. It never exposes date of birth, national ID, contact details, portal account data, or financial information.
+
+Because the reference appears in the URL and unlocks the printed name and course, verification responses send `Cache-Control: private, no-store`, `Referrer-Policy: no-referrer`, and `X-Robots-Tag: noindex, nofollow, noarchive`. The page loads no third-party scripts, fonts, analytics, images, or styles that could receive the reference through a request or referrer; required assets are self-hosted. A QR code may encode this same verification URL for the external printer to place on the physical certificate, but generating the certificate layout remains outside the application.
+
 ### Relationships
 
 ```
@@ -266,6 +288,7 @@ users ──1:1── staff_profiles ──1:N── staff_certificates
 users ──M:N── batches                (via batch_instructor, with assigned_hours)
 users ──1:N── staff_compensation     (effective-dated)
 courses ──1:N── batches ──1:N── enrollments ──N:1── students
+enrollments ──1:N── student_certificates
 enrollments ──1:N── charges ──M:N── payments  (via payment_allocations)
 activity_log ──polymorphic── everything auditable
 ```
@@ -347,3 +370,4 @@ Recorded so these do not reappear as assumptions:
 - Expense tracking beyond staff wages
 - A mobile application
 - Public student self-registration
+- Student certificate template design, PDF generation, physical printing, or printer integration
