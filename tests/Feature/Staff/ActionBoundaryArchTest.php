@@ -24,6 +24,35 @@ use Illuminate\Support\Facades\File;
  */
 
 /*
+ * The raw gateways to the pivot table, which write nothing themselves and hand
+ * out something that does.
+ *
+ * These do not begin with a write-shaped verb, so the reflection guard's prefix
+ * regex never sees them and the writer list below never would have grown to
+ * include them. They are a real bypass all the same:
+ *
+ *     $batch->instructors()->newPivotQuery()->delete();
+ *     $batch->instructors()->newPivotStatement()->insert([...]);
+ *     $batch->instructors()->newExistingPivot([...])->save();
+ *
+ * Every one of those writes batch_instructor without passing an Action, and
+ * before they were listed the boundary rules reported complete coverage while
+ * leaving them open. Named separately from the writers because they are a
+ * different shape of hole, and folded into the alternation below so every rule
+ * using KNOWN_PIVOT_MUTATORS picks them up without being rewritten.
+ *
+ * getQuery() is deliberately ABSENT. On a BelongsToMany it returns the query for
+ * the RELATED model — users, not the pivot — so writing through it is a
+ * different rule's business, and listing it here would claim a protection this
+ * does not provide.
+ *
+ * Declared before KNOWN_PIVOT_MUTATORS because that constant interpolates this
+ * one, and `const` at file scope is evaluated in source order.
+ */
+const RAW_PIVOT_GATEWAYS = 'newPivot|newExistingPivot|newPivotQuery'
+    .'|newPivotStatement|newPivotStatementForId';
+
+/*
  * Every BelongsToMany writer that can create, change, or remove a pivot row.
  *
  * attach/detach/sync were the obvious three; attachOrFail(), save(), saveMany(),
@@ -36,8 +65,8 @@ use Illuminate\Support\Facades\File;
  * This list previously held `sync` but not `syncOrFail`, and the alternation
  * does not cover one with the other: matching `sync` against `syncOrFail(`
  * consumes four characters and then requires `\s*\(`, which fails on the `O`.
- * Every variant therefore has to be named in its own right. Nine were missing
- * — syncOrFail, syncWithoutDetachingOrFail, syncWithPivotValues,
+ * Every variant therefore has to be named in its own right. TEN were missing —
+ * syncOrFail, syncWithoutDetachingOrFail, syncWithPivotValues,
  * syncWithPivotValuesOrFail, toggleOrFail, updateExistingPivotOrFail,
  * saveManyQuietly, firstOrCreate, createOrFirst and updateOrCreate — and each
  * was a live route to batch_instructor that this rule reported as covered.
@@ -47,6 +76,13 @@ use Illuminate\Support\Facades\File;
  * fails if the framework exposes a write-shaped public method this constant
  * does not name. A Laravel upgrade that adds one breaks the build instead of
  * quietly reopening the hole.
+ *
+ * `createQuietly` and `push` are named here but are NOT public methods of
+ * BelongsToMany, and they stay. An extra name in this constant is fail-safe —
+ * it can only make a rule match more — whereas an extra name in the guard's
+ * $notWriters exclusions is fail-open, because it removes a real method from
+ * scrutiny. Only the exclusions are held to a freshness rule, and that
+ * asymmetry is the reason.
  */
 const KNOWN_PIVOT_MUTATORS = '(attach|attachOrFail|detach|detachOrFail'
     .'|sync|syncOrFail|syncWithoutDetaching|syncWithoutDetachingOrFail'
@@ -54,7 +90,8 @@ const KNOWN_PIVOT_MUTATORS = '(attach|attachOrFail|detach|detachOrFail'
     .'|toggle|toggleOrFail|updateExistingPivot|updateExistingPivotOrFail'
     .'|save|saveMany|saveQuietly|saveManyQuietly'
     .'|create|createMany|createQuietly|createOrFirst'
-    .'|firstOrCreate|updateOrCreate|push)';
+    .'|firstOrCreate|updateOrCreate|push'
+    .'|'.RAW_PIVOT_GATEWAYS.')';
 
 /**
  * @return array<int, string> Absolute paths of every PHP file under app/.
@@ -302,7 +339,7 @@ it('keeps no write-guard method overrides on the User model', function () {
 it('names every write-shaped BelongsToMany method in KNOWN_PIVOT_MUTATORS', function () {
     // THE ROOT CAUSE OF THE MISSING MUTATORS, CLOSED.
     //
-    // Nine writers were absent from the constant above, and nothing failed —
+    // Ten writers were absent from the constant above, and nothing failed —
     // the rules kept passing while syncOrFail(), updateOrCreate() and the rest
     // wrote batch_instructor unchallenged. A list maintained by hand against a
     // framework surface that grows every release will drift again, and the
@@ -314,59 +351,103 @@ it('names every write-shaped BelongsToMany method in KNOWN_PIVOT_MUTATORS', func
     // names it. A Laravel upgrade introducing syncQuietly() breaks the build.
     //
     // The prefix list is deliberately broader than the pivot writers proper —
-    // it also catches read helpers like findOrNew(), which are then excluded by
-    // name below. An explicit exclusion is reviewable; a narrower prefix regex
-    // would silently stop matching things.
+    // it also catches reads such as first() and firstWhere(), which are then
+    // excluded by name below. An explicit exclusion is reviewable; a narrower
+    // prefix regex would silently stop matching things.
+    //
+    // It does NOT reach the raw gateways: newPivotQuery() and its siblings begin
+    // with `new`, so they are handled by RAW_PIVOT_GATEWAYS and asserted
+    // separately at the end of this test rather than through this regex.
     $writeShaped = '/^(attach|detach|sync|toggle|save|create|update|push|first|force|replicate)/';
 
     /*
      * Public methods that match the write prefix but touch no pivot row.
      *
-     * findOrNew() instantiates an unsaved model. updateExistingPivot's siblings
-     * are all in the constant; these are not writers at all, and each is listed
-     * because it was checked, not because it looked harmless.
+     * EVERY ENTRY WAS REFLECTED, NOT REMEMBERED. An earlier version of this list
+     * carried five names that do not exist on BelongsToMany at all — findOrNew,
+     * syncTimestamp, syncTimestamps, updateOrCreateUsing and firstOrCreateUsing
+     * — written from memory of the Eloquent surface instead of read off the
+     * class. Dead exclusions are not harmless: this list is FAIL-OPEN, so a
+     * guessed name that Laravel later introduces as a real writer would exempt
+     * it from the moment it appeared, silently and by accident.
+     *
+     * The second assertion below therefore polices the exclusions themselves.
+     * Each must still be a public method AND still match the prefix regex; one
+     * that stops being either is dead weight and fails the build until removed.
+     *
+     * What survives, and why none of them writes a pivot row: createdAt() and
+     * updatedAt() return timestamp COLUMN NAMES. first(), firstOr(),
+     * firstOrFail() and firstWhere() are reads, and firstOrNew() instantiates
+     * without persisting — firstOrCreate() is the sibling that does persist, and
+     * it is named in the constant.
      */
     $notWriters = [
-        'findOrNew',
-        'updatedAt',
         'createdAt',
-        'syncTimestamp',
-        'syncTimestamps',
-        'updateOrCreateUsing',
-        'firstOrCreateUsing',
-        'firstOrNew',
-        'firstOrFail',
         'first',
-        'firstWhere',
         'firstOr',
+        'firstOrFail',
+        'firstOrNew',
+        'firstWhere',
+        'updatedAt',
     ];
 
     $reflection = new ReflectionClass(BelongsToMany::class);
 
-    $uncovered = [];
+    $publicMethods = collect($reflection->getMethods(ReflectionMethod::IS_PUBLIC))
+        ->reject(fn (ReflectionMethod $method): bool => $method->isStatic())
+        ->map(fn (ReflectionMethod $method): string => $method->getName())
+        ->unique();
 
-    foreach ($reflection->getMethods(ReflectionMethod::IS_PUBLIC) as $method) {
-        $name = $method->getName();
+    // Anchored on both sides, so `sync` cannot satisfy the requirement for
+    // `syncOrFail` — the exact bug this guard exists to prevent.
+    $named = fn (string $name): bool => preg_match(
+        '/[(|]'.preg_quote($name, '/').'[)|]/',
+        KNOWN_PIVOT_MUTATORS,
+    ) === 1;
 
-        if ($method->isStatic() || in_array($name, $notWriters, true)) {
-            continue;
-        }
-
-        if (preg_match($writeShaped, $name) !== 1) {
-            continue;
-        }
-
-        // Anchored on both sides: `sync` must not satisfy the requirement for
-        // `syncOrFail`, which is the exact bug this guard exists to prevent.
-        if (preg_match('/[(|]'.preg_quote($name, '/').'[)|]/', KNOWN_PIVOT_MUTATORS) !== 1) {
-            $uncovered[] = $name;
-        }
-    }
+    $uncovered = $publicMethods
+        ->filter(fn (string $name): bool => preg_match($writeShaped, $name) === 1)
+        ->reject(fn (string $name): bool => in_array($name, $notWriters, true))
+        ->reject($named)
+        ->values()
+        ->all();
 
     expect($uncovered)->toBeEmpty(
         'BelongsToMany exposes write-shaped methods that KNOWN_PIVOT_MUTATORS does not name, '
         .'so the pivot rules above have holes. Add them to the constant, or add them to '
         .'$notWriters with a reason: '.implode(', ', $uncovered),
+    );
+
+    // The exclusions, held to the same freshness rule as the list they qualify.
+    $stale = collect($notWriters)
+        ->reject(fn (string $name): bool => $publicMethods->contains($name)
+            && preg_match($writeShaped, $name) === 1)
+        ->values()
+        ->all();
+
+    expect($stale)->toBeEmpty(
+        'These $notWriters exclusions are not currently reflected, prefix-matching public methods '
+        .'of BelongsToMany. They exempt nothing today, and would silently exempt a real writer if '
+        .'one ever took the name. Remove them: '.implode(', ', $stale),
+    );
+
+    /*
+     * And the raw gateways, which the prefix regex cannot reach by design.
+     *
+     * Checked from the other direction: every name in RAW_PIVOT_GATEWAYS must
+     * still exist on the class AND still be folded into KNOWN_PIVOT_MUTATORS. A
+     * gateway that is listed but not folded in is the worst case here — it reads
+     * as covered in the constant's docblock while no rule matches it.
+     */
+    $missingGateways = collect(explode('|', RAW_PIVOT_GATEWAYS))
+        ->reject(fn (string $name): bool => $publicMethods->contains($name) && $named($name))
+        ->values()
+        ->all();
+
+    expect($missingGateways)->toBeEmpty(
+        'RAW_PIVOT_GATEWAYS names something that is either no longer a public BelongsToMany method '
+        .'or is not folded into KNOWN_PIVOT_MUTATORS, so the rules do not in fact catch it: '
+        .implode(', ', $missingGateways),
     );
 });
 
