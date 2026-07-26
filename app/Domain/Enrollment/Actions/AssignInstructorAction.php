@@ -9,6 +9,7 @@ use App\Domain\Enrollment\Exceptions\BatchClosedException;
 use App\Domain\Enrollment\Exceptions\InstructorNotEligibleException;
 use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Staff\Enums\EmploymentType;
+use App\Domain\Staff\Models\StaffProfile;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
@@ -74,15 +75,34 @@ final class AssignInstructorAction
              * the actual reason.
              *
              * lockForUpdate() on this row is not decoration either. The
-             * eligibility decision READS is_active, deleted_at and the
-             * employment type; reading them unlocked is the same race the batch
-             * lock exists to prevent — a deactivation committed between this
-             * read and the pivot write would leave hours assigned to somebody
-             * the system had already stood down.
+             * eligibility decision READS is_active and deleted_at from it, and
+             * reading them unlocked is the same race the batch lock exists to
+             * prevent — a deactivation committed between this read and the
+             * pivot write would leave hours assigned to somebody the system had
+             * already stood down.
+             *
+             * It covers THIS ROW AND NO OTHER. The third input to the decision,
+             * employment_type, lives on staff_profiles and needs its own lock;
+             * see below.
              */
             $instructor = User::query()->withTrashed()->lockForUpdate()->findOrFail($data->instructorId);
 
-            $this->assertEligible($instructor);
+            /*
+             * The employment type lives on staff_profiles, which is a DIFFERENT
+             * ROW IN A DIFFERENT TABLE. Locking the users row above says nothing
+             * about it: a profile changed from Instructor to Administrative
+             * between this read and the pivot write would commit freely, and the
+             * hours would land on somebody the centre no longer has teaching.
+             *
+             * Locked here and passed into the eligibility check, so the decision
+             * is made from the locked copy rather than a re-read that would race
+             * all over again. Null is a legitimate answer — an account with no
+             * employment record is not an instructor — so this locks whatever
+             * row exists and refuses when none does.
+             */
+            $profile = $instructor->staffProfile()->lockForUpdate()->first();
+
+            $this->assertEligible($instructor, $profile);
 
             $batch->instructors()->syncWithoutDetaching([
                 $instructor->getKey() => ['assigned_hours' => $data->assignedHours],
@@ -124,14 +144,14 @@ final class AssignInstructorAction
      * hours they were already assigned are history phase 2 pays from; that is a
      * read, and this is a write.
      *
-     * The staff profile is read through the relation query rather than the
-     * loaded relation, so a stale in-memory copy on the passed instance cannot
-     * make an administrator look like an instructor.
+     * The staff profile is passed in rather than read here, and the caller reads
+     * it through the relation query under a lock rather than from the loaded
+     * relation: a stale in-memory copy on the passed instance cannot make an
+     * administrator look like an instructor, and a locked row cannot change
+     * employment type between this decision and the pivot write.
      */
-    private function assertEligible(User $instructor): void
+    private function assertEligible(User $instructor, ?StaffProfile $profile): void
     {
-        $profile = $instructor->staffProfile()->first();
-
         if (
             $instructor->trashed()
             || ! $instructor->is_active

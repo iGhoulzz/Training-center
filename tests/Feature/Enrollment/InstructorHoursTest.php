@@ -20,7 +20,6 @@ use Illuminate\Database\QueryException;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\File;
 
 /**
  * Instructor hour allocation (P1-T10).
@@ -60,39 +59,115 @@ beforeEach(function () {
     $this->remove = app(RemoveInstructorAction::class);
 
     /*
-     * Start recording every statement that takes a row lock.
+     * Start recording every statement, WITH THE TRANSACTION DEPTH IT RAN AT.
+     *
+     * The depth is the whole point, and recording only the SQL was a real hole
+     * in these tests. RefreshDatabase wraps each test in its own transaction, so
+     * a lockForUpdate() emits `... for update` whether or not the Action opened
+     * a transaction of its own — and an Action with its DB::transaction()
+     * deleted passed the earlier version of every lock test below. In
+     * production that Action autocommits each statement, so the lock is released
+     * the instant it is taken and every race it exists to win is lost, silently
+     * and with a green suite.
+     *
+     * DB::transactionLevel() is read inside the listener, which fires while the
+     * statement's transaction is still open, so it reports the depth the
+     * statement actually executed at.
      *
      * An ArrayObject rather than an array because the listener has to keep
      * filling the same collection after this closure has returned, and a
      * returned array would be a copy.
      */
-    $this->captureLocks = function (): ArrayObject {
-        $locking = new ArrayObject;
+    $this->captureStatements = function (): ArrayObject {
+        $statements = new ArrayObject;
 
-        DB::listen(function (QueryExecuted $query) use ($locking): void {
-            $sql = strtolower($query->sql);
-
-            if (str_contains($sql, ' for update')) {
-                $locking->append($sql);
-            }
+        DB::listen(function (QueryExecuted $query) use ($statements): void {
+            $statements->append([
+                'sql' => strtolower($query->sql),
+                'bindings' => $query->bindings,
+                'level' => DB::transactionLevel(),
+            ]);
         });
 
-        return $locking;
+        return $statements;
     };
 
-    /** Which tables those statements locked — `select ... from `batches` ... for update`. */
-    $this->lockedTables = fn (ArrayObject $locking): array => collect($locking)
-        ->map(function (string $sql): string {
-            preg_match('/ from `(\w+)`/', $sql, $matches);
-
-            return $matches[1] ?? '';
-        })
+    /**
+     * The locking reads taken against $table — `select ... from `batches` ... for update`.
+     *
+     * @return array<int, array{sql: string, bindings: array<int, mixed>, level: int}>
+     */
+    $this->locksOn = fn (ArrayObject $statements, string $table): array => collect($statements)
+        ->filter(fn (array $statement): bool => str_contains($statement['sql'], ' for update')
+            && str_contains($statement['sql'], "from `{$table}`"))
+        ->values()
         ->all();
 
-    /** The statements themselves, for a failure message that says what DID run. */
-    $this->describeLocks = fn (ArrayObject $locking): string => $locking->count() === 0
+    /**
+     * The statements that actually wrote batch_instructor.
+     *
+     * Insert, update and delete all count: syncWithoutDetaching() inserts a new
+     * pair and updates an existing one, and detach() deletes. A test that
+     * watched only for inserts would stop meaning anything the first time an
+     * allocation was changed rather than created.
+     *
+     * @return array<int, array{sql: string, bindings: array<int, mixed>, level: int}>
+     */
+    $this->pivotWrites = fn (ArrayObject $statements): array => collect($statements)
+        ->filter(fn (array $statement): bool => preg_match(
+            '/^(insert into|update|delete from) `batch_instructor`/',
+            $statement['sql'],
+        ) === 1)
+        ->values()
+        ->all();
+
+    /** Every statement with its depth, for a failure message that says what DID run. */
+    $this->describe = fn (ArrayObject $statements): string => $statements->count() === 0
         ? 'none'
-        : implode(' | ', (array) $locking);
+        : collect($statements)
+            ->map(fn (array $statement): string => "[level {$statement['level']}] {$statement['sql']}")
+            ->implode(' | ');
+
+    /**
+     * Assert a statement ran exactly one transaction level deeper than the
+     * caller, against the expected row.
+     *
+     * THE DELTA, NOT THE ABSOLUTE LEVEL. Under RefreshDatabase the caller sits
+     * at level 1 and in production at level 0; asserting `level === 1` would
+     * pass here for an Action that opens no transaction at all, which is
+     * precisely the bug. baseline + 1 means the same thing in both places: the
+     * Action opened one itself.
+     *
+     * @param  array{sql: string, bindings: array<int, mixed>, level: int}  $statement
+     */
+    $this->expectOneLevelDeeper = function (array $statement, int $baseline, int $rowId, string $what): void {
+        expect($statement['level'])->toBe(
+            $baseline + 1,
+            "{$what} ran at transaction level {$statement['level']}, expected ".($baseline + 1)
+            .' — one deeper than the caller. At the caller\'s own level the Action opened no '
+            .'transaction, so the lock releases immediately and guards nothing. SQL: '.$statement['sql'],
+        );
+
+        /*
+         * Only the integer-ish bindings, because a pivot write also binds
+         * timestamps: array_map('intval', ...) over a Carbon instance is a
+         * TypeError, not a comparison. in_array() on the filtered list rather
+         * than expect()->toContain(), because toContain() is variadic and would
+         * read a failure message as a second expected value.
+         */
+        $ids = array_values(array_filter(array_map(
+            fn (mixed $binding): ?int => is_int($binding) || (is_string($binding) && ctype_digit($binding))
+                ? (int) $binding
+                : null,
+            $statement['bindings'],
+        ), fn (?int $binding): bool => $binding !== null));
+
+        expect(in_array($rowId, $ids, true))->toBeTrue(
+            "{$what} did not bind row id {$rowId}, so it addressed something other than the row under "
+            .'test. Integer bindings seen: '.($ids === [] ? 'none' : implode(', ', $ids))
+            .'. SQL: '.$statement['sql'],
+        );
+    };
 });
 
 /*
@@ -614,10 +689,11 @@ it('counts a departed instructor in the eager hour aggregate too', function () {
 | one loses every race it was written to win. These read the emitted SQL.
 */
 
-it('locks the batch row while assigning', function () {
+it('locks the batch row while assigning, inside a transaction it opened itself', function () {
     $sara = ($this->makeInstructor)('Sara');
 
-    $locked = ($this->captureLocks)();
+    $baseline = DB::transactionLevel();
+    $statements = ($this->captureStatements)();
 
     $this->assign->execute($this->admin, new AssignInstructorData(
         (int) $this->batch->getKey(),
@@ -625,20 +701,25 @@ it('locks the batch row while assigning', function () {
         18,
     ));
 
-    expect(in_array('batches', ($this->lockedTables)($locked), true))->toBeTrue(
-        'AssignInstructorAction re-read the batch without lockForUpdate(). Locking statements seen: '
-        .($this->describeLocks)($locked),
+    $locks = ($this->locksOn)($statements, 'batches');
+
+    expect($locks)->not->toBeEmpty(
+        'AssignInstructorAction re-read the batch without lockForUpdate(). Statements seen: '
+        .($this->describe)($statements),
     );
+
+    ($this->expectOneLevelDeeper)($locks[0], $baseline, (int) $this->batch->getKey(), 'The batch lock');
 });
 
-it('locks the instructor row while assigning', function () {
-    // The eligibility decision READS the instructor's is_active, deleted_at and
-    // employment type. Reading them unlocked is the same race the batch lock
-    // exists to prevent: a deactivation or departure committed between that read
-    // and the pivot write leaves hours against somebody already stood down.
+it('locks the instructor row while assigning, inside a transaction it opened itself', function () {
+    // The eligibility decision READS the instructor's is_active and deleted_at.
+    // Reading them unlocked is the same race the batch lock exists to prevent: a
+    // deactivation or departure committed between that read and the pivot write
+    // leaves hours against somebody already stood down.
     $sara = ($this->makeInstructor)('Sara');
 
-    $locked = ($this->captureLocks)();
+    $baseline = DB::transactionLevel();
+    $statements = ($this->captureStatements)();
 
     $this->assign->execute($this->admin, new AssignInstructorData(
         (int) $this->batch->getKey(),
@@ -646,24 +727,100 @@ it('locks the instructor row while assigning', function () {
         18,
     ));
 
-    expect(in_array('users', ($this->lockedTables)($locked), true))->toBeTrue(
-        'AssignInstructorAction read the instructor without lockForUpdate(). Locking statements seen: '
-        .($this->describeLocks)($locked),
+    $locks = ($this->locksOn)($statements, 'users');
+
+    expect($locks)->not->toBeEmpty(
+        'AssignInstructorAction read the instructor without lockForUpdate(). Statements seen: '
+        .($this->describe)($statements),
     );
+
+    ($this->expectOneLevelDeeper)($locks[0], $baseline, (int) $sara->getKey(), 'The instructor lock');
 });
 
-it('locks the batch row while removing', function () {
+it('locks the staff profile row while assigning, inside a transaction it opened itself', function () {
+    /*
+     * THE THIRD INPUT TO ELIGIBILITY, AND IT IS NOT ON THE USERS ROW.
+     *
+     * employment_type lives on staff_profiles. Locking users says nothing about
+     * it, so an unlocked read here was a real hole in exactly the guarantee the
+     * other two locks exist to provide: a profile moved off Instructor between
+     * the read and the pivot write would commit, and the batch would carry hours
+     * against somebody who no longer teaches. Bound by user_id rather than the
+     * profile's own key, because that is how the relation resolves it.
+     */
+    $sara = ($this->makeInstructor)('Sara');
+
+    $baseline = DB::transactionLevel();
+    $statements = ($this->captureStatements)();
+
+    $this->assign->execute($this->admin, new AssignInstructorData(
+        (int) $this->batch->getKey(),
+        (int) $sara->getKey(),
+        18,
+    ));
+
+    $locks = ($this->locksOn)($statements, 'staff_profiles');
+
+    expect($locks)->not->toBeEmpty(
+        'AssignInstructorAction read the staff profile without lockForUpdate(), so employment_type '
+        .'was decided from an unlocked row. Statements seen: '.($this->describe)($statements),
+    );
+
+    ($this->expectOneLevelDeeper)($locks[0], $baseline, (int) $sara->getKey(), 'The staff profile lock');
+});
+
+it('writes the pivot inside the same transaction as the locks it depends on', function () {
+    /*
+     * The locks and the write have to share one transaction, not merely each
+     * have one. A lock taken in a transaction that commits before the pivot
+     * write protects nothing — the row is free the moment it commits — so the
+     * depth is asserted on the write as well as on the reads.
+     */
+    $sara = ($this->makeInstructor)('Sara');
+
+    $baseline = DB::transactionLevel();
+    $statements = ($this->captureStatements)();
+
+    $this->assign->execute($this->admin, new AssignInstructorData(
+        (int) $this->batch->getKey(),
+        (int) $sara->getKey(),
+        18,
+    ));
+
+    $writes = ($this->pivotWrites)($statements);
+
+    expect($writes)->not->toBeEmpty(
+        'No write to batch_instructor was observed at all. Statements seen: '.($this->describe)($statements),
+    );
+
+    ($this->expectOneLevelDeeper)($writes[0], $baseline, (int) $this->batch->getKey(), 'The pivot write');
+});
+
+it('locks the batch row while removing, inside a transaction it opened itself', function () {
     $sara = ($this->makeInstructor)('Sara');
     $this->assign->execute($this->admin, new AssignInstructorData((int) $this->batch->getKey(), (int) $sara->getKey(), 18));
 
-    $locked = ($this->captureLocks)();
+    $baseline = DB::transactionLevel();
+    $statements = ($this->captureStatements)();
 
     $this->remove->execute($this->admin, $this->batch, $sara);
 
-    expect(in_array('batches', ($this->lockedTables)($locked), true))->toBeTrue(
-        'RemoveInstructorAction re-read the batch without lockForUpdate(). Locking statements seen: '
-        .($this->describeLocks)($locked),
+    $locks = ($this->locksOn)($statements, 'batches');
+
+    expect($locks)->not->toBeEmpty(
+        'RemoveInstructorAction re-read the batch without lockForUpdate(). Statements seen: '
+        .($this->describe)($statements),
     );
+
+    ($this->expectOneLevelDeeper)($locks[0], $baseline, (int) $this->batch->getKey(), 'The batch lock');
+
+    $writes = ($this->pivotWrites)($statements);
+
+    expect($writes)->not->toBeEmpty(
+        'No delete against batch_instructor was observed. Statements seen: '.($this->describe)($statements),
+    );
+
+    ($this->expectOneLevelDeeper)($writes[0], $baseline, (int) $this->batch->getKey(), 'The pivot delete');
 });
 
 /*
@@ -837,62 +994,22 @@ it('lets a super admin assign instructors', function () {
 |--------------------------------------------------------------------------
 */
 
-it('writes the instructor pivot from nowhere but the two Actions', function () {
-    /*
-     * A scan, not a behavioural proof — see docs/ENGINEERING.md on what these
-     * are worth. It catches the code shape that reaches around the Actions:
-     * $batch->instructors()->attach/detach/sync/syncWithoutDetaching/toggle/
-     * updateExistingPivot. The existing ActionBoundaryArchTest covers the same
-     * shape for roles, permissions and users; instructors are outside its regex,
-     * and that test is not this task's to edit.
-     *
-     * Comments are stripped first, so the docblocks above that NAME these
-     * methods do not trip it.
-     */
-    $stripComments = function (string $path): string {
-        $code = '';
-
-        foreach (token_get_all((string) file_get_contents($path)) as $token) {
-            if (is_array($token)) {
-                if (in_array($token[0], [T_COMMENT, T_DOC_COMMENT], true)) {
-                    continue;
-                }
-
-                $code .= $token[1];
-
-                continue;
-            }
-
-            $code .= $token;
-        }
-
-        return $code;
-    };
-
-    // The sanctioned write path, and nothing else. Both authorize the actor
-    // against the freshly locked batch before touching the pivot.
-    $sanctioned = ['AssignInstructorAction', 'RemoveInstructorAction'];
-
-    $offenders = [];
-
-    foreach (File::allFiles(app_path()) as $file) {
-        if ($file->getExtension() !== 'php') {
-            continue;
-        }
-
-        if (in_array($file->getFilenameWithoutExtension(), $sanctioned, true)) {
-            continue;
-        }
-
-        $pattern = '/->\s*instructors\s*\(\s*\)\s*->\s*(attach|detach|sync|syncWithoutDetaching|toggle|updateExistingPivot)\s*\(/';
-
-        if (preg_match($pattern, $stripComments((string) $file->getRealPath())) === 1) {
-            $offenders[] = $file->getRelativePathname();
-        }
-    }
-
-    expect($offenders)->toBeEmpty(
-        'Instructor pivot writes must go through AssignInstructorAction / RemoveInstructorAction: '
-        .implode(', ', $offenders),
-    );
-});
+/*
+ * The instructor pivot write-boundary scan USED TO LIVE HERE, and has been
+ * removed rather than kept alongside its replacement.
+ *
+ * It was written when ActionBoundaryArchTest's rules covered only roles,
+ * permissions and users, with a note saying that test "is not this task's to
+ * edit". P1-T10a then edited exactly that test to cover instructors, and the
+ * copy here became a strictly weaker duplicate of
+ * ActionBoundaryArchTest's "does not write the instructor pivot outside the
+ * sanctioned Actions": same relation, same allowlist, six mutators against that
+ * rule's twenty-six.
+ *
+ * TWO DETECTORS FOR ONE RULE IS WORSE THAN ONE. The weaker copy passes on
+ * bypasses the real rule catches — $batch->instructors()->syncOrFail() sailed
+ * through this scan — so a green run here reads as coverage that does not
+ * exist, and a reader who finds this first stops looking. The rule lives in
+ * ActionBoundaryArchTest, with the shared KNOWN_PIVOT_MUTATORS constant and the
+ * reflection guard that keeps that constant honest against framework upgrades.
+ */

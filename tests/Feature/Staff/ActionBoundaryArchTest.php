@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Support\Facades\File;
 
 /**
@@ -29,9 +30,31 @@ use Illuminate\Support\Facades\File;
  * create(), and toggle() reach the same rows by other names, and a detector
  * that names only the obvious three reads as coverage while leaving the rest
  * open. Each is mutation-tested in this file.
+ *
+ * THE *OrFail AND *Quietly VARIANTS ARE NOT OPTIONAL ENTRIES
+ * ----------------------------------------------------------
+ * This list previously held `sync` but not `syncOrFail`, and the alternation
+ * does not cover one with the other: matching `sync` against `syncOrFail(`
+ * consumes four characters and then requires `\s*\(`, which fails on the `O`.
+ * Every variant therefore has to be named in its own right. Nine were missing
+ * — syncOrFail, syncWithoutDetachingOrFail, syncWithPivotValues,
+ * syncWithPivotValuesOrFail, toggleOrFail, updateExistingPivotOrFail,
+ * saveManyQuietly, firstOrCreate, createOrFirst and updateOrCreate — and each
+ * was a live route to batch_instructor that this rule reported as covered.
+ *
+ * A hand-maintained list is the actual defect, so it no longer stands alone:
+ * the guard test at the bottom of this file reflects over BelongsToMany and
+ * fails if the framework exposes a write-shaped public method this constant
+ * does not name. A Laravel upgrade that adds one breaks the build instead of
+ * quietly reopening the hole.
  */
-const KNOWN_PIVOT_MUTATORS = '(attach|attachOrFail|detach|detachOrFail|sync|syncWithoutDetaching'
-    .'|toggle|updateExistingPivot|save|saveMany|saveQuietly|create|createMany|createQuietly|push)';
+const KNOWN_PIVOT_MUTATORS = '(attach|attachOrFail|detach|detachOrFail'
+    .'|sync|syncOrFail|syncWithoutDetaching|syncWithoutDetachingOrFail'
+    .'|syncWithPivotValues|syncWithPivotValuesOrFail'
+    .'|toggle|toggleOrFail|updateExistingPivot|updateExistingPivotOrFail'
+    .'|save|saveMany|saveQuietly|saveManyQuietly'
+    .'|create|createMany|createQuietly|createOrFirst'
+    .'|firstOrCreate|updateOrCreate|push)';
 
 /**
  * @return array<int, string> Absolute paths of every PHP file under app/.
@@ -274,6 +297,77 @@ it('keeps no write-guard method overrides on the User model', function () {
             "User must not override {$method}(); actor-aware writes belong in Actions.",
         );
     }
+});
+
+it('names every write-shaped BelongsToMany method in KNOWN_PIVOT_MUTATORS', function () {
+    // THE ROOT CAUSE OF THE MISSING MUTATORS, CLOSED.
+    //
+    // Nine writers were absent from the constant above, and nothing failed —
+    // the rules kept passing while syncOrFail(), updateOrCreate() and the rest
+    // wrote batch_instructor unchallenged. A list maintained by hand against a
+    // framework surface that grows every release will drift again, and the
+    // drift is silent by construction: a detector that misses a method reports
+    // exactly the same green as one that catches it.
+    //
+    // So the framework is asked directly. Any public BelongsToMany method whose
+    // name starts like a write must appear in the constant, or this fails and
+    // names it. A Laravel upgrade introducing syncQuietly() breaks the build.
+    //
+    // The prefix list is deliberately broader than the pivot writers proper —
+    // it also catches read helpers like findOrNew(), which are then excluded by
+    // name below. An explicit exclusion is reviewable; a narrower prefix regex
+    // would silently stop matching things.
+    $writeShaped = '/^(attach|detach|sync|toggle|save|create|update|push|first|force|replicate)/';
+
+    /*
+     * Public methods that match the write prefix but touch no pivot row.
+     *
+     * findOrNew() instantiates an unsaved model. updateExistingPivot's siblings
+     * are all in the constant; these are not writers at all, and each is listed
+     * because it was checked, not because it looked harmless.
+     */
+    $notWriters = [
+        'findOrNew',
+        'updatedAt',
+        'createdAt',
+        'syncTimestamp',
+        'syncTimestamps',
+        'updateOrCreateUsing',
+        'firstOrCreateUsing',
+        'firstOrNew',
+        'firstOrFail',
+        'first',
+        'firstWhere',
+        'firstOr',
+    ];
+
+    $reflection = new ReflectionClass(BelongsToMany::class);
+
+    $uncovered = [];
+
+    foreach ($reflection->getMethods(ReflectionMethod::IS_PUBLIC) as $method) {
+        $name = $method->getName();
+
+        if ($method->isStatic() || in_array($name, $notWriters, true)) {
+            continue;
+        }
+
+        if (preg_match($writeShaped, $name) !== 1) {
+            continue;
+        }
+
+        // Anchored on both sides: `sync` must not satisfy the requirement for
+        // `syncOrFail`, which is the exact bug this guard exists to prevent.
+        if (preg_match('/[(|]'.preg_quote($name, '/').'[)|]/', KNOWN_PIVOT_MUTATORS) !== 1) {
+            $uncovered[] = $name;
+        }
+    }
+
+    expect($uncovered)->toBeEmpty(
+        'BelongsToMany exposes write-shaped methods that KNOWN_PIVOT_MUTATORS does not name, '
+        .'so the pivot rules above have holes. Add them to the constant, or add them to '
+        .'$notWriters with a reason: '.implode(', ', $uncovered),
+    );
 });
 
 it('keeps no write-guard method overrides on the Role model', function () {
