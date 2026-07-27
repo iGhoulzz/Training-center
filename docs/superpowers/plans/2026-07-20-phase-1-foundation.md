@@ -7638,267 +7638,153 @@ and wait for the review verdict.
 
 **Branch:** `p1/t12-activity-log`
 
-**Files:**
+**Rewritten 2026-07-27 at decision level.** The original section targeted
+activitylog **v4**; the installed package is **v5.0.0** and the API it named does
+not exist — `Spatie\Activitylog\Traits\LogsActivity` (v5: `Models\Concerns\`),
+`dontSubmitEmptyLogs()` (removed), and diffs under `properties['old']` (v5 has a
+separate `attribute_changes` column). This section records decisions, scope,
+signatures and mutation obligations. It deliberately does **not** restate
+implementation source: four review rounds on T11 established that verbatim method
+bodies in a plan mostly generate findings that running the code catches in
+seconds.
+
+### Decisions
+
+1. **The boundary is the model event, not the Action.** Spatie's `LogsActivity`
+   concern registers `created`/`updated`/`deleted`/`restored` listeners on each
+   audited model, so a Filament form write, a console command, a seeder and an
+   Action all log identically. Logging inside Actions would both duplicate and
+   miss every ordinary write. Explicit `activity()` calls are confined to the
+   cases where **no model event can fire**: pivot writes, auth events, cascaded
+   deletes, and semantic security events.
+
+2. **Per-model `logOnly()` allowlists.** A column added later is unlogged until
+   somebody decides it belongs, rather than logged automatically. The failure
+   mode is "misses by default" instead of "leaks by default".
+
+3. **Audited models:** `User`, `App\Models\Role`, `StaffProfile`,
+   `StaffCertificate`, `Student`, `Course`, `Batch`, `Enrollment`.
+
+   `Role` is included because Shield's resource creates, renames and deletes
+   roles through ordinary Eloquent writes — those never reach
+   `SyncUserRolesAction` or `UpdateRolePermissionsAction`, so without the concern
+   on the model itself the authorization graph could be rewritten unaudited.
+
+4. **Buffering is hard-disabled and not environment-switchable.**
+   `activitylog.buffer.enabled` defaults to false, which makes entries `save()`
+   inline so they roll back with the surrounding transaction. Enabling it flushes
+   on `terminating`/shutdown — **outside** the transaction — writing audit rows
+   for writes that never committed. The published config sets it to a literal
+   `false` with no `env()` call.
+
+5. **IP is attached centrally, in a custom log action.** `activitylog.actions.log_activity`
+   is a documented swap point ("your custom classes must extend the originals").
+   A model's `beforeActivityLogged()` hook is per-**subject** and therefore
+   cannot reach auth events, which have no subject. One extension point covers
+   both model-generated and explicit entries.
+
+6. **Password events are logged semantically, never by diff.** `password` and
+   `must_change_password` are excluded from diffs — which alone would make a
+   reset produce an empty change set that `dontLogEmptyChanges` (the v5 default)
+   suppresses entirely, so the security event would vanish. `ResetUserPasswordAction`
+   and the self-service password change therefore record their own events, with
+   no hash and no password in the properties.
+
+7. **File columns are not retained in diffs.** `disk`, `path` and
+   `original_filename` carry little audit value and a filename can contain
+   personal information. Certificate and photo activity is recorded as a
+   semantic upload / replacement / deletion event instead — no contents, no
+   storage paths.
+
+8. **`forceDelete()` needs no special handling.** Laravel's `forceDelete()` calls
+   `delete()`, so `deleted` fires and v5 records it; adding a `forceDeleted`
+   listener would double-log. A test pins the real behaviour rather than assuming
+   either way.
+
+9. **Cascaded certificate deletions are recorded explicitly.**
+   `staff_certificates.staff_profile_id` is `cascadeOnDelete`, so the database
+   removes those rows and **no model event fires**. `DeleteStaffProfileAction`
+   already loads and authorizes each certificate individually, so it records the
+   cascaded deletions there.
+
+10. **Pivot logging happens inside the same transaction as the mutation**, skips
+    no-op syncs so repeatable seeding creates no false events, and
+    `SystemRoleWriter` entries are **anonymous system entries** even when an
+    authenticated user happens to exist — a seeder run is not somebody's action.
+
+11. **Production seeds only `view_any_activity` and `view_activity`.**
+    `create_activity`, `update_activity` and `delete_activity` are not created,
+    so `activity` leaves the standard CRUD `RESOURCES` list. The append-only test
+    creates `delete_activity` itself, grants it, and asserts the policy still
+    refuses — which proves the policy ignores the grant rather than that nobody
+    holds it.
+
+12. **Every Activity mutation ability returns `false` explicitly** — `create`,
+    `update`, `delete`, `deleteAny`, `forceDelete`, `forceDeleteAny`, `restore`,
+    `restoreAny`, `replicate`, `reorder` — rather than relying on absent methods.
+
+    Append-only here is **application-level, not database-level**: a raw SQL
+    DELETE still works. Saying otherwise would be a doc-versus-code lie.
+
+### File scope
+
+- Create: published `config/activitylog.php` and the activity-log migration
+- Create: `app/Domain/Staff/Support/RecordsActivity.php` — the shared audit trait
+- Create: `app/Domain/Staff/Support/ActivityContext.php` — the custom log action attaching IP
 - Create: `app/Domain/Staff/Policies/ActivityPolicy.php`
-- Create: `app/Domain/Staff/Filament/Resources/ActivityResource.php`
-- Create: `tests/Feature/Staff/ActivityLogTest.php`
-- Modify: all domain models (add the `LogsActivity` trait)
-- Modify: `app/Providers/AppServiceProvider.php`
+- Create: `app/Domain/Staff/Filament/Resources/ActivityResource.php` (+ its List/View pages)
+- Create: `tests/Feature/Staff/ActivityLogTest.php` — model events, diffs, IP, rollback
+- Create: `tests/Feature/Staff/ActivityAppendOnlyTest.php` — policy, UI, architecture
+- Create: `tests/Feature/Staff/ActivityAuthEventsTest.php` — login/logout/failed, password events
+- Modify: the eight audited models (add the trait + `logOnly()`)
+- Modify: `app/Providers/AppServiceProvider.php` — policy, auth listeners
+- Modify: `SyncUserRolesAction`, `UpdateRolePermissionsAction`, `SystemRoleWriter` — pivot events
+- Modify: `ResetUserPasswordAction` — semantic password event
+- Modify: `DeleteStaffProfileAction` — cascaded certificate deletions
+- Modify: `UploadStaffCertificateAction`, `DeleteStaffCertificateAction`, the photo Actions — semantic file events
+- Modify: `RolePermissionSeeder` — `activity` off the CRUD resource list
+- Modify: `ActionBoundaryArchTest` — no write shape against the activity model
+- Modify: `lang/en/` — event and record-type labels (expanding the T11 catalogue)
 
-- [ ] **Step 1: Publish the activity log migration**
+### Signatures
 
-```bash
-php artisan vendor:publish --provider="Spatie\Activitylog\ActivitylogServiceProvider" --tag="activitylog-migrations"
-php artisan migrate
-```
+- `RecordsActivity::getActivitylogOptions(): LogOptions` — shared defaults; models
+  supply their own `logOnly()` set
+- `ActivityContext extends LogActivityAction` — `execute(Model $activity): Model`,
+  attaching `ip` to properties for every entry, model-generated or explicit
+- `ActivityPolicy` — `viewAny`/`view` permission-based; the ten mutation
+  abilities return `false`
+- Explicit recorders take the actor and the subject and never accept a password,
+  hash, or storage path
 
-- [ ] **Step 2: Write the failing test**
+### Mutation obligations
 
-Create `tests/Feature/Staff/ActivityLogTest.php`:
+Each must be shown to fail a **named** test before this task is done.
 
-```php
-<?php
+| Break | Must fail |
+|---|---|
+| Enable `buffer.enabled` | rollback test — **the test flushes the buffer after the failed transaction**, or buffering leaves it green because nothing ever flushed |
+| Remove the `password` entry from `User`'s `logOnly()` allowlist | secret-absent-from-diff test |
+| Change the global `default_except_attributes` config | its own pinning test (with allowlists, removing it exposes nothing — so it cannot be proven by the diff test and needs pinning separately) |
+| Make the policy honour `delete_activity` | super-admin-holding-the-grant-still-refused test |
+| Register any action on the Filament resource | exact-registry test |
+| Drop IP from the custom log action | two tests: automatic model IP, and explicit-event IP |
+| Attribute a `SystemRoleWriter` write to the logged-in user | system-entries-are-anonymous test |
+| Log a no-op role sync | repeatable-seed test |
+| Remove pivot logging from a role Action | role-change-audited test |
+| Remove the cascaded-certificate recording | cascaded-deletion test |
+| Record a storage path in a file event | no-paths-in-audit test |
+| Suppress the password event | reset and self-service change tests |
+| Add a write shape against the activity model in `app/` | architecture test |
 
-declare(strict_types=1);
+Also tested: role create/rename/delete; null IP and null actor for genuine system
+operations; and the real `forceDelete()` behaviour.
 
-use App\Domain\Enrollment\Models\Student;
-use App\Models\User;
-use Spatie\Activitylog\Models\Activity;
+### UI requirements
 
-uses(Illuminate\Foundation\Testing\RefreshDatabase::class);
-
-beforeEach(function () {
-    $this->seed(Database\Seeders\RolePermissionSeeder::class);
-
-    $this->actor = User::factory()->create(['is_active' => true]);
-    $this->actor->assignRole('admin');
-    $this->actingAs($this->actor);
-});
-
-it('logs student creation with the acting user', function () {
-    $student = Student::factory()->create();
-
-    $activity = Activity::query()->latest('id')->first();
-
-    expect($activity->description)->toBe('created')
-        ->and($activity->subject_id)->toBe($student->id)
-        ->and($activity->causer_id)->toBe($this->actor->id);
-});
-
-it('records a before and after diff on update', function () {
-    $student = Student::factory()->create(['first_name' => 'Amal']);
-    $student->update(['first_name' => 'Amel']);
-
-    $activity = Activity::query()->latest('id')->first();
-
-    expect($activity->description)->toBe('updated')
-        ->and($activity->properties['old']['first_name'])->toBe('Amal')
-        ->and($activity->properties['attributes']['first_name'])->toBe('Amel');
-});
-
-it('does not log a login timestamp update as a user change', function () {
-    $before = Activity::count();
-
-    $this->actor->forceFill(['last_login_at' => now()])->saveQuietly();
-
-    expect(Activity::count())->toBe($before);
-});
-
-it('denies staff access to the activity log', function () {
-    $staff = User::factory()->create(['is_active' => true]);
-    $staff->assignRole('staff');
-
-    expect($staff->can('viewAny', Activity::class))->toBeFalse();
-});
-
-it('allows an admin to view the activity log', function () {
-    expect($this->actor->can('viewAny', Activity::class))->toBeTrue();
-});
-
-it('forbids deleting an activity entry for every role', function () {
-    $superAdmin = User::factory()->create(['is_active' => true]);
-    $superAdmin->assignRole('super_admin');
-
-    $activity = Activity::query()->create([
-        'log_name' => 'default',
-        'description' => 'created',
-    ]);
-
-    expect($superAdmin->can('delete', $activity))->toBeFalse()
-        ->and($this->actor->can('delete', $activity))->toBeFalse();
-});
-```
-
-- [ ] **Step 3: Run the test to verify it fails**
-
-Run: `php artisan test --filter=ActivityLogTest`
-Expected: FAIL — no activity recorded.
-
-- [ ] **Step 4: Add the trait to every auditable model**
-
-Add to `User`, `StaffProfile`, `Student`, `Course`, `Batch`, and `Enrollment`:
-
-```php
-use Spatie\Activitylog\LogOptions;
-use Spatie\Activitylog\Traits\LogsActivity;
-
-// in the trait list
-use LogsActivity;
-
-public function getActivitylogOptions(): LogOptions
-{
-    return LogOptions::defaults()
-        ->logFillable()
-        ->logOnlyDirty()
-        ->dontSubmitEmptyLogs();
-}
-```
-
-For `User`, exclude sensitive and noisy fields:
-
-```php
-public function getActivitylogOptions(): LogOptions
-{
-    return LogOptions::defaults()
-        ->logFillable()
-        ->logExcept(['password', 'remember_token', 'last_login_at'])
-        ->logOnlyDirty()
-        ->dontSubmitEmptyLogs();
-}
-```
-
-- [ ] **Step 5: Log authentication events**
-
-In `app/Providers/AppServiceProvider.php` `boot()`:
-
-```php
-use Illuminate\Auth\Events\Failed;
-use Illuminate\Auth\Events\Logout;
-
-Event::listen(Login::class, fn (Login $e) => activity('auth')
-    ->causedBy($e->user)
-    ->withProperties(['ip' => request()->ip()])
-    ->log('logged_in'));
-
-Event::listen(Logout::class, fn (Logout $e) => activity('auth')
-    ->causedBy($e->user)
-    ->log('logged_out'));
-
-Event::listen(Failed::class, fn (Failed $e) => activity('auth')
-    ->withProperties([
-        'email' => $e->credentials['email'] ?? null,
-        'ip' => request()->ip(),
-    ])
-    ->log('login_failed'));
-```
-
-- [ ] **Step 6: Write the append-only policy**
-
-Create `app/Domain/Staff/Policies/ActivityPolicy.php`:
-
-```php
-<?php
-
-declare(strict_types=1);
-
-namespace App\Domain\Staff\Policies;
-
-use App\Models\User;
-use Spatie\Activitylog\Models\Activity;
-
-class ActivityPolicy
-{
-    public function viewAny(User $user): bool
-    {
-        return $user->can('view_any_activity');
-    }
-
-    public function view(User $user, Activity $activity): bool
-    {
-        return $user->can('view_activity');
-    }
-
-    /**
-     * The activity log is append-only. No role may create, edit, or delete
-     * entries — including super admin. An audit trail that can be edited
-     * is not an audit trail.
-     */
-    public function create(User $user): bool
-    {
-        return false;
-    }
-
-    public function update(User $user, Activity $activity): bool
-    {
-        return false;
-    }
-
-    public function delete(User $user, Activity $activity): bool
-    {
-        return false;
-    }
-}
-```
-
-Register with `Gate::policy(Activity::class, ActivityPolicy::class);`.
-
-- [ ] **Step 7: Build the read-only Filament resource**
-
-```bash
-php artisan make:filament-resource Activity --panel=admin
-```
-
-Move to `app/Domain/Staff/Filament/Resources/`, update the namespace, and make it read-only:
-
-```php
-public static function canCreate(): bool
-{
-    return false;
-}
-
-public static function table(Table $table): Table
-{
-    return $table
-        ->columns([
-            TextColumn::make('created_at')->label(__('staff.when'))->dateTime()->sortable(),
-            TextColumn::make('causer.name')->label(__('staff.who'))
-                ->placeholder(__('staff.system'))->searchable(),
-            TextColumn::make('description')->label(__('staff.action'))->badge(),
-            TextColumn::make('subject_type')->label(__('staff.record'))
-                ->formatStateUsing(fn (?string $state): string => class_basename($state ?? '—')),
-            TextColumn::make('properties')->label(__('staff.changes'))
-                ->limit(60)->wrap()->toggleable(),
-        ])
-        ->defaultSort('created_at', 'desc')
-        ->filters([
-            SelectFilter::make('causer_id')
-                ->label(__('staff.who'))
-                ->relationship('causer', 'name'),
-            Filter::make('created_at')->schema([
-                DatePicker::make('from')->label(__('staff.from')),
-                DatePicker::make('until')->label(__('staff.until')),
-            ])->query(fn (Builder $query, array $data): Builder => $query
-                ->when($data['from'] ?? null, fn ($q, $d) => $q->whereDate('created_at', '>=', $d))
-                ->when($data['until'] ?? null, fn ($q, $d) => $q->whereDate('created_at', '<=', $d))),
-        ])
-        // No recordActions and no toolbarActions — deletion must not be reachable.
-        ->recordActions([])
-        ->toolbarActions([]);
-}
-```
-
-- [ ] **Step 8: Run tests to verify they pass**
-
-Run: `php artisan test --filter=ActivityLogTest`
-Expected: 6 passed.
-
-- [ ] **Step 9: Commit**
-
-```bash
-vendor/bin/pint && vendor/bin/phpstan analyse && php artisan test
-git add -A
-git commit -m "feat(staff): add append-only activity log with auth events [P1-T12]"
-```
+Actor, date-range and record-type filters; translated event and record-type
+labels; and readable rendering of v5's `attribute_changes` column — not a raw
+JSON blob. List and view only.
 
 ---
 
