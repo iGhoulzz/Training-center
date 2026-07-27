@@ -4,19 +4,25 @@ declare(strict_types=1);
 
 namespace App\Domain\Enrollment\Filament\Resources;
 
+use App\Domain\Enrollment\Actions\DeleteBatchAction;
 use App\Domain\Enrollment\Enums\BatchStatus;
+use App\Domain\Enrollment\Enums\EnrollmentStatus;
+use App\Domain\Enrollment\Exceptions\BatchInUseException;
 use App\Domain\Enrollment\Filament\Resources\BatchResource\Pages\CreateBatch;
 use App\Domain\Enrollment\Filament\Resources\BatchResource\Pages\EditBatch;
 use App\Domain\Enrollment\Filament\Resources\BatchResource\Pages\ListBatches;
 use App\Domain\Enrollment\Filament\Resources\BatchResource\Pages\ViewBatch;
+use App\Domain\Enrollment\Filament\Resources\BatchResource\RelationManagers\EnrollmentsRelationManager;
 use App\Domain\Enrollment\Filament\Resources\BatchResource\RelationManagers\InstructorsRelationManager;
 use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Course;
+use App\Models\User;
 use BackedEnum;
 use Filament\Actions\DeleteAction;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
+use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
@@ -130,7 +136,26 @@ class BatchResource extends Resource
              * withTrashed() reaches this aggregate too. Drop it there and the
              * badge silently stops counting hours the panel still lists.
              */
-            ->withSum('instructors as '.Batch::ASSIGNED_HOURS_SUM, 'batch_instructor.assigned_hours');
+            ->withSum('instructors as '.Batch::ASSIGNED_HOURS_SUM, 'batch_instructor.assigned_hours')
+            /*
+             * The active-enrolment count, selected here so the enrolment-load
+             * column reads an aggregate instead of querying once per listed row.
+             * The constrained closure is what makes it ACTIVE enrolments — a bare
+             * withCount('enrollments') would include withdrawn students and report
+             * batches as over capacity that are not.
+             */
+            ->withCount([
+                /*
+                 * The condition is spelled out rather than calling
+                 * Enrollment::scopeActive(). withCount() hands the closure a
+                 * generic Builder, and a local scope on it is invisible to static
+                 * analysis — the scope stays the definition for every ordinary
+                 * caller, and this names the same enum case so the two cannot
+                 * mean different things.
+                 */
+                'enrollments as '.Batch::ACTIVE_ENROLLMENTS_COUNT => fn (Builder $query): Builder => $query
+                    ->where('status', EnrollmentStatus::Active),
+            ]);
     }
 
     public static function form(Schema $schema): Schema
@@ -284,6 +309,32 @@ class BatchResource extends Resource
                     ->label(__('enrollment.capacity'))
                     ->numeric(),
 
+                /*
+                 * Seats taken against seats available — "3 / 2".
+                 *
+                 * This is what makes ACTIVE_ENROLLMENTS_COUNT load-bearing.
+                 * Without a consumer the aggregate is plumbing, and an N+1 test
+                 * over plumbing proves nothing about the application; with one,
+                 * the listing renders capacity for every batch inside the single
+                 * list query, and BatchResourceTest asserts no separate select
+                 * against enrollments happens at all.
+                 *
+                 * A WARNING COLOUR, NEVER AN ERROR ONE. Spec line 217 makes
+                 * over-enrolment a legitimate decision the centre is entitled to
+                 * take; the badge exists so it is noticed, not so it reads as a
+                 * fault. A batch with no stated capacity shows an em dash rather
+                 * than "3 / 0", which would look like a violated limit.
+                 */
+                TextColumn::make('enrolment_load')
+                    ->label(__('enrollment.enrolment_load'))
+                    ->state(fn (Batch $record): string => $record->activeEnrollmentCount()
+                        .' / '.($record->capacity > 0 ? (string) $record->capacity : '—'))
+                    ->badge()
+                    ->color(fn (Batch $record): string => $record->isOverCapacity() ? 'warning' : 'gray')
+                    ->tooltip(fn (Batch $record): ?string => $record->isOverCapacity()
+                        ? __('enrollment.over_capacity_warning')
+                        : null),
+
                 // The INHERITED figure, not the raw column: a batch with a null
                 // total_hours shows its course's hours, which is what anyone
                 // reading this list actually wants to know. Not sortable — it is
@@ -345,9 +396,50 @@ class BatchResource extends Resource
             // that a crafted Livewire mount ignores, whereas authorize() runs
             // BatchPolicy::delete() against this record on the server.
             ->recordActions([
-                DeleteAction::make()
-                    ->authorize('delete'),
+                self::deleteAction(),
             ]);
+    }
+
+    /**
+     * The one delete action, shared by the table row and the edit page.
+     *
+     * Both enrollments.batch_id and batch_instructor.batch_id are
+     * restrictOnDelete, so deleting a batch that still carries either is refused
+     * by the database — correctly, since the alternative is silently destroying
+     * enrolment history and the hour allocations phase 2 pays wages from. An
+     * unhandled QueryException reaches the user as a 500, which reads as "the
+     * system is broken" rather than "this batch is still in use".
+     *
+     * halt() rather than using(): using() replaces the persistence step but the
+     * action still completes and reports success, so a refusal would notify AND
+     * then claim the delete worked. halt() stops the action where it stands, and
+     * BatchDeletionTest asserts the absence of the success notification — the one
+     * assertion that fails if halt() is removed.
+     *
+     * Both surfaces call this so the two cannot drift apart. The Action
+     * re-authorizes the actor: authorize('delete') is the UI gate, and the Action
+     * is what makes the answer binding for every other caller.
+     */
+    public static function deleteAction(): DeleteAction
+    {
+        return DeleteAction::make()
+            ->authorize('delete')
+            ->action(function (Batch $record, DeleteAction $action): void {
+                /** @var User $actor */
+                $actor = auth()->user();
+
+                try {
+                    app(DeleteBatchAction::class)->execute($actor, $record);
+                } catch (BatchInUseException) {
+                    Notification::make()
+                        ->title(__('enrollment.batch_in_use'))
+                        ->body(__('enrollment.batch_in_use_hint'))
+                        ->danger()
+                        ->send();
+
+                    $action->halt();
+                }
+            });
     }
 
     /**
@@ -362,6 +454,7 @@ class BatchResource extends Resource
     {
         return [
             InstructorsRelationManager::class,
+            EnrollmentsRelationManager::class,
         ];
     }
 

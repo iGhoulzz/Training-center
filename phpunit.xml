@@ -18,6 +18,19 @@
         </include>
     </source>
     <php>
+        <!--
+            PHP's 128M default is no longer enough to run this suite in one
+            process. P1-T11 took it past the line: the certificate upload tests
+            build multi-megabyte strings to exercise the size ceiling, and by the
+            time they run the accumulated fixtures tip the process over, so the
+            suite dies mid-run with "Allowed memory size exhausted" in a file that
+            passes perfectly well on its own.
+
+            Raised here rather than left to a command-line flag, because
+            `php artisan test` spawns its own process and -d on the parent does
+            not reach it — the limit has to come from configuration or not at all.
+        -->
+        <ini name="memory_limit" value="512M"/>
         <env name="APP_ENV" value="testing"/>
         <env name="APP_MAINTENANCE_DRIVER" value="file"/>
         <env name="BCRYPT_ROUNDS" value="4"/>

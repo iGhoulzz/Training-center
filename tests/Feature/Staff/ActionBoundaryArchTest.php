@@ -290,6 +290,12 @@ it('does not delete or deactivate users outside the sanctioned Actions', functio
             'DeactivateUserAction',
             // Courses: refuses while batches reference the course.
             'DeleteCourseAction',
+            // Batches (P1-T11): refuses while enrolments or instructor
+            // allocations remain, and owns the 1451 conversion.
+            'DeleteBatchAction',
+            // Enrolments (P1-T11): single-record only, authorizes against the
+            // row locked by EnrollmentMutex.
+            'DeleteEnrollmentAction',
             // Staff files (P1-T06b): each removes a record AND owns the durable
             // commit-first/delete-after file lifecycle. The certificate and
             // profile Actions authorize the actor and write a
@@ -459,5 +465,101 @@ it('keeps no write-guard method overrides on the Role model', function () {
             0,
             "Role must not override {$method}(); protection belongs in RolePolicy and Actions.",
         );
+    }
+});
+
+/*
+ * Every shape that writes the enrollments table, SPLIT BY OPERATION.
+ *
+ * NOT KNOWN_PIVOT_MUTATORS. That constant enumerates BelongsToMany's writers and
+ * is correct for batch_instructor; `enrollments` is a HasMany, and reusing the
+ * pivot list would miss update(), delete(), forceDelete(), insert(), upsert() and
+ * — the ones that matter most — every write that bypasses the relation entirely:
+ * Enrollment::create(), Enrollment::query()->update(), DB::table('enrollments').
+ *
+ * ONE ALLOWLIST PER OPERATION, NOT ONE PER FILE. A single allowlist naming all
+ * three Actions exempts each of them from ALL the shapes, so EnrollStudentAction
+ * could delete and WithdrawEnrollmentAction could create, with nothing failing.
+ * Each Action is sanctioned for the one operation it owns and is bound by the
+ * rest — the same lesson as P1-T10a, where merging two rules let one allowlist
+ * dissolve the other.
+ *
+ * THIS IS A TRIPWIRE, NOT CONTAINMENT. A regex over source cannot resolve types,
+ * so a write through a differently-named variable is not caught. What actually
+ * contains these writes is that the Actions are the only code holding the locks,
+ * and EnrollmentTest asserts the locks exist. This catches the shapes somebody
+ * plausibly writes.
+ */
+const ENROLLMENT_WRITE_RULES = [
+    'create' => [
+        'allowed' => ['EnrollStudentAction'],
+        'patterns' => [
+            '/->\s*enrollments\s*\(\s*\)\s*->\s*(create|createMany|createQuietly|forceCreate'
+                .'|make|save|saveMany|saveQuietly|firstOrCreate|firstOrNew|createOrFirst)\s*\(/',
+            '/\bEnrollment::\s*(create|forceCreate|createQuietly|make|insert|insertOrIgnore'
+                .'|insertGetId|upsert|firstOrCreate|createOrFirst)\s*\(/',
+        ],
+    ],
+    'update' => [
+        'allowed' => ['WithdrawEnrollmentAction'],
+        'patterns' => [
+            '/->\s*enrollments\s*\(\s*\)\s*->\s*(update|updateQuietly|updateOrCreate|increment'
+                .'|decrement|touch|restore)\s*\(/',
+            '/\bEnrollment::\s*updateOrCreate\s*\(/',
+            '/\bEnrollment::(query|where|whereKey)\s*\([^;]*->\s*(update|updateQuietly|increment'
+                .'|decrement|restore)\s*\(/',
+            /*
+             * $enrollment->, $locked->, $held->enrollment->
+             *
+             * The variable names are ANCHORED, not fuzzy. An earlier version
+             * matched \$\w*(record|locked)\w* and reported
+             * DeleteStaffPhotoAction's $lockedProfile->update() as an enrolment
+             * write — `$record` and `locked*` are generic names this codebase
+             * uses for every model, so a loose match is noise that trains people
+             * to add allowlist entries.
+             *
+             * KNOWN LIMIT: a write through some other variable name is not
+             * caught. A regex over source cannot resolve types. What actually
+             * contains these writes is that the Actions hold the locks and
+             * EnrollmentsRelationManagerTest asserts the panel registers exactly
+             * three actions, none of them a built-in persister.
+             */
+            '/(\$locked|\$\w*enrol\w*|->\s*enrollment)\s*->\s*'
+                .'(update|updateQuietly|save|saveQuietly|fill|forceFill|restore)\s*\(/i',
+        ],
+    ],
+    'delete' => [
+        'allowed' => ['DeleteEnrollmentAction'],
+        'patterns' => [
+            '/->\s*enrollments\s*\(\s*\)\s*->\s*(delete|forceDelete|truncate)\s*\(/',
+            '/\bEnrollment::\s*(destroy|truncate)\s*\(/',
+            '/\bEnrollment::(query|where|whereKey)\s*\([^;]*->\s*(delete|forceDelete)\s*\(/',
+            // Anchored for the same reason as the update shape above.
+            '/(\$locked|\$\w*enrol\w*|->\s*enrollment)\s*->\s*(delete|forceDelete)\s*\(/i',
+        ],
+    ],
+    'raw table' => [
+        // Nobody. The table is reached through the model or not at all.
+        'allowed' => [],
+        'patterns' => ['/DB::\s*table\s*\(\s*[\'"]enrollments[\'"]\s*\)/'],
+    ],
+];
+
+it('writes the enrollments table from nowhere but the Action that owns each operation', function () {
+    // Enrolments are what phase 2 bills from. The closed-batch, duplicate,
+    // deleted-student and capacity rules live in EnrollStudentAction, the status
+    // transition in WithdrawEnrollmentAction, the removal in
+    // DeleteEnrollmentAction, and the locks in EnrollmentMutex behind both.
+    foreach (ENROLLMENT_WRITE_RULES as $operation => $rule) {
+        foreach ($rule['patterns'] as $index => $pattern) {
+            $offenders = filesMatching($pattern, $rule['allowed']);
+
+            $permitted = $rule['allowed'] === [] ? 'no file at all' : implode(' / ', $rule['allowed']);
+
+            expect($offenders)->toBeEmpty(
+                "Enrollment '{$operation}' writes (pattern {$index}) are permitted in {$permitted}, "
+                .'not in: '.implode(', ', $offenders),
+            );
+        }
     }
 });
