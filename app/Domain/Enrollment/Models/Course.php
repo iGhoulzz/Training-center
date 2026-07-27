@@ -88,16 +88,28 @@ class Course extends Model
             : (string) $this->name_en;
     }
 
-    /** price is phase 2's, but a change to it is audited from the first commit. */
+    /**
+     * BOTH LOCALE COLUMNS, and no `name`.
+     *
+     * There is no `name` column. Course::name() is a METHOD that resolves against
+     * the request locale, and listing it here made the audit read $course->name,
+     * which Eloquent resolved as a relationship accessor and broke every course
+     * test in the suite. The audited facts are the stored columns: name_en and
+     * name_ar change independently and a rename in either is worth recording.
+     *
+     * default_price is phase 2's, but a change to it is audited from commit one.
+     */
     public function auditedAttributes(): array
     {
         return [
             'code',
-            'name',
-            'description',
+            'name_en',
+            'name_ar',
+            'description_en',
+            'description_ar',
             'total_hours',
-            'price',
-            'status',
+            'default_price',
+            'is_active',
         ];
     }
 

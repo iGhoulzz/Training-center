@@ -7,6 +7,7 @@ namespace App\Domain\Staff\Actions;
 use App\Domain\Staff\Services\SuperAdminInvariantService;
 use App\Models\Role;
 use App\Models\User;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 
 /**
@@ -64,14 +65,32 @@ final class SyncUserRolesAction
             Gate::forUser($actor)->authorize('assignRole', [User::class, $role]);
         }
 
-        // Guard 3: only a super-admin removal can shrink the population, so only
-        // that write needs the locked, atomic invariant check.
-        if (in_array(Role::SUPER_ADMIN, $removing, true)) {
-            $this->invariant->protect(fn () => $target->syncRoles($desired));
+        /*
+         * The write and its audit entry share ONE transaction.
+         *
+         * Attaching a role writes model_has_roles, which fires no Eloquent event
+         * on User — the LogsActivity concern cannot see it, so this is one of the
+         * few places an explicit entry is the only option. Recording it outside
+         * the transaction would leave an audit row for a role change that rolled
+         * back, which is the failure the whole buffering decision exists to avoid.
+         *
+         * The no-op return above means a repeated sync writes nothing at all: a
+         * seeder run twice must not manufacture a second "roles changed" event.
+         */
+        DB::transaction(function () use ($target, $desired, $adding, $removing): void {
+            // Guard 3: only a super-admin removal can shrink the population, so
+            // only that write needs the locked, atomic invariant check.
+            if (in_array(Role::SUPER_ADMIN, $removing, true)) {
+                $this->invariant->protect(fn () => $target->syncRoles($desired));
+            } else {
+                $target->syncRoles($desired);
+            }
 
-            return;
-        }
-
-        $target->syncRoles($desired);
+            activity()
+                ->performedOn($target)
+                ->event('roles_changed')
+                ->withProperties(['added' => $adding, 'removed' => $removing])
+                ->log('roles_changed');
+        });
     }
 }

@@ -7,6 +7,7 @@ namespace App\Domain\Staff\Actions;
 use App\Models\Role;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 
 /**
@@ -41,6 +42,37 @@ final class UpdateRolePermissionsAction
 
         Gate::forUser($actor)->authorize('update', $role);
 
-        $role->syncPermissions(array_values(array_unique($permissions)));
+        $desired = array_values(array_unique($permissions));
+        $current = $role->permissions()->pluck('name')->all();
+
+        $adding = array_values(array_diff($desired, $current));
+        $removing = array_values(array_diff($current, $desired));
+
+        /*
+         * A sync that changes nothing records nothing. Re-running the seeder, or
+         * re-saving an untouched permissions form, must not manufacture an audit
+         * event — a log full of "changed" entries where nothing changed is a log
+         * nobody reads.
+         */
+        if ($adding === [] && $removing === []) {
+            return;
+        }
+
+        /*
+         * One transaction for the write and its entry. role_has_permissions is a
+         * pivot: syncPermissions() fires no Eloquent event on Role, so the
+         * LogsActivity concern there sees role renames but never this. An entry
+         * written outside the transaction would survive a rollback and claim a
+         * permission change that never landed.
+         */
+        DB::transaction(function () use ($role, $desired, $adding, $removing): void {
+            $role->syncPermissions($desired);
+
+            activity()
+                ->performedOn($role)
+                ->event('permissions_changed')
+                ->withProperties(['added' => $adding, 'removed' => $removing])
+                ->log('permissions_changed');
+        });
     }
 }

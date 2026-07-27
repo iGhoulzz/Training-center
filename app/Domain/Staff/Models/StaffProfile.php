@@ -110,11 +110,11 @@ class StaffProfile extends Model
     {
         return [
             'user_id',
-            'employment_type',
+            'phone',
             'job_title',
-            'hired_on',
-            'left_on',
-            'notes',
+            'hire_date',
+            'employment_type',
+            'qualifications',
         ];
     }
 

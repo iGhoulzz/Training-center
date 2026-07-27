@@ -7,7 +7,9 @@ namespace App\Domain\Staff\Actions;
 use App\Domain\Staff\Services\SuperAdminInvariantService;
 use App\Models\Role;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Spatie\Permission\Contracts\Permission;
 
 /**
@@ -50,7 +52,19 @@ final class SystemRoleWriter
      */
     public function assignRoles(User $user, string|array $roles): void
     {
-        $user->assignRole($roles);
+        $desired = array_values(array_unique((array) $roles));
+        $current = $user->roles()->pluck('name')->all();
+        $adding = array_values(array_diff($desired, $current));
+
+        if ($adding === []) {
+            return;
+        }
+
+        DB::transaction(function () use ($user, $roles, $adding): void {
+            $user->assignRole($roles);
+
+            self::recordSystemEvent($user, 'roles_changed', ['added' => $adding, 'removed' => []]);
+        });
     }
 
     /**
@@ -72,16 +86,28 @@ final class SystemRoleWriter
      */
     public function syncRoles(User $user, array $roles): void
     {
-        $removesSuperAdmin = $user->isSuperAdmin()
-            && ! in_array(Role::SUPER_ADMIN, $roles, true);
+        $desired = array_values(array_unique($roles));
+        $current = $user->roles()->pluck('name')->all();
 
-        if (! $removesSuperAdmin) {
-            $user->syncRoles($roles);
+        $adding = array_values(array_diff($desired, $current));
+        $removing = array_values(array_diff($current, $desired));
 
+        if ($adding === [] && $removing === []) {
             return;
         }
 
-        $this->invariant->protect(fn () => $user->syncRoles($roles));
+        $removesSuperAdmin = $user->isSuperAdmin()
+            && ! in_array(Role::SUPER_ADMIN, $roles, true);
+
+        DB::transaction(function () use ($user, $roles, $removesSuperAdmin, $adding, $removing): void {
+            if ($removesSuperAdmin) {
+                $this->invariant->protect(fn () => $user->syncRoles($roles));
+            } else {
+                $user->syncRoles($roles);
+            }
+
+            self::recordSystemEvent($user, 'roles_changed', ['added' => $adding, 'removed' => $removing]);
+        });
     }
 
     /**
@@ -92,6 +118,55 @@ final class SystemRoleWriter
      */
     public function syncRolePermissions(Role $role, iterable $permissions): void
     {
-        $role->syncPermissions($permissions);
+        $desired = collect($permissions)
+            ->map(fn (Permission|string $permission): string => $permission instanceof Permission
+                ? $permission->name
+                : $permission)
+            ->unique()
+            ->values()
+            ->all();
+
+        $current = $role->permissions()->pluck('name')->all();
+
+        $adding = array_values(array_diff($desired, $current));
+        $removing = array_values(array_diff($current, $desired));
+
+        if ($adding === [] && $removing === []) {
+            return;
+        }
+
+        DB::transaction(function () use ($role, $permissions, $adding, $removing): void {
+            $role->syncPermissions($permissions);
+
+            self::recordSystemEvent($role, 'permissions_changed', [
+                'added' => $adding,
+                'removed' => $removing,
+            ]);
+        });
+    }
+
+    /**
+     * Record a change made by the SYSTEM, with no causer.
+     *
+     * causedByAnonymous() is the whole point and is not a detail. Seeders and
+     * console commands run with whatever session happens to exist — in a test, or
+     * in `php artisan tinker` on a live box, that can be a real logged-in user —
+     * and the package would otherwise attribute a seeder's rewrite of the
+     * permission matrix to whoever was signed in. Naming a person for a change
+     * they did not make is worse than naming nobody.
+     *
+     * The no-op guards in every caller above are what stop a repeatable seeder
+     * run from producing a fresh event each time it confirms the same grants.
+     *
+     * @param  array<string, mixed>  $properties
+     */
+    private static function recordSystemEvent(Model $subject, string $event, array $properties): void
+    {
+        activity()
+            ->causedByAnonymous()
+            ->performedOn($subject)
+            ->event($event)
+            ->withProperties($properties)
+            ->log($event);
     }
 }
