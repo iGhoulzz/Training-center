@@ -14,6 +14,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
  * A course actually running — the January intake, the March intake.
@@ -22,9 +23,9 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
  * for how many hours. That split is why "English B1" can run four times a year
  * without four copies of its definition.
  *
- * P1-T11 adds enrollments(), deliberately absent rather than stubbed: a relation
- * pointing at a class or table that does not exist yet is a fatal error waiting
- * for the first eager load.
+ * P1-T11 added enrollments() and the capacity predicates. Every write to that
+ * relation goes through EnrollStudentAction / WithdrawEnrollmentAction /
+ * DeleteEnrollmentAction, never through the relation here.
  *
  * Configuration only — casts, relationships, one inheriting accessor, status
  * and hour predicates, one scope. No business logic and no write guards; see
@@ -60,6 +61,72 @@ class Batch extends Model
      * remove, with nothing failing.
      */
     public const ASSIGNED_HOURS_SUM = 'assigned_hours_total';
+
+    /**
+     * The alias BatchResource selects the active-enrolment COUNT into.
+     *
+     * Named here for the same reason ASSIGNED_HOURS_SUM is: a typo at either end
+     * silently reinstates the per-row query the aggregate exists to remove, and
+     * nothing fails when it does.
+     */
+    public const ACTIVE_ENROLLMENTS_COUNT = 'active_enrollments_count';
+
+    /**
+     * Everyone enrolled on this intake, withdrawn students included.
+     *
+     * NOT A WRITE PATH. Every insert goes through EnrollStudentAction, every
+     * status change through WithdrawEnrollmentAction, and every removal through
+     * DeleteEnrollmentAction — each authorizing the actor against freshly locked
+     * rows. A bare $batch->enrollments()->create() reaches around all three, and
+     * ActionBoundaryArchTest forbids it.
+     *
+     * @return HasMany<Enrollment, $this>
+     */
+    public function enrollments(): HasMany
+    {
+        return $this->hasMany(Enrollment::class);
+    }
+
+    /**
+     * Students currently holding a seat on this batch.
+     *
+     * Counts ACTIVE enrolments only. A withdrawn student has left their seat, and
+     * counting them would report a full batch that in fact has room.
+     *
+     * Reads the eager aggregate when the row was loaded through a query that
+     * selected it (BatchResource::getEloquentQuery() does), and only falls back to
+     * its own count when it was not.
+     *
+     * array_key_exists rather than a null coalesce, because the two ask different
+     * questions: whether the alias was SELECTED, not what value it holds. COUNT
+     * returns 0 for a batch with no enrolments — it is SUM that returns NULL, and
+     * totalAssignedHours() carries that reasoning correctly for its own aggregate.
+     * The check is still the right one: a row loaded without the alias must fall
+     * back, and `??` cannot tell an absent alias from a present zero.
+     */
+    public function activeEnrollmentCount(): int
+    {
+        $attributes = $this->getAttributes();
+
+        return array_key_exists(self::ACTIVE_ENROLLMENTS_COUNT, $attributes)
+            ? (int) $attributes[self::ACTIVE_ENROLLMENTS_COUNT]
+            : (int) $this->enrollments()->active()->count();
+    }
+
+    /**
+     * Are more students holding seats than this batch has?
+     *
+     * A WARNING CONDITION, NEVER A BLOCK. Spec line 217: enrolling beyond
+     * capacity produces a warning, because centres routinely squeeze in one more
+     * student. Do not "fix" this into a constraint — the centre's own answer,
+     * recorded in the spec, is that it is allowed.
+     *
+     * capacity > 0 guards a batch with no stated ceiling, which cannot be over it.
+     */
+    public function isOverCapacity(): bool
+    {
+        return $this->capacity > 0 && $this->activeEnrollmentCount() > $this->capacity;
+    }
 
     /**
      * The catalogue entry this intake runs.

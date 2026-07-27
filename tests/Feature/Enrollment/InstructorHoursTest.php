@@ -15,7 +15,6 @@ use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
-use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Database\QueryException;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -57,117 +56,6 @@ beforeEach(function () {
 
     $this->assign = app(AssignInstructorAction::class);
     $this->remove = app(RemoveInstructorAction::class);
-
-    /*
-     * Start recording every statement, WITH THE TRANSACTION DEPTH IT RAN AT.
-     *
-     * The depth is the whole point, and recording only the SQL was a real hole
-     * in these tests. RefreshDatabase wraps each test in its own transaction, so
-     * a lockForUpdate() emits `... for update` whether or not the Action opened
-     * a transaction of its own — and an Action with its DB::transaction()
-     * deleted passed the earlier version of every lock test below. In
-     * production that Action autocommits each statement, so the lock is released
-     * the instant it is taken and every race it exists to win is lost, silently
-     * and with a green suite.
-     *
-     * DB::transactionLevel() is read inside the listener, which fires while the
-     * statement's transaction is still open, so it reports the depth the
-     * statement actually executed at.
-     *
-     * An ArrayObject rather than an array because the listener has to keep
-     * filling the same collection after this closure has returned, and a
-     * returned array would be a copy.
-     */
-    $this->captureStatements = function (): ArrayObject {
-        $statements = new ArrayObject;
-
-        DB::listen(function (QueryExecuted $query) use ($statements): void {
-            $statements->append([
-                'sql' => strtolower($query->sql),
-                'bindings' => $query->bindings,
-                'level' => DB::transactionLevel(),
-            ]);
-        });
-
-        return $statements;
-    };
-
-    /**
-     * The locking reads taken against $table — `select ... from `batches` ... for update`.
-     *
-     * @return array<int, array{sql: string, bindings: array<int, mixed>, level: int}>
-     */
-    $this->locksOn = fn (ArrayObject $statements, string $table): array => collect($statements)
-        ->filter(fn (array $statement): bool => str_contains($statement['sql'], ' for update')
-            && str_contains($statement['sql'], "from `{$table}`"))
-        ->values()
-        ->all();
-
-    /**
-     * The statements that actually wrote batch_instructor.
-     *
-     * Insert, update and delete all count: syncWithoutDetaching() inserts a new
-     * pair and updates an existing one, and detach() deletes. A test that
-     * watched only for inserts would stop meaning anything the first time an
-     * allocation was changed rather than created.
-     *
-     * @return array<int, array{sql: string, bindings: array<int, mixed>, level: int}>
-     */
-    $this->pivotWrites = fn (ArrayObject $statements): array => collect($statements)
-        ->filter(fn (array $statement): bool => preg_match(
-            '/^(insert into|update|delete from) `batch_instructor`/',
-            $statement['sql'],
-        ) === 1)
-        ->values()
-        ->all();
-
-    /** Every statement with its depth, for a failure message that says what DID run. */
-    $this->describe = fn (ArrayObject $statements): string => $statements->count() === 0
-        ? 'none'
-        : collect($statements)
-            ->map(fn (array $statement): string => "[level {$statement['level']}] {$statement['sql']}")
-            ->implode(' | ');
-
-    /**
-     * Assert a statement ran exactly one transaction level deeper than the
-     * caller, against the expected row.
-     *
-     * THE DELTA, NOT THE ABSOLUTE LEVEL. Under RefreshDatabase the caller sits
-     * at level 1 and in production at level 0; asserting `level === 1` would
-     * pass here for an Action that opens no transaction at all, which is
-     * precisely the bug. baseline + 1 means the same thing in both places: the
-     * Action opened one itself.
-     *
-     * @param  array{sql: string, bindings: array<int, mixed>, level: int}  $statement
-     */
-    $this->expectOneLevelDeeper = function (array $statement, int $baseline, int $rowId, string $what): void {
-        expect($statement['level'])->toBe(
-            $baseline + 1,
-            "{$what} ran at transaction level {$statement['level']}, expected ".($baseline + 1)
-            .' — one deeper than the caller. At the caller\'s own level the Action opened no '
-            .'transaction, so the lock releases immediately and guards nothing. SQL: '.$statement['sql'],
-        );
-
-        /*
-         * Only the integer-ish bindings, because a pivot write also binds
-         * timestamps: array_map('intval', ...) over a Carbon instance is a
-         * TypeError, not a comparison. in_array() on the filtered list rather
-         * than expect()->toContain(), because toContain() is variadic and would
-         * read a failure message as a second expected value.
-         */
-        $ids = array_values(array_filter(array_map(
-            fn (mixed $binding): ?int => is_int($binding) || (is_string($binding) && ctype_digit($binding))
-                ? (int) $binding
-                : null,
-            $statement['bindings'],
-        ), fn (?int $binding): bool => $binding !== null));
-
-        expect(in_array($rowId, $ids, true))->toBeTrue(
-            "{$what} did not bind row id {$rowId}, so it addressed something other than the row under "
-            .'test. Integer bindings seen: '.($ids === [] ? 'none' : implode(', ', $ids))
-            .'. SQL: '.$statement['sql'],
-        );
-    };
 });
 
 /*
@@ -693,7 +581,7 @@ it('locks the batch row while assigning, inside a transaction it opened itself',
     $sara = ($this->makeInstructor)('Sara');
 
     $baseline = DB::transactionLevel();
-    $statements = ($this->captureStatements)();
+    $statements = captureStatements();
 
     $this->assign->execute($this->admin, new AssignInstructorData(
         (int) $this->batch->getKey(),
@@ -701,14 +589,14 @@ it('locks the batch row while assigning, inside a transaction it opened itself',
         18,
     ));
 
-    $locks = ($this->locksOn)($statements, 'batches');
+    $locks = locksOn($statements, 'batches');
 
     expect($locks)->not->toBeEmpty(
         'AssignInstructorAction re-read the batch without lockForUpdate(). Statements seen: '
-        .($this->describe)($statements),
+        .describeStatements($statements),
     );
 
-    ($this->expectOneLevelDeeper)($locks[0], $baseline, (int) $this->batch->getKey(), 'The batch lock');
+    expectOneLevelDeeper($locks[0], $baseline, (int) $this->batch->getKey(), 'The batch lock');
 });
 
 it('locks the instructor row while assigning, inside a transaction it opened itself', function () {
@@ -719,7 +607,7 @@ it('locks the instructor row while assigning, inside a transaction it opened its
     $sara = ($this->makeInstructor)('Sara');
 
     $baseline = DB::transactionLevel();
-    $statements = ($this->captureStatements)();
+    $statements = captureStatements();
 
     $this->assign->execute($this->admin, new AssignInstructorData(
         (int) $this->batch->getKey(),
@@ -727,14 +615,14 @@ it('locks the instructor row while assigning, inside a transaction it opened its
         18,
     ));
 
-    $locks = ($this->locksOn)($statements, 'users');
+    $locks = locksOn($statements, 'users');
 
     expect($locks)->not->toBeEmpty(
         'AssignInstructorAction read the instructor without lockForUpdate(). Statements seen: '
-        .($this->describe)($statements),
+        .describeStatements($statements),
     );
 
-    ($this->expectOneLevelDeeper)($locks[0], $baseline, (int) $sara->getKey(), 'The instructor lock');
+    expectOneLevelDeeper($locks[0], $baseline, (int) $sara->getKey(), 'The instructor lock');
 });
 
 it('locks the staff profile row while assigning, inside a transaction it opened itself', function () {
@@ -751,7 +639,7 @@ it('locks the staff profile row while assigning, inside a transaction it opened 
     $sara = ($this->makeInstructor)('Sara');
 
     $baseline = DB::transactionLevel();
-    $statements = ($this->captureStatements)();
+    $statements = captureStatements();
 
     $this->assign->execute($this->admin, new AssignInstructorData(
         (int) $this->batch->getKey(),
@@ -759,14 +647,14 @@ it('locks the staff profile row while assigning, inside a transaction it opened 
         18,
     ));
 
-    $locks = ($this->locksOn)($statements, 'staff_profiles');
+    $locks = locksOn($statements, 'staff_profiles');
 
     expect($locks)->not->toBeEmpty(
         'AssignInstructorAction read the staff profile without lockForUpdate(), so employment_type '
-        .'was decided from an unlocked row. Statements seen: '.($this->describe)($statements),
+        .'was decided from an unlocked row. Statements seen: '.describeStatements($statements),
     );
 
-    ($this->expectOneLevelDeeper)($locks[0], $baseline, (int) $sara->getKey(), 'The staff profile lock');
+    expectOneLevelDeeper($locks[0], $baseline, (int) $sara->getKey(), 'The staff profile lock');
 });
 
 it('writes the pivot inside the same transaction as the locks it depends on', function () {
@@ -779,7 +667,7 @@ it('writes the pivot inside the same transaction as the locks it depends on', fu
     $sara = ($this->makeInstructor)('Sara');
 
     $baseline = DB::transactionLevel();
-    $statements = ($this->captureStatements)();
+    $statements = captureStatements();
 
     $this->assign->execute($this->admin, new AssignInstructorData(
         (int) $this->batch->getKey(),
@@ -787,13 +675,13 @@ it('writes the pivot inside the same transaction as the locks it depends on', fu
         18,
     ));
 
-    $writes = ($this->pivotWrites)($statements);
+    $writes = writesTo($statements, 'batch_instructor');
 
     expect($writes)->not->toBeEmpty(
-        'No write to batch_instructor was observed at all. Statements seen: '.($this->describe)($statements),
+        'No write to batch_instructor was observed at all. Statements seen: '.describeStatements($statements),
     );
 
-    ($this->expectOneLevelDeeper)($writes[0], $baseline, (int) $this->batch->getKey(), 'The pivot write');
+    expectOneLevelDeeper($writes[0], $baseline, (int) $this->batch->getKey(), 'The pivot write');
 });
 
 it('locks the batch row while removing, inside a transaction it opened itself', function () {
@@ -801,26 +689,26 @@ it('locks the batch row while removing, inside a transaction it opened itself', 
     $this->assign->execute($this->admin, new AssignInstructorData((int) $this->batch->getKey(), (int) $sara->getKey(), 18));
 
     $baseline = DB::transactionLevel();
-    $statements = ($this->captureStatements)();
+    $statements = captureStatements();
 
     $this->remove->execute($this->admin, $this->batch, $sara);
 
-    $locks = ($this->locksOn)($statements, 'batches');
+    $locks = locksOn($statements, 'batches');
 
     expect($locks)->not->toBeEmpty(
         'RemoveInstructorAction re-read the batch without lockForUpdate(). Statements seen: '
-        .($this->describe)($statements),
+        .describeStatements($statements),
     );
 
-    ($this->expectOneLevelDeeper)($locks[0], $baseline, (int) $this->batch->getKey(), 'The batch lock');
+    expectOneLevelDeeper($locks[0], $baseline, (int) $this->batch->getKey(), 'The batch lock');
 
-    $writes = ($this->pivotWrites)($statements);
+    $writes = writesTo($statements, 'batch_instructor');
 
     expect($writes)->not->toBeEmpty(
-        'No delete against batch_instructor was observed. Statements seen: '.($this->describe)($statements),
+        'No delete against batch_instructor was observed. Statements seen: '.describeStatements($statements),
     );
 
-    ($this->expectOneLevelDeeper)($writes[0], $baseline, (int) $this->batch->getKey(), 'The pivot delete');
+    expectOneLevelDeeper($writes[0], $baseline, (int) $this->batch->getKey(), 'The pivot delete');
 });
 
 /*
@@ -829,25 +717,49 @@ it('locks the batch row while removing, inside a transaction it opened itself', 
 |--------------------------------------------------------------------------
 */
 
-it('cascades the allocations away when the batch is deleted', function () {
-    // An allocation to a batch that no longer exists is not a fact about
-    // anything.
+it('refuses at the foreign key to delete a batch holding allocations', function () {
+    /*
+     * WAS "cascades the allocations away when the batch is deleted", until
+     * P1-T11 made instructor hours survive their batch.
+     *
+     * The old rationale — "an allocation to a batch that no longer exists is not
+     * a fact about anything" — never squared with the line beside it: user_id is
+     * restrictOnDelete because phase 2 pays wages from these rows. The same row
+     * was protected from the instructor side and destroyable from the batch side,
+     * so tidying up a batch destroyed the record of work somebody may still be
+     * owed for.
+     */
     $sara = ($this->makeInstructor)('Sara');
     $omar = ($this->makeInstructor)('Omar');
 
     $this->assign->execute($this->admin, new AssignInstructorData((int) $this->batch->getKey(), (int) $sara->getKey(), 18));
     $this->assign->execute($this->admin, new AssignInstructorData((int) $this->batch->getKey(), (int) $omar->getKey(), 12));
 
-    $survivor = Batch::factory()->for($this->course)->active()->create();
-    $this->assign->execute($this->admin, new AssignInstructorData((int) $survivor->getKey(), (int) $sara->getKey(), 30));
+    try {
+        $this->batch->delete();
+        $thrown = null;
+    } catch (QueryException $exception) {
+        $thrown = $exception;
+    }
 
-    $this->batch->delete();
-
-    expect(DB::table('batch_instructor')->where('batch_id', $this->batch->getKey())->count())->toBe(0)
-        // Only this batch's rows went; the other batch is untouched.
-        ->and(DB::table('batch_instructor')->count())->toBe(1)
-        // And both accounts survive: batches are deleted, people are not.
+    expect($thrown)->toBeInstanceOf(QueryException::class)
+        // 1451 exactly, not merely "something threw": a lost connection would
+        // also be a QueryException and would prove nothing about the restriction.
+        ->and($thrown->errorInfo[1] ?? null)->toBe(1451)
+        ->and(Batch::whereKey($this->batch->getKey())->exists())->toBeTrue()
+        ->and(DB::table('batch_instructor')->count())->toBe(2)
+        // And both accounts survive either way: batches are deleted, people are not.
         ->and(User::whereKey([$sara->getKey(), $omar->getKey()])->count())->toBe(2);
+});
+
+it('deletes a batch that holds no allocations at all', function () {
+    // The positive control. Without it the restriction above is
+    // indistinguishable from a delete path that is simply broken.
+    $spare = Batch::factory()->for($this->course)->active()->create();
+
+    $spare->delete();
+
+    expect(Batch::whereKey($spare->getKey())->exists())->toBeFalse();
 });
 
 it('refuses at the foreign key to hard-delete an instructor holding allocations', function () {
