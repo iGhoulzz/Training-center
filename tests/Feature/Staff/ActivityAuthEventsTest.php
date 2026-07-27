@@ -1,0 +1,274 @@
+<?php
+
+declare(strict_types=1);
+
+use App\Domain\Staff\Actions\DeleteStaffPhotoAction;
+use App\Domain\Staff\Actions\DeleteStaffProfileAction;
+use App\Domain\Staff\Actions\ResetUserPasswordAction;
+use App\Domain\Staff\Actions\SyncUserRolesAction;
+use App\Domain\Staff\Actions\SystemRoleWriter;
+use App\Domain\Staff\Actions\UpdateRolePermissionsAction;
+use App\Domain\Staff\Models\StaffCertificate;
+use App\Domain\Staff\Models\StaffProfile;
+use App\Filament\Pages\PasswordChange;
+use App\Models\Role;
+use App\Models\User;
+use Database\Seeders\RolePermissionSeeder;
+use Illuminate\Auth\Events\Failed;
+use Illuminate\Auth\Events\Login;
+use Illuminate\Auth\Events\Logout;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Event;
+use Spatie\Activitylog\Models\Activity;
+use Spatie\Permission\Models\Permission;
+
+uses(RefreshDatabase::class);
+
+beforeEach(function () {
+    $this->seed(RolePermissionSeeder::class);
+
+    $this->system = app(SystemRoleWriter::class);
+
+    $this->actorWith = function (string $role): User {
+        $user = User::factory()->create(['is_active' => true]);
+        $this->system->assignRoles($user, $role);
+
+        return $user->refresh();
+    };
+
+    $this->superAdmin = ($this->actorWith)('super_admin');
+
+    $this->entriesForEvent = fn (string $event) => Activity::query()
+        ->where('event', $event)
+        ->latest('id')
+        ->get();
+});
+
+/*
+|--------------------------------------------------------------------------
+| Authentication
+|--------------------------------------------------------------------------
+*/
+
+it('logs a successful sign-in against the account', function () {
+    $user = ($this->actorWith)('admin');
+
+    Event::dispatch(new Login('web', $user, false));
+
+    $entry = ($this->entriesForEvent)('logged_in')->first();
+
+    expect($entry)->not->toBeNull()
+        ->and($entry->log_name)->toBe('auth')
+        ->and((int) $entry->causer_id)->toBe((int) $user->getKey())
+        ->and($entry->getProperty('ip'))->toBe(request()->ip());
+});
+
+it('logs a sign-out', function () {
+    $user = ($this->actorWith)('admin');
+
+    Event::dispatch(new Logout('web', $user));
+
+    expect(((int) ($this->entriesForEvent)('logged_out')->first()->causer_id))
+        ->toBe((int) $user->getKey());
+});
+
+it('logs a failed attempt with the attempted email and no causer', function () {
+    /*
+     * A failed attempt has NO causer — the whole point is that nobody proved who
+     * they were. The identifier is recorded so a run of attempts against one
+     * account is visible; the submitted password never is, not even hashed.
+     */
+    Event::dispatch(new Failed('web', null, [
+        'email' => 'someone@example.test',
+        'password' => 'the-attempted-secret',
+    ]));
+
+    $entry = ($this->entriesForEvent)('login_failed')->first();
+
+    expect($entry)->not->toBeNull()
+        ->and($entry->causer_id)->toBeNull()
+        ->and($entry->getProperty('email'))->toBe('someone@example.test')
+        ->and($entry->getProperty('ip'))->toBe(request()->ip())
+        ->and(json_encode($entry->properties->all()))->not->toContain('the-attempted-secret');
+});
+
+/*
+|--------------------------------------------------------------------------
+| Password events, which the diff cannot carry
+|--------------------------------------------------------------------------
+*/
+
+it('records an administrator resetting somebody else s password', function () {
+    /*
+     * `password` is excluded from the diff, so without an explicit event this
+     * would be invisible — and on an account already flagged for rotation the
+     * change set would be empty and suppressed entirely.
+     */
+    $target = User::factory()->create(['must_change_password' => true]);
+
+    $plain = app(ResetUserPasswordAction::class)->execute($this->superAdmin, $target);
+
+    $entry = ($this->entriesForEvent)('password_reset')->first();
+
+    expect($entry)->not->toBeNull()
+        ->and((int) $entry->subject_id)->toBe((int) $target->getKey())
+        ->and((int) $entry->causer_id)->toBe((int) $this->superAdmin->getKey());
+
+    // The new password never reaches the log, in any column.
+    $everything = json_encode([$entry->properties->all(), $entry->attribute_changes?->all()]);
+
+    expect($everything)->not->toContain($plain)
+        ->and($everything)->not->toContain('$2y$');
+});
+
+it('records somebody changing their own password', function () {
+    // Kept distinct from a reset: they answer different questions, and only one
+    // of them involves a second party.
+    $user = ($this->actorWith)('admin');
+    $this->actingAs($user);
+
+    Livewire::test(PasswordChange::class)
+        ->fillForm(['password' => 'a-fresh-secret-1', 'password_confirmation' => 'a-fresh-secret-1'])
+        ->call('save');
+
+    $entry = ($this->entriesForEvent)('password_changed')->first();
+
+    expect($entry)->not->toBeNull()
+        ->and((int) $entry->causer_id)->toBe((int) $user->getKey());
+
+    expect(json_encode(Activity::query()->get()->toArray()))->not->toContain('a-fresh-secret-1');
+});
+
+/*
+|--------------------------------------------------------------------------
+| Pivot changes, which fire no model event
+|--------------------------------------------------------------------------
+*/
+
+it('records a role assignment against the account', function () {
+    $target = User::factory()->create(['is_active' => true]);
+
+    app(SyncUserRolesAction::class)->execute($this->superAdmin, $target, ['staff']);
+
+    $entry = ($this->entriesForEvent)('roles_changed')->first();
+
+    expect($entry)->not->toBeNull()
+        ->and((int) $entry->subject_id)->toBe((int) $target->getKey())
+        ->and((int) $entry->causer_id)->toBe((int) $this->superAdmin->getKey())
+        ->and($entry->getProperty('added'))->toBe(['staff'])
+        ->and($entry->getProperty('removed'))->toBe([]);
+});
+
+it('records a permission change against the role', function () {
+    $role = Role::findOrCreate('registrar', 'web');
+
+    app(UpdateRolePermissionsAction::class)
+        ->execute($this->superAdmin, $role, ['view_any_student']);
+
+    $entry = ($this->entriesForEvent)('permissions_changed')->first();
+
+    expect($entry)->not->toBeNull()
+        ->and((int) $entry->subject_id)->toBe((int) $role->getKey())
+        ->and($entry->getProperty('added'))->toBe(['view_any_student']);
+});
+
+it('writes no event when a role sync changes nothing', function () {
+    // Repeatable seeding must not manufacture audit events. A second identical
+    // sync is a no-op and records nothing.
+    $target = User::factory()->create(['is_active' => true]);
+
+    app(SyncUserRolesAction::class)->execute($this->superAdmin, $target, ['staff']);
+    $after = ($this->entriesForEvent)('roles_changed')->count();
+
+    app(SyncUserRolesAction::class)->execute($this->superAdmin, $target, ['staff']);
+
+    expect(($this->entriesForEvent)('roles_changed')->count())->toBe($after);
+});
+
+it('writes no event when a permission sync changes nothing', function () {
+    $role = Role::findOrCreate('registrar', 'web');
+    $permissions = [Permission::findByName('view_any_student', 'web')->name];
+
+    app(UpdateRolePermissionsAction::class)->execute($this->superAdmin, $role, $permissions);
+    $after = ($this->entriesForEvent)('permissions_changed')->count();
+
+    app(UpdateRolePermissionsAction::class)->execute($this->superAdmin, $role, $permissions);
+
+    expect(($this->entriesForEvent)('permissions_changed')->count())->toBe($after);
+});
+
+it('attributes a system write to nobody, even with a user signed in', function () {
+    /*
+     * SystemRoleWriter runs from seeders and console commands, where whatever
+     * session happens to exist is not the author of the change. Attributing a
+     * seeder's rewrite of the permission matrix to whoever was logged in names a
+     * person for something they did not do.
+     */
+    $this->actingAs($this->superAdmin);
+
+    $target = User::factory()->create(['is_active' => true]);
+    $this->system->assignRoles($target, 'staff');
+
+    $entry = Activity::query()
+        ->where('event', 'roles_changed')
+        ->where('subject_id', $target->getKey())
+        ->latest('id')
+        ->first();
+
+    expect($entry)->not->toBeNull()
+        ->and($entry->causer_id)->toBeNull()
+        ->and($entry->causer_type)->toBeNull();
+});
+
+/*
+|--------------------------------------------------------------------------
+| Deletes the database performs, which fire no model event
+|--------------------------------------------------------------------------
+*/
+
+it('records certificates removed by the profile cascade', function () {
+    /*
+     * staff_certificates.staff_profile_id is cascadeOnDelete, so the DATABASE
+     * removes those rows and no Eloquent event fires. Without the explicit
+     * record they would simply cease to exist, with nothing saying they had.
+     */
+    $profile = StaffProfile::factory()->create();
+    $certificates = StaffCertificate::factory()->count(2)->for($profile)->create();
+
+    app(DeleteStaffProfileAction::class)->execute($this->superAdmin, $profile);
+
+    $entries = ($this->entriesForEvent)('deleted_by_cascade');
+
+    expect($entries)->toHaveCount(2)
+        ->and($entries->pluck('subject_id')->map(fn ($id): int => (int) $id)->sort()->values()->all())
+        ->toBe($certificates->pluck('id')->map(fn ($id): int => (int) $id)->sort()->values()->all());
+
+    // Titles, not storage paths.
+    $everything = json_encode($entries->pluck('properties')->toArray());
+
+    expect($everything)->not->toContain('.pdf')
+        ->and($everything)->not->toContain('staff-certificates/');
+});
+
+/*
+|--------------------------------------------------------------------------
+| Photo events, which the diff cannot carry either
+|--------------------------------------------------------------------------
+*/
+
+it('records a photo removal without the path', function () {
+    $profile = StaffProfile::factory()->create([
+        'profile_photo_path' => 'staff-photos/personal-name-here.png',
+    ]);
+
+    app(DeleteStaffPhotoAction::class)
+        ->execute($this->superAdmin, $profile);
+
+    $entry = ($this->entriesForEvent)('photo_removed')->first();
+
+    expect($entry)->not->toBeNull()
+        ->and((int) $entry->subject_id)->toBe((int) $profile->getKey());
+
+    expect(json_encode(Activity::query()->get()->toArray()))
+        ->not->toContain('personal-name-here');
+});

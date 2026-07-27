@@ -65,10 +65,11 @@ final class UpdateRolePermissionsAction
          * written outside the transaction would survive a rollback and claim a
          * permission change that never landed.
          */
-        DB::transaction(function () use ($role, $desired, $adding, $removing): void {
+        DB::transaction(function () use ($actor, $role, $desired, $adding, $removing): void {
             $role->syncPermissions($desired);
 
             activity()
+                ->causedBy($actor)
                 ->performedOn($role)
                 ->event('permissions_changed')
                 ->withProperties(['added' => $adding, 'removed' => $removing])

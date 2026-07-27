@@ -48,12 +48,21 @@ return [
      * These attributes will be excluded from logging for all models.
      * Model-specific exclusions via logExcept() are merged with these.
      *
-     * A BACKSTOP, NOT THE PRIMARY DEFENCE. Every audited model declares an
-     * explicit logOnly() allowlist, so a column is unlogged until somebody
-     * decides it belongs — the failure mode is "misses by default" rather than
-     * "leaks by default". This list catches a model that is ever switched to
-     * logFillable()/logAll(), and is pinned by its own test because with
-     * allowlists in place emptying it exposes nothing and could rot unnoticed.
+     * THE EFFECTIVE DEFENCE FOR SECRETS, AND NOT MERELY A BACKSTOP.
+     *
+     * LogsActivity::excludedAttributes() merges this list on top of whatever the
+     * model's logOnly() allowlist selected, so it wins: `password` is stripped
+     * even if a model names it. Verified by mutation — adding `password` to
+     * User's allowlist alone changes nothing; only removing it from BOTH exposes
+     * the hash.
+     *
+     * The two layers are therefore independent and are tested independently:
+     * this list is pinned by its own assertion, and each model's allowlist is
+     * asserted not to name a secret. Neither test can stand in for the other.
+     *
+     * The allowlists remain the primary control over what is logged AT ALL —
+     * "misses by default" rather than "leaks by default" for every ordinary
+     * column — but for credentials this list is what actually holds.
      */
     'default_except_attributes' => [
         'password',

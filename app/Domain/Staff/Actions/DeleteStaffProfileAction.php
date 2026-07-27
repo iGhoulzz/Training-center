@@ -111,6 +111,7 @@ final class DeleteStaffProfileAction
              */
             foreach ($certificates as $certificate) {
                 activity()
+                    ->causedBy($actor)
                     ->performedOn($certificate)
                     ->event('deleted_by_cascade')
                     ->withProperties([

@@ -41,7 +41,7 @@ final class ResetUserPasswordAction
          * The write and its audit entry share one transaction, so a reset that
          * rolls back leaves no record claiming it happened.
          */
-        DB::transaction(function () use ($target, $plain): void {
+        DB::transaction(function () use ($actor, $target, $plain): void {
             $target->forceFill([
                 'password' => Hash::make($plain),
                 'must_change_password' => true,
@@ -63,6 +63,7 @@ final class ResetUserPasswordAction
              * WHEN, and the secret itself is never part of that answer.
              */
             activity()
+                ->causedBy($actor)
                 ->performedOn($target)
                 ->event('password_reset')
                 ->log('password_reset');

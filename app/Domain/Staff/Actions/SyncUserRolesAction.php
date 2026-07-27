@@ -77,7 +77,7 @@ final class SyncUserRolesAction
          * The no-op return above means a repeated sync writes nothing at all: a
          * seeder run twice must not manufacture a second "roles changed" event.
          */
-        DB::transaction(function () use ($target, $desired, $adding, $removing): void {
+        DB::transaction(function () use ($actor, $target, $desired, $adding, $removing): void {
             // Guard 3: only a super-admin removal can shrink the population, so
             // only that write needs the locked, atomic invariant check.
             if (in_array(Role::SUPER_ADMIN, $removing, true)) {
@@ -87,6 +87,7 @@ final class SyncUserRolesAction
             }
 
             activity()
+                ->causedBy($actor)
                 ->performedOn($target)
                 ->event('roles_changed')
                 ->withProperties(['added' => $adding, 'removed' => $removing])
