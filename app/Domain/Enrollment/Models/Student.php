@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Domain\Enrollment\Models;
 
 use App\Domain\Enrollment\Enums\StudentStatus;
+use App\Domain\Staff\Support\RecordsActivity;
 use App\Models\User;
 use Database\Factories\StudentFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
@@ -45,6 +46,8 @@ class Student extends Model
 {
     /** @use HasFactory<StudentFactory> */
     use HasFactory, SoftDeletes;
+
+    use RecordsActivity;
 
     /**
      * The portal account for this student, if one was ever issued.
@@ -102,6 +105,30 @@ class Student extends Model
     protected function fullName(): Attribute
     {
         return Attribute::get(fn (): string => trim("{$this->first_name} {$this->last_name}"));
+    }
+
+    /**
+     * The whole record, national_id included. This is personal data and it is in
+     * the audit trail on purpose: the log is admin-only (view_any_activity), and
+     * "who changed this student's national ID" is precisely the question a
+     * register has to be able to answer.
+     */
+    public function auditedAttributes(): array
+    {
+        return [
+            'user_id',
+            'student_code',
+            'first_name',
+            'last_name',
+            'email',
+            'phone',
+            'national_id',
+            'date_of_birth',
+            'gender',
+            'address',
+            'status',
+            'notes',
+        ];
     }
 
     /**

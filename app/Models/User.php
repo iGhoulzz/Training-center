@@ -6,6 +6,7 @@ namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use App\Domain\Staff\Models\StaffProfile;
+use App\Domain\Staff\Support\RecordsActivity;
 use Database\Factories\UserFactory;
 use Filament\Models\Contracts\FilamentUser;
 use Filament\Panel;
@@ -45,7 +46,7 @@ use Spatie\Permission\Traits\HasRoles;
 class User extends Authenticatable implements FilamentUser
 {
     /** @use HasFactory<UserFactory> */
-    use HasFactory, HasRoles, Notifiable, SoftDeletes;
+    use HasFactory, HasRoles, Notifiable, RecordsActivity, SoftDeletes;
 
     /**
      * Panel access is permission-based, never role-based.
@@ -113,6 +114,33 @@ class User extends Authenticatable implements FilamentUser
      *
      * @return array<string, string>
      */
+    /**
+     * The account columns worth an audit diff.
+     *
+     * password and remember_token are absent by design and must stay absent: a
+     * hash in an audit trail is a credential in a table many people can read.
+     * A password change is recorded as its own semantic event instead — see
+     * ResetUserPasswordAction — because excluding the column alone would leave
+     * an empty diff that is suppressed, making the security event invisible.
+     *
+     * must_change_password IS listed. It is a flag, not a secret, and "who
+     * forced this account to rotate its password" is exactly an audit question.
+     *
+     * last_login_at is absent deliberately: it moves on every sign-in and would
+     * bury real changes under one "user updated" per login. Logins are recorded
+     * as auth events, which is where they belong.
+     */
+    public function auditedAttributes(): array
+    {
+        return [
+            'name',
+            'email',
+            'locale',
+            'is_active',
+            'must_change_password',
+        ];
+    }
+
     protected function casts(): array
     {
         return [

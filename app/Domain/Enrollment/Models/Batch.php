@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Domain\Enrollment\Models;
 
 use App\Domain\Enrollment\Enums\BatchStatus;
+use App\Domain\Staff\Support\RecordsActivity;
 use App\Models\User;
 use Database\Factories\BatchFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
@@ -51,6 +52,8 @@ class Batch extends Model
 {
     /** @use HasFactory<BatchFactory> */
     use HasFactory;
+
+    use RecordsActivity;
 
     /**
      * The alias BatchResource selects the instructor-hours SUM into.
@@ -268,6 +271,21 @@ class Batch extends Model
         return Attribute::get(
             fn (): int => $this->total_hours ?? $this->course->total_hours,
         );
+    }
+
+    /** Instructor hours live on batch_instructor and are audited by their Actions. */
+    public function auditedAttributes(): array
+    {
+        return [
+            'course_id',
+            'code',
+            'start_date',
+            'end_date',
+            'capacity',
+            'total_hours',
+            'price',
+            'status',
+        ];
     }
 
     /**

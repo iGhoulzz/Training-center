@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Enrollment\Models;
 
+use App\Domain\Staff\Support\RecordsActivity;
 use Database\Factories\CourseFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Builder;
@@ -41,6 +42,8 @@ class Course extends Model
 {
     /** @use HasFactory<CourseFactory> */
     use HasFactory;
+
+    use RecordsActivity;
 
     /**
      * Every intake of this course, past and present.
@@ -83,6 +86,19 @@ class Course extends Model
         return app()->getLocale() === 'ar' && filled($this->name_ar)
             ? (string) $this->name_ar
             : (string) $this->name_en;
+    }
+
+    /** price is phase 2's, but a change to it is audited from the first commit. */
+    public function auditedAttributes(): array
+    {
+        return [
+            'code',
+            'name',
+            'description',
+            'total_hours',
+            'price',
+            'status',
+        ];
     }
 
     /**

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Domain\Staff\Models;
 
 use App\Domain\Staff\Enums\EmploymentType;
+use App\Domain\Staff\Support\RecordsActivity;
 use App\Models\User;
 use Database\Factories\StaffProfileFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
@@ -36,6 +37,8 @@ class StaffProfile extends Model
 {
     /** @use HasFactory<StaffProfileFactory> */
     use HasFactory;
+
+    use RecordsActivity;
 
     /**
      * withTrashed() is required, not a convenience.
@@ -96,6 +99,23 @@ class StaffProfile extends Model
             0,
             2,
         );
+    }
+
+    /**
+     * profile_photo_path is absent: a storage path is not an audit fact, and a
+     * filename can carry a person's name. Photo changes are recorded as semantic
+     * upload/replacement/removal events without the path.
+     */
+    public function auditedAttributes(): array
+    {
+        return [
+            'user_id',
+            'employment_type',
+            'job_title',
+            'hired_on',
+            'left_on',
+            'notes',
+        ];
     }
 
     /**
