@@ -195,10 +195,13 @@ class EnrollmentsRelationManager extends RelationManager
         // No bulk actions, deliberately. See the class docblock.
     }
 
-    /** `TC-0042 — Fatima Zarrouk`, so two students of the same name are distinguishable. */
+    /** Include code and name, so two students with the same name remain distinguishable. */
     private static function studentLabel(Student $student): string
     {
-        return "{$student->student_code} — {$student->full_name}";
+        return __('enrollment.student_option_label', [
+            'code' => $student->student_code,
+            'name' => $student->full_name,
+        ]);
     }
 
     /**

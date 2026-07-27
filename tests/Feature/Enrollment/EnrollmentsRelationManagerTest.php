@@ -17,12 +17,24 @@ use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Filament\Actions\Action;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Lang;
 use Livewire\Livewire;
 
 uses(RefreshDatabase::class);
 
 beforeEach(function () {
     $this->seed(RolePermissionSeeder::class);
+
+    /*
+     * Sentinels rather than the eventual English copy. These prove the visible
+     * composite values are controlled by translations; hardcoded separators or
+     * ordering cannot accidentally satisfy the assertions.
+     */
+    Lang::addLines([
+        'enrollment.student_option_label' => 'student=:code|name=:name',
+        'enrollment.enrolment_load_value' => 'load=:active|limit=:capacity',
+        'enrollment.no_capacity_limit_short' => 'unlimited',
+    ], app()->getLocale());
 
     $this->system = app(SystemRoleWriter::class);
 
@@ -277,7 +289,7 @@ it('labels each result with the code and the full name', function () {
     ]);
 
     expect(EnrollmentsRelationManager::searchStudents('Zarrouk')[(int) $student->getKey()])
-        ->toBe('TC-0042 — Fatima Zarrouk');
+        ->toBe('student=TC-0042|name=Fatima Zarrouk');
 });
 
 it('rehydrates the label of an already-selected student without searching', function () {
@@ -291,7 +303,7 @@ it('rehydrates the label of an already-selected student without searching', func
     ]);
 
     expect(EnrollmentsRelationManager::studentOptionLabel($student->getKey()))
-        ->toBe('TC-0042 — Fatima Zarrouk')
+        ->toBe('student=TC-0042|name=Fatima Zarrouk')
         ->and(EnrollmentsRelationManager::studentOptionLabel(999999))->toBeNull();
 });
 
@@ -388,6 +400,9 @@ it('shows seats taken against seats available, and only warns when over', functi
     $within = Batch::factory()->for($this->course)->active()->create(['capacity' => 2]);
     Enrollment::factory()->count(2)->for($within)->create();
 
+    $unlimited = Batch::factory()->for($this->course)->active()->create(['capacity' => 0]);
+    Enrollment::factory()->for($unlimited)->create();
+
     $loaded = fn (Batch $batch): Batch => BatchResource::getEloquentQuery()
         ->whereKey($batch->getKey())
         ->sole();
@@ -400,6 +415,7 @@ it('shows seats taken against seats available, and only warns when over', functi
     Livewire::actingAs(($this->makeUser)('admin'))
         ->test(ListBatches::class)
         ->assertSuccessful()
-        ->assertSee('3 / 2')
-        ->assertSee('2 / 2');
+        ->assertSee('load=3|limit=2')
+        ->assertSee('load=2|limit=2')
+        ->assertSee('load=1|limit=unlimited');
 });

@@ -585,11 +585,14 @@ it('reads the instructor assignment with FOR UPDATE, after the batch lock, in th
     }
 });
 
-it('refuses a withdrawal whose assignment was revoked before the mutex was taken', function () {
+it('refuses a withdrawal when the binding locking check sees the assignment removed', function () {
     /*
-     * The behavioural half of the test above. The assignment is removed after the
-     * Action has begun — after its snapshot exists — and the locking read must
-     * still see the removal.
+     * The behavioural half of the test above. The listener removes the assignment
+     * on this connection after the batch lock statement and before the binding
+     * pivot read. This deliberately does NOT claim to simulate a second committed
+     * connection: it forces the binding answer to false and proves the Action
+     * refuses directly from that answer. Removing the AuthorizationException in
+     * WithdrawEnrollmentAction makes the status assertion fail.
      */
     $staff = ($this->actorWith)('staff');
     StaffProfile::factory()->for($staff)->instructor()->create();

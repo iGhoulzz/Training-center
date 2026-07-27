@@ -327,8 +327,12 @@ class BatchResource extends Resource
                  */
                 TextColumn::make('enrolment_load')
                     ->label(__('enrollment.enrolment_load'))
-                    ->state(fn (Batch $record): string => $record->activeEnrollmentCount()
-                        .' / '.($record->capacity > 0 ? (string) $record->capacity : '—'))
+                    ->state(fn (Batch $record): string => __('enrollment.enrolment_load_value', [
+                        'active' => $record->activeEnrollmentCount(),
+                        'capacity' => $record->capacity > 0
+                            ? (string) $record->capacity
+                            : __('enrollment.no_capacity_limit_short'),
+                    ]))
                     ->badge()
                     ->color(fn (Batch $record): string => $record->isOverCapacity() ? 'warning' : 'gray')
                     ->tooltip(fn (Batch $record): ?string => $record->isOverCapacity()

@@ -147,6 +147,56 @@ it('lets an admin delete an enrollment', function () {
         ->allows('delete', Enrollment::factory()->create()))->toBeTrue();
 });
 
+it('pins the seeded enrollment permission matrix for every role', function () {
+    /*
+     * Policy-mechanics tests cannot catch a seeder mistake. In particular, every
+     * direct-permission test below would stay green if the student role were
+     * accidentally granted create_enrollment or delete_enrollment.
+     */
+    $enrollmentPermissions = [
+        'view_any_enrollment',
+        'view_enrollment',
+        'create_enrollment',
+        'update_enrollment',
+        'update_assigned_batch_enrollment',
+        'delete_enrollment',
+    ];
+
+    $expected = [
+        'super_admin' => $enrollmentPermissions,
+        'admin' => [
+            'view_any_enrollment',
+            'view_enrollment',
+            'create_enrollment',
+            'update_enrollment',
+            'delete_enrollment',
+        ],
+        'staff' => [
+            'view_any_enrollment',
+            'view_enrollment',
+            'create_enrollment',
+            'update_assigned_batch_enrollment',
+        ],
+        // Phase 3 adds access to the student's own records. Phase 1 grants none.
+        'student' => [],
+    ];
+
+    foreach ($expected as $roleName => $grants) {
+        $actual = Role::findByName($roleName, 'web')
+            ->permissions
+            ->pluck('name')
+            ->intersect($enrollmentPermissions)
+            ->sort()
+            ->values()
+            ->all();
+
+        expect($actual)->toBe(
+            collect($grants)->sort()->values()->all(),
+            "{$roleName} enrollment grants do not match the permission matrix.",
+        );
+    }
+});
+
 /*
 |--------------------------------------------------------------------------
 | Arbitrary roles — the policy must not know the seeded names

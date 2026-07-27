@@ -13,7 +13,6 @@ use App\Domain\Enrollment\Support\EnrollmentUpdateRule;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Gate;
 
 /**
  * Take a student off a batch.
@@ -34,18 +33,17 @@ use Illuminate\Support\Facades\Gate;
  *
  * THE AUTHORIZATION THAT BINDS IS THE LOCKING ONE
  * -----------------------------------------------
- * Gate::authorize() is NOT what decides this write. The registered policy reads
- * the pivot with an ordinary SELECT, and under REPEATABLE READ that is served
- * from the snapshot this transaction established with its own first statement —
- * before the batch mutex was taken. An assignment revoked in that window would
- * still read as present.
+ * The registered policy is NOT what decides this write. It reads the pivot with
+ * an ordinary SELECT, and under REPEATABLE READ that is served from the snapshot
+ * this transaction established with its own first statement — before the batch
+ * mutex was taken. An assignment revoked in that window would still read as
+ * present.
  *
  * So the rule is asked again with locking: true, after the mutex, and THAT answer
- * is final. The Gate is then re-entered only to produce the refusal, so the
- * response comes from the policy rather than being invented here — the same
- * reason AssignInstructorAction re-enters it. If the Gate disagrees, the locking
- * read wins and the refusal is thrown by hand, because disagreeing is precisely
- * the stale-snapshot case this exists to catch.
+ * is final. A denial is thrown directly from that answer. Re-entering the Gate
+ * here would ask the ordinary-read policy for a second, potentially stale answer
+ * and would need a separate fallback branch to stop an outdated "allowed"
+ * response from reopening the write.
  *
  * IDEMPOTENT, AND TERMINAL
  * ------------------------
@@ -72,7 +70,7 @@ final class WithdrawEnrollmentAction
         return DB::transaction(function () use ($actor, $enrollment): Enrollment {
             $held = $this->mutex->acquire($enrollment);
 
-            $this->authorize($actor, $held->enrollment, $held->batchId);
+            $this->authorize($actor, $held->batchId);
 
             $locked = $held->enrollment;
 
@@ -90,23 +88,11 @@ final class WithdrawEnrollmentAction
         });
     }
 
-    /**
-     * Decide from the locking read; surface the refusal through the policy.
-     *
-     * See the class docblock for why the locking read is the one that binds.
-     */
-    private function authorize(User $actor, Enrollment $locked, int $batchId): void
+    /** Decide and, when necessary, refuse directly from the binding locking read. */
+    private function authorize(User $actor, int $batchId): void
     {
-        if ($this->rule->allows($actor, $batchId, locking: true)) {
-            return;
+        if (! $this->rule->allows($actor, $batchId, locking: true)) {
+            throw new AuthorizationException(__('enrollment.enrollment_change_denied'));
         }
-
-        // Throws AuthorizationException carrying whatever response the policy
-        // produces. Deliberately re-entered rather than thrown by hand.
-        Gate::forUser($actor)->authorize('update', $locked);
-
-        // Reached only when the policy's snapshot-served read disagrees with the
-        // locking one. The locking read is the current state, so it wins.
-        throw new AuthorizationException(__('enrollment.enrollment_change_denied'));
     }
 }
