@@ -8061,6 +8061,16 @@ git commit -m "feat: add automated off-server daily database backups [P1-T13]"
 
 Structure only. Arabic translations arrive in phase 4; this task guarantees phase 4 is a translation exercise rather than a refactor.
 
+**T14 EXPANDS AN EXISTING CATALOGUE — IT DOES NOT CREATE ONE.** P1-T11 shipped
+`lang/en/enrollment.php` with three keys, because two visible values were being
+built by string interpolation (`":code — :name"` and `":active / :capacity"`) and
+the separator and the ORDER of those parts are both localisable — RTL flips them.
+Any step here that assumes `lang/` is empty, or that recreates that file, is
+wrong. The composite-format keys already in it are the pattern the rest of the
+catalogue should follow: named placeholders, so a translator can reorder without
+touching code, and tested with a sentinel translation rather than the English
+copy (asserting the English string passes just as well against a hardcode).
+
 **Files:**
 - Create: `lang/en/{staff,enrollment,auth}.php`
 - Create: `lang/ar/{staff,enrollment,auth}.php`
