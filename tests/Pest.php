@@ -2,9 +2,11 @@
 
 declare(strict_types=1);
 
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Testing\File;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 /*
@@ -141,5 +143,130 @@ function pdfUpload(string $clientName = 'diploma.pdf'): UploadedFile
     return uploadWithBytes(
         $clientName,
         "%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n",
+    );
+}
+
+/*
+|--------------------------------------------------------------------------
+| Statement capture, for proving locks and transactions
+|--------------------------------------------------------------------------
+|
+| RefreshDatabase wraps every test in a transaction, so a lockForUpdate()
+| emits "for update" whether or not the Action under test opened one of its
+| own. Asserting the SQL alone therefore passes for an Action whose lock does
+| not survive its own return. These record the DEPTH each statement ran at.
+|
+| See P1-T10d: with DB::transaction() deleted from AssignInstructorAction,
+| every lock test still passed.
+*/
+
+/**
+ * Begin recording every statement with the transaction depth it executed at.
+ *
+ * An ArrayObject rather than an array because the listener keeps filling the
+ * same collection after this function returns, and an array would be a copy.
+ *
+ * @return ArrayObject<int, array{sql: string, bindings: array<int, mixed>, level: int}>
+ */
+function captureStatements(): ArrayObject
+{
+    /** @var ArrayObject<int, array{sql: string, bindings: array<int, mixed>, level: int}> $statements */
+    $statements = new ArrayObject;
+
+    DB::listen(function (QueryExecuted $query) use ($statements): void {
+        $statements->append([
+            'sql' => strtolower($query->sql),
+            'bindings' => $query->bindings,
+            'level' => DB::transactionLevel(),
+        ]);
+    });
+
+    return $statements;
+}
+
+/**
+ * The locking reads taken against $table.
+ *
+ * @param  ArrayObject<int, array{sql: string, bindings: array<int, mixed>, level: int}>  $statements
+ * @return array<int, array{sql: string, bindings: array<int, mixed>, level: int}>
+ */
+function locksOn(ArrayObject $statements, string $table): array
+{
+    return collect($statements)
+        ->filter(fn (array $statement): bool => str_contains($statement['sql'], ' for update')
+            && str_contains($statement['sql'], "from `{$table}`"))
+        ->values()
+        ->all();
+}
+
+/**
+ * The statements that wrote $table — insert, update or delete.
+ *
+ * All three count: a test watching only for inserts stops meaning anything the
+ * first time a row is changed rather than created.
+ *
+ * @param  ArrayObject<int, array{sql: string, bindings: array<int, mixed>, level: int}>  $statements
+ * @return array<int, array{sql: string, bindings: array<int, mixed>, level: int}>
+ */
+function writesTo(ArrayObject $statements, string $table): array
+{
+    return collect($statements)
+        ->filter(fn (array $statement): bool => preg_match(
+            '/^(insert into|update|delete from) `'.preg_quote($table, '/').'`/',
+            $statement['sql'],
+        ) === 1)
+        ->values()
+        ->all();
+}
+
+/**
+ * Every statement with its depth, for a failure message that says what DID run.
+ *
+ * @param  ArrayObject<int, array{sql: string, bindings: array<int, mixed>, level: int}>  $statements
+ */
+function describeStatements(ArrayObject $statements): string
+{
+    return $statements->count() === 0
+        ? 'none'
+        : collect($statements)
+            ->map(fn (array $statement): string => "[level {$statement['level']}] {$statement['sql']}")
+            ->implode(' | ');
+}
+
+/**
+ * Assert a statement ran exactly one transaction level deeper than the caller,
+ * against the expected row.
+ *
+ * THE DELTA, NOT THE ABSOLUTE LEVEL. Under RefreshDatabase the caller sits at
+ * level 1 and in production at level 0; asserting `level === 1` would pass for
+ * an Action that opens no transaction at all, which is precisely the bug this
+ * exists to catch. baseline + 1 means the same thing in both places.
+ *
+ * @param  array{sql: string, bindings: array<int, mixed>, level: int}  $statement
+ */
+function expectOneLevelDeeper(array $statement, int $baseline, int $rowId, string $what): void
+{
+    expect($statement['level'])->toBe(
+        $baseline + 1,
+        "{$what} ran at transaction level {$statement['level']}, expected ".($baseline + 1)
+        .' — one deeper than the caller. At the caller\'s own level the Action opened no '
+        .'transaction, so the lock releases immediately and guards nothing. SQL: '.$statement['sql'],
+    );
+
+    // Only the integer-ish bindings: a write also binds timestamps, and
+    // array_map('intval', ...) over a Carbon instance is a TypeError. in_array()
+    // rather than expect()->toContain(), which is variadic and would read a
+    // failure message as a second expected value.
+    $ids = array_values(array_filter(array_map(
+        fn (mixed $binding): ?int => is_int($binding) || (is_string($binding) && ctype_digit($binding))
+            ? (int) $binding
+            : null,
+        $statement['bindings'],
+    ), fn (?int $binding): bool => $binding !== null));
+
+    expect(in_array($rowId, $ids, true))->toBeTrue(
+        "{$what} did not bind row id {$rowId}, so it addressed something other than the row under "
+        .'test. Integer bindings seen: '.($ids === [] ? 'none' : implode(', ', $ids))
+        .'. SQL: '.$statement['sql'],
     );
 }

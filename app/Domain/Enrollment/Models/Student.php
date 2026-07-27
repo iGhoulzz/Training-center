@@ -13,18 +13,17 @@ use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 /**
  * A person the centre teaches.
  *
  * The record stands on its own: it carries the student's name, contact details
- * and status, and none of that depends on a login existing. P1-T11 hangs
- * enrolments off this model; that relation is deliberately absent here because
- * the Enrollment model does not exist yet, and a placeholder pointing at a
- * missing class is a fatal error waiting for the first eager load.
+ * and status, and none of that depends on a login existing. P1-T11 hung
+ * enrolments off this model.
  *
- * Configuration only — casts, one relationship, one scope, one display
+ * Configuration only — casts, two relationships, one scope, one display
  * accessor. No business logic and no write guards; see App\Models\User for why
  * that architecture was removed in P1-T04c.
  */
@@ -63,6 +62,21 @@ class Student extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    /**
+     * Every batch this student has been placed on.
+     *
+     * Survives the student's own soft delete, because enrollments.student_id is
+     * restrictOnDelete and the rows outlive the scope on this model.
+     *
+     * NOT A WRITE PATH — see Batch::enrollments().
+     *
+     * @return HasMany<Enrollment, $this>
+     */
+    public function enrollments(): HasMany
+    {
+        return $this->hasMany(Enrollment::class);
     }
 
     /**

@@ -34,6 +34,11 @@ class RolePermissionSeeder extends Seeder
         'reset_user_password',
         'assign_instructor',
         'manage_settings',
+        // "May edit enrolments, but only on batches this actor is assigned to
+        // teach." Separate from update_enrollment, which is unrestricted, so the
+        // scope distinction in spec line 110 is carried by permissions rather
+        // than by a role check. See EnrollmentPolicy::update().
+        'update_assigned_batch_enrollment',
     ];
 
     /**
@@ -115,7 +120,12 @@ class RolePermissionSeeder extends Seeder
             'view_any_course', 'view_course',
             'view_any_batch', 'view_batch',
             'view_any_enrollment', 'view_enrollment',
-            'create_enrollment', 'update_enrollment',
+            // Creation is unscoped: a front-desk staffer enrols walk-ins into any
+            // open batch. Editing is not — the scoped ability below is restricted
+            // to batches this actor teaches. Deliberately NOT update_enrollment,
+            // which is the unrestricted grant; holding it would make
+            // EnrollmentPolicy::update() return true before the scoping ran.
+            'create_enrollment', 'update_assigned_batch_enrollment',
             'access_admin_panel',
         ]);
 

@@ -121,6 +121,12 @@ Authorization is **permission-based, never role-based, in code**. Always `$user-
 
 The students row previously read "view all, edit own batches", which conflated two different things: a student **record**, and the **enrolments** that place a student in a batch. Staff scope applies to the latter. On student records staff hold **view and create** — they register walk-ins and see the whole register — but not update or delete, because correcting or removing an existing record is an administrative act. Create without update is deliberate; the two are separate grants and are tested as such.
 
+**How the enrolment scope is expressed (P1-T11).** "create/edit in own batches" is carried by two permissions, never by a role check. `update_enrollment` is unrestricted and is held by super admins and admins. `update_assigned_batch_enrollment` is the staff grant and is restricted to batches the actor is assigned to teach. Staff deliberately do **not** hold `update_enrollment`: holding it would satisfy the unrestricted branch first and the scoping would never run, while every scoped test still passed.
+
+"Own batches" is answered by the `batch_instructor` pivot and never by `staff_profiles.employment_type`. Employment type says what somebody *is*; the pivot says what they were actually put on. An administrative profile assigned to teach one batch may amend that batch's enrolments, and an instructor assigned to nothing may amend none — both correct, and neither expressible through employment type.
+
+**Creation is unscoped.** `create_enrollment` alone. A front-desk staffer must be able to enrol a walk-in (goal, section 1) and they teach nothing at all; scoping creation the way editing is scoped would make the system's stated purpose unreachable for the people it was written for. The asymmetry matches the reasoning applied to student records above.
+
 The "roles and permissions" row originally read `none` for admins while the row above granted them staff-account management. Those are incompatible once creating an account requires giving it a role: an admin could only ever produce an account that rolled back or could reach no panel. Admins therefore hold `assign_role`, and **guard 1 — not the absence of the permission — is the boundary**. Admins cannot manage the roles themselves (creating, renaming, deleting a role, or changing its permissions remains super-admin-only via `RolePolicy`); they can only assign existing roles below `super_admin` to users.
 
 The payment split is deliberate. Front-desk administrators must be able to record incoming money without a super admin present, but corrections and reversals are a separate, restricted capability — that boundary is what makes the audit trail meaningful.
@@ -211,10 +217,18 @@ The nullable `user_id` is deliberate: a student exists whether or not they ever 
 
 Where two instructors share a course, the hours belong to the *relationship*, not to either side. One instructor assigned to a 30-hour batch receives all 30; two may split 18/12 or any other distribution. The system warns when assigned hours do not sum to the batch total but does not block it, because genuine co-teaching means both instructors are present for all hours.
 
+**Both foreign keys restrict on delete (corrected in P1-T11).** `user_id` always did, because phase 2 pays wages from these rows and an instructor holding allocations must not be destroyable. `batch_id` originally cascaded, on the reasoning that "an allocation to a batch that no longer exists is not a dangling fact" — which was wrong, and never squared with the line beside it: the same row was protected from the instructor side and destroyable from the batch side, so tidying up a batch destroyed the record of work somebody may still be owed for. A batch carrying either enrolments or instructor hours is now undeletable, and the refusal comes from the database where it cannot be raced.
+
+**Deleting a batch goes through `DeleteBatchAction`**, which authorizes the actor, pre-checks both relations for a readable message, and converts **only** MySQL 1451 into a typed refusal. The pre-check is not race-safe and is not meant to be — the foreign keys are the guarantee, and converting any other driver error would report a deadlock or a lost connection as "this batch is still in use".
+
 **`enrollments`** — associative entity
 `id, student_id (FK), batch_id (FK), enrolled_at, status, completed_at, unique(student_id, batch_id)`
 
 Enrolling beyond a batch's capacity produces a warning, not a hard block.
+
+**What phase 1 actually ships (P1-T11):** enrolment, withdrawal and deletion. There is no completion path, because completion marking belongs to phase 3 (section 3) — `EnrollmentStatus::Completed` is therefore unreachable from the application in phase 1, and `completed_at` is a column nothing writes yet. Withdrawal is `active → withdrawn`, idempotent, and terminal; there is no generic status editing anywhere in the UI and deliberately no `withdrawn_at` column, since withdrawal is unambiguous from the status alone and a second timestamp would have to be kept consistent with it forever.
+
+Withdrawal and deletion are **not** gated on the batch's status — see the status rules below. Deleting an enrolment is a separate grant from withdrawing one: withdrawal keeps the record that the student was once on the batch, which is what phase 2 bills from, and deletion destroys it.
 
 Certificate issuance does not live as a boolean or timestamp on an enrollment. Phase 3 needs to preserve revocation and replacement history, so each issued physical certificate gets its own immutable issuance record.
 
@@ -236,7 +250,9 @@ Defined here so they are not invented inconsistently during implementation:
 
 A batch's status gates two specific operations, and only those two: `completed` and `cancelled` batches reject **new enrollments** and **instructor changes**.
 
-It is deliberately not a general edit freeze. Blocking all updates on a closed batch would make its own `status` column uneditable, so a mis-clicked "completed" could never be undone through the application and a typo in a finished batch's dates would need raw SQL. `BatchPolicy::update()` therefore checks the permission alone; the status gate lives on `assignInstructor()` and on the enrollment path.
+It is deliberately not a general edit freeze. Blocking all updates on a closed batch would make its own `status` column uneditable, so a mis-clicked "completed" could never be undone through the application and a typo in a finished batch's dates would need raw SQL. `BatchPolicy::update()` therefore checks the permission alone; the status gate lives on `assignInstructor()` and, since P1-T11, on `EnrollStudentAction`.
+
+The enumeration is exhaustive, and that matters in the other direction too: **withdrawing or deleting an enrolment on a closed batch is allowed**, because neither is a new enrolment nor an instructor change. A student recorded in error on a finished batch must stay removable, or the mistake is permanent.
 
 ### Note on price columns in phase 1
 

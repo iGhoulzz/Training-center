@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\Domain\Enrollment\Filament\Resources\BatchResource\Pages;
 
 use App\Domain\Enrollment\Filament\Resources\BatchResource;
-use Filament\Actions\DeleteAction;
 use Filament\Resources\Pages\EditRecord;
 
 /**
@@ -42,8 +41,9 @@ class EditBatch extends EditRecord
     protected function getHeaderActions(): array
     {
         return [
-            DeleteAction::make()
-                ->authorize('delete')
+            // The shared definition, so the edit page and the table row cannot
+            // drift apart on what a refused delete does.
+            BatchResource::deleteAction()
                 ->successRedirectUrl(fn (): string => BatchResource::getUrl('index')),
         ];
     }
