@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Domain\Enrollment\Models;
 
 use App\Domain\Enrollment\Enums\EnrollmentStatus;
+use App\Domain\Staff\Support\RecordsActivity;
 use Database\Factories\EnrollmentFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Builder;
@@ -42,6 +43,8 @@ class Enrollment extends Model
 {
     /** @use HasFactory<EnrollmentFactory> */
     use HasFactory;
+
+    use RecordsActivity;
 
     /**
      * The person enrolled.
@@ -88,6 +91,18 @@ class Enrollment extends Model
     public function scopeActive(Builder $query): void
     {
         $query->where('status', EnrollmentStatus::Active);
+    }
+
+    /** Phase 2 bills from these rows, so every column is auditable. */
+    public function auditedAttributes(): array
+    {
+        return [
+            'student_id',
+            'batch_id',
+            'enrolled_at',
+            'status',
+            'completed_at',
+        ];
     }
 
     /**

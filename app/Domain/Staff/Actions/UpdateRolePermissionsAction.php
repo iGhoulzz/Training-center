@@ -7,6 +7,7 @@ namespace App\Domain\Staff\Actions;
 use App\Models\Role;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 
 /**
@@ -39,8 +40,58 @@ final class UpdateRolePermissionsAction
             throw new AuthorizationException(__('staff.escalation.requires_assign_role'));
         }
 
-        Gate::forUser($actor)->authorize('update', $role);
+        $desired = array_values(array_unique($permissions));
 
-        $role->syncPermissions(array_values(array_unique($permissions)));
+        /*
+         * READ, DECIDE, WRITE AND LOG UNDER ONE LOCK.
+         *
+         * Computing the diff before the transaction let two concurrent syncs read
+         * the same "current" set and each record an added/removed list against a
+         * state that had already moved. The permissions would end up right and the
+         * audit trail would describe a change that never happened that way.
+         */
+        DB::transaction(function () use ($actor, $role, $desired): void {
+            $locked = Role::query()->lockForUpdate()->findOrFail($role->getKey());
+
+            /*
+             * AUTHORIZED AGAINST THE LOCKED ROW, INSIDE THE TRANSACTION.
+             *
+             * RolePolicy::update() refuses a role the ACTOR HOLDS — nobody edits
+             * the permissions of a role they are a member of. That question was
+             * previously asked before the lock, against the passed instance, and
+             * the answer could go stale in the gap: an actor granted the role
+             * between the check and the write kept an authorization that was no
+             * longer true, and the permission change landed anyway.
+             *
+             * Asking it here means the decision and the write are serialized by
+             * the same lock. Confirmed by regression test: granting the actor the
+             * role mid-transaction now refuses.
+             */
+            Gate::forUser($actor)->authorize('update', $locked);
+
+            $current = $locked->permissions()->pluck('name')->all();
+
+            $adding = array_values(array_diff($desired, $current));
+            $removing = array_values(array_diff($current, $desired));
+
+            /*
+             * A sync that changes nothing records nothing. Re-running the seeder,
+             * or re-saving an untouched permissions form, must not manufacture an
+             * audit event — a log full of "changed" entries where nothing changed
+             * is a log nobody reads.
+             */
+            if ($adding === [] && $removing === []) {
+                return;
+            }
+
+            $locked->syncPermissions($desired);
+
+            activity()
+                ->causedBy($actor)
+                ->performedOn($locked)
+                ->event('permissions_changed')
+                ->withProperties(['added' => $adding, 'removed' => $removing])
+                ->log('permissions_changed');
+        });
     }
 }

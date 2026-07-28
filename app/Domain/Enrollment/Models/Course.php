@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Enrollment\Models;
 
+use App\Domain\Staff\Support\RecordsActivity;
 use Database\Factories\CourseFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Builder;
@@ -41,6 +42,8 @@ class Course extends Model
 {
     /** @use HasFactory<CourseFactory> */
     use HasFactory;
+
+    use RecordsActivity;
 
     /**
      * Every intake of this course, past and present.
@@ -83,6 +86,31 @@ class Course extends Model
         return app()->getLocale() === 'ar' && filled($this->name_ar)
             ? (string) $this->name_ar
             : (string) $this->name_en;
+    }
+
+    /**
+     * BOTH LOCALE COLUMNS, and no `name`.
+     *
+     * There is no `name` column. Course::name() is a METHOD that resolves against
+     * the request locale, and listing it here made the audit read $course->name,
+     * which Eloquent resolved as a relationship accessor and broke every course
+     * test in the suite. The audited facts are the stored columns: name_en and
+     * name_ar change independently and a rename in either is worth recording.
+     *
+     * default_price is phase 2's, but a change to it is audited from commit one.
+     */
+    public function auditedAttributes(): array
+    {
+        return [
+            'code',
+            'name_en',
+            'name_ar',
+            'description_en',
+            'description_ar',
+            'total_hours',
+            'default_price',
+            'is_active',
+        ];
     }
 
     /**

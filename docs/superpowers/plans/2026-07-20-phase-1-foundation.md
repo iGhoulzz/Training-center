@@ -7683,13 +7683,15 @@ seconds.
    cannot reach auth events, which have no subject. One extension point covers
    both model-generated and explicit entries.
 
-6. **Password events are logged semantically, never by diff.** `password` and
-   `must_change_password` are excluded from diffs — which alone would make a
-   reset produce an empty change set that `dontLogEmptyChanges` (the v5 default)
-   suppresses entirely, so the security event would vanish. `ResetUserPasswordAction`
-   and the self-service password change therefore record their own events, with
-   no hash and no password in the properties.
+6. **Password events are logged semantically, never by diff.** `password` never
+   reaches a diff, so a reset would otherwise produce an empty change set that
+   `dontLogEmptyChanges` (the v5 default) suppresses — and the security event
+   would vanish. `ResetUserPasswordAction` and the self-service password change
+   record their own events, with no hash and no password in the properties.
 
+   `must_change_password` **is** audited: it is a flag, not a secret, and "who
+   forced this account to rotate" is an audit question. It lives in the allowlist
+   and NOT in the global exclusion list, which holds secrets only.
 7. **File columns are not retained in diffs.** `disk`, `path` and
    `original_filename` carry little audit value and a filename can contain
    personal information. Certificate and photo activity is recorded as a
@@ -7719,7 +7721,17 @@ seconds.
     refuses — which proves the policy ignores the grant rather than that nobody
     holds it.
 
-12. **Every Activity mutation ability returns `false` explicitly** — `create`,
+12. **`default_except_attributes` holds SECRETS ONLY.** It is merged *over* each
+    model's allowlist and wins, so it — not the allowlist — is what actually keeps
+    a password hash out of a diff. Noise suppression (`last_login_at`) belongs in
+    the allowlists instead; mixing the two produced a real contradiction, where
+    `User` documented `must_change_password` as audited while the global list
+    stripped it.
+13. **Pivot diffs are read, decided, written and logged under one lock.** Computing
+    the diff before the transaction lets two concurrent syncs each record an
+    added/removed list against a state that has already moved: the rows end up
+    right and the audit trail describes a change that never happened that way.
+14. **Every Activity mutation ability returns `false` explicitly** — `create`,
     `update`, `delete`, `deleteAny`, `forceDelete`, `forceDeleteAny`, `restore`,
     `restoreAny`, `replicate`, `reorder` — rather than relying on absent methods.
 
@@ -7730,9 +7742,13 @@ seconds.
 
 - Create: published `config/activitylog.php` and the activity-log migration
 - Create: `app/Domain/Staff/Support/RecordsActivity.php` — the shared audit trait
-- Create: `app/Domain/Staff/Support/ActivityContext.php` — the custom log action attaching IP
+- Create: `app/Domain/Staff/Support/RecordActivityWithContext.php` — the custom log
+  action attaching IP **and the actor-name snapshot**
 - Create: `app/Domain/Staff/Policies/ActivityPolicy.php`
-- Create: `app/Domain/Staff/Filament/Resources/ActivityResource.php` (+ its List/View pages)
+- Create: `app/Domain/Staff/Filament/Resources/ActivityResource.php` + its List and
+  View pages. Both read-only; the View page exists because an entry's full
+  property set does not fit a table row, and truncating it left the explicit
+  events' substance — which roles, whose email — effectively invisible.
 - Create: `tests/Feature/Staff/ActivityLogTest.php` — model events, diffs, IP, rollback
 - Create: `tests/Feature/Staff/ActivityAppendOnlyTest.php` — policy, UI, architecture
 - Create: `tests/Feature/Staff/ActivityAuthEventsTest.php` — login/logout/failed, password events
@@ -7750,8 +7766,11 @@ seconds.
 
 - `RecordsActivity::getActivitylogOptions(): LogOptions` — shared defaults; models
   supply their own `logOnly()` set
-- `ActivityContext extends LogActivityAction` — `execute(Model $activity): Model`,
-  attaching `ip` to properties for every entry, model-generated or explicit
+- `RecordActivityWithContext extends LogActivityAction` —
+  `execute(Model $activity, string $description): Model`, attaching `ip` and a
+  `causer_name` snapshot to every entry, model-generated or explicit. The
+  snapshot exists because `causer` resolves to null once an account soft-deletes,
+  which would render a real person's action as "System".
 - `ActivityPolicy` — `viewAny`/`view` permission-based; the ten mutation
   abilities return `false`
 - Explicit recorders take the actor and the subject and never accept a password,
@@ -7764,8 +7783,8 @@ Each must be shown to fail a **named** test before this task is done.
 | Break | Must fail |
 |---|---|
 | Enable `buffer.enabled` | rollback test — **the test flushes the buffer after the failed transaction**, or buffering leaves it green because nothing ever flushed |
-| Remove the `password` entry from `User`'s `logOnly()` allowlist | secret-absent-from-diff test |
-| Change the global `default_except_attributes` config | its own pinning test (with allowlists, removing it exposes nothing — so it cannot be proven by the diff test and needs pinning separately) |
+| **Add** `password` to `User`'s `logOnly()` allowlist | the allowlist test. It is not there to remove, and the global list strips it regardless, so the mutation is an ADDITION and only the direct allowlist assertion catches it |
+| Empty the global `default_except_attributes` | its own pinning test. It cannot be proven by the runtime diff test, since with allowlists in place removing it exposes nothing on its own |
 | Make the policy honour `delete_activity` | super-admin-holding-the-grant-still-refused test |
 | Register any action on the Filament resource | exact-registry test |
 | Drop IP from the custom log action | two tests: automatic model IP, and explicit-event IP |

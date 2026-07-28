@@ -91,6 +91,36 @@ final class DeleteStaffProfileAction
 
             $ids = $this->files->record($files);
 
+            /*
+             * THE CASCADE IS INVISIBLE TO THE AUDIT TRAIL, SO IT IS RECORDED HERE.
+             *
+             * staff_certificates.staff_profile_id is cascadeOnDelete, so the
+             * DATABASE removes those rows. No Eloquent event fires for them, which
+             * means the LogsActivity concern on StaffCertificate never sees the
+             * deletion — the certificates would simply cease to exist with nothing
+             * in the log saying who removed them or that they were ever there.
+             *
+             * Recorded before the delete, while the rows are still readable, and
+             * inside the same transaction so a rollback takes the entries with it.
+             * The certificates are already loaded and individually authorized
+             * above, so this costs no extra query.
+             *
+             * Titles and ids only — no disk, path or original filename. An
+             * uploaded filename routinely carries somebody's name or national ID,
+             * and none of that belongs in a table this many people can read.
+             */
+            foreach ($certificates as $certificate) {
+                activity()
+                    ->causedBy($actor)
+                    ->performedOn($certificate)
+                    ->event('deleted_by_cascade')
+                    ->withProperties([
+                        'staff_profile_id' => $lockedProfile->getKey(),
+                        'title' => $certificate->title,
+                    ])
+                    ->log('deleted_by_cascade');
+            }
+
             // Cascades to staff_certificates. The receipts above were written
             // first, so the intent to destroy those files is committed with the
             // same transaction that destroys their rows.

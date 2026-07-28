@@ -120,6 +120,26 @@ final class UpdateStaffPhotoAction
 
                 $lockedProfile->update(['profile_photo_path' => $path]);
 
+                /*
+                 * RECORDED EXPLICITLY, BECAUSE THE DIFF CANNOT CARRY IT.
+                 *
+                 * profile_photo_path is absent from StaffProfile's audit
+                 * allowlist — a storage path is not an audit fact and the filename
+                 * can carry somebody's name. But that exclusion is what would
+                 * erase the event: this update moves that column and nothing else,
+                 * so the diff is empty, dontLogEmptyChanges() suppresses it, and
+                 * replacing a staff member's photo leaves no trace at all.
+                 *
+                 * The event says WHETHER this replaced an existing photo, which is
+                 * the audit question, and carries no path, filename or bytes.
+                 */
+                activity()
+                    ->causedBy($actor)
+                    ->performedOn($lockedProfile)
+                    ->event('photo_updated')
+                    ->withProperties(['replaced_existing' => $ids !== []])
+                    ->log('photo_updated');
+
                 return $ids;
             },
         );

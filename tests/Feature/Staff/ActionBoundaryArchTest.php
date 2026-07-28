@@ -563,3 +563,40 @@ it('writes the enrollments table from nowhere but the Action that owns each oper
         }
     }
 });
+
+/*
+ * Every shape that would write the activity log from application code.
+ *
+ * NO ALLOWLIST. Nothing under app/ is sanctioned to create, change or remove an
+ * entry — the package writes them, and it does so from vendor/. That makes this
+ * the only boundary rule here with an empty exemption list, and the emptiness is
+ * the point: an audit trail application code can write by hand is one it can
+ * forge, and one it can delete is not a trail at all.
+ *
+ * ActivityPolicy refuses every mutation ability and the resource registers no
+ * controls; this catches the path that goes around both.
+ *
+ * The activity() helper is deliberately NOT forbidden. It is how the sanctioned
+ * explicit events are recorded — pivot changes, auth events, cascaded deletes —
+ * and it appends through the package rather than writing the model directly.
+ */
+const ACTIVITY_WRITE_SHAPES = [
+    'model' => '/\bActivity::\s*(create|forceCreate|createQuietly|make|insert|insertOrIgnore'
+        .'|insertGetId|upsert|updateOrCreate|firstOrCreate|createOrFirst|destroy|truncate)\s*\(/',
+    'query builder' => '/\bActivity::(query|where|whereKey)\s*\([^;]*->\s*'
+        .'(update|updateQuietly|delete|forceDelete|insert|upsert|increment|decrement)\s*\(/',
+    'raw table' => '/DB::\s*table\s*\(\s*[\'"]activity_log[\'"]\s*\)/',
+    'instance' => '/\$\w*activit\w*\s*->\s*(update|updateQuietly|save|saveQuietly|delete'
+        .'|forceDelete|fill|forceFill|restore)\s*\(/i',
+];
+
+it('never writes the activity log from application code', function () {
+    foreach (ACTIVITY_WRITE_SHAPES as $shape => $pattern) {
+        $offenders = filesMatching($pattern);
+
+        expect($offenders)->toBeEmpty(
+            "Activity log '{$shape}' writes are permitted in no file at all — the log is "
+            .'append-only and the package owns it: '.implode(', ', $offenders),
+        );
+    }
+});
