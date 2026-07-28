@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Domain\Staff\Support\RecordsActivity;
 use Spatie\Permission\Models\Role as SpatieRole;
 
 /**
@@ -36,6 +37,27 @@ use Spatie\Permission\Models\Role as SpatieRole;
  */
 class Role extends SpatieRole
 {
+    use RecordsActivity;
+
+    /**
+     * Role rows are audited on the MODEL, not only in the role Actions.
+     *
+     * Shield's role resource creates, renames and deletes roles through ordinary
+     * Eloquent writes. Those never reach SyncUserRolesAction or
+     * UpdateRolePermissionsAction — which govern who HOLDS a role and what a role
+     * MAY DO — so auditing only there would leave the authorization graph
+     * rewritable with no trace of who added or removed a role.
+     *
+     * guard_name is included: moving a role between guards changes what it
+     * governs.
+     *
+     * @return array<int, string>
+     */
+    public function auditedAttributes(): array
+    {
+        return ['name', 'guard_name'];
+    }
+
     /**
      * The canonical name of the super-admin role.
      *

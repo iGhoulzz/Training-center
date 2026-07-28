@@ -7,7 +7,9 @@ namespace App\Domain\Staff\Actions;
 use App\Domain\Staff\Services\SuperAdminInvariantService;
 use App\Models\Role;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Spatie\Permission\Contracts\Permission;
 
 /**
@@ -50,7 +52,25 @@ final class SystemRoleWriter
      */
     public function assignRoles(User $user, string|array $roles): void
     {
-        $user->assignRole($roles);
+        $requested = array_values(array_unique((array) $roles));
+
+        // Read, decide and log under the lock, for the same reason the
+        // request-path Actions do: a diff computed outside the transaction can
+        // describe a change from a state that has already moved.
+        DB::transaction(function () use ($user, $requested): void {
+            $locked = User::query()->lockForUpdate()->findOrFail($user->getKey());
+
+            $current = $locked->roles()->pluck('name')->all();
+            $adding = array_values(array_diff($requested, $current));
+
+            if ($adding === []) {
+                return;
+            }
+
+            $locked->assignRole($requested);
+
+            self::recordSystemEvent($locked, 'roles_changed', ['added' => $adding, 'removed' => []]);
+        });
     }
 
     /**
@@ -72,16 +92,37 @@ final class SystemRoleWriter
      */
     public function syncRoles(User $user, array $roles): void
     {
-        $removesSuperAdmin = $user->isSuperAdmin()
-            && ! in_array(Role::SUPER_ADMIN, $roles, true);
+        $desired = array_values(array_unique($roles));
 
-        if (! $removesSuperAdmin) {
-            $user->syncRoles($roles);
+        DB::transaction(function () use ($user, $desired): void {
+            // Same global order as the request path: super_admin role, then the
+            // account. syncRoles() can REDUCE the population and so reaches the
+            // invariant, which locks that row — taking it here first is what keeps
+            // this from inverting against DeleteUserAction.
+            Role::lockSuperAdminRow();
 
-            return;
-        }
+            $locked = User::query()->lockForUpdate()->findOrFail($user->getKey());
 
-        $this->invariant->protect(fn () => $user->syncRoles($roles));
+            $current = $locked->roles()->pluck('name')->all();
+
+            $adding = array_values(array_diff($desired, $current));
+            $removing = array_values(array_diff($current, $desired));
+
+            if ($adding === [] && $removing === []) {
+                return;
+            }
+
+            $removesSuperAdmin = $locked->isSuperAdmin()
+                && ! in_array(Role::SUPER_ADMIN, $desired, true);
+
+            if ($removesSuperAdmin) {
+                $this->invariant->protect(fn () => $locked->syncRoles($desired));
+            } else {
+                $locked->syncRoles($desired);
+            }
+
+            self::recordSystemEvent($locked, 'roles_changed', ['added' => $adding, 'removed' => $removing]);
+        });
     }
 
     /**
@@ -92,6 +133,57 @@ final class SystemRoleWriter
      */
     public function syncRolePermissions(Role $role, iterable $permissions): void
     {
-        $role->syncPermissions($permissions);
+        $desired = collect($permissions)
+            ->map(fn (Permission|string $permission): string => $permission instanceof Permission
+                ? $permission->name
+                : $permission)
+            ->unique()
+            ->values()
+            ->all();
+
+        DB::transaction(function () use ($role, $permissions, $desired): void {
+            $locked = Role::query()->lockForUpdate()->findOrFail($role->getKey());
+
+            $current = $locked->permissions()->pluck('name')->all();
+
+            $adding = array_values(array_diff($desired, $current));
+            $removing = array_values(array_diff($current, $desired));
+
+            if ($adding === [] && $removing === []) {
+                return;
+            }
+
+            $locked->syncPermissions($permissions);
+
+            self::recordSystemEvent($locked, 'permissions_changed', [
+                'added' => $adding,
+                'removed' => $removing,
+            ]);
+        });
+    }
+
+    /**
+     * Record a change made by the SYSTEM, with no causer.
+     *
+     * causedByAnonymous() is the whole point and is not a detail. Seeders and
+     * console commands run with whatever session happens to exist — in a test, or
+     * in `php artisan tinker` on a live box, that can be a real logged-in user —
+     * and the package would otherwise attribute a seeder's rewrite of the
+     * permission matrix to whoever was signed in. Naming a person for a change
+     * they did not make is worse than naming nobody.
+     *
+     * The no-op guards in every caller above are what stop a repeatable seeder
+     * run from producing a fresh event each time it confirms the same grants.
+     *
+     * @param  array<string, mixed>  $properties
+     */
+    private static function recordSystemEvent(Model $subject, string $event, array $properties): void
+    {
+        activity()
+            ->causedByAnonymous()
+            ->performedOn($subject)
+            ->event($event)
+            ->withProperties($properties)
+            ->log($event);
     }
 }

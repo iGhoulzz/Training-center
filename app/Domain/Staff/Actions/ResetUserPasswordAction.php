@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Domain\Staff\Actions;
 
 use App\Models\User;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
@@ -36,10 +37,37 @@ final class ResetUserPasswordAction
 
         $plain = Str::password(16, symbols: false);
 
-        $target->forceFill([
-            'password' => Hash::make($plain),
-            'must_change_password' => true,
-        ])->save();
+        /*
+         * The write and its audit entry share one transaction, so a reset that
+         * rolls back leaves no record claiming it happened.
+         */
+        DB::transaction(function () use ($actor, $target, $plain): void {
+            $target->forceFill([
+                'password' => Hash::make($plain),
+                'must_change_password' => true,
+            ])->save();
+
+            /*
+             * RECORDED EXPLICITLY, BECAUSE THE DIFF CANNOT CARRY IT.
+             *
+             * `password` is absent from User::auditedAttributes() on purpose — a
+             * hash in an audit table is a credential sitting where several people
+             * can read it. But excluding it is exactly what would make this event
+             * disappear: the save above moves `password` and, when the account was
+             * already flagged, nothing else. dontLogEmptyChanges() then suppresses
+             * the entry entirely, and a password reset — one of the events an audit
+             * trail exists for — leaves no trace at all.
+             *
+             * So the fact is recorded as its own event. No password, no hash, not
+             * even a length: the audit answer is WHO reset WHOSE credentials and
+             * WHEN, and the secret itself is never part of that answer.
+             */
+            activity()
+                ->causedBy($actor)
+                ->performedOn($target)
+                ->event('password_reset')
+                ->log('password_reset');
+        });
 
         return $plain;
     }

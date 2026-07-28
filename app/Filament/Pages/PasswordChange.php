@@ -10,6 +10,7 @@ use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Schemas\Schema;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use LogicException;
 
@@ -61,10 +62,36 @@ class PasswordChange extends Page
             throw new LogicException('The authenticated user must be an App\Models\User to change a password.');
         }
 
-        $user->update([
-            'password' => Hash::make($state['password']),
-            'must_change_password' => false,
-        ]);
+        /*
+         * The change and its audit entry share one transaction.
+         *
+         * The entry is explicit for the same reason ResetUserPasswordAction's is:
+         * `password` is absent from User::auditedAttributes() so no hash reaches
+         * the log, and an account that was NOT flagged for rotation moves no
+         * audited column at all — the diff would be empty, suppressed, and a
+         * self-service password change would leave no trace whatsoever.
+         *
+         * Distinguished from password_reset because they answer different
+         * questions: this is somebody changing their OWN credentials, which needs
+         * no second party, while a reset is an administrator acting on another
+         * account.
+         */
+        DB::transaction(function () use ($user, $state): void {
+            $user->update([
+                'password' => Hash::make($state['password']),
+                'must_change_password' => false,
+            ]);
+
+            activity()
+                // Explicit rather than relying on the ambient guard: the actor is
+                // the user this page resolved and authorized, and an entry whose
+                // attribution depends on guard state is one that silently loses it
+                // the day this runs anywhere but a web request.
+                ->causedBy($user)
+                ->performedOn($user)
+                ->event('password_changed')
+                ->log('password_changed');
+        });
 
         Notification::make()->title(__('auth.password_updated'))->success()->send();
 

@@ -22,8 +22,23 @@ class RolePermissionSeeder extends Seeder
      */
     private const RESOURCES = [
         'user', 'staff_profile', 'staff_certificate', 'student', 'course',
-        'batch', 'enrollment', 'activity', 'role',
+        'batch', 'enrollment', 'role',
     ];
+
+    /**
+     * The activity log gets READ permissions only, and is therefore not in the
+     * CRUD list above.
+     *
+     * create_activity, update_activity and delete_activity are deliberately not
+     * created in production. The log is append-only: entries are written by the
+     * package, never by a person, and no role may edit or remove one. Seeding
+     * abilities nothing may honour invites somebody to wire them up later.
+     *
+     * ActivityAppendOnlyTest creates delete_activity inside the test, grants it
+     * to a super admin, and proves ActivityPolicy refuses anyway — which is a
+     * stronger statement than "the permission does not exist".
+     */
+    private const ACTIVITY_READ = ['view_any_activity', 'view_activity'];
 
     private const ACTIONS = ['view_any', 'view', 'create', 'update', 'delete'];
 
@@ -76,7 +91,7 @@ class RolePermissionSeeder extends Seeder
             }
         }
 
-        foreach ([...self::CUSTOM, ...self::ROLE_EXTRA] as $ability) {
+        foreach ([...self::ACTIVITY_READ, ...self::CUSTOM, ...self::ROLE_EXTRA] as $ability) {
             Permission::findOrCreate($ability, 'web');
         }
 

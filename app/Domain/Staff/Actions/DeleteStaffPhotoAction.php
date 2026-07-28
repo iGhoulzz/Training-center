@@ -59,6 +59,15 @@ final class DeleteStaffPhotoAction
 
             $lockedProfile->update(['profile_photo_path' => null]);
 
+            // Explicit for the same reason as the replacement event: the only
+            // column that moves is excluded from the diff, so without this a
+            // removed photo is indistinguishable from one that was never there.
+            activity()
+                ->causedBy($actor)
+                ->performedOn($lockedProfile)
+                ->event('photo_removed')
+                ->log('photo_removed');
+
             return $ids;
         });
 

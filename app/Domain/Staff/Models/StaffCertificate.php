@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Staff\Models;
 
+use App\Domain\Staff\Support\RecordsActivity;
 use Database\Factories\StaffCertificateFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Builder;
@@ -34,6 +35,8 @@ class StaffCertificate extends Model
 {
     /** @use HasFactory<StaffCertificateFactory> */
     use HasFactory;
+
+    use RecordsActivity;
 
     /**
      * @return BelongsTo<StaffProfile, $this>
@@ -87,6 +90,22 @@ class StaffCertificate extends Model
     public function isExpired(): bool
     {
         return $this->expires_on !== null && $this->expires_on->lt(today());
+    }
+
+    /**
+     * disk, path and original_filename are absent for the same reason as the
+     * profile photo: little audit value, and an uploaded filename routinely
+     * contains a person's name or national ID. The file's lifecycle is recorded
+     * as semantic events by the upload and delete Actions.
+     */
+    public function auditedAttributes(): array
+    {
+        return [
+            'staff_profile_id',
+            'title',
+            'issued_on',
+            'expires_on',
+        ];
     }
 
     /**
