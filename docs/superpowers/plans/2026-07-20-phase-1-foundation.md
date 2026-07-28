@@ -7813,150 +7813,111 @@ JSON blob. List and view only.
 
 Per spec section 11 — set up before there is anything valuable to lose.
 
-**Files:**
-- Create: `config/backup.php` (published)
-- Create: `tests/Feature/BackupConfigTest.php`
-- Modify: `routes/console.php`
-- Modify: `.env.example`
+**Rewritten 2026-07-28 to match what was built.** The original section was drafted
+2026-07-20 and specified a working shape that turned out to be wrong in several
+operational details: it named `storage/app/public` and `storage/app/secure` but
+not the disk roots they come from, left archive paths absolute so the restore
+instructions did not match the archive, scheduled `run` and `clean` without a
+monitor, and stopped at "document the deployment requirement" without addressing
+the silent failure it named. Recorded here at decision level; the implementation
+is the detail.
 
-- [ ] **Step 1: Publish the config**
+### Decisions
 
-```bash
-php artisan vendor:publish --provider="Spatie\Backup\BackupServiceProvider"
-```
+1. **A small operational boundary.** Published configuration, one dedicated disk,
+   three scheduled commands, one guard class, one runbook. No Filament UI and no
+   custom backup layer — the package is the feature.
 
-- [ ] **Step 2: Write the failing test**
+2. **Both halves, or neither is a backup.** The MySQL dump plus both upload
+   roots, taken from `config('filesystems.disks.private.root')` and
+   `…public.root` rather than written out again. The database records only PATHS,
+   so a database-only restore leaves every scanned credential unrecoverable.
 
-Create `tests/Feature/BackupConfigTest.php`:
+3. **Not `base_path()`.** Sweeping the project in would put `.env` — production
+   database credentials, the app key, the backup bucket's own secret — into
+   third-party storage. The source tree is in git.
 
-```php
-<?php
+4. **Archive paths relative to the project root.** `relative_path => base_path()`.
+   Left null the package stores absolute deployment paths, so an archive unpacks
+   into a tree that only makes sense on the server that produced it, and the
+   runbook's instructions are wrong.
 
-declare(strict_types=1);
+5. **Off-server only.** The destination is the `backups` disk and nothing else;
+   `local` is deliberately absent. A backup on the same VPS dies with it, and
+   listing it alongside lets a misconfigured deployment keep "succeeding" against
+   the one destination that guarantees nothing. Generic S3 driven by
+   `BACKUP_S3_*`, so the provider is a deployment choice.
 
-it('backs up the database', function () {
-    expect(config('backup.backup.source.databases'))->toContain('mysql');
-});
+6. **Production refuses to boot** without bucket, key, secret, region and archive
+   password. Every part of this feature fails quietly by nature; the check runs
+   at boot where it cannot be missed rather than at 01:30 where nobody is
+   watching.
 
-it('writes backups to an off-server disk', function () {
-    expect(config('backup.backup.destination.disks'))->toContain('backups');
-});
+7. **Encrypted, verified, retried.** AES-256 from `BACKUP_ARCHIVE_PASSWORD`;
+   `verify_backup` on, because the alternative is finding a truncated zip during
+   a restore; three attempts a minute apart, because one turns a transient upload
+   failure into a missing night.
 
-it('keeps backups for at least 30 days', function () {
-    expect(config('backup.cleanup.default_strategy.keep_all_backups_for_days'))
-        ->toBeGreaterThanOrEqual(30);
-});
+8. **No destructive storage ceiling.** `delete_oldest_backups_when_using_more_megabytes_than`
+   is null. It is not a monitoring threshold — exceeding it deletes the oldest
+   archives regardless of the retention window, and full archives including
+   uploads pass a few gigabytes long before thirty of them accumulate. Retention
+   is the policy; storage is a bill. `MaximumStorageInMegabytes` still warns.
 
-it('registers a daily backup schedule', function () {
-    $events = collect(app(Illuminate\Console\Scheduling\Schedule::class)->events())
-        ->map(fn ($e) => $e->command)
-        ->filter();
+9. **Dump options a restricted user can actually use.** `--no-tablespaces`,
+   because MySQL 8 reads `INFORMATION_SCHEMA.FILES` unless told not to and that
+   needs the global `PROCESS` privilege no managed host grants an application
+   user. Plus single-transaction and skip-lock-tables. On the `mysql` connection
+   only — nothing backs up `mariadb`.
 
-    expect($events->contains(fn (string $c): bool => str_contains($c, 'backup:run')))->toBeTrue()
-        ->and($events->contains(fn (string $c): bool => str_contains($c, 'backup:clean')))->toBeTrue();
-});
-```
+10. **`run` → `monitor` → `clean`, one shared mutex, explicit timezone.** The
+    monitor is the point rather than an extra: a failed run throws and notifies,
+    but a run that never happens throws nothing, and a cron entry that stopped
+    firing is indistinguishable from success. All three take the same lock via
+    `createMutexNameUsing`, so cleanup cannot run while a backup is still
+    uploading. The timezone is stated because the app runs in UTC and the centre
+    does not.
 
-- [ ] **Step 3: Run the test to verify it fails**
+11. **Tests never contact external storage.** They assert what ships. Whether the
+    credentials work is proven once at deploy time and nightly thereafter by
+    `backup:monitor` — configuration tests catch a misconfigured repository, the
+    monitor catches a broken environment, and neither can catch the other.
 
-Run: `php artisan test --filter=BackupConfigTest`
-Expected: FAIL — disk `backups` not configured, no schedule registered.
+12. **A runbook with a drill.** `docs/RESTORE.md`. A backup nobody has restored is
+    a hypothesis, and the drill ends by opening an actual certificate — row counts
+    prove the dump restored, only a file proves the two halves agree.
 
-- [ ] **Step 4: Configure the off-server disk**
+### File scope
 
-In `config/filesystems.php`, add to `disks`:
+- Create: `config/backup.php` (published), `docs/RESTORE.md`,
+  `app/Domain/Staff/Support/BackupConfiguration.php`,
+  `tests/Feature/BackupConfigurationTest.php`
+- Modify: `config/filesystems.php` (the `backups` disk), `config/database.php`
+  (dump options), `routes/console.php`, `app/Providers/AppServiceProvider.php`,
+  `.env.example`, `composer.json` (`league/flysystem-aws-s3-v3`)
 
-```php
-'backups' => [
-    'driver' => 's3',
-    'key' => env('BACKUP_S3_KEY'),
-    'secret' => env('BACKUP_S3_SECRET'),
-    'region' => env('BACKUP_S3_REGION'),
-    'bucket' => env('BACKUP_S3_BUCKET'),
-    'endpoint' => env('BACKUP_S3_ENDPOINT'),
-    'use_path_style_endpoint' => true,
-    'throw' => true,
-],
-```
+### Mutation obligations
 
-Add the matching keys to `.env.example` with empty values, and install the driver:
+| Break | Must fail |
+|---|---|
+| Add `local` to the destination disks | off-server-only test |
+| Set `relative_path` back to null | archive-layout test |
+| Drop `--no-tablespaces` | restricted-user dump test |
+| Remove the explicit timezone | timezone test (assert the ZONE — "not null" passes, Laravel fills it from config) |
+| Remove `withoutOverlapping` | overlap test |
+| Give the three commands different mutex names | shared-mutex test |
+| Restore the 5 GB destructive ceiling | storage-ceiling test |
+| Use `env('X', $default)` for the alert address | empty-variable resolution test |
+| Delete the guard call from `AppServiceProvider` | guard-wiring tripwire |
 
-```bash
-composer require league/flysystem-aws-s3-v3 --no-interaction
-```
+### Notes for whoever deploys this
 
-- [ ] **Step 5: Point the backup config at that disk**
-
-In `config/backup.php`:
-
-```php
-'source' => [
-    'files' => [
-        // storage/app/secure holds staff certificates and profile photos
-        // (Task 6) — the 'private' disk. It MUST be backed up: the database
-        // stores only paths, so a database-only restore leaves every uploaded
-        // credential unrecoverable.
-        //
-        // Note the path: it is deliberately NOT storage/app/private, which is
-        // the framework's default `local` disk root and is served over HTTP.
-        'include' => [
-            base_path('storage/app/public'),
-            base_path('storage/app/secure'),
-        ],
-        'exclude' => [base_path('vendor'), base_path('node_modules')],
-    ],
-    'databases' => ['mysql'],
-],
-
-'destination' => [
-    'filename_prefix' => 'training-center-',
-    'disks' => ['backups'],
-],
-```
-
-And under `cleanup.default_strategy`:
-
-```php
-'keep_all_backups_for_days' => 30,
-'keep_daily_backups_for_days' => 60,
-'keep_monthly_backups_for_months' => 12,
-```
-
-- [ ] **Step 6: Schedule the jobs**
-
-In `routes/console.php`:
-
-```php
-use Illuminate\Support\Facades\Schedule;
-
-Schedule::command('backup:clean')->daily()->at('01:00');
-Schedule::command('backup:run')->daily()->at('01:30');
-```
-
-- [ ] **Step 7: Run tests to verify they pass**
-
-Run: `php artisan test --filter=BackupConfigTest`
-Expected: 4 passed.
-
-- [ ] **Step 8: Document the deployment requirement**
-
-Append to `docs/WORKFLOW.md` under a new "Deployment requirements" heading:
-
-```markdown
-## Deployment requirements
-
-- Laravel's scheduler must run: `* * * * * cd /path/to/app && php artisan schedule:run >> /dev/null 2>&1`
-- The `BACKUP_S3_*` environment variables must be set. Without them, backups fail silently.
-- Verify after the first deploy: `php artisan backup:run` should complete and the file should appear in the bucket.
-```
-
-- [ ] **Step 9: Commit**
-
-```bash
-vendor/bin/pint && vendor/bin/phpstan analyse && php artisan test
-git add -A
-git commit -m "feat: add automated off-server daily database backups [P1-T13]"
-```
+The suite cannot prove the credentials work. Run `php artisan backup:run` once
+after the first deploy and confirm the file lands in the bucket. Store
+`BACKUP_ARCHIVE_PASSWORD` in a password manager — `.env` lives on the server the
+backup exists to survive, and a lost password makes every archive unreadable.
+The default `log` mailer tells nobody, so production needs a real mailer before
+`BACKUP_ALERT_EMAIL` means anything.
 
 ---
 

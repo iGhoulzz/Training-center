@@ -110,6 +110,37 @@ return [
             'report' => false,
         ],
 
+        /*
+         * Off-server backup storage.
+         *
+         * SEPARATE FROM THE GENERIC 's3' DISK BELOW, ON PURPOSE. That one is
+         * Laravel's default and exists for application storage; backups are the
+         * one thing that must survive the loss of everything else, and sharing a
+         * disk definition would mean a change made for one silently re-aims the
+         * other. Different credentials, different bucket, different blast radius.
+         *
+         * GENERIC S3, NOT AWS. Every value comes from BACKUP_S3_* and the
+         * endpoint is explicit, so Backblaze B2, Wasabi, DigitalOcean Spaces,
+         * Hetzner or MinIO all work without a code change — the provider is a
+         * deployment decision, not an architectural one.
+         *
+         * throw => true is deliberate and is the opposite of the disks above. A
+         * write that silently fails here produces a backup run that reports
+         * success and stores nothing, which is worse than no backup at all
+         * because it is trusted. See BackupConfigurationTest.
+         */
+        'backups' => [
+            'driver' => 's3',
+            'key' => env('BACKUP_S3_KEY'),
+            'secret' => env('BACKUP_S3_SECRET'),
+            'region' => env('BACKUP_S3_REGION'),
+            'bucket' => env('BACKUP_S3_BUCKET'),
+            'endpoint' => env('BACKUP_S3_ENDPOINT'),
+            'use_path_style_endpoint' => env('BACKUP_S3_PATH_STYLE', true),
+            'throw' => true,
+            'report' => true,
+        ],
+
         's3' => [
             'driver' => 's3',
             'key' => env('AWS_ACCESS_KEY_ID'),
