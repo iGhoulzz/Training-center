@@ -422,16 +422,34 @@ function firstPhysicalCssProperty(string $source): ?string
         '/text-align\s*:\s*(left|right)/i',
         '/float\s*:\s*(left|right)/i',
         '/clear\s*:\s*(left|right)/i',
-        // Bare `left:` / `right:`, but only in declaration position — after a
-        // brace, a semicolon, or at the start of a line. Unanchored, this would
-        // fire on any JavaScript object literal in a Blade template.
-        '/(?<=[{;]|^)\s*(left|right)\s*:/im',
+        /*
+         * Bare `left:` / `right:` in declaration position — after a brace, a
+         * semicolon, a quote, or at the start of a line. Unanchored, this would
+         * fire on any JavaScript object literal in a Blade template.
+         *
+         * The quote branch is what reaches style="left: 0", where the property
+         * opens the attribute and no brace or semicolon precedes it. It does not
+         * reach the JSON key `{"left": 0}`, because there the name is CLOSED by
+         * a quote before the colon — `left"` rather than `left:` — so requiring
+         * the colon to follow the name is what separates the two.
+         */
+        '/(?<=[{;"\']|^)\s*(left|right)\s*:/im',
 
         // --- Tailwind utilities, including the negative and arbitrary forms ---
         '/(?<![\w-])-?(ml|mr|pl|pr)-'.$suffix.'/i',        // -ml-2, ml-auto, ml-[3px]
         '/(?<![\w-])-?(left|right)-'.$suffix.'/i',         // left-0, -right-4, left-[1rem]
         '/(?<![\w-])text-(left|right)(?![\w-])/i',
         '/(?<![\w-])float-(left|right)(?![\w-])/i',
+        /*
+         * border-l / border-r and every suffix they take: border-l, border-r-2,
+         * border-l-[3px], border-l-red-500.
+         *
+         * The trailing (?![\w]) rejects a letter but allows a hyphen, which is
+         * what separates the utility from the colour: `border-r-2` continues
+         * with `-`, while `border-red-500` continues with `e` and is left alone.
+         * `border-s` / `border-e` never enter the alternation at all.
+         */
+        '/(?<![\w-])border-(l|r)(?![\w])/i',
     ];
 
     foreach ($patterns as $pattern) {
@@ -462,6 +480,14 @@ it('catches every physical form the stylesheet rules forbid', function (string $
     '.thing { left: 0; }',
     'position: absolute; right: 12px;',
 
+    // Inline style attributes, where the property opens the attribute and no
+    // brace or semicolon precedes it.
+    '<div style="left: 0">',
+    "<div style='right: 12px'>",
+    '<div style="left:0;top:0">',
+    '<div style="position: absolute; right: 4px">',
+    '<div style="border-left: 1px solid #ccc">',
+
     // Tailwind: numeric, fractional, negative, auto, px, arbitrary.
     '<div class="ml-4">',
     '<div class="mr-1.5">',
@@ -477,6 +503,11 @@ it('catches every physical form the stylesheet rules forbid', function (string $
     '<div class="text-left">',
     '<div class="text-right font-bold">',
     '<div class="float-right">',
+    '<div class="border-l">',
+    '<div class="border-r-2">',
+    '<div class="border-l-4 border-gray-200">',
+    '<div class="border-l-[3px]">',
+    '<div class="border-l-red-500">',
 ]);
 
 it('passes the logical forms that replace them', function (string $sample) {
@@ -493,7 +524,11 @@ it('passes the logical forms that replace them', function (string $sample) {
     'text-align: start;',
     'text-align: center;',
     'float: inline-start;',
+    'clear: inline-end;',
     'inset-inline-start: 0;',
+    'inset-inline-end: 0;',
+    'border-inline-start: 1px solid red;',
+    'border-inline-end-width: 2px;',
     '<div class="ms-4 me-2">',
     '<div class="ps-2 pe-2">',
     '<div class="-ms-2">',
@@ -501,11 +536,28 @@ it('passes the logical forms that replace them', function (string $sample) {
     '<div class="start-0 end-4">',
     '<div class="text-start">',
     '<div class="text-end">',
-    // Words that merely contain a forbidden fragment.
+    '<div class="border-s">',
+    '<div class="border-e-2">',
+    '<div class="border-s-[3px]">',
+    '<div class="border-s-red-500">',
+
+    // Inline styles that are already logical.
+    '<div style="inset-inline-start: 0">',
+    '<div style="margin-inline-end: 4px">',
+
+    // Words that merely contain a forbidden fragment. border-red-500 and
+    // border-solid both begin "border-r"/"border-s" and must survive.
     '<div class="html-left-panel">',
     '<div class="overflow-hidden">',
+    '<div class="border-red-500">',
+    '<div class="border-solid border-2">',
+    '<div class="rounded-lg">',
     'grid-template-columns: 1fr;',
+
+    // A JSON/JS key, not a declaration: the name is closed by a quote before
+    // the colon, so the inline-style rule must not reach it.
     '{ "left": 0 }',
+    "{ 'right': 12 }",
 ]);
 
 it('uses logical CSS properties only', function () {

@@ -8015,10 +8015,18 @@ as missing, because a blank label reads as a styling bug rather than as an absen
 string and is harder to trace than the raw key would have been.
 
 The logical-CSS detector carries its own sample sets — physical forms it must
-catch, logical forms it must not — covering raw CSS and the Tailwind numeric,
-negative, `auto`, `px` and arbitrary-value suffixes. Review found `border-left`,
-`left: 0` and `ml-auto` passing undetected: a detector narrower than the README
-it enforces reports the rule as kept while breaking it.
+catch, logical forms it must not — covering raw CSS, inline `style` attributes,
+and the Tailwind numeric, negative, `auto`, `px` and arbitrary-value suffixes.
+Review found `border-left`, `left: 0` and `ml-auto` passing undetected, then
+`style="left: 0"` and `border-l-*` in a second pass: a detector narrower than the
+README it enforces reports the rule as kept while breaking it.
+
+Both misses came from the same shape — an anchor added to avoid a false positive
+that also excluded a real one. The bare `left:` rule was anchored to a brace or
+semicolon, which is exactly what an inline style does not have. The fix is not a
+looser anchor but a more precise one: a quote may precede the property, and the
+colon must follow the NAME, which is what separates `style="left: 0"` from the
+JSON key `{"left": 0}`. Both are now controls in opposite sample sets.
 
 ### File scope
 
@@ -8051,7 +8059,9 @@ it enforces reports the rule as kept while breaking it.
 | Hardcode a Filament label | no-hardcoded-strings test |
 | Use a physical CSS property, in any form | logical-CSS test |
 | Delete a rule from the CSS detector | detector self-test (physical samples) |
-| Over-broaden a rule so `ms-*` trips it | detector self-test (logical samples) |
+| Anchor the bare `left:` rule to braces only | inline-`style` samples |
+| Over-broaden a rule so `ms-*` or `border-s` trips it | detector self-test (logical samples) |
+| Drop the colon requirement, so a JSON key reads as a declaration | JSON-key control |
 | Hand-write the exempted stock page | exemption-freshness test |
 | Point the scan at the wrong root | scan-floor test |
 

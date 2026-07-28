@@ -23,10 +23,14 @@ constraint, not preparation for one.
 In Tailwind, use `ms-*` / `me-*` / `ps-*` / `pe-*` and `text-start` / `text-end`,
 never `ml-*` / `mr-*` / `pl-*` / `pr-*` / `text-left` / `text-right`.
 
-`start-*` / `end-*` replace `left-*` / `right-*` for positioning.
+`start-*` / `end-*` replace `left-*` / `right-*` for positioning, and
+`border-s-*` / `border-e-*` replace `border-l-*` / `border-r-*`.
 
-Every suffix counts, not just the numeric one: `ml-auto`, `-ml-2`, `mr-px` and
-`left-[1rem]` are as direction-blind as `ml-4`.
+Every suffix counts, not just the numeric one: `ml-auto`, `-ml-2`, `mr-px`,
+`left-[1rem]` and `border-l-red-500` are as direction-blind as `ml-4`.
+
+The rule applies to inline `style` attributes too — `style="left: 0"` is the
+same property wherever it is written.
 
 ## Enforcement
 
