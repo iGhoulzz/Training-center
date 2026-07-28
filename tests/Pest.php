@@ -270,3 +270,41 @@ function expectOneLevelDeeper(array $statement, int $baseline, int $rowId, strin
         .'. SQL: '.$statement['sql'],
     );
 }
+
+/*
+|--------------------------------------------------------------------------
+| Source scanning for the architecture tests (moved here by P1-T14)
+|--------------------------------------------------------------------------
+|
+| Two tests now scan PHP source for forbidden or required shapes:
+| ActionBoundaryArchTest, for writes that bypass an Action, and
+| LocalizationTest, for translation keys and hardcoded labels. Both must see
+| code only — this codebase's comments quote the very patterns being searched
+| for, so an unstripped scan reports its own documentation.
+|
+| It lives in Pest.php rather than in whichever test file needed it first,
+| because Pest gives no guarantee about the order test files are loaded, and a
+| helper defined in one of them is only sometimes there for the other.
+*/
+
+/** The file's PHP source with all comments and docblocks removed. */
+function appSourceWithoutComments(string $path): string
+{
+    $code = '';
+
+    foreach (token_get_all((string) file_get_contents($path)) as $token) {
+        if (is_array($token)) {
+            if (in_array($token[0], [T_COMMENT, T_DOC_COMMENT], true)) {
+                continue;
+            }
+
+            $code .= $token[1];
+
+            continue;
+        }
+
+        $code .= $token;
+    }
+
+    return $code;
+}

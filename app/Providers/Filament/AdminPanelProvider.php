@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Providers\Filament;
 
 use App\Http\Middleware\ForcePasswordChange;
+use App\Http\Middleware\SetLocale;
 use BezhanSalleh\FilamentShield\FilamentShieldPlugin;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
@@ -67,9 +68,33 @@ class AdminPanelProvider extends PanelProvider
             ->plugins([
                 FilamentShieldPlugin::make(),
             ])
+            /*
+             * SetLocale sits between the two deliberately (P1-T14).
+             *
+             * AFTER Authenticate, because it reads users.locale and there is no
+             * user to read before that. BEFORE ForcePasswordChange, so that a
+             * user who is being forced to change their password still sees that
+             * page in their own language.
+             */
             ->authMiddleware([
                 Authenticate::class,
+                SetLocale::class,
                 ForcePasswordChange::class,
+            ])
+            /*
+             * Livewire updates — every table filter, every modal, every save on
+             * this panel — arrive on Livewire's own route rather than on the
+             * panel's, so route middleware does not run for them. Filament makes
+             * Authenticate persistent for that reason; SetLocale needs the same
+             * treatment or the first paint would be Arabic and every interaction
+             * after it English.
+             *
+             * Marked here rather than through authMiddleware(isPersistent: true),
+             * which would also make ForcePasswordChange persistent and quietly
+             * change when that guard fires.
+             */
+            ->persistentMiddleware([
+                SetLocale::class,
             ]);
     }
 }

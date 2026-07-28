@@ -20,13 +20,15 @@ enum EmploymentType: string
     /**
      * The translated label for display.
      *
-     * The lang/ files arrive in P1-T14, so until then these keys render as
-     * themselves. That is expected: what matters from commit one is that no
-     * user-facing string is hardcoded here.
+     * employment_typeS, plural, since P1-T14 supplied the catalogue: the
+     * SINGULAR is the field label, "Employment type". One key cannot be both a
+     * string and an array — __('staff.employment_type') would hand Filament the
+     * case list and fatal on it. lang/en/enrollment.php already splits them the
+     * same way: 'status' labels the column, 'batch_status' holds the cases.
      */
     public function label(): string
     {
-        $label = __("staff.employment_type.{$this->value}");
+        $label = __("staff.employment_types.{$this->value}");
 
         return is_string($label) ? $label : $this->value;
     }
