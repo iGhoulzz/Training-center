@@ -7921,270 +7921,132 @@ The default `log` mailer tells nobody, so production needs a real mailer before
 
 ---
 
-## Task 14: Internationalization scaffolding
+## Task 14: Internationalization
 
 **Branch:** `p1/t14-i18n`
 
-Structure only. Arabic translations arrive in phase 4; this task guarantees phase 4 is a translation exercise rather than a refactor.
+**Rewritten 2026-07-28 to match what was built.** The original section was drafted
+2026-07-20 and called this "scaffolding": create three small English files, copy
+them to Arabic, add a middleware. Measured against the code, that description was
+wrong in scale and in several mechanics. Recorded here at decision level; the
+implementation is the detail.
 
-**T14 EXPANDS AN EXISTING CATALOGUE — IT DOES NOT CREATE ONE.** P1-T11 shipped
-`lang/en/enrollment.php` with three keys, because two visible values were being
-built by string interpolation (`":code — :name"` and `":active / :capacity"`) and
-the separator and the ORDER of those parts are both localisable — RTL flips them.
-Any step here that assumes `lang/` is empty, or that recreates that file, is
-wrong. The composite-format keys already in it are the pattern the rest of the
-catalogue should follow: named placeholders, so a translator can reorder without
-touching code, and tested with a sentinel translation rather than the English
-copy (asserting the English string passes just as well against a hardcode).
+### What it turned out to be
 
-**Files:**
-- Create: `lang/en/{staff,enrollment,auth}.php`
-- Create: `lang/ar/{staff,enrollment,auth}.php`
-- Create: `app/Http/Middleware/SetLocale.php`
-- Create: `tests/Feature/LocalizationTest.php`
-- Modify: `bootstrap/app.php`, `app/Providers/Filament/AdminPanelProvider.php`
+The codebase referenced **160 distinct translation keys and 135 did not exist**
+— enrollment 79, staff 52, auth 4. A missing key is not an error in Laravel: the
+translator returns the key. So the admin panel had been rendering
+`enrollment.student` where it meant "Student" since P1-T06, every test passed,
+and nothing said so. This task is catalogue completion and locale enforcement,
+not structure.
 
-- [ ] **Step 1: Write the failing test**
+The structure itself was already sound: **zero hardcoded Filament labels** in
+`app/`. The `__()` rule held for eleven tasks on discipline alone.
 
-Create `tests/Feature/LocalizationTest.php`:
+### Decisions
 
-```php
-<?php
+1. **Arabic catalogues ship empty.** `lang/ar/{activity,auth,enrollment,staff}.php`
+   each `return []`. Laravel falls back per key, so an Arabic user sees English
+   and nothing breaks. The original step 4 said to copy the English values in;
+   that is the one option that must not be taken, because copied English renders
+   identically to a real translation and no screenshot, review or test could then
+   tell how far a translator had actually got. Absent means untranslated.
 
-declare(strict_types=1);
+2. **`SetLocale` is panel auth middleware, not web-group middleware.** It reads
+   `users.locale`, so it runs after Filament has resolved the user — stated in
+   the stack rather than relying on the panel happening to use the default
+   session guard. Placed before `ForcePasswordChange` so that page is in the
+   user's language too. Also registered as **persistent** middleware: Livewire
+   updates arrive on Livewire's own route, and without it the first paint would
+   be Arabic and every interaction after it English.
 
-use App\Models\User;
+3. **An invalid locale resets to the fallback, explicitly.** `locale` is a plain
+   `string(5)`. The original middleware skipped `setLocale()` for an unrecognised
+   value, which leaves whatever locale was already set standing — in a queue
+   worker or a long-lived process, the previous request's. One user's language
+   leaking into another user's page is the failure being closed here.
 
-uses(Illuminate\Foundation\Testing\RefreshDatabase::class);
+4. **Direction comes from Filament's own catalogue.** `Panel::direction()` does
+   not exist in the installed version; the layout renders
+   `dir="{{ __('filament-panels::layout.direction') }}"`, and Filament ships
+   Arabic — including `rtl` — for all ten of its packages. Setting the locale is
+   therefore the whole mechanism. Asserted on the **rendered attribute**, not on
+   config, with an LTR control so "always RTL" cannot pass.
 
-beforeEach(function () {
-    $this->seed(Database\Seeders\RolePermissionSeeder::class);
-});
+5. **`lang/en/auth.php` merges, it does not replace.** Laravel's `FileLoader`
+   reduces over the framework's lang path and the app's with
+   `array_replace_recursive`. Four keys here; `failed`, `password` and `throttle`
+   still come from the framework. Tested, because "completing" the file by
+   pasting those in would silently stop tracking framework wording.
 
-it('applies the user locale to the request', function () {
-    $user = User::factory()->create(['is_active' => true, 'locale' => 'ar']);
-    $user->assignRole('admin');
+6. **A group and a leaf cannot share a key.** `staff.employment_type` was both
+   the field label and the enum's case group, so `__()` returned an array and
+   Filament fatalled on `->label()`. The enum now builds
+   `staff.employment_types.*`, matching the split already used in enrollment
+   (`status` labels the column, `batch_status` holds the cases). Only a full page
+   render caught this; a test now catches it at the catalogue.
 
-    $this->actingAs($user)->get('/admin');
+7. **No locale switcher.** Nothing to switch to until phase 4 supplies Arabic.
+   `users.locale` is the input, set by an administrator on the user record.
 
-    expect(app()->getLocale())->toBe('ar');
-});
+8. **Logical CSS is enforced, not documented.** `resources/css/README.md` states
+   the rule and a test fails on physical properties in `resources/`. One
+   exemption — Laravel's stock `welcome.blade.php`, which inlines a compiled
+   Tailwind build — and the exemption is itself checked: it lapses as soon as
+   that file stops containing the vendor build, so replacing the placeholder
+   brings it back under the scan.
 
-it('falls back to english for a guest', function () {
-    $this->get('/admin/login');
+### The tests are the deliverable
 
-    expect(app()->getLocale())->toBe('en');
-});
+Without a completeness test, key 136 goes missing exactly the way the first 135
+did. `tests/Feature/LocalizationTest.php` scans `app/`, `resources/views/`,
+`routes/` and `database/` with comments stripped, and fails on any literal
+`__('group.key')` that resolves to itself. Two things it cannot see are covered
+separately: **enum labels**, whose keys are built by interpolation, are walked
+case by case; and **composite formats**, which are checked for their named
+placeholders here and proven at the call site by `EnrollmentsRelationManagerTest`.
 
-it('has matching keys in every english and arabic file', function (string $file) {
-    $en = require lang_path("en/{$file}.php");
-    $ar = require lang_path("ar/{$file}.php");
+The scan is also self-checked — one test asserts a missing key still returns
+itself, another that the scan matches a plausible number of files — because a
+scan that silently matches nothing passes every assertion built on it.
 
-    expect(array_keys($ar))->toEqualCanonicalizing(array_keys($en));
-})->with(['staff', 'enrollment', 'auth']);
+### File scope
 
-it('has no hardcoded strings in domain filament resources', function () {
-    $files = Illuminate\Support\Facades\File::allFiles(app_path('Domain'));
+- Create: `lang/en/{staff,auth}.php`, `lang/ar/{activity,auth,enrollment,staff}.php`,
+  `app/Http/Middleware/SetLocale.php`, `tests/Feature/LocalizationTest.php`,
+  `resources/css/README.md`
+- Modify: `lang/en/enrollment.php` (expanded from 3 keys to 82),
+  `app/Providers/Filament/AdminPanelProvider.php`,
+  `app/Domain/Staff/Enums/EmploymentType.php` (the group rename),
+  `tests/Pest.php` and `tests/Feature/Staff/ActionBoundaryArchTest.php`
+  (`appSourceWithoutComments()` moved to the shared file, since two tests now
+  scan source and Pest does not guarantee test-file load order)
 
-    $offenders = collect($files)
-        ->filter(fn ($f): bool => str_contains($f->getPathname(), 'Filament'))
-        ->filter(fn ($f): bool => (bool) preg_match(
-            "/->label\(['\"]/",
-            (string) file_get_contents($f->getPathname()),
-        ))
-        ->map(fn ($f): string => $f->getRelativePathname())
-        ->values()
-        ->all();
+### Mutation obligations
 
-    expect($offenders)->toBeEmpty(
-        'Filament labels must use __() rather than literal strings: '.implode(', ', $offenders),
-    );
-});
-```
-
-The last test is the enforcement mechanism. Without it, "no hardcoded strings" is a guideline nobody follows.
-
-- [ ] **Step 2: Run the test to verify it fails**
-
-Run: `php artisan test --filter=LocalizationTest`
-Expected: FAIL — language files do not exist.
-
-- [ ] **Step 3: Create the English language files**
-
-Create `lang/en/staff.php`:
-
-```php
-<?php
-
-declare(strict_types=1);
-
-return [
-    'user' => 'User',
-    'name' => 'Name',
-    'email' => 'Email',
-    'locale' => 'Language',
-    'is_active' => 'Active',
-    'roles' => 'Roles',
-    'last_login' => 'Last login',
-    'never' => 'Never',
-    'reset_password' => 'Reset password',
-    'temp_password_generated' => 'Temporary password generated',
-    'when' => 'When',
-    'who' => 'Who',
-    'action' => 'Action',
-    'record' => 'Record',
-    'changes' => 'Changes',
-    'system' => 'System',
-    'from' => 'From',
-    'until' => 'Until',
-    // Added by P1-T04c. The escalation exceptions translate their messages, so
-    // these keys must exist or the errors surface as raw key strings.
-    'escalation' => [
-        'last_super_admin' => 'The last active super admin cannot be removed or deactivated.',
-        'requires_assign_role' => 'Managing roles and permissions requires the role-assignment permission.',
-    ],
-    'employment_type' => [
-        'instructor' => 'Instructor',
-        'administrative' => 'Administrative',
-        'support' => 'Support',
-    ],
-];
-```
-
-Create `lang/en/enrollment.php`:
-
-```php
-<?php
-
-declare(strict_types=1);
-
-return [
-    'student_code' => 'Student code',
-    'full_name' => 'Name',
-    'phone' => 'Phone',
-    'status' => 'Status',
-    'instructor' => 'Instructor',
-    'assigned_hours' => 'Assigned hours',
-    'hour_allocation' => 'Hours allocated',
-    'hour_mismatch_hint' => 'Assigned instructor hours do not match the batch total.',
-    'student_status' => [
-        'prospective' => 'Prospective',
-        'active' => 'Active',
-        'graduated' => 'Graduated',
-        'inactive' => 'Inactive',
-    ],
-    'batch_status' => [
-        'planned' => 'Planned',
-        'active' => 'Active',
-        'completed' => 'Completed',
-        'cancelled' => 'Cancelled',
-    ],
-    'enrollment_status' => [
-        'active' => 'Active',
-        'completed' => 'Completed',
-        'withdrawn' => 'Withdrawn',
-    ],
-];
-```
-
-Create `lang/en/auth.php` (append to Laravel's existing file):
-
-```php
-'new_password' => 'New password',
-'confirm_password' => 'Confirm password',
-'update_password' => 'Update password',
-'password_updated' => 'Password updated',
-```
-
-- [ ] **Step 4: Create the Arabic files with identical key structure**
-
-Create `lang/ar/staff.php`, `lang/ar/enrollment.php`, and `lang/ar/auth.php` with **exactly the same keys**, values left as the English text for now. Phase 4 replaces the values; the key-parity test above prevents drift in the meantime.
-
-- [ ] **Step 5: Write the locale middleware**
-
-Create `app/Http/Middleware/SetLocale.php`:
-
-```php
-<?php
-
-declare(strict_types=1);
-
-namespace App\Http\Middleware;
-
-use Closure;
-use Illuminate\Http\Request;
-use Symfony\Component\HttpFoundation\Response;
-
-class SetLocale
-{
-    private const SUPPORTED = ['en', 'ar'];
-
-    public function handle(Request $request, Closure $next): Response
-    {
-        $locale = $request->user()?->locale ?? config('app.locale');
-
-        if (in_array($locale, self::SUPPORTED, strict: true)) {
-            app()->setLocale($locale);
-        }
-
-        return $next($request);
-    }
-}
-```
-
-Register it in `bootstrap/app.php`:
-
-```php
-->withMiddleware(function (Middleware $middleware): void {
-    $middleware->web(append: [\App\Http\Middleware\SetLocale::class]);
-})
-```
-
-- [ ] **Step 6: Enable RTL in the Filament panel**
-
-In `app/Providers/Filament/AdminPanelProvider.php`, add to the panel chain:
-
-```php
-->direction(fn (): string => app()->getLocale() === 'ar' ? 'rtl' : 'ltr')
-```
-
-If the installed Filament version has no `direction()` method, set the direction on the `<html>` tag in a published panel layout instead, and note the substitution in the PR description.
-
-- [ ] **Step 7: Add the CSS guard**
-
-Create `resources/css/README.md`:
-
-```markdown
-# Stylesheet rules
-
-Use logical CSS properties only. Physical properties break the Arabic (RTL) layout.
-
-| Never | Always |
+| Break | Must fail |
 |---|---|
-| `margin-left` | `margin-inline-start` |
-| `margin-right` | `margin-inline-end` |
-| `padding-left` | `padding-inline-start` |
-| `padding-right` | `padding-inline-end` |
-| `text-align: left` | `text-align: start` |
-| `left` / `right` | `inset-inline-start` / `inset-inline-end` |
+| Delete any catalogue key | completeness test |
+| Delete an enum case's line | enum-label test |
+| Give a group and a leaf the same key | group/leaf test |
+| Put English into a `lang/ar` file | empty-Arabic test |
+| Remove `lang/ar` | file-parity test |
+| Delete `lang/en/auth.php` | framework-merge test |
+| Drop a placeholder from a composite format | placeholder test |
+| Remove `SetLocale` from `authMiddleware` | registration, locale and RTL tests |
+| Drop `persistentMiddleware()` | Livewire-persistence test |
+| Skip `setLocale()` for an invalid value | fallback-reset test |
+| Hardcode a Filament label | no-hardcoded-strings test |
+| Use a physical CSS property | logical-CSS test |
+| Hand-write the exempted stock page | exemption-freshness test |
+| Point the scan at the wrong root | scan-floor test |
 
-In Tailwind, use `ms-*` / `me-*` / `ps-*` / `pe-*`, never `ml-*` / `mr-*` / `pl-*` / `pr-*`.
-```
+### What phase 4 inherits
 
-- [ ] **Step 8: Run tests to verify they pass**
-
-Run: `php artisan test --filter=LocalizationTest`
-Expected: 6 passed (4 data-driven key-parity cases plus 2 others).
-
-If the hardcoded-string test fails, fix the offending resources from tasks 5–12 by wrapping their labels in `__()`. That is the test doing its job.
-
-- [ ] **Step 9: Commit**
-
-```bash
-vendor/bin/pint && vendor/bin/phpstan analyse && php artisan test
-git add -A
-git commit -m "feat: add bilingual scaffolding with RTL support and key-parity test [P1-T14]"
-```
+Translation only. Add Arabic values to the four `lang/ar` files; the wiring,
+direction, fallback and enforcement are done. A locale switcher, if wanted, and
+Arabic content for `courses.name_ar` / `description_ar`, which are data rather
+than interface.
 
 ---
 

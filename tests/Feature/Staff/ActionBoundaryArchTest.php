@@ -105,30 +105,12 @@ function appSourceFiles(): array
         ->all();
 }
 
-/**
- * The file's PHP source with all comments and docblocks removed, so scans see
- * code only.
+/*
+ * appSourceWithoutComments() lived here until P1-T14, which needed the same
+ * comment-stripping for its translation-key scan. It is now in tests/Pest.php,
+ * loaded before any test file, so both callers get it regardless of the order
+ * Pest happens to load them in.
  */
-function appSourceWithoutComments(string $path): string
-{
-    $code = '';
-
-    foreach (token_get_all((string) file_get_contents($path)) as $token) {
-        if (is_array($token)) {
-            if (in_array($token[0], [T_COMMENT, T_DOC_COMMENT], true)) {
-                continue;
-            }
-
-            $code .= $token[1];
-
-            continue;
-        }
-
-        $code .= $token;
-    }
-
-    return $code;
-}
 
 /**
  * Files under app/ whose stripped source matches $pattern, excluding any file
