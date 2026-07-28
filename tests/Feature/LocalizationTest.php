@@ -70,7 +70,11 @@ function referencedTranslationKeys(): array
                 continue;
             }
 
-            preg_match_all("/__\(\s*'([a-z_]+\.[a-zA-Z0-9_.]+)'/", $source, $matches);
+            // BOTH quote styles. A single-quote-only pattern is fail-open: PHP
+            // treats "staff.name" and 'staff.name' identically, so a key written
+            // with double quotes — as every interpolated key in this codebase
+            // is — was invisible to the scan and silently uncounted.
+            preg_match_all('/__\(\s*[\'"]([a-z_]+\.[a-zA-Z0-9_.]+)[\'"]/', $source, $matches);
 
             foreach ($matches[1] as $key) {
                 $found[$key] ??= str_replace(base_path().DIRECTORY_SEPARATOR, '', $path);
@@ -93,14 +97,21 @@ it('resolves every translation key the application references', function () {
     $missing = [];
 
     foreach (referencedTranslationKeys() as $key => $file) {
-        if (__($key) === $key) {
-            $missing[] = "{$key}  ({$file})";
+        $value = __($key);
+
+        // An EMPTY value is the other way this fails open. '' is not the key,
+        // so a resolves-to-itself check passes it, and the panel renders a
+        // blank label — which reads as a styling bug, not a missing string, and
+        // is harder to trace than the raw key would have been. Whitespace-only
+        // is the same thing wearing a disguise.
+        if ($value === $key || (is_string($value) && trim($value) === '')) {
+            $missing[] = "{$key}  ({$file})".($value === $key ? '' : '  [empty]');
         }
     }
 
     expect($missing)->toBeEmpty(
-        count($missing).' translation key(s) resolve to themselves, so the panel renders the '
-        ."key where it means the label:\n  ".implode("\n  ", $missing),
+        count($missing).' translation key(s) resolve to themselves or to nothing, so the panel '
+        ."renders the key, or a blank, where it means the label:\n  ".implode("\n  ", $missing),
     );
 });
 
@@ -390,18 +401,114 @@ it('only exempts files that are still stock vendor builds', function () {
     }
 });
 
-it('uses logical CSS properties only', function () {
-    $physical = '/'
-        .'margin-(left|right)'
-        .'|padding-(left|right)'
-        .'|border-(left|right)-'
-        .'|text-align:\s*(left|right)'
-        .'|float:\s*(left|right)'
-        .'|(?<![\w-])(ml|mr|pl|pr)-[0-9]'      // Tailwind physical spacing
-        .'|(?<![\w-])(left|right)-[0-9]'       // Tailwind physical insets
-        .'|(?<![\w-])text-(left|right)(?![\w-])'
-        .'/i';
+/**
+ * The first physical, direction-blind CSS construct in $source, or null.
+ *
+ * A named function rather than an inline pattern so the detector can be tested
+ * against samples. A scan that quietly matches less than it claims is worse than
+ * no scan: the README promises a rule, the suite reports it enforced, and
+ * `ml-auto` sails through. The self-tests below are what make the promise real.
+ */
+function firstPhysicalCssProperty(string $source): ?string
+{
+    // A Tailwind spacing/inset suffix: numeric (4, 1.5), px, auto, full, or an
+    // arbitrary value. Bare `ml-` with nothing after it is not a class.
+    $suffix = '(\d+(\.\d+)?|px|auto|full|screen|\[[^\]]+\])';
 
+    $patterns = [
+        // --- raw CSS declarations ---
+        '/(margin|padding)-(left|right)\s*:/i',
+        '/border-(left|right)(-(width|style|color|radius))?\s*:/i',
+        '/text-align\s*:\s*(left|right)/i',
+        '/float\s*:\s*(left|right)/i',
+        '/clear\s*:\s*(left|right)/i',
+        // Bare `left:` / `right:`, but only in declaration position — after a
+        // brace, a semicolon, or at the start of a line. Unanchored, this would
+        // fire on any JavaScript object literal in a Blade template.
+        '/(?<=[{;]|^)\s*(left|right)\s*:/im',
+
+        // --- Tailwind utilities, including the negative and arbitrary forms ---
+        '/(?<![\w-])-?(ml|mr|pl|pr)-'.$suffix.'/i',        // -ml-2, ml-auto, ml-[3px]
+        '/(?<![\w-])-?(left|right)-'.$suffix.'/i',         // left-0, -right-4, left-[1rem]
+        '/(?<![\w-])text-(left|right)(?![\w-])/i',
+        '/(?<![\w-])float-(left|right)(?![\w-])/i',
+    ];
+
+    foreach ($patterns as $pattern) {
+        if (preg_match($pattern, $source, $match)) {
+            return trim($match[0]);
+        }
+    }
+
+    return null;
+}
+
+it('catches every physical form the stylesheet rules forbid', function (string $sample) {
+    expect(firstPhysicalCssProperty($sample))->not->toBeNull(
+        "The logical-CSS detector missed: {$sample}",
+    );
+})->with([
+    // Raw CSS.
+    'margin-left: 1rem;',
+    'margin-right:0',
+    'padding-left: 2px;',
+    'padding-right : 2px;',
+    'border-left: 1px solid red;',
+    'border-right-width: 2px;',
+    'text-align: left;',
+    'text-align:right',
+    'float: left;',
+    'clear: right;',
+    '.thing { left: 0; }',
+    'position: absolute; right: 12px;',
+
+    // Tailwind: numeric, fractional, negative, auto, px, arbitrary.
+    '<div class="ml-4">',
+    '<div class="mr-1.5">',
+    '<div class="pl-2 pr-2">',
+    '<div class="-ml-2">',
+    '<div class="ml-auto">',
+    '<div class="mr-px">',
+    '<div class="ml-[1rem]">',
+    '<div class="left-0">',
+    '<div class="-left-2">',
+    '<div class="right-auto">',
+    '<div class="left-[1rem]">',
+    '<div class="text-left">',
+    '<div class="text-right font-bold">',
+    '<div class="float-right">',
+]);
+
+it('passes the logical forms that replace them', function (string $sample) {
+    // The other half. A detector that flagged everything would also make the
+    // scan above pass vacuously — and would fail the moment anyone wrote the
+    // correct code.
+    expect(firstPhysicalCssProperty($sample))->toBeNull(
+        "The logical-CSS detector wrongly flagged: {$sample}",
+    );
+})->with([
+    'margin-inline-start: 1rem;',
+    'padding-inline-end: 2px;',
+    'border-inline-start: 1px solid red;',
+    'text-align: start;',
+    'text-align: center;',
+    'float: inline-start;',
+    'inset-inline-start: 0;',
+    '<div class="ms-4 me-2">',
+    '<div class="ps-2 pe-2">',
+    '<div class="-ms-2">',
+    '<div class="ms-auto">',
+    '<div class="start-0 end-4">',
+    '<div class="text-start">',
+    '<div class="text-end">',
+    // Words that merely contain a forbidden fragment.
+    '<div class="html-left-panel">',
+    '<div class="overflow-hidden">',
+    'grid-template-columns: 1fr;',
+    '{ "left": 0 }',
+]);
+
+it('uses logical CSS properties only', function () {
     $offenders = [];
 
     foreach (File::allFiles(resource_path()) as $file) {
@@ -412,12 +519,15 @@ it('uses logical CSS properties only', function () {
             continue;
         }
 
+        // css and php only. resources/css/README.md is deliberately not scanned:
+        // its "Never" column spells out every forbidden property, so scanning
+        // documentation would report the rule as its own violation.
         if (! in_array($file->getExtension(), ['css', 'php'], true)) {
             continue;
         }
 
-        if (preg_match($physical, (string) file_get_contents($path), $match)) {
-            $offenders[] = str_replace(base_path().DIRECTORY_SEPARATOR, '', $path).' → '.$match[0];
+        if (($match = firstPhysicalCssProperty((string) file_get_contents($path))) !== null) {
+            $offenders[] = str_replace(base_path().DIRECTORY_SEPARATOR, '', $path).' → '.$match;
         }
     }
 

@@ -98,7 +98,10 @@ return [
     'inherits_from_course' => 'Inherited from the course',
 
     // Helper text.
-    'capacity_hint' => 'Leave empty for no limit. Enrolling past the limit is allowed and warns.',
+    // Zero, not empty. The field is required and the column is NOT NULL — see
+    // BatchResource, where "leave it blank" was removed precisely because an
+    // empty box reached MySQL as NULL and surfaced as a raw query error.
+    'capacity_hint' => 'Enter 0 for no limit. Enrolling past a limit is allowed and warns.',
     'total_hours_course_hint' => 'The default teaching hours for every batch of this course.',
     'total_hours_batch_hint' => 'Leave empty to use the course total. A value here applies to this batch only.',
     'is_active_course_hint' => 'Inactive courses stay on record but accept no new batches.',
@@ -106,21 +109,29 @@ return [
     'hour_mismatch_hint' => 'Assigned instructor hours do not match the batch total.',
     'delete_enrollment_warning' => 'This removes the enrolment record entirely. To keep the history, withdraw the student instead.',
     'instructor_departed_hint' => 'This instructor has left the centre. The assignment is kept so past batches stay accurate.',
-    'batch_in_use_hint' => 'Withdraw or delete the enrolments first.',
+    'batch_in_use_hint' => 'Remove the enrolments and the assigned instructors first.',
     'course_in_use_hint' => 'Delete the batches first, or deactivate the course to stop new ones.',
 
     // Refusals. These reach the user as notification titles and as exception
     // messages, so they are whole sentences rather than fragments.
     'over_capacity_warning' => 'This batch is now over capacity.',
     'duplicate_enrollment' => 'This student is already enrolled in this batch.',
-    'student_not_enrollable' => 'This student cannot be enrolled.',
-    'batch_closed' => 'This batch is closed and accepts no changes.',
-    'batch_in_use' => 'This batch has enrolments and cannot be deleted.',
+    'student_not_enrollable' => 'This student record has been deleted and cannot take new enrolments.',
+    // Two operations, not all of them. Spec section 6 gates new enrolments and
+    // instructor changes on a completed or cancelled batch; the batch's own
+    // details stay editable, and saying otherwise sends a user looking for a
+    // permission problem that does not exist.
+    'batch_closed' => 'Completed and cancelled batches take no new enrolments and no instructor changes.',
+    // Both restricting foreign keys, because either is a correct reason to
+    // refuse. Naming only enrolments sends the user to an empty list.
+    'batch_in_use' => 'This batch still has enrolments or assigned instructors and cannot be deleted.',
     'course_in_use' => 'This course has batches and cannot be deleted.',
     'instructor_not_eligible' => 'This person is not an eligible instructor.',
     'instructor_change_denied' => 'You are not allowed to change instructors on this batch.',
     'enrollment_change_denied' => 'You are not allowed to change this enrolment.',
-    'enrollment_not_withdrawable' => 'This enrolment cannot be withdrawn.',
+    // Withdrawing an already-withdrawn enrolment is a no-op, not a refusal.
+    // This is the completed case only.
+    'enrollment_not_withdrawable' => 'Only an active enrolment can be withdrawn.',
     'enrollment_batch_changed' => 'This enrolment moved to another batch. Reload and try again.',
 
     /*

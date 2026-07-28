@@ -17,6 +17,7 @@ constraint, not preparation for one.
 | `border-left` | `border-inline-start` |
 | `text-align: left` | `text-align: start` |
 | `float: left` | `float: inline-start` |
+| `clear: left` | `clear: inline-start` |
 | `left` / `right` | `inset-inline-start` / `inset-inline-end` |
 
 In Tailwind, use `ms-*` / `me-*` / `ps-*` / `pe-*` and `text-start` / `text-end`,
@@ -24,10 +25,20 @@ never `ml-*` / `mr-*` / `pl-*` / `pr-*` / `text-left` / `text-right`.
 
 `start-*` / `end-*` replace `left-*` / `right-*` for positioning.
 
+Every suffix counts, not just the numeric one: `ml-auto`, `-ml-2`, `mr-px` and
+`left-[1rem]` are as direction-blind as `ml-4`.
+
 ## Enforcement
 
 `tests/Feature/LocalizationTest.php` scans `resources/` and fails on a physical
 property, so this file documents the rule rather than carrying it.
+
+The detector has its own self-tests — one set of physical samples it must catch,
+one set of logical samples it must not — covering raw CSS and the Tailwind
+numeric, fractional, negative, `auto`, `px` and arbitrary-value forms. A scan
+that quietly matches less than this table promises is worse than no scan: it
+reports the rule as enforced while `ml-auto` sails through. Anything added to
+the table above belongs in both sample sets.
 
 One file is exempt: `resources/views/welcome.blade.php`, Laravel's stock landing
 page, which inlines a compiled Tailwind build. The exemption is checked — it

@@ -8008,7 +8008,17 @@ placeholders here and proven at the call site by `EnrollmentsRelationManagerTest
 
 The scan is also self-checked — one test asserts a missing key still returns
 itself, another that the scan matches a plausible number of files — because a
-scan that silently matches nothing passes every assertion built on it.
+scan that silently matches nothing passes every assertion built on it. Two
+fail-open holes found in review are closed the same way: the key pattern accepts
+both quote styles, since PHP does, and an empty or whitespace-only value counts
+as missing, because a blank label reads as a styling bug rather than as an absent
+string and is harder to trace than the raw key would have been.
+
+The logical-CSS detector carries its own sample sets — physical forms it must
+catch, logical forms it must not — covering raw CSS and the Tailwind numeric,
+negative, `auto`, `px` and arbitrary-value suffixes. Review found `border-left`,
+`left: 0` and `ml-auto` passing undetected: a detector narrower than the README
+it enforces reports the rule as kept while breaking it.
 
 ### File scope
 
@@ -8036,8 +8046,12 @@ scan that silently matches nothing passes every assertion built on it.
 | Remove `SetLocale` from `authMiddleware` | registration, locale and RTL tests |
 | Drop `persistentMiddleware()` | Livewire-persistence test |
 | Skip `setLocale()` for an invalid value | fallback-reset test |
+| Write a key with double quotes | completeness test |
+| Set an English value to `''` | completeness test |
 | Hardcode a Filament label | no-hardcoded-strings test |
-| Use a physical CSS property | logical-CSS test |
+| Use a physical CSS property, in any form | logical-CSS test |
+| Delete a rule from the CSS detector | detector self-test (physical samples) |
+| Over-broaden a rule so `ms-*` trips it | detector self-test (logical samples) |
 | Hand-write the exempted stock page | exemption-freshness test |
 | Point the scan at the wrong root | scan-floor test |
 
