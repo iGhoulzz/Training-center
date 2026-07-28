@@ -64,6 +64,32 @@ return [
             'options' => extension_loaded('pdo_mysql') ? array_filter([
                 Mysql::ATTR_SSL_CA => env('MYSQL_ATTR_SSL_CA'),
             ]) : [],
+
+            /*
+             * Dump options for spatie/laravel-backup, chosen to work as a
+             * RESTRICTED database user — the kind a managed host actually issues.
+             *
+             * addExtraOption('--no-tablespaces') is the one that matters most.
+             * From MySQL 8, mysqldump reads INFORMATION_SCHEMA.FILES unless told
+             * not to, and that needs the PROCESS privilege — which is global, not
+             * per-database, and which no sane host grants an application user. A
+             * backup that only runs as root is a backup that stops running the
+             * day somebody tightens the grants, and it fails at 01:30 with nobody
+             * watching.
+             *
+             * useSingleTransaction() takes a consistent snapshot without locking
+             * the tables, so the nightly dump does not block the application on
+             * InnoDB. skipLockTables() goes with it: LOCK TABLES needs its own
+             * grant and is redundant under a single transaction.
+             *
+             * The same options are set on mariadb below so the two connections
+             * cannot drift into dumping differently.
+             */
+            'dump' => [
+                'useSingleTransaction' => true,
+                'skipLockTables' => true,
+                'addExtraOption' => '--no-tablespaces',
+            ],
         ],
 
         'mariadb' => [

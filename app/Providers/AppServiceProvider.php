@@ -17,6 +17,7 @@ use App\Domain\Staff\Models\StaffProfile;
 use App\Domain\Staff\Policies\StaffCertificatePolicy;
 use App\Domain\Staff\Policies\StaffProfilePolicy;
 use App\Domain\Staff\Policies\UserPolicy;
+use App\Domain\Staff\Support\BackupConfiguration;
 use App\Models\User;
 use Illuminate\Auth\Events\Login;
 use Illuminate\Support\Facades\Event;
@@ -38,6 +39,16 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        /*
+         * Refuse to run production without working off-server backups.
+         *
+         * Placed first so it fires before anything else has a chance to succeed:
+         * an install missing its bucket credentials or archive password looks
+         * completely healthy until a restore is needed, and that is exactly when
+         * discovering it is worst. See BackupConfiguration.
+         */
+        BackupConfiguration::assertReadyForProduction($this->app->environment());
+
         /*
          * These policies live outside app/Policies, so Laravel's
          * convention-based discovery will not find them. Without these lines
