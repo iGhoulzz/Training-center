@@ -7683,13 +7683,15 @@ seconds.
    cannot reach auth events, which have no subject. One extension point covers
    both model-generated and explicit entries.
 
-6. **Password events are logged semantically, never by diff.** `password` and
-   `must_change_password` are excluded from diffs — which alone would make a
-   reset produce an empty change set that `dontLogEmptyChanges` (the v5 default)
-   suppresses entirely, so the security event would vanish. `ResetUserPasswordAction`
-   and the self-service password change therefore record their own events, with
-   no hash and no password in the properties.
+6. **Password events are logged semantically, never by diff.** `password` never
+   reaches a diff, so a reset would otherwise produce an empty change set that
+   `dontLogEmptyChanges` (the v5 default) suppresses — and the security event
+   would vanish. `ResetUserPasswordAction` and the self-service password change
+   record their own events, with no hash and no password in the properties.
 
+   `must_change_password` **is** audited: it is a flag, not a secret, and "who
+   forced this account to rotate" is an audit question. It lives in the allowlist
+   and NOT in the global exclusion list, which holds secrets only.
 7. **File columns are not retained in diffs.** `disk`, `path` and
    `original_filename` carry little audit value and a filename can contain
    personal information. Certificate and photo activity is recorded as a
@@ -7781,8 +7783,8 @@ Each must be shown to fail a **named** test before this task is done.
 | Break | Must fail |
 |---|---|
 | Enable `buffer.enabled` | rollback test — **the test flushes the buffer after the failed transaction**, or buffering leaves it green because nothing ever flushed |
-| Remove the `password` entry from `User`'s `logOnly()` allowlist | secret-absent-from-diff test |
-| Change the global `default_except_attributes` config | its own pinning test (with allowlists, removing it exposes nothing — so it cannot be proven by the diff test and needs pinning separately) |
+| **Add** `password` to `User`'s `logOnly()` allowlist | the allowlist test. It is not there to remove, and the global list strips it regardless, so the mutation is an ADDITION and only the direct allowlist assertion catches it |
+| Empty the global `default_except_attributes` | its own pinning test. It cannot be proven by the runtime diff test, since with allowlists in place removing it exposes nothing on its own |
 | Make the policy honour `delete_activity` | super-admin-holding-the-grant-still-refused test |
 | Register any action on the Filament resource | exact-registry test |
 | Drop IP from the custom log action | two tests: automatic model IP, and explicit-event IP |

@@ -110,11 +110,6 @@ class User extends Authenticatable implements FilamentUser
     }
 
     /**
-     * Get the attributes that should be cast.
-     *
-     * @return array<string, string>
-     */
-    /**
      * The account columns worth an audit diff.
      *
      * password and remember_token are absent by design and must stay absent: a
@@ -144,6 +139,11 @@ class User extends Authenticatable implements FilamentUser
         ];
     }
 
+    /**
+     * Get the attributes that should be cast.
+     *
+     * @return array<string, string>
+     */
     protected function casts(): array
     {
         return [

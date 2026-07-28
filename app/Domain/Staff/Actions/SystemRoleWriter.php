@@ -95,6 +95,12 @@ final class SystemRoleWriter
         $desired = array_values(array_unique($roles));
 
         DB::transaction(function () use ($user, $desired): void {
+            // Same global order as the request path: super_admin role, then the
+            // account. syncRoles() can REDUCE the population and so reaches the
+            // invariant, which locks that row — taking it here first is what keeps
+            // this from inverting against DeleteUserAction.
+            Role::lockSuperAdminRow();
+
             $locked = User::query()->lockForUpdate()->findOrFail($user->getKey());
 
             $current = $locked->roles()->pluck('name')->all();

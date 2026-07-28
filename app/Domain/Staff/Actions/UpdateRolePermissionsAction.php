@@ -40,8 +40,6 @@ final class UpdateRolePermissionsAction
             throw new AuthorizationException(__('staff.escalation.requires_assign_role'));
         }
 
-        Gate::forUser($actor)->authorize('update', $role);
-
         $desired = array_values(array_unique($permissions));
 
         /*
@@ -54,6 +52,22 @@ final class UpdateRolePermissionsAction
          */
         DB::transaction(function () use ($actor, $role, $desired): void {
             $locked = Role::query()->lockForUpdate()->findOrFail($role->getKey());
+
+            /*
+             * AUTHORIZED AGAINST THE LOCKED ROW, INSIDE THE TRANSACTION.
+             *
+             * RolePolicy::update() refuses a role the ACTOR HOLDS — nobody edits
+             * the permissions of a role they are a member of. That question was
+             * previously asked before the lock, against the passed instance, and
+             * the answer could go stale in the gap: an actor granted the role
+             * between the check and the write kept an authorization that was no
+             * longer true, and the permission change landed anyway.
+             *
+             * Asking it here means the decision and the write are serialized by
+             * the same lock. Confirmed by regression test: granting the actor the
+             * role mid-transaction now refuses.
+             */
+            Gate::forUser($actor)->authorize('update', $locked);
 
             $current = $locked->permissions()->pluck('name')->all();
 

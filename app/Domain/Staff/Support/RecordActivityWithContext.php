@@ -30,10 +30,10 @@ use Spatie\Activitylog\Actions\LogActivityAction;
  * would make a system operation indistinguishable from somebody working locally.
  * ActivityLogTest pins the null case alongside the populated one.
  *
- * Nothing here reads the causer: the package resolves that, and overriding it
- * would silently re-attribute entries whose causer was set on purpose — see
- * SystemRoleWriter, which records anonymous entries even when somebody is
- * logged in.
+ * The causer is READ here, to snapshot its name, but never SET or overridden.
+ * Who the causer is remains the package's decision — overriding it would silently
+ * re-attribute entries whose causer was chosen on purpose, as SystemRoleWriter's
+ * anonymous entries are. This only records what that decision was.
  *
  * WHY NOT LogActivityAction::beforeLogging()
  * ------------------------------------------

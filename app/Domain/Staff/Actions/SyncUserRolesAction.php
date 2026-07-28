@@ -59,6 +59,25 @@ final class SyncUserRolesAction
          * against any other sync for the same account.
          */
         DB::transaction(function () use ($actor, $target, $desired): void {
+            /*
+             * THE SUPER-ADMIN ROLE ROW IS LOCKED BEFORE THE USER ROW. ALWAYS.
+             *
+             * ONE GLOBAL ORDER: super_admin role -> user. DeleteUserAction and
+             * DeactivateUserAction reach the invariant service first, which locks
+             * that role row and only then touches the account. This Action used to
+             * take the user lock first and the role lock later (through the
+             * invariant), so a role sync and a deactivation against the same super
+             * admin could each hold what the other was waiting for.
+             *
+             * Taken unconditionally rather than only when super_admin is involved,
+             * because whether it IS involved cannot be known until the current
+             * roles are read — and that read is what the user lock protects. The
+             * cost is that role writes serialize against each other globally,
+             * which is acceptable for a rare administrative operation and is the
+             * same row the invariant already serializes every reducer on.
+             */
+            Role::lockSuperAdminRow();
+
             $locked = User::query()->lockForUpdate()->findOrFail($target->getKey());
 
             $current = $locked->roles()->pluck('name')->all();

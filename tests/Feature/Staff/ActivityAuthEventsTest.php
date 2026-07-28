@@ -14,9 +14,11 @@ use App\Filament\Pages\PasswordChange;
 use App\Models\Role;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\Events\Failed;
 use Illuminate\Auth\Events\Login;
 use Illuminate\Auth\Events\Logout;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Event;
 use Spatie\Activitylog\Models\Activity;
@@ -381,4 +383,117 @@ it('writes the audit entry in the same transaction as the pivot change', functio
 
     expect(Activity::query()->count())->toBe($before)
         ->and($target->fresh()->roles()->count())->toBe(0);
+});
+
+/*
+|--------------------------------------------------------------------------
+| Authorization is decided under the lock, not before it
+|--------------------------------------------------------------------------
+*/
+
+it('refuses a permission change when the actor gains the role mid-transaction', function () {
+    /*
+     * THE STALE-AUTHORIZATION WINDOW.
+     *
+     * RolePolicy::update() refuses a role the actor HOLDS — nobody edits the
+     * permissions of a role they belong to. Asked before the lock, that answer
+     * could go stale: an actor granted the role between the check and the write
+     * kept an authorization that was no longer true, and the change landed.
+     *
+     * The grant is injected from a listener on the role lock, which is after the
+     * transaction opens and before the policy runs. Moving the authorize() back
+     * outside the transaction makes this pass again.
+     */
+    $actor = ($this->actorWith)('super_admin');
+    $role = Role::findOrCreate('registrar', 'web');
+
+    $granted = false;
+
+    DB::listen(function (QueryExecuted $query) use (&$granted, $actor, $role): void {
+        if ($granted || ! str_contains(strtolower($query->sql), 'from `roles`')) {
+            return;
+        }
+
+        if (! str_contains(strtolower($query->sql), 'for update')) {
+            return;
+        }
+
+        $granted = true;
+
+        DB::table('model_has_roles')->insert([
+            'role_id' => $role->getKey(),
+            'model_type' => $actor->getMorphClass(),
+            'model_id' => $actor->getKey(),
+        ]);
+    });
+
+    try {
+        app(UpdateRolePermissionsAction::class)->execute($actor, $role, ['view_any_student']);
+        $thrown = null;
+    } catch (AuthorizationException $exception) {
+        $thrown = $exception;
+    }
+
+    expect($thrown)->toBeInstanceOf(AuthorizationException::class)
+        ->and($role->fresh()->permissions()->count())->toBe(0);
+});
+
+/*
+|--------------------------------------------------------------------------
+| One lock order, everywhere
+|--------------------------------------------------------------------------
+*/
+
+it('locks the super-admin role before the account on every role writer', function () {
+    /*
+     * DEADLOCK PREVENTION, ASSERTED AS AN ORDER.
+     *
+     * DeleteUserAction and DeactivateUserAction reach the invariant service
+     * first, which locks the super_admin role row and only then touches the
+     * account: role -> user. A role sync that locked the user first and the role
+     * later would invert that, and two concurrent reductions against the same
+     * super admin would each hold what the other waited for.
+     *
+     * Asserted for both the request path and the system path, because they are
+     * separate writers and only one of them being right is a deadlock.
+     */
+    $writers = [
+        'request path' => function (): void {
+            $target = User::factory()->create(['is_active' => true]);
+            app(SyncUserRolesAction::class)->execute($this->superAdmin, $target, ['staff']);
+        },
+        'system path' => function (): void {
+            $target = User::factory()->create(['is_active' => true]);
+            $this->system->syncRoles($target, ['staff']);
+        },
+    ];
+
+    foreach ($writers as $label => $write) {
+        $statements = captureStatements();
+
+        $write();
+
+        $ordered = collect($statements)->values();
+
+        $roleLock = $ordered->search(fn (array $s): bool => str_contains($s['sql'], ' for update')
+            && str_contains($s['sql'], 'from `roles`'));
+
+        $userLock = $ordered->search(fn (array $s): bool => str_contains($s['sql'], ' for update')
+            && str_contains($s['sql'], 'from `users`'));
+
+        expect($roleLock)->not->toBeFalse(
+            "{$label}: the super-admin role row was never locked. ".describeStatements($statements),
+        );
+
+        expect($userLock)->not->toBeFalse(
+            "{$label}: the account was never locked. ".describeStatements($statements),
+        );
+
+        expect($roleLock)->toBeLessThan(
+            $userLock,
+            "{$label}: the account was locked BEFORE the super-admin role, inverting the order "
+            .'DeleteUserAction and DeactivateUserAction use. Two concurrent reductions against '
+            .'the same super admin can now deadlock.',
+        );
+    }
 });
