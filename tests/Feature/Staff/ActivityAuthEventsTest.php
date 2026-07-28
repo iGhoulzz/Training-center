@@ -469,6 +469,7 @@ it('locks the super-admin role before the account on every role writer', functio
     ];
 
     foreach ($writers as $label => $write) {
+        $baseline = DB::transactionLevel();
         $statements = captureStatements();
 
         $write();
@@ -495,5 +496,28 @@ it('locks the super-admin role before the account on every role writer', functio
             .'DeleteUserAction and DeactivateUserAction use. Two concurrent reductions against '
             .'the same super admin can now deadlock.',
         );
+
+        /*
+         * THE ORDER ONLY MEANS ANYTHING INSIDE A TRANSACTION.
+         *
+         * Two locks taken in the right sequence but on autocommit are released
+         * the instant each statement finishes, so nothing is ever held long
+         * enough to serialize against a concurrent writer — and the ordering
+         * assertion above passes regardless. The depth is what proves both locks
+         * are held together until the write commits.
+         *
+         * baseline + 1, not an absolute level: RefreshDatabase already holds a
+         * transaction open, so the caller sits at 1 here and at 0 in production.
+         * Asserting `=== 1` would pass for an Action that opens none.
+         */
+        foreach (['role' => $roleLock, 'account' => $userLock] as $what => $index) {
+            expect($ordered[$index]['level'])->toBe(
+                $baseline + 1,
+                "{$label}: the {$what} lock ran at transaction level {$ordered[$index]['level']}, "
+                .'expected '.($baseline + 1).' — one deeper than the caller. At the callers own '
+                .'level the Action opened no transaction, so the lock releases immediately and the '
+                .'ordering guarantees nothing. SQL: '.$ordered[$index]['sql'],
+            );
+        }
     }
 });
