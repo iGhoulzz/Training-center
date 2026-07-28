@@ -49,10 +49,33 @@ it('backs up both upload roots, because the database only stores paths', functio
      * credential permanently unrecoverable, which is the failure spec section 11
      * names explicitly.
      */
+    /*
+     * CROSS-CHECKED AGAINST THE DISK CONFIGURATION, not a literal path.
+     *
+     * Asserting storage_path('app/secure') passes even after somebody moves the
+     * private disk's root — the backup would then quietly cover a directory
+     * nothing writes to while the real uploads went unbacked. Reading the roots
+     * from the disks means the two cannot drift apart silently.
+     */
     $include = config('backup.backup.source.files.include');
 
-    expect($include)->toContain(storage_path('app/secure'))
-        ->and($include)->toContain(storage_path('app/public'));
+    expect($include)->toContain(config('filesystems.disks.private.root'))
+        ->and($include)->toContain(config('filesystems.disks.public.root'));
+});
+
+it('stores archive paths relative to the project root', function () {
+    /*
+     * Left null, the package writes every entry under its absolute deployment
+     * path, so an archive taken on one server unpacks into a tree that only makes
+     * sense on that server — and docs/RESTORE.md, which says to rsync from
+     * restore/storage/app/secure, is simply wrong.
+     */
+    expect(config('backup.backup.source.files.relative_path'))->toBe(base_path());
+
+    // The path the runbook tells somebody to type, derived rather than repeated.
+    $secure = str_replace(base_path().DIRECTORY_SEPARATOR, '', (string) config('filesystems.disks.private.root'));
+
+    expect(str_replace(DIRECTORY_SEPARATOR, '/', $secure))->toBe('storage/app/secure');
 });
 
 it('does not sweep the whole project into the archive', function () {
@@ -262,6 +285,90 @@ it('wires the production guard into the application boot', function () {
     expect($provider)->toContain('BackupConfiguration::assertReadyForProduction');
 });
 
+it('resolves an alert address even when the env variable is present but empty', function () {
+    /*
+     * THE BUG A FRESH CHECKOUT HITS.
+     *
+     * env()'s second argument is a default for a MISSING key. A key that exists
+     * and is empty — exactly what .env.example ships — returns '', sails past the
+     * default, and the package throws InvalidConfig on every backup command,
+     * backup:list included. The application does not start.
+     *
+     * Re-evaluates the config file with the variable blank, because the booted
+     * config was resolved before this test ran and would not show it.
+     */
+    $original = $_ENV['BACKUP_ALERT_EMAIL'] ?? null;
+
+    $_ENV['BACKUP_ALERT_EMAIL'] = '';
+    putenv('BACKUP_ALERT_EMAIL=');
+
+    try {
+        $resolved = (require config_path('backup.php'))['notifications']['mail']['to'];
+    } finally {
+        if ($original === null) {
+            unset($_ENV['BACKUP_ALERT_EMAIL']);
+            putenv('BACKUP_ALERT_EMAIL');
+        } else {
+            $_ENV['BACKUP_ALERT_EMAIL'] = $original;
+            putenv('BACKUP_ALERT_EMAIL='.$original);
+        }
+    }
+
+    expect($resolved)->not->toBeEmpty(
+        'A blank BACKUP_ALERT_EMAIL resolves to an empty address, which the package rejects '
+        .'at boot — every backup command fails on a fresh checkout.',
+    );
+});
+
+it('shares one mutex across the whole backup pipeline', function () {
+    /*
+     * withoutOverlapping() derives its lock from the command, so three commands
+     * hold three separate locks and none excludes the others: a backup still
+     * uploading at 03:00 does not stop the cleanup, which then evaluates
+     * retention against a destination mid-write.
+     */
+    $names = collect(['backup:run', 'backup:monitor', 'backup:clean'])
+        ->map(fn (string $command): string => scheduledBackupCommand($command)->mutexName())
+        ->unique();
+
+    expect($names)->toHaveCount(
+        1,
+        'The backup commands hold different locks, so cleanup can run while a backup uploads.',
+    );
+});
+
+it('retries a failed backup rather than skipping the night', function () {
+    // Rate-limiting, a dropped upload, a DNS blip at 01:30 — one attempt turns any
+    // of those into a missing night, and the next chance is 24 hours away.
+    expect(config('backup.backup.tries'))->toBeGreaterThan(1)
+        ->and(config('backup.backup.retry_delay'))->toBeGreaterThan(0);
+});
+
+it('never deletes backups to stay under a storage ceiling', function () {
+    /*
+     * Not a monitoring threshold: exceeding it makes the cleanup delete the
+     * OLDEST archives regardless of every retention setting above. Full archives
+     * include the uploads, so thirty daily copies pass a few gigabytes quickly and
+     * the promised 30 days silently becomes however many happen to fit.
+     */
+    expect(config('backup.cleanup.default_strategy.delete_oldest_backups_when_using_more_megabytes_than'))
+        ->toBeNull();
+});
+
+it('requires a region before production may boot', function () {
+    // The S3 client cannot sign a request without one, so an unset region fails
+    // every upload at 01:30 rather than at boot.
+    config([
+        'filesystems.disks.backups.key' => 'a-key',
+        'filesystems.disks.backups.secret' => 'a-secret',
+        'filesystems.disks.backups.bucket' => 'a-bucket',
+        'filesystems.disks.backups.region' => null,
+        'backup.backup.password' => 'a-long-archive-password',
+    ]);
+
+    BackupConfiguration::assertReadyForProduction('production');
+})->throws(RuntimeException::class, 'filesystems.disks.backups.region');
+
 it('never ships the package placeholder alert address', function () {
     /*
      * The package defaults to your@example.com. Left in place, every failure
@@ -304,6 +411,7 @@ it('refuses to boot production without an archive password', function () {
         'filesystems.disks.backups.key' => 'a-key',
         'filesystems.disks.backups.secret' => 'a-secret',
         'filesystems.disks.backups.bucket' => 'a-bucket',
+        'filesystems.disks.backups.region' => 'a-region',
         'backup.backup.password' => null,
     ]);
 
@@ -317,6 +425,7 @@ it('boots production once everything is configured', function () {
         'filesystems.disks.backups.key' => 'a-key',
         'filesystems.disks.backups.secret' => 'a-secret',
         'filesystems.disks.backups.bucket' => 'a-bucket',
+        'filesystems.disks.backups.region' => 'a-region',
         'backup.backup.password' => 'a-long-archive-password',
     ]);
 

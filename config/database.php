@@ -82,8 +82,11 @@ return [
              * InnoDB. skipLockTables() goes with it: LOCK TABLES needs its own
              * grant and is redundant under a single transaction.
              *
-             * The same options are set on mariadb below so the two connections
-             * cannot drift into dumping differently.
+             * Set on `mysql` only, which is the connection this application
+             * actually uses and the one named in config/backup.php. The mariadb
+             * connection below is Laravel's stock entry and nothing here backs it
+             * up; giving it dump options would imply a second supported database
+             * that does not exist.
              */
             'dump' => [
                 'useSingleTransaction' => true,

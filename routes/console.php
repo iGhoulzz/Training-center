@@ -38,28 +38,51 @@ Artisan::command('inspire', function () {
 | offset changes, so the nightly dump starts competing with real users for the
 | database. Stated rather than assumed.
 |
-| withoutOverlapping() bounds each command instead of trusting it to finish. A
-| growing uploads directory eventually makes the archive take longer than the gap
-| to the next window, and two concurrent backup:run processes would dump the same
-| database twice and race each other writing to the bucket. The arguments are
-| expiry minutes: a lock left behind by a killed process releases itself rather
-| than blocking every subsequent night.
+| ONE MUTEX ACROSS ALL THREE, NOT ONE EACH.
+|
+| withoutOverlapping() derives its lock from the command by default, so the three
+| would hold three separate locks and none would exclude the others — a backup
+| still uploading at 03:00 would not stop the cleanup starting, and the cleanup
+| would then evaluate retention against a destination mid-write. They are one
+| pipeline and take one lock.
+|
+| The bound also protects each command from itself: a growing uploads directory
+| eventually makes the archive take longer than the gap to the next window, and
+| two concurrent backup:run processes would dump the same database twice and race
+| each other writing to the bucket.
+|
+| The expiry is generous on purpose — a lock left behind by a killed process
+| releases itself rather than blocking every subsequent night, and the whole
+| pipeline shares one window.
 */
+
+/*
+ * The shared lock name is repeated literally rather than held in a constant.
+ *
+ * This file is re-evaluated on every application boot, and a file-scope const
+ * throws "already defined" the second time — which in a test run is every test
+ * after the first. BackupConfigurationTest asserts the three resolve to one
+ * identical mutex, so a typo here fails the build rather than silently giving
+ * cleanup its own lock.
+ */
 
 Schedule::command('backup:run')
     ->daily()
     ->at('01:30')
     ->timezone('Africa/Tripoli')
-    ->withoutOverlapping(120);
+    ->createMutexNameUsing(fn (): string => 'framework/schedule-backup-pipeline')
+    ->withoutOverlapping(180);
 
 Schedule::command('backup:monitor')
     ->daily()
     ->at('02:30')
     ->timezone('Africa/Tripoli')
-    ->withoutOverlapping(30);
+    ->createMutexNameUsing(fn (): string => 'framework/schedule-backup-pipeline')
+    ->withoutOverlapping(180);
 
 Schedule::command('backup:clean')
     ->daily()
     ->at('03:00')
     ->timezone('Africa/Tripoli')
-    ->withoutOverlapping(60);
+    ->createMutexNameUsing(fn (): string => 'framework/schedule-backup-pipeline')
+    ->withoutOverlapping(180);

@@ -74,11 +74,19 @@ return [
                 'ignore_unreadable_directories' => false,
 
                 /*
-                 * This path is used to make directories in resulting zip-file relative
-                 * Set to `null` to include complete absolute path
-                 * Example: base_path()
+                 * PATHS INSIDE THE ARCHIVE ARE RELATIVE TO THE PROJECT ROOT.
+                 *
+                 * Left null, the package stores every file under its absolute
+                 * deployment path — /home/forge/training-center/storage/app/secure/…
+                 * — so an archive taken on one server unpacks into a directory
+                 * tree that only makes sense on that server, and the restore
+                 * runbook's `restore/storage/app/secure` is simply wrong.
+                 *
+                 * base_path() makes the entries `storage/app/secure/…`, which is
+                 * both what the runbook documents and what rsync back into a new
+                 * install expects. BackupConfigurationTest asserts the two agree.
                  */
-                'relative_path' => null,
+                'relative_path' => base_path(),
             ],
 
             /*
@@ -255,13 +263,21 @@ return [
         /*
          * The number of attempts, in case the backup command encounters an exception
          */
-        'tries' => 1,
+        /*
+         * Three attempts, a minute apart.
+         *
+         * The failure this covers is transient: object storage rate-limiting, a
+         * dropped connection mid-upload, a momentary DNS blip at 01:30. One
+         * attempt turns any of those into a missing night, and the next chance is
+         * 24 hours away.
+         */
+        'tries' => 3,
 
         /*
          * The number of seconds to wait before attempting a new backup if the previous try failed
          * Set to `0` for none
          */
-        'retry_delay' => 0,
+        'retry_delay' => 60,
     ],
 
     /*
@@ -294,8 +310,11 @@ return [
              * "no alerting" — it means the application does not start. Found by
              * BackupConfigurationTest rather than at deploy time.
              *
-             * Falls back to the application's own from-address, which is always
-             * set, so a fresh checkout boots without inventing credentials.
+             * ?: RATHER THAN env()'s SECOND ARGUMENT. A default only applies when
+             * the variable is ABSENT — a key present but empty, which is exactly
+             * what .env.example ships, returns '' and sails past it. The result
+             * was that a fresh checkout threw InvalidConfig on every backup
+             * command. ?: falls back on empty as well as missing.
              * Production should point BACKUP_ALERT_EMAIL at a mailbox somebody
              * reads: the monitor schedule exists to notice a backup that stopped
              * running, and mail to an address nobody checks is the same as no
@@ -303,7 +322,7 @@ return [
              *
              * Asserted never to be the package's your@example.com placeholder.
              */
-            'to' => env('BACKUP_ALERT_EMAIL', env('MAIL_FROM_ADDRESS', 'backups@localhost')),
+            'to' => env('BACKUP_ALERT_EMAIL') ?: env('MAIL_FROM_ADDRESS') ?: 'backups@localhost',
 
             'from' => [
                 'address' => env('MAIL_FROM_ADDRESS', 'hello@example.com'),
@@ -444,7 +463,21 @@ return [
              * this amount of megabytes has been reached.
              * Set null for unlimited size.
              */
-            'delete_oldest_backups_when_using_more_megabytes_than' => 5000,
+            /*
+             * NO DESTRUCTIVE CEILING. This is not a monitoring threshold — when
+             * the destination exceeds it the cleanup DELETES the oldest archives
+             * regardless of every retention setting above.
+             *
+             * The archives are full backups including the uploads, so at even a
+             * couple of hundred megabytes of files, thirty daily copies pass 5 GB
+             * and the promised 30 days quietly becomes however many fit. The
+             * retention window is the policy; storage is a bill, and a bill is
+             * not a reason to silently discard the restore point somebody needs.
+             *
+             * Growth is still visible: MaximumStorageInMegabytes under
+             * monitor_backups WARNS without deleting anything.
+             */
+            'delete_oldest_backups_when_using_more_megabytes_than' => null,
         ],
 
         /*

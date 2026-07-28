@@ -48,6 +48,9 @@ final class BackupConfiguration
         'filesystems.disks.backups.key',
         'filesystems.disks.backups.secret',
         'filesystems.disks.backups.bucket',
+        // The S3 client refuses to sign a request without one, so an unset region
+        // fails every upload at 01:30 rather than at boot.
+        'filesystems.disks.backups.region',
         'backup.backup.password',
     ];
 

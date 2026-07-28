@@ -59,16 +59,38 @@ year.
 
 ### 2. Unpack it
 
+**`unzip` will probably not work.** The archives are AES-256, and the `unzip`
+shipped by most Linux distributions only understands the legacy ZipCrypto
+scheme. It typically reports `unsupported compression method 99` or simply an
+incorrect password, which is misleading — the password is fine, the tool is not.
+
+Use 7-Zip:
+
 ```bash
-unzip -P "$BACKUP_ARCHIVE_PASSWORD" training-center-2026-07-28-01-30-00.zip -d restore/
+7z x -p"$BACKUP_ARCHIVE_PASSWORD" training-center-2026-07-28-01-30-00.zip -orestore/
+```
+
+Or, if 7-Zip is not available, PHP's own `ZipArchive` — which is what wrote the
+file, so it can always read it:
+
+```bash
+php -r '
+$zip = new ZipArchive;
+$zip->open("training-center-2026-07-28-01-30-00.zip");
+$zip->setPassword(getenv("BACKUP_ARCHIVE_PASSWORD"));
+$zip->extractTo("restore/");
+$zip->close();
+'
 ```
 
 You should get a `db-dumps/` directory containing the SQL dump, and the two
-storage roots under their original paths.
+storage roots under `restore/storage/app/…`. Paths inside the archive are
+relative to the project root — `relative_path` is set to `base_path()` — so they
+unpack the same way regardless of which server produced them.
 
-If `unzip` reports an incorrect password, stop and check you are using the
-password that was current **when that archive was written** — rotating it does
-not re-encrypt existing archives.
+If the password is genuinely rejected, check you are using the one that was
+current **when that archive was written**: rotating it does not re-encrypt
+existing archives.
 
 ### 3. Restore the database
 
@@ -169,3 +191,46 @@ If the newest entry is not from last night, the scheduler, the credentials or
 the database user's grants are the places to look. `--no-tablespaces` is already
 set for the last of those; a dump that starts failing after a grants change is
 usually asking for a privilege the application user should not have.
+
+---
+
+## The drill
+
+Do this once on a scratch environment, and again whenever the archive password
+or the storage provider changes. It takes about twenty minutes and it is the
+only thing that turns this document from a plan into a procedure.
+
+1. **Take a backup on purpose.**
+
+   ```bash
+   php artisan backup:run
+   ```
+
+2. **Download it from the bucket**, using the provider's console or an S3 client.
+   Do not copy it off the application server — the drill is worthless if it only
+   proves the copy you already had is readable.
+
+3. **Extract it with the tool you would actually reach for**, per step 2 above.
+   If `unzip` fails here, that is the finding: note which tool works on your
+   machines and tell whoever else might do this.
+
+4. **Restore into a throwaway database.** Never the live one.
+
+   ```bash
+   mysql -u USER -p scratch_restore < restore/db-dumps/*.sql
+   ```
+
+5. **Point a checkout at it**, run `php artisan migrate`, copy the two storage
+   roots into place, and sign in.
+
+6. **Open a staff profile and download a certificate.** This is the step that
+   matters. Row counts prove the dump restored; opening a file proves the
+   database and the uploads came from the same night and still agree with each
+   other. That is the failure this entire feature exists to prevent, and it is
+   the only one you cannot detect any other way.
+
+7. **Write down how long it took.** When this is needed for real, somebody will
+   ask, and "about twenty minutes" is a much better answer than a guess.
+
+If any step surprises you, fix this document rather than remembering the
+workaround.
