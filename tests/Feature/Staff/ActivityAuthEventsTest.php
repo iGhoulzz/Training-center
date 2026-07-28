@@ -20,6 +20,7 @@ use Illuminate\Auth\Events\Logout;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Event;
 use Spatie\Activitylog\Models\Activity;
+use Spatie\Activitylog\Support\ActivityBuffer;
 use Spatie\Permission\Models\Permission;
 
 uses(RefreshDatabase::class);
@@ -271,4 +272,113 @@ it('records a photo removal without the path', function () {
 
     expect(json_encode(Activity::query()->get()->toArray()))
         ->not->toContain('personal-name-here');
+});
+
+/*
+|--------------------------------------------------------------------------
+| The pivot diff is computed under the lock, inside the transaction
+|--------------------------------------------------------------------------
+*/
+
+it('locks the account before reading the roles it audits', function () {
+    /*
+     * THE ORDERING THE AUDIT TRAIL'S ACCURACY DEPENDS ON.
+     *
+     * The diff used to be computed before the transaction opened. Two concurrent
+     * syncs would then both read the same "current" set and each record an
+     * added/removed list against a state that had already moved — the rows would
+     * end up right and the log would describe a change that never happened that
+     * way, which is the worse failure because nobody notices it.
+     *
+     * Asserted as an ORDER at a DEPTH, because each property alone is satisfiable
+     * by the broken arrangement: a lock happens, a pivot read happens, a write
+     * happens.
+     */
+    $target = User::factory()->create(['is_active' => true]);
+
+    $baseline = DB::transactionLevel();
+    $statements = captureStatements();
+
+    app(SyncUserRolesAction::class)->execute($this->superAdmin, $target, ['staff']);
+
+    $ordered = collect($statements)->values();
+
+    $lock = $ordered->search(fn (array $s): bool => str_contains($s['sql'], ' for update')
+        && str_contains($s['sql'], 'from `users`'));
+
+    $pivotRead = $ordered->search(fn (array $s): bool => str_starts_with($s['sql'], 'select')
+        && str_contains($s['sql'], 'model_has_roles'));
+
+    $auditWrite = $ordered->search(fn (array $s): bool => str_starts_with($s['sql'], 'insert into `activity_log`'));
+
+    expect($lock)->not->toBeFalse(
+        'The account was never locked, so the roles read below raced any concurrent sync. '
+        .describeStatements($statements),
+    );
+
+    expect($pivotRead)->not->toBeFalse('No pivot read observed. '.describeStatements($statements))
+        ->and($auditWrite)->not->toBeFalse('No audit entry written. '.describeStatements($statements));
+
+    expect($lock)->toBeLessThan(
+        $pivotRead,
+        'The roles were read BEFORE the account was locked, so the recorded diff can describe '
+        .'a state that had already changed.',
+    );
+
+    expect($pivotRead)->toBeLessThan($auditWrite);
+
+    foreach ([$lock, $pivotRead, $auditWrite] as $index) {
+        expect($ordered[$index]['level'])->toBe(
+            $baseline + 1,
+            'Statement ran outside the Action\'s transaction: '.$ordered[$index]['sql'],
+        );
+    }
+});
+
+it('locks the role before reading the permissions it audits', function () {
+    $role = Role::findOrCreate('registrar', 'web');
+
+    $baseline = DB::transactionLevel();
+    $statements = captureStatements();
+
+    app(UpdateRolePermissionsAction::class)
+        ->execute($this->superAdmin, $role, ['view_any_student']);
+
+    $ordered = collect($statements)->values();
+
+    $lock = $ordered->search(fn (array $s): bool => str_contains($s['sql'], ' for update')
+        && str_contains($s['sql'], 'from `roles`'));
+
+    $auditWrite = $ordered->search(fn (array $s): bool => str_starts_with($s['sql'], 'insert into `activity_log`'));
+
+    expect($lock)->not->toBeFalse(
+        'The role was never locked. '.describeStatements($statements),
+    );
+
+    expect($auditWrite)->not->toBeFalse()
+        ->and($lock)->toBeLessThan($auditWrite)
+        ->and($ordered[$lock]['level'])->toBe($baseline + 1)
+        ->and($ordered[$auditWrite]['level'])->toBe($baseline + 1);
+});
+
+it('writes the audit entry in the same transaction as the pivot change', function () {
+    // A rollback must take the entry with it. Recording outside the transaction
+    // would leave a log claiming a role change that never landed.
+    $target = User::factory()->create(['is_active' => true]);
+    $before = Activity::query()->count();
+
+    try {
+        DB::transaction(function () use ($target): void {
+            app(SyncUserRolesAction::class)->execute($this->superAdmin, $target, ['staff']);
+
+            throw new RuntimeException('the surrounding operation failed');
+        });
+    } catch (RuntimeException) {
+        // Expected.
+    }
+
+    app(ActivityBuffer::class)->flush();
+
+    expect(Activity::query()->count())->toBe($before)
+        ->and($target->fresh()->roles()->count())->toBe(0);
 });

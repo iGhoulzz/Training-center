@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace App\Domain\Staff\Filament\Resources;
 
 use App\Domain\Staff\Filament\Resources\ActivityResource\Pages\ListActivities;
+use App\Domain\Staff\Filament\Resources\ActivityResource\Pages\ViewActivity;
 use App\Models\User;
 use BackedEnum;
+use Carbon\Carbon;
 use Filament\Forms\Components\DatePicker;
 use Filament\Resources\Resource;
 use Filament\Support\Icons\Heroicon;
@@ -29,9 +31,10 @@ use Spatie\Activitylog\Models\Activity;
  * ActivityAppendOnlyTest asserts the registry is empty rather than trusting this
  * comment — a control added later fails the build.
  *
- * There is deliberately no ViewActivity page either. Everything an entry holds
- * is on the row, and a view page is one more surface that would need the same
- * guarantees.
+ * The view page is read-only for the same reasons and is asserted to register no
+ * actions either. It exists because the listing has to stay scannable: an entry's
+ * full property set and change set do not fit a table row, and truncating them
+ * left the explicit events — which roles, whose email — effectively invisible.
  *
  * READABLE, NOT RAW
  * -----------------
@@ -101,19 +104,37 @@ class ActivityResource extends Resource
                  * seeder, a scheduled job or a failed sign-in genuinely has no
                  * actor, and "System" says so. An empty cell reads as missing data.
                  */
-                TextColumn::make('causer.name')
+                /*
+                 * THREE DISTINCT ANSWERS, NOT TWO.
+                 *
+                 * No causer at all means the SYSTEM acted — a seeder, a console
+                 * command, a failed sign-in. A causer whose account has since been
+                 * soft-deleted is a PERSON, and rendering them as "System" would
+                 * claim a machine did something a human did.
+                 *
+                 * The name comes from the snapshot taken at write time, so it
+                 * survives both deletion and a later rename: the log says who the
+                 * actor was then, not who that row is called now.
+                 */
+                TextColumn::make('causer_name')
                     ->label(__('activity.who'))
-                    ->placeholder(__('activity.system'))
-                    ->searchable(),
+                    ->state(fn (Activity $record): string => self::actorLabel($record))
+                    ->searchable(query: fn (Builder $query, string $search): Builder => $query
+                        ->where('properties->causer_name', 'like', '%'.$search.'%')),
 
                 TextColumn::make('event')
                     ->label(__('activity.action'))
                     ->badge()
                     ->formatStateUsing(fn (?string $state): string => self::eventLabel($state)),
 
+                /*
+                 * The TYPE alone cannot identify anything. "Student" tells a
+                 * reader nothing about which student, and an audit trail whose
+                 * subject is unidentifiable answers half a question.
+                 */
                 TextColumn::make('subject_type')
                     ->label(__('activity.record'))
-                    ->formatStateUsing(fn (?string $state): string => self::recordTypeLabel($state)),
+                    ->state(fn (Activity $record): string => self::subjectLabel($record)),
 
                 /*
                  * One translated line per changed field, not a JSON blob.
@@ -124,6 +145,22 @@ class ActivityResource extends Resource
                     ->label(__('activity.changes'))
                     ->state(fn (Activity $record): string => self::describeChanges($record))
                     ->wrap(),
+
+                /*
+                 * The explicit events carry their substance HERE, not in
+                 * attribute_changes: which roles were added or removed, the email
+                 * a failed sign-in attempted, the title of a cascaded certificate.
+                 * Without this column the panel says "Roles changed" and never
+                 * says which roles, which is most of the answer missing.
+                 *
+                 * ip and causer_name are omitted — they have their own column and
+                 * are context rather than detail.
+                 */
+                TextColumn::make('properties')
+                    ->label(__('activity.details'))
+                    ->state(fn (Activity $record): string => self::describeProperties($record))
+                    ->wrap()
+                    ->toggleable(),
 
                 TextColumn::make('properties.ip')
                     ->label(__('activity.ip'))
@@ -144,7 +181,10 @@ class ActivityResource extends Resource
                  */
                 SelectFilter::make('causer_id')
                     ->label(__('activity.who'))
-                    ->options(fn (): array => User::query()
+                    // withTrashed(): a departed member of staff is still an actor
+                    // in the history, and dropping them from the filter would make
+                    // their entries unreachable.
+                    ->options(fn (): array => User::withTrashed()
                         ->orderBy('name')
                         ->pluck('name', 'id')
                         ->all())
@@ -186,16 +226,39 @@ class ActivityResource extends Resource
                         DatePicker::make('from')->label(__('activity.from')),
                         DatePicker::make('until')->label(__('activity.until')),
                     ])
+                    /*
+                     * Timestamp comparisons, NOT whereDate().
+                     *
+                     * whereDate() wraps the column in DATE(), which makes the
+                     * comparison non-sargable: MySQL cannot use the created_at
+                     * index and scans the table instead — on the one table here
+                     * that only ever grows. startOfDay/endOfDay keep the same
+                     * inclusive meaning while leaving the column bare.
+                     */
                     ->query(fn (Builder $query, array $data): Builder => $query
                         ->when(
                             $data['from'] ?? null,
-                            fn (Builder $q, string $date): Builder => $q->whereDate('created_at', '>=', $date),
+                            fn (Builder $q, string $date): Builder => $q->where(
+                                'created_at',
+                                '>=',
+                                Carbon::parse($date)->startOfDay(),
+                            ),
                         )
                         ->when(
                             $data['until'] ?? null,
-                            fn (Builder $q, string $date): Builder => $q->whereDate('created_at', '<=', $date),
+                            fn (Builder $q, string $date): Builder => $q->where(
+                                'created_at',
+                                '<=',
+                                Carbon::parse($date)->endOfDay(),
+                            ),
                         )),
             ])
+            /*
+             * The row links to the view page instead of carrying a view ACTION.
+             * recordUrl() is navigation, not a mountable server-side handler, so
+             * the registry stays empty and there is still nothing to reach.
+             */
+            ->recordUrl(fn (Activity $record): string => ActivityResource::getUrl('view', ['record' => $record]))
             // No recordActions, no toolbarActions, no bulk actions. Deliberate,
             // asserted, and the reason is the class docblock.
             ->recordActions([])
@@ -206,7 +269,81 @@ class ActivityResource extends Resource
     {
         return [
             'index' => ListActivities::route('/'),
+            'view' => ViewActivity::route('/{record}'),
         ];
+    }
+
+    /**
+     * Who acted — distinguishing "the system" from "a person whose account is gone".
+     *
+     * Reads the snapshot rather than the relation, so a soft-deleted or renamed
+     * actor still shows the name recorded at the time. Falls back to a
+     * deleted-account label when an entry has a causer id but no snapshot, which
+     * is only possible for rows written before the snapshot existed.
+     */
+    public static function actorLabel(Activity $activity): string
+    {
+        if ($activity->causer_id === null) {
+            return __('activity.system');
+        }
+
+        $name = $activity->getProperty('causer_name');
+
+        if (! is_string($name) || $name === '') {
+            return __('activity.unknown_actor');
+        }
+
+        // The account still exists: the snapshot is the historical name, which is
+        // what the log should say.
+        if ($activity->causer !== null) {
+            return $name;
+        }
+
+        return __('activity.deleted_account', ['name' => $name]);
+    }
+
+    /** The subject as "Student #12" — the type alone identifies nothing. */
+    public static function subjectLabel(Activity $activity): string
+    {
+        if ($activity->subject_type === null) {
+            return __('activity.empty_value');
+        }
+
+        return __('activity.subject_reference', [
+            'type' => self::recordTypeLabel($activity->subject_type),
+            'id' => (string) $activity->subject_id,
+        ]);
+    }
+
+    /**
+     * The explicit events' substance: which roles, which email, which certificate.
+     *
+     * ip and causer_name are skipped — both have columns of their own and are
+     * context rather than detail. Lists render comma-separated so "added: staff,
+     * admin" reads as a sentence rather than as JSON.
+     */
+    public static function describeProperties(Activity $activity): string
+    {
+        $properties = $activity->properties;
+
+        if (! $properties instanceof Collection) {
+            return __('activity.empty_value');
+        }
+
+        $lines = $properties
+            ->except(['ip', 'causer_name'])
+            ->reject(fn (mixed $value): bool => $value === null
+                || $value === ''
+                || (is_array($value) && $value === []))
+            ->map(fn (mixed $value, string $key): string => __('activity.property_line', [
+                'key' => $key,
+                'value' => is_array($value)
+                    ? implode(', ', array_map(fn (mixed $item): string => (string) $item, $value))
+                    : self::renderValue($value),
+            ]));
+
+        return $lines->isEmpty() ? __('activity.empty_value') : $lines->implode('
+');
     }
 
     /** The translated label for a stored event, falling back to the raw value. */
@@ -286,7 +423,7 @@ class ActivityResource extends Resource
     }
 
     /** Scalars as text; anything structured as compact JSON; null as a dash. */
-    private static function renderValue(mixed $value): string
+    public static function renderValue(mixed $value): string
     {
         if ($value === null || $value === '') {
             return __('activity.empty_value');

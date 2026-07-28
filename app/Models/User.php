@@ -123,8 +123,11 @@ class User extends Authenticatable implements FilamentUser
      * ResetUserPasswordAction — because excluding the column alone would leave
      * an empty diff that is suppressed, making the security event invisible.
      *
-     * must_change_password IS listed. It is a flag, not a secret, and "who
-     * forced this account to rotate its password" is exactly an audit question.
+     * must_change_password IS listed here AND removed from the global exclusion
+     * list, so it genuinely reaches the diff. It is a flag, not a secret, and
+     * "who forced this account to rotate its password" is an audit question —
+     * but listing it while the global list stripped it made this docblock claim
+     * something the code did not do, which is worse than not auditing it.
      *
      * last_login_at is absent deliberately: it moves on every sign-in and would
      * bury real changes under one "user updated" per login. Logins are recorded

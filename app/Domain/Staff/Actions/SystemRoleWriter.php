@@ -52,18 +52,24 @@ final class SystemRoleWriter
      */
     public function assignRoles(User $user, string|array $roles): void
     {
-        $desired = array_values(array_unique((array) $roles));
-        $current = $user->roles()->pluck('name')->all();
-        $adding = array_values(array_diff($desired, $current));
+        $requested = array_values(array_unique((array) $roles));
 
-        if ($adding === []) {
-            return;
-        }
+        // Read, decide and log under the lock, for the same reason the
+        // request-path Actions do: a diff computed outside the transaction can
+        // describe a change from a state that has already moved.
+        DB::transaction(function () use ($user, $requested): void {
+            $locked = User::query()->lockForUpdate()->findOrFail($user->getKey());
 
-        DB::transaction(function () use ($user, $roles, $adding): void {
-            $user->assignRole($roles);
+            $current = $locked->roles()->pluck('name')->all();
+            $adding = array_values(array_diff($requested, $current));
 
-            self::recordSystemEvent($user, 'roles_changed', ['added' => $adding, 'removed' => []]);
+            if ($adding === []) {
+                return;
+            }
+
+            $locked->assignRole($requested);
+
+            self::recordSystemEvent($locked, 'roles_changed', ['added' => $adding, 'removed' => []]);
         });
     }
 
@@ -87,26 +93,29 @@ final class SystemRoleWriter
     public function syncRoles(User $user, array $roles): void
     {
         $desired = array_values(array_unique($roles));
-        $current = $user->roles()->pluck('name')->all();
 
-        $adding = array_values(array_diff($desired, $current));
-        $removing = array_values(array_diff($current, $desired));
+        DB::transaction(function () use ($user, $desired): void {
+            $locked = User::query()->lockForUpdate()->findOrFail($user->getKey());
 
-        if ($adding === [] && $removing === []) {
-            return;
-        }
+            $current = $locked->roles()->pluck('name')->all();
 
-        $removesSuperAdmin = $user->isSuperAdmin()
-            && ! in_array(Role::SUPER_ADMIN, $roles, true);
+            $adding = array_values(array_diff($desired, $current));
+            $removing = array_values(array_diff($current, $desired));
 
-        DB::transaction(function () use ($user, $roles, $removesSuperAdmin, $adding, $removing): void {
-            if ($removesSuperAdmin) {
-                $this->invariant->protect(fn () => $user->syncRoles($roles));
-            } else {
-                $user->syncRoles($roles);
+            if ($adding === [] && $removing === []) {
+                return;
             }
 
-            self::recordSystemEvent($user, 'roles_changed', ['added' => $adding, 'removed' => $removing]);
+            $removesSuperAdmin = $locked->isSuperAdmin()
+                && ! in_array(Role::SUPER_ADMIN, $desired, true);
+
+            if ($removesSuperAdmin) {
+                $this->invariant->protect(fn () => $locked->syncRoles($desired));
+            } else {
+                $locked->syncRoles($desired);
+            }
+
+            self::recordSystemEvent($locked, 'roles_changed', ['added' => $adding, 'removed' => $removing]);
         });
     }
 
@@ -126,19 +135,21 @@ final class SystemRoleWriter
             ->values()
             ->all();
 
-        $current = $role->permissions()->pluck('name')->all();
+        DB::transaction(function () use ($role, $permissions, $desired): void {
+            $locked = Role::query()->lockForUpdate()->findOrFail($role->getKey());
 
-        $adding = array_values(array_diff($desired, $current));
-        $removing = array_values(array_diff($current, $desired));
+            $current = $locked->permissions()->pluck('name')->all();
 
-        if ($adding === [] && $removing === []) {
-            return;
-        }
+            $adding = array_values(array_diff($desired, $current));
+            $removing = array_values(array_diff($current, $desired));
 
-        DB::transaction(function () use ($role, $permissions, $adding, $removing): void {
-            $role->syncPermissions($permissions);
+            if ($adding === [] && $removing === []) {
+                return;
+            }
 
-            self::recordSystemEvent($role, 'permissions_changed', [
+            $locked->syncPermissions($permissions);
+
+            self::recordSystemEvent($locked, 'permissions_changed', [
                 'added' => $adding,
                 'removed' => $removing,
             ]);

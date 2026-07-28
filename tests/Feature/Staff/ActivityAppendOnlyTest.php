@@ -2,9 +2,13 @@
 
 declare(strict_types=1);
 
+use App\Domain\Enrollment\Models\Course;
+use App\Domain\Enrollment\Models\Student;
+use App\Domain\Staff\Actions\SyncUserRolesAction;
 use App\Domain\Staff\Actions\SystemRoleWriter;
 use App\Domain\Staff\Filament\Resources\ActivityResource;
 use App\Domain\Staff\Filament\Resources\ActivityResource\Pages\ListActivities;
+use App\Domain\Staff\Filament\Resources\ActivityResource\Pages\ViewActivity;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -141,9 +145,9 @@ it('registers no actions of any kind on the activity table', function () {
 });
 
 it('offers only a listing page, and refuses creation', function () {
-    // No create, edit or view page: every extra surface is one more that would
-    // have to be proven incapable of writing.
-    expect(array_keys(ActivityResource::getPages()))->toBe(['index'])
+    // Listing and view only — no create page and no edit page. The view page is
+    // asserted separately to register no actions of its own.
+    expect(array_keys(ActivityResource::getPages()))->toBe(['index', 'view'])
         ->and(ActivityResource::canCreate())->toBeFalse();
 });
 
@@ -195,4 +199,267 @@ it('renders field changes as readable lines rather than raw JSON', function () {
         ->and($rendered)->toContain('Renamed Person')
         ->and($rendered)->not->toContain('{"')
         ->and($rendered)->not->toContain('attributes');
+});
+
+/*
+|--------------------------------------------------------------------------
+| Attribution survives the actor
+|--------------------------------------------------------------------------
+*/
+
+it('still names the actor after their account is deleted', function () {
+    /*
+     * THE FINDING THIS EXISTS FOR.
+     *
+     * causer is a relation to a soft-deleting model, so resolving it at read time
+     * returns null once the account goes — and the panel would render a real
+     * person's action as "System". That is not cosmetic: it says a machine did
+     * something a human did, in the one table that exists to answer who did what.
+     */
+    $actor = ($this->actorWith)('admin');
+    $actor->update(['name' => 'Hana Ben Salah']);
+
+    $this->actingAs($actor);
+    Student::factory()->create();
+
+    $entry = Activity::query()->where('event', 'created')->latest('id')->first();
+
+    $actor->delete();
+
+    $label = ActivityResource::actorLabel($entry->fresh());
+
+    expect($label)->toContain('Hana Ben Salah')
+        ->and($label)->not->toBe(__('activity.system'));
+});
+
+it('keeps the name recorded at the time, not the name today', function () {
+    // A rename must not rewrite history. The snapshot is what the actor was
+    // called when they acted.
+    $actor = ($this->actorWith)('admin');
+    $actor->update(['name' => 'Original Name']);
+
+    $this->actingAs($actor);
+    Student::factory()->create();
+
+    $entry = Activity::query()->where('event', 'created')->latest('id')->first();
+
+    $actor->update(['name' => 'Renamed Later']);
+
+    expect(ActivityResource::actorLabel($entry->fresh()))->toBe('Original Name');
+});
+
+it('says System only when there genuinely was no actor', function () {
+    // The distinction the snapshot exists to preserve: a seeder is the system, a
+    // deleted account is a person.
+    $user = User::factory()->create(['is_active' => true]);
+    $this->system->assignRoles($user, 'staff');
+
+    $entry = Activity::query()->where('event', 'roles_changed')->latest('id')->first();
+
+    expect($entry->causer_id)->toBeNull()
+        ->and(ActivityResource::actorLabel($entry))->toBe(__('activity.system'));
+});
+
+/*
+|--------------------------------------------------------------------------
+| Explicit-event detail and subject identity are visible
+|--------------------------------------------------------------------------
+*/
+
+it('renders which roles changed, not merely that they did', function () {
+    /*
+     * The substance of every explicit event lives in properties, not in
+     * attribute_changes. Without rendering it the panel says "Roles changed" and
+     * never says which roles — most of the answer missing.
+     */
+    $target = User::factory()->create(['is_active' => true]);
+
+    app(SyncUserRolesAction::class)
+        ->execute(($this->actorWith)('super_admin'), $target, ['staff']);
+
+    $entry = Activity::query()->where('event', 'roles_changed')->latest('id')->first();
+
+    $rendered = ActivityResource::describeProperties($entry);
+
+    expect($rendered)->toContain('staff')
+        ->and($rendered)->toContain('added')
+        // Context has its own columns and is not repeated as detail.
+        ->and($rendered)->not->toContain('ip')
+        ->and($rendered)->not->toContain('causer_name');
+});
+
+it('identifies which record an entry is about, not only its type', function () {
+    $this->actingAs(($this->actorWith)('admin'));
+
+    $student = Student::factory()->create();
+
+    $entry = Activity::query()->where('event', 'created')->latest('id')->first();
+
+    expect(ActivityResource::subjectLabel($entry))->toContain((string) $student->getKey());
+});
+
+it('offers a read-only view page that registers no actions', function () {
+    ($this->entry)();
+
+    $activity = Activity::query()->latest('id')->first();
+
+    Livewire::actingAs(($this->actorWith)('admin'))
+        ->test(ViewActivity::class, [
+            'record' => $activity->getKey(),
+        ])
+        ->assertSuccessful()
+        /*
+         * ViewRecord inherits an edit action when the resource has an edit page.
+         * This one has none, and these assert that the inheritance stays absent
+         * rather than trusting that it does.
+         */
+        ->assertActionDoesNotExist('edit')
+        ->assertActionDoesNotExist('delete')
+        ->assertActionDoesNotExist('restore')
+        ->assertActionDoesNotExist('forceDelete');
+});
+
+/*
+|--------------------------------------------------------------------------
+| The filters actually filter
+|--------------------------------------------------------------------------
+|
+| Mounting the page proves it renders. It says nothing about whether a filter
+| narrows anything, which is the only reason the filters exist.
+*/
+
+it('filters the log by actor', function () {
+    $mine = ($this->actorWith)('admin');
+    $theirs = ($this->actorWith)('admin');
+
+    $this->actingAs($mine);
+    Student::factory()->create();
+    $ours = Activity::query()->latest('id')->first();
+
+    $this->actingAs($theirs);
+    Student::factory()->create();
+    $others = Activity::query()->latest('id')->first();
+
+    Livewire::actingAs($mine)
+        ->test(ListActivities::class)
+        ->filterTable('causer_id', $mine->getKey())
+        ->assertCanSeeTableRecords([$ours])
+        ->assertCanNotSeeTableRecords([$others]);
+});
+
+it('filters the log by record type', function () {
+    $admin = ($this->actorWith)('admin');
+    $this->actingAs($admin);
+
+    Student::factory()->create();
+    $studentEntry = Activity::query()->latest('id')->first();
+
+    Course::factory()->create();
+    $courseEntry = Activity::query()->latest('id')->first();
+
+    Livewire::actingAs($admin)
+        ->test(ListActivities::class)
+        ->filterTable('subject_type', Student::class)
+        ->assertCanSeeTableRecords([$studentEntry])
+        ->assertCanNotSeeTableRecords([$courseEntry]);
+});
+
+it('filters the log by date range, inclusively at both ends', function () {
+    /*
+     * The boundaries are the point. The filter compares timestamps rather than
+     * calling whereDate() — so it can use the created_at index — and startOfDay /
+     * endOfDay are what keep "from today until today" matching everything that
+     * happened today rather than only midnight exactly.
+     */
+    $admin = ($this->actorWith)('admin');
+    $this->actingAs($admin);
+
+    Student::factory()->create();
+    $today = Activity::query()->latest('id')->first();
+
+    Student::factory()->create();
+    $old = Activity::query()->latest('id')->first();
+    $old->forceFill(['created_at' => now()->subDays(10)])->saveQuietly();
+
+    Livewire::actingAs($admin)
+        ->test(ListActivities::class)
+        ->filterTable('created_at', [
+            'from' => now()->toDateString(),
+            'until' => now()->toDateString(),
+        ])
+        ->assertCanSeeTableRecords([$today])
+        ->assertCanNotSeeTableRecords([$old->fresh()]);
+});
+
+it('filters the log by log name', function () {
+    $admin = ($this->actorWith)('admin');
+
+    activity('auth')->event('login_failed')->log('login_failed');
+    $auth = Activity::query()->latest('id')->first();
+
+    $this->actingAs($admin);
+    Student::factory()->create();
+    $default = Activity::query()->latest('id')->first();
+
+    Livewire::actingAs($admin)
+        ->test(ListActivities::class)
+        ->filterTable('log_name', 'auth')
+        ->assertCanSeeTableRecords([$auth])
+        ->assertCanNotSeeTableRecords([$default]);
+});
+
+it('offers departed staff in the actor filter', function () {
+    // A deleted account is still an actor in the history; dropping it from the
+    // filter would make its entries unreachable.
+    $departed = ($this->actorWith)('admin');
+    $departed->update(['name' => 'Departed Person']);
+    $departed->delete();
+
+    $options = Livewire::actingAs(($this->actorWith)('admin'))
+        ->test(ListActivities::class)
+        ->instance()
+        ->getTable()
+        ->getFilter('causer_id')
+        ->getOptions();
+
+    expect($options)->toHaveKey($departed->getKey());
+});
+
+it('compares the date filter against a bare column so the index is usable', function () {
+    /*
+     * A SHAPE ASSERTION, BECAUSE BEHAVIOUR CANNOT SEE THIS.
+     *
+     * whereDate() and a timestamp range return identical rows, so the inclusivity
+     * test above passes either way — reverting to whereDate() fails nothing.
+     * The difference is that DATE(created_at) is non-sargable: MySQL cannot use
+     * the created_at index and scans the table, on the one table here that only
+     * ever grows.
+     *
+     * So the emitted SQL is asserted directly: the filter may compare created_at,
+     * but must not wrap it in a function.
+     */
+    $admin = ($this->actorWith)('admin');
+    $this->actingAs($admin);
+
+    Student::factory()->create();
+
+    $statements = captureStatements();
+
+    Livewire::actingAs($admin)
+        ->test(ListActivities::class)
+        ->filterTable('created_at', [
+            'from' => now()->toDateString(),
+            'until' => now()->toDateString(),
+        ]);
+
+    $wrapped = collect($statements)
+        ->filter(fn (array $s): bool => str_contains($s['sql'], 'activity_log')
+            && preg_match('/date\([^)]*created_at/', $s['sql']) === 1)
+        ->count();
+
+    expect($wrapped)->toBe(
+        0,
+        'The date filter wrapped created_at in DATE(), which makes the comparison non-sargable '
+        .'and the created_at index unusable. Statements: '.describeStatements($statements),
+    );
 });

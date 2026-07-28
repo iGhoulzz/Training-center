@@ -83,6 +83,11 @@ class PasswordChange extends Page
             ]);
 
             activity()
+                // Explicit rather than relying on the ambient guard: the actor is
+                // the user this page resolved and authorized, and an entry whose
+                // attribution depends on guard state is one that silently loses it
+                // the day this runs anywhere but a web request.
+                ->causedBy($user)
                 ->performedOn($user)
                 ->event('password_changed')
                 ->log('password_changed');

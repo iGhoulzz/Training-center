@@ -61,7 +61,35 @@ final class RecordActivityWithContext extends LogActivityAction
 
         $properties = $properties instanceof Collection ? $properties : collect();
 
-        $activity->setAttribute('properties', $properties->put('ip', request()->ip()));
+        $properties = $properties->put('ip', request()->ip());
+
+        /*
+         * THE ACTOR'S NAME IS SNAPSHOTTED, NOT LOOKED UP LATER.
+         *
+         * causer is a relation to a soft-deleting model, so resolving it at read
+         * time returns NULL once the account is deleted — and the panel would then
+         * render a real person's action as "System", which is not a cosmetic
+         * problem: it says a machine did something a human did, in the one table
+         * that exists to answer who did what.
+         *
+         * A snapshot also survives a RENAME, which a live lookup does not. An
+         * audit trail should say who the actor was at the time, not who the row
+         * happens to be called today.
+         *
+         * causer_id stays on the row, so the account is still identifiable even
+         * when its name has changed or the record is gone.
+         */
+        $causer = $activity->getAttribute('causer');
+
+        if ($causer instanceof Model) {
+            $name = $causer->getAttribute('name');
+
+            if (is_string($name) && $name !== '') {
+                $properties = $properties->put('causer_name', $name);
+            }
+        }
+
+        $activity->setAttribute('properties', $properties);
 
         return parent::execute($activity, $description);
     }

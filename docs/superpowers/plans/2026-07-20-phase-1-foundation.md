@@ -7719,7 +7719,17 @@ seconds.
     refuses — which proves the policy ignores the grant rather than that nobody
     holds it.
 
-12. **Every Activity mutation ability returns `false` explicitly** — `create`,
+12. **`default_except_attributes` holds SECRETS ONLY.** It is merged *over* each
+    model's allowlist and wins, so it — not the allowlist — is what actually keeps
+    a password hash out of a diff. Noise suppression (`last_login_at`) belongs in
+    the allowlists instead; mixing the two produced a real contradiction, where
+    `User` documented `must_change_password` as audited while the global list
+    stripped it.
+13. **Pivot diffs are read, decided, written and logged under one lock.** Computing
+    the diff before the transaction lets two concurrent syncs each record an
+    added/removed list against a state that has already moved: the rows end up
+    right and the audit trail describes a change that never happened that way.
+14. **Every Activity mutation ability returns `false` explicitly** — `create`,
     `update`, `delete`, `deleteAny`, `forceDelete`, `forceDeleteAny`, `restore`,
     `restoreAny`, `replicate`, `reorder` — rather than relying on absent methods.
 
@@ -7730,9 +7740,13 @@ seconds.
 
 - Create: published `config/activitylog.php` and the activity-log migration
 - Create: `app/Domain/Staff/Support/RecordsActivity.php` — the shared audit trait
-- Create: `app/Domain/Staff/Support/ActivityContext.php` — the custom log action attaching IP
+- Create: `app/Domain/Staff/Support/RecordActivityWithContext.php` — the custom log
+  action attaching IP **and the actor-name snapshot**
 - Create: `app/Domain/Staff/Policies/ActivityPolicy.php`
-- Create: `app/Domain/Staff/Filament/Resources/ActivityResource.php` (+ its List/View pages)
+- Create: `app/Domain/Staff/Filament/Resources/ActivityResource.php` + its List and
+  View pages. Both read-only; the View page exists because an entry's full
+  property set does not fit a table row, and truncating it left the explicit
+  events' substance — which roles, whose email — effectively invisible.
 - Create: `tests/Feature/Staff/ActivityLogTest.php` — model events, diffs, IP, rollback
 - Create: `tests/Feature/Staff/ActivityAppendOnlyTest.php` — policy, UI, architecture
 - Create: `tests/Feature/Staff/ActivityAuthEventsTest.php` — login/logout/failed, password events
@@ -7750,8 +7764,11 @@ seconds.
 
 - `RecordsActivity::getActivitylogOptions(): LogOptions` — shared defaults; models
   supply their own `logOnly()` set
-- `ActivityContext extends LogActivityAction` — `execute(Model $activity): Model`,
-  attaching `ip` to properties for every entry, model-generated or explicit
+- `RecordActivityWithContext extends LogActivityAction` —
+  `execute(Model $activity, string $description): Model`, attaching `ip` and a
+  `causer_name` snapshot to every entry, model-generated or explicit. The
+  snapshot exists because `causer` resolves to null once an account soft-deletes,
+  which would render a real person's action as "System".
 - `ActivityPolicy` — `viewAny`/`view` permission-based; the ten mutation
   abilities return `false`
 - Explicit recorders take the actor and the subject and never accept a password,

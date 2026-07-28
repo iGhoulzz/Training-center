@@ -63,12 +63,17 @@ return [
      * The allowlists remain the primary control over what is logged AT ALL —
      * "misses by default" rather than "leaks by default" for every ordinary
      * column — but for credentials this list is what actually holds.
+     *
+     * SECRETS ONLY. must_change_password and last_login_at were here too, which
+     * muddled the list's purpose and produced a real contradiction: User listed
+     * must_change_password as audited while this stripped it, so the docblock
+     * claimed something the code did not do. Noise suppression belongs in the
+     * allowlists — last_login_at is simply not named there — and this list means
+     * exactly one thing.
      */
     'default_except_attributes' => [
         'password',
         'remember_token',
-        'must_change_password',
-        'last_login_at',
     ],
 
     /*

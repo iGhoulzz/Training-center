@@ -43,34 +43,38 @@ final class UpdateRolePermissionsAction
         Gate::forUser($actor)->authorize('update', $role);
 
         $desired = array_values(array_unique($permissions));
-        $current = $role->permissions()->pluck('name')->all();
-
-        $adding = array_values(array_diff($desired, $current));
-        $removing = array_values(array_diff($current, $desired));
 
         /*
-         * A sync that changes nothing records nothing. Re-running the seeder, or
-         * re-saving an untouched permissions form, must not manufacture an audit
-         * event — a log full of "changed" entries where nothing changed is a log
-         * nobody reads.
+         * READ, DECIDE, WRITE AND LOG UNDER ONE LOCK.
+         *
+         * Computing the diff before the transaction let two concurrent syncs read
+         * the same "current" set and each record an added/removed list against a
+         * state that had already moved. The permissions would end up right and the
+         * audit trail would describe a change that never happened that way.
          */
-        if ($adding === [] && $removing === []) {
-            return;
-        }
+        DB::transaction(function () use ($actor, $role, $desired): void {
+            $locked = Role::query()->lockForUpdate()->findOrFail($role->getKey());
 
-        /*
-         * One transaction for the write and its entry. role_has_permissions is a
-         * pivot: syncPermissions() fires no Eloquent event on Role, so the
-         * LogsActivity concern there sees role renames but never this. An entry
-         * written outside the transaction would survive a rollback and claim a
-         * permission change that never landed.
-         */
-        DB::transaction(function () use ($actor, $role, $desired, $adding, $removing): void {
-            $role->syncPermissions($desired);
+            $current = $locked->permissions()->pluck('name')->all();
+
+            $adding = array_values(array_diff($desired, $current));
+            $removing = array_values(array_diff($current, $desired));
+
+            /*
+             * A sync that changes nothing records nothing. Re-running the seeder,
+             * or re-saving an untouched permissions form, must not manufacture an
+             * audit event — a log full of "changed" entries where nothing changed
+             * is a log nobody reads.
+             */
+            if ($adding === [] && $removing === []) {
+                return;
+            }
+
+            $locked->syncPermissions($desired);
 
             activity()
                 ->causedBy($actor)
-                ->performedOn($role)
+                ->performedOn($locked)
                 ->event('permissions_changed')
                 ->withProperties(['added' => $adding, 'removed' => $removing])
                 ->log('permissions_changed');
