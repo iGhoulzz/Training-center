@@ -8089,8 +8089,9 @@ introduced in T05 and papered over in T09 shows up in neither diff read alone.
 
 ### What is reviewed
 
-`main` at `3f47b35` — 107 files under `app/`, 18 migrations, 50 test files, 748
-tests — read as the system it now is, against:
+The tip of `main` at the moment each brief is dispatched — 107 files under
+`app/`, 18 migrations, 50 test files, 748 tests — read as the system it now is,
+against:
 
 - `docs/superpowers/specs/2026-07-20-training-center-dashboard-design.md`
 - `docs/ENGINEERING.md`
@@ -8152,10 +8153,13 @@ A finding missing any of these is sent back rather than triaged:
 
 1. **Severity** — Critical, High, Medium or Low, on the scale below.
 2. **Exact file and line.**
-3. **A concrete failure or bypass scenario** — the actual sequence of actions,
-   with the actor and their permissions named. "This could be unsafe" is not a
-   finding; "a staff user holding `update_assigned_batch_enrollment` can POST X
-   and reach Y" is.
+3. **A concrete failure or bypass scenario** — the actual sequence of actions.
+   Where an actor exists, name them and their permissions: "a staff user holding
+   `update_assigned_batch_enrollment` can POST X and reach Y", not "this could be
+   unsafe". Where no actor exists — a scheduled backup, a queue worker, a restore
+   procedure, a boot-time guard — name the operator, job, command or request
+   instead, and the concrete conditions that trigger it: the environment, the
+   configuration values, the timing, the preceding failure.
 4. **The rule violated** — the spec section or `ENGINEERING.md` heading, quoted.
    A finding that cites no rule is a design opinion, and belongs in a separate
    list marked as such.
@@ -8200,6 +8204,99 @@ All three go into `docs/reviews/2026-07-29-phase-1-review.md`. **Task 16 folds
 the rejections and deferrals into the spec**, so that a future reader finds the
 answer rather than re-opening the question.
 
+### Brief corrections (2026-07-29, before dispatch)
+
+Six defects found reviewing the briefs themselves. Each would have produced a
+false approval or a false finding, which is worse than no review: a reviewer with
+no context cannot tell a stale instruction from a real one.
+
+**1. The pinned revision goes stale between writing and dispatch.**
+
+The first draft pinned `3f47b35`, which stopped being the tip the moment this
+plan was committed. **A brief pins the tip of `main` at the moment it is
+dispatched, and the SHA is written into the brief then** — not carried over from
+the draft. Every commit after `3f47b35` has touched `docs/` only, so the code
+under review is unchanged, but a reviewer cannot know that and should never be
+asked to guess which revision is authoritative.
+
+Briefs 2 and 3 are **repinned to the new tip after brief 1's fixes merge.**
+Reviewing group 2 against a revision whose authorization layer has since changed
+is how a fixed finding gets reported twice.
+
+**2. Erratum: permission names in `CLAUDE.md` are illustrative, not real.**
+
+`CLAUDE.md` writes the non-negotiable as `$user->can('students.delete')`. **No
+permission of that shape exists.** Shield generates snake-case names and the
+seeder creates them in that form: `delete_user`, `view_any_student`,
+`create_enrollment`, `update_assigned_batch_enrollment`. A reviewer matching the
+documented example literally would flag every correct call in the codebase.
+
+The rule itself stands unchanged — permission-based, never role-based. What
+reviewers reject is `hasRole('admin')` and its equivalents, **not** a correctly
+named Shield permission.
+
+**One deliberate exception exists and is documented where it lives.**
+`UserPolicy::outranks()` and `assignRole()` check the super-admin *role*, because
+what they express is rank, not ability. Encoding it as a permission would mean
+inventing an `is_super_admin` ability that could be granted directly with
+`givePermissionTo()` — which is the exact escalation the guards exist to prevent.
+Rank resolves through `User::isSuperAdmin()`, which compares the role's immutable
+primary key against the live pivot rather than a mutable name. See the docblock
+at `app/Domain/Staff/Policies/UserPolicy.php:30`.
+
+Reviewers may still challenge that reasoning — it is a real trade-off, and the
+carve-out is exactly the sort of thing a fresh reader should push on. What they
+must not do is report it as an unnoticed oversight.
+
+**3. Brief 2 could not review file cleanup or UI bypass as scoped.**
+
+The staff-file half named Actions and controllers but not the models, the purge
+job, or the pages that reach them. Added: `app/Domain/Staff/Models/StaffProfile.php`,
+`StaffCertificate.php`, `PendingFileDeletion.php`;
+`app/Domain/Staff/Jobs/PurgeDeletedFileJob.php`; the whole
+`StaffProfileResource/` tree — `Pages/`, `Concerns/WritesStaffPhotoThroughAction.php`,
+`RelationManagers/CertificatesRelationManager.php`; and the staff-file migrations.
+
+Deferred deletion is the point of that subsystem. Without the pending-deletion
+model and the purge job, a reviewer can see that a file is scheduled for removal
+and nothing about whether it is ever actually removed, or removed too early.
+
+**4. Brief 3 named the mechanisms but not all of their call sites.**
+
+- **Activity.** Every `RecordsActivity` consumer — nine models across both
+  domains, including `User` and `Role` — and every `activity()` call under
+  `app/`: seven Actions, `app/Filament/Pages/PasswordChange.php`, and
+  `app/Providers/AppServiceProvider.php`, which logs authentication events on a
+  separate log name. A trait audited in isolation says nothing about the models
+  that forgot to use it.
+- **Backups.** Added `config/filesystems.php` (the disk the archive is written
+  to), `config/database.php` (the dump options), `.env.example` (the variables an
+  operator must set), and `AppServiceProvider` (where the production guard is
+  actually invoked — a guard class nobody calls is the failure mode).
+- **Localization and detectors.** Added `tests/Pest.php`, which holds the shared
+  source-scanning helper both architecture tests depend on. A detector is only as
+  honest as the source it is fed.
+
+**5. The finding format assumed every finding has an actor.**
+
+It required "the actor and their permissions" unconditionally. A backup that
+never runs, a scheduled command that overlaps itself, a queue worker holding a
+stale locale, a restore procedure that does not match the archive — none of these
+have an authenticated user, and demanding one invites reviewers to invent one or
+to suppress the finding.
+
+Corrected: **name the actor and their permissions where an actor exists.** Where
+none does, name the operator, request, job, command or scheduled run, and the
+concrete conditions that trigger it — the environment, the configuration values,
+the timing, the failure that precedes it.
+
+**6. Static-only, restated because it is the constraint most likely to be
+rationalised away.**
+
+A reviewer who cannot confirm something statically will be tempted to just run
+the suite. They must not. Any runtime claim goes back marked **Unverified** with
+the exact experiment needed, and triage runs it serially.
+
 ### Steps
 
 - [ ] **Step 1: Remove the merged worktrees, keep branches and tags**
@@ -8209,7 +8306,8 @@ answer rather than re-opening the question.
 - [ ] **Step 2: Write the three briefs and have them approved before dispatch**
 
   Each is self-contained: scope, files, the rules that apply, the report format,
-  the static-only constraint.
+  the static-only constraint, and the SHA it pins — written at dispatch, not
+  carried over from the draft.
 
 - [ ] **Step 3: Dispatch group 1 alone**
 
@@ -8218,7 +8316,7 @@ answer rather than re-opening the question.
   Full gates after the fixes, serially: `php artisan test`, `vendor/bin/pint --test`,
   `vendor/bin/phpstan analyse --memory-limit=1G`. Report real output.
 
-- [ ] **Step 5: Dispatch groups 2 and 3**
+- [ ] **Step 5: Repin briefs 2 and 3 to the new tip, then dispatch them**
 
 - [ ] **Step 6: Triage; fix; verify**
 
