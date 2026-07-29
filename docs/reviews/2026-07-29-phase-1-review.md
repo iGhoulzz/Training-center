@@ -52,19 +52,49 @@ triaged**. Incomplete findings are where false approvals come from.
 **Scope:** authentication, Shield/Spatie wiring, `User` and `Role` policies, the
 escalation invariants, the Action boundary, staff-account UI.
 
-**Status:** running.
+**Status:** reported and triaged 2026-07-29. Six findings, **all six confirmed by
+the lead against `vendor/`, and none rejected.** Two were re-rated after
+verification.
 
 ### Findings
 
-_Awaiting the reviewer's report._
+| # | Severity | File:line | Summary | Disposition |
+|---|---|---|---|---|
+| 2 | **Critical** (raised from Medium) | `UserPolicy.php:113` | `assignRole()` compares the role name case-sensitively in PHP; MySQL's `utf8mb4_unicode_ci` resolves it case-insensitively, so `'Super_Admin'` passes the guard and attaches the real `super_admin` row | Fix now |
+| 1 | **High** (scope widened) | `UserPolicy.php:52-149` plus four more policies | Filament returns `Response::allow()` for a **missing** policy method where Laravel's `Gate` returns `false`; five soft-deletable models have policies with no `restore`/`forceDelete`/`deleteAny` | Fix now |
+| 4 | High | `DeleteUserAction.php:32`, `DeactivateUserAction.php:36` | The last-super-admin branch is chosen from an unlocked read taken outside the transaction; a concurrent role grant lands in the gap | Fix now |
+| 3 | Medium | `RoleResource.php:34-45` | Inherits Shield's table, whose inline `EditAction` persists with a bare `$record->update()` and never reaches `UpdateRolePermissionsAction` | Fix now |
+| 5 | Medium | `AdminPanelProvider.php:79-98` | `ForcePasswordChange` and `AuthenticateSession` are not persistent, so neither runs on `/livewire/update` | Fix now |
+| 6 | Medium (raised from Low) | `PasswordChange.php:37-53` | Self-service password change requires no current password, converting session access into permanent credential ownership | Fix now |
 
-| # | Severity | File:line | Summary | Disposition | Reasoning |
-|---|---|---|---|---|---|
+**Finding 2 was demonstrated, not reasoned.** A throwaway probe had an `admin`
+call `SyncUserRolesAction::execute($admin, $puppet, ['Super_Admin'])`: no
+exception was thrown and `roles_after` came back `['super_admin']`. The reviewer
+rated it Medium on the grounds that Filament's `Select` `in` rule blocks the UI
+path. That rule is incidental, and `UserResource.php:50-56` explicitly disclaims
+it — "FILTERING THE OPTIONS LIST IS NOT THE CONTROL ... Every one of these paths
+therefore re-authorizes inside its Action on execute; that is the boundary." The
+boundary is what failed, so the severity belongs to the boundary.
+
+**Finding 1 is wider than group 1's scope could see.** The reviewer correctly
+stayed in its lane and reported `UserPolicy`. The same gap exists in
+`StudentPolicy`, `BatchPolicy`, `EnrollmentPolicy` and `CoursePolicy` (no
+`deleteAny`, `restore`, `restoreAny`, `forceDelete`, `forceDeleteAny`), and in
+`StaffProfilePolicy` and `StaffCertificatePolicy` (no `restore`/`forceDelete`),
+while `User`, `Student`, `Batch`, `Enrollment` and `StaffProfile` all use
+`SoftDeletes`. Only `RolePolicy` and `ActivityPolicy` are complete. Nothing is
+reachable today — no `TrashedFilter`, `RestoreAction`, `ForceDeleteAction` or
+bulk action is rendered anywhere — so this is a loaded trap rather than an open
+door, and the fix must include an architecture test, because the next person to
+add the standard Filament soft-delete idiom is the one who springs it.
 
 ### Unverified items
 
-| # | Claim | Experiment | Result | Disposition |
-|---|---|---|---|---|
+| # | Claim | Experiment | Result |
+|---|---|---|---|
+| 1 | Filament's `Select` `in` rule blocks the case-variant from the UI | Drive `EditUser` with `roles => ['Super_Admin']` as an admin | **Superseded.** The Action-layer probe settled severity without it. Still worth an assertion in the regression test. |
+| 2 | Behaviour of Shield's inline `EditAction` on the roles table | Drive `callTableAction('edit', ...)` and observe | Open — resolve while fixing finding 3 |
+| 3 | Whether the `ForcePasswordChange` bypass is reachable by a fresh attacker rather than only a stale open page | Obtain a snapshot from the exempt page, drive another component | Open — the stale-page scenario already justifies the fix |
 
 ### Gates after group 1 fixes
 
