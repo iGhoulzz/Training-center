@@ -8263,12 +8263,18 @@ and nothing about whether it is ever actually removed, or removed too early.
 
 **4. Brief 3 named the mechanisms but not all of their call sites.**
 
-- **Activity.** Every `RecordsActivity` consumer — nine models across both
-  domains, including `User` and `Role` — and every `activity()` call under
-  `app/`: seven Actions, `app/Filament/Pages/PasswordChange.php`, and
-  `app/Providers/AppServiceProvider.php`, which logs authentication events on a
-  separate log name. A trait audited in isolation says nothing about the models
+- **Activity.** Every `RecordsActivity` consumer, and every executable
+  `activity()` call under `app/` — Actions, `app/Filament/Pages/PasswordChange.php`,
+  and the auth listeners in `app/Providers/AppServiceProvider.php`, which log to
+  a separate log name. A trait audited in isolation says nothing about the models
   that forgot to use it.
+
+  **No counts are given, deliberately.** The first draft of this brief said
+  "nine models" and "seven Actions"; both were wrong — the grep behind them
+  counted the trait's own file and was truncated by `head`. A stated count is
+  something a reviewer stops at: reaching the number reads as completing the
+  task, and a consumer added next week falls outside a number written today.
+  Enumerate from the code.
 - **Backups.** Added `config/filesystems.php` (the disk the archive is written
   to), `config/database.php` (the dump options), `.env.example` (the variables an
   operator must set), and `AppServiceProvider` (where the production guard is
