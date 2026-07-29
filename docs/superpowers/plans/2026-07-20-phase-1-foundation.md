@@ -8074,101 +8074,168 @@ than interface.
 
 ---
 
-## Task 15: Phase 1 review by a fresh reviewer
+## Task 15: Phase 1 review by fresh reviewers
 
-**No branch** — this task produces findings, not code.
+**No branch for the review itself** — it produces findings, not code. Fixes that
+come out of it get their own branches.
 
-A reviewing subagent with **no implementation context** reviews all fourteen task diffs. It has not seen the reasoning behind any decision, which is the point: it cannot inherit the implementer's blind spots.
+**Rewritten 2026-07-29.** The original section was drafted 2026-07-20 and assumed
+fourteen task branches would still exist to be diffed one by one. They do not,
+and by the end of phase 1 they will not: each branch is deleted as its pull
+request merges, and `task/P1-*-end` tags stop at T10. More importantly, the
+premise was wrong even where it was possible. What ships is the **final state of
+`main`**, not the fourteen intermediate states that led to it. A defect
+introduced in T05 and papered over in T09 shows up in neither diff read alone.
 
-- [ ] **Step 1: Confirm every task branch still exists**
+### What is reviewed
 
-```bash
-git branch --list 'p1/*'
-```
+`main` at `3f47b35` — 107 files under `app/`, 18 migrations, 50 test files, 748
+tests — read as the system it now is, against:
 
-Expected: fourteen branches, `p1/t01-*` through `p1/t14-*`. If any were deleted, reconstruct the diff from the squashed commit on `main` instead.
+- `docs/superpowers/specs/2026-07-20-training-center-dashboard-design.md`
+- `docs/ENGINEERING.md`
 
-- [ ] **Step 2: Dispatch the reviewer on Task 4 first**
+Task history stays available as *context on intent*, not as the review surface:
+the merge commits on `main`, the eleven `task/P1-*-end` tags, and the per-task
+sections of this plan.
 
-Task 4 is reviewed before anything else, because tasks 5–14 are built on top of it and a defect there is the most expensive one to find late.
+### Who reviews
 
-Dispatch a subagent with this brief:
+Fresh subagents with **no implementation context and no access to this session's
+history**. That is the whole point of the task: they cannot inherit the
+implementer's blind spots, and every brief must therefore be self-contained.
 
-```
-Review this diff: git diff main...p1/t04-escalation-guards
+Each reviewer reports findings only. **No reviewer edits code**, so no reviewer
+can quietly resolve a disagreement by rewriting the thing being disputed.
 
-Context you need:
-- Spec: docs/superpowers/specs/2026-07-20-training-center-dashboard-design.md, section 5
-- Standards: docs/ENGINEERING.md
+### Three groups, staged
 
-This code enforces three privilege escalation guards:
-1. An admin cannot create, edit, or delete a super admin.
-2. No user can modify their own roles or permissions.
-3. The last active super admin cannot be deleted or deactivated.
+Group 1 is dispatched alone. Its confirmed findings are fixed and merged before
+groups 2 and 3 go out, because everything they review sits on top of the
+authorization layer — reviewing enrolment integrity against a broken permission
+model produces findings that evaporate the moment the model is fixed.
 
-Your primary task: find a FOURTH escalation path the eleven existing tests do
-not cover. Consider at minimum — role assignment through the Filament form
-versus through the policy, direct Eloquent writes that bypass the policy layer,
-soft-deleted super admins counting or not counting as survivors, a user holding
-multiple roles simultaneously, permission changes made directly rather than
-through a role, and queued jobs or seeders acting with no authenticated user.
+| Group | Scope |
+|---|---|
+| **1. Security** | Authentication, Shield/Spatie wiring, `User` and `Role` policies, the escalation invariants, Action boundaries, and the staff-account UI. |
+| **2. Domain integrity** | Staff files, students, courses, batches, instructor allocations, enrolments — database constraints, transactions, locks, concurrency, and UI reachability. |
+| **3. Cross-cutting operations** | Append-only activity log, backup and restore, localization, RTL, and the hardcoded-string and CSS enforcement. |
 
-Report findings with file:line. Do not fix anything. If you find nothing, say
-so plainly rather than manufacturing findings.
-```
+Groups 2 and 3 may run concurrently with each other. The scope is deliberately
+**not** narrowed to security: file privacy, enrolment integrity, backups and the
+audit trail are each capable of losing or exposing real data.
 
-- [ ] **Step 3: Resolve Task 4 findings before continuing**
+### Test execution is serialized. This is not negotiable.
 
-Any confirmed escalation path becomes a fix plus a regression test on a new branch `p1/t04-fix-{slug}`, merged before the review proceeds. Findings you disagree with should be answered with reasoning, not implemented reflexively — the reviewer can be wrong.
+Every suite in this project runs against one MySQL database, `training_center_test`,
+and `RefreshDatabase` issues `migrate:fresh` against it. Two reviewers running
+tests at the same time will drop each other's schema mid-run and produce failures
+that belong to neither of them — and the natural reading of such a failure is
+"the code is broken", which is exactly the wrong conclusion to hand a reviewer
+with no context.
 
-- [ ] **Step 4: Dispatch the reviewer on the remaining thirteen diffs**
+Therefore:
 
-```
-Review these diffs in order:
-  git diff main...p1/t01-scaffold        (through)
-  git diff main...p1/t14-i18n
+- Reviewers perform **static review only**. They read code, tests, migrations and
+  configuration. They do not run `php artisan test`, `migrate`, `migrate:fresh`,
+  or anything that touches the database.
+- Static review may overlap freely. Nothing else may.
+- Where a finding needs runtime proof, the reviewer says so and describes the
+  experiment. **Triage runs it centrally, one at a time.**
 
-Reference documents:
-- Spec: docs/superpowers/specs/2026-07-20-training-center-dashboard-design.md
-- Standards: docs/ENGINEERING.md
+The alternative — a separate test database per reviewer — is available if this
+ever becomes the bottleneck, but it is not worth the setup for three reviewers.
 
-Check each diff for:
-1. Correctness, including unhappy paths.
-2. Spec compliance. Silent deviation from the spec is a finding, not a detail.
-3. Standards compliance — permission-based not role-based authorization, money
-   as decimal(12,3), foreign keys constrained with deliberate onDelete behavior,
-   no derived financial values stored, no hardcoded user-facing strings,
-   logical CSS properties only.
-4. Test quality. Every permission test must assert the negative case, not only
-   the positive. Flag any test that only proves the happy path.
-5. Phase discipline. Phase 1 must contain no financial features. The price
-   columns exist in migrations but must not be readable or editable anywhere
-   in the UI.
+### What every finding must contain
 
-Report findings with file:line, ranked most severe first. Do not fix anything.
-```
+A finding missing any of these is sent back rather than triaged:
 
-- [ ] **Step 5: Triage and resolve**
+1. **Severity** — Critical, High, Medium or Low, on the scale below.
+2. **Exact file and line.**
+3. **A concrete failure or bypass scenario** — the actual sequence of actions,
+   with the actor and their permissions named. "This could be unsafe" is not a
+   finding; "a staff user holding `update_assigned_batch_enrollment` can POST X
+   and reach Y" is.
+4. **The rule violated** — the spec section or `ENGINEERING.md` heading, quoted.
+   A finding that cites no rule is a design opinion, and belongs in a separate
+   list marked as such.
+5. **The missing or insufficient regression test** — which test file should have
+   caught this, and what it must assert. If a test exists but only proves the
+   happy path, name it and say what the negative case is.
 
-Group findings into: fix now, fix in phase 2, and reject with reasoning. Record the rejections and their justification — Task 16 folds them into the spec so the same question is not re-opened later.
+**Severity scale**
 
-- [ ] **Step 6: Verify the full suite after all fixes**
+| | Meaning |
+|---|---|
+| **Critical** | Privilege escalation, data loss, or exposure of another person's private file or identity document. |
+| **High** | A spec or non-negotiable rule is violated in a way that corrupts data or misreports it to a user. |
+| **Medium** | A real defect on an unhappy path, or a rule violated without immediate data consequences. |
+| **Low** | Style, clarity, or a gap that costs maintenance rather than correctness. |
 
-```bash
-php artisan test
-vendor/bin/pint --test
-vendor/bin/phpstan analyse
-```
+### Guarding against manufactured findings
 
-Expected: all pass. **Report actual output.**
+Reviews in this project have produced confident findings about methods that do
+not exist. Every brief carries these constraints:
 
-- [ ] **Step 7: Delete the task branches**
+- **Verify against `vendor/` before asserting a framework or package behaves a
+  certain way.** Quote the file and line you checked.
+- **Finding nothing in an area is a result.** Say so plainly. Do not pad.
+- **Distinguish "I could not verify this statically" from "this is broken."**
+  The first is a request for the triage step to run something; the second is a
+  claim. Mark uncertain items **Unverified** rather than assigning severity.
 
-Only now, once the review has consumed them:
+### Triage
 
-```bash
-git branch --list 'p1/*' | xargs -r git branch -D
-```
+Central, by the lead, after each group returns. Every finding gets exactly one
+disposition, recorded with its reasoning:
+
+- **Fix now** — becomes a branch `p1/t15-fix-{slug}` with a regression test that
+  is shown to fail before the fix.
+- **Defer** — with the phase it belongs to and why deferring is safe.
+- **Reject** — with the reasoning. A reviewer with no context can be wrong, and
+  answering with reasoning rather than reflexive compliance is the point of
+  triage existing at all.
+
+All three go into `docs/reviews/2026-07-29-phase-1-review.md`. **Task 16 folds
+the rejections and deferrals into the spec**, so that a future reader finds the
+answer rather than re-opening the question.
+
+### Steps
+
+- [ ] **Step 1: Remove the merged worktrees, keep branches and tags**
+
+  Done 2026-07-29. Branches and `task/P1-*` tags stay until T16 completes.
+
+- [ ] **Step 2: Write the three briefs and have them approved before dispatch**
+
+  Each is self-contained: scope, files, the rules that apply, the report format,
+  the static-only constraint.
+
+- [ ] **Step 3: Dispatch group 1 alone**
+
+- [ ] **Step 4: Triage group 1; fix confirmed findings; verify**
+
+  Full gates after the fixes, serially: `php artisan test`, `vendor/bin/pint --test`,
+  `vendor/bin/phpstan analyse --memory-limit=1G`. Report real output.
+
+- [ ] **Step 5: Dispatch groups 2 and 3**
+
+- [ ] **Step 6: Triage; fix; verify**
+
+- [ ] **Step 7: Record every disposition in the review log**
+
+- [ ] **Step 8: Delete task branches and tags — only after T16 has consumed them**
+
+  Not here. T16 reconciles documentation against what was actually built, and the
+  history is its evidence.
+
+### Why this is worth doing at all
+
+Fourteen tasks were each reviewed as they landed, and the reviews were
+substantive. What none of them could see is the seam between tasks: a permission
+seeded in T02 and first used in T11, a policy written in T05 against a model that
+grew two columns in T07. Every finding in this project that reached a merge did
+so by being invisible from inside a single task's diff.
 
 ---
 
