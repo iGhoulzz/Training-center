@@ -373,16 +373,90 @@ or the runbook must state that an empty value silently means AWS.
 as absent. It is present with a `null` value — `$disk['endpoint'] ?? '(absent)'`
 cannot tell null from missing. The corrected reading is above.
 
-### Still to run
+### G2-U2 — can the purge job deadlock against an in-flight upload? **NO. No finding.**
 
-- **G2-U2** — whether `PurgeDeletedFileJob::isOwned()` can deadlock against an
-  in-flight upload rather than blocking on it. Needs a held-open upload
-  transaction across the `(disk, path)` index gap on a second connection.
-- **G2-U3** — whether `ViewStaffProfile` falls back to the form schema and
-  discloses the account roster.
-- **G1-U1** — whether Filament's `Select` `in` rule blocks the case-variant
-  through a crafted Livewire payload. This one bounds a claim rather than a fix:
-  the escalation is already fixed and already proven at the Action boundary.
+Two connections. A plays the upload: insert the certificate row naming a path,
+then lock the owning profile row — `UploadStaffCertificateAction`'s order — held
+open and uncommitted. B plays the job: the two locking ownership reads in
+`PurgeDeletedFileJob::isOwned()`'s order.
+
+| Observation | Value |
+|---|---|
+| B's outcome | **BLOCKED**, 1205 lock wait timeout, 3.01 s |
+| Rows left behind after rollback | **0** |
+
+B waits for the owner, which is exactly what the design says it does. No cycle,
+no victim, no possibility of the job purging bytes an uncommitted upload still
+intends to use. **The deferred-deletion ownership check is correct.**
+
+Run under the safety constraints imposed for it: fake paths only, no file on disk
+touched, every transaction rolled back, and no `pending_file_deletions` receipt
+written or removed — so no receipt was ever at risk of being lost to an uncertain
+outcome.
+
+*(A first attempt failed on invented column names — `mime_type`, `size_bytes`.
+The real table is `id, staff_profile_id, title, issued_on, expires_on,
+original_filename, disk, path, created_at, updated_at`. Read from
+`Schema::getColumnListing()` rather than guessed the second time.)*
+
+### G2-U3 — does the profile view page leak the account roster? **YES. Confirmed, and it is a real leak.**
+
+Tested with a **synthetic** role, because no seeded role can show this: everyone
+holding `view_staff_profile` also holds `view_any_user`. The probe role held
+`view_any_staff_profile`, `view_staff_profile` and `access_admin_panel` — and no
+user permission at all.
+
+| Observation | Value |
+|---|---|
+| `GET /admin/staff-profiles/{id}` | **200** |
+| Viewer holds `view_any_user` | **false** |
+| Canary account name present in the HTML | **true** |
+| `<option>` tags rendered | 4 |
+
+`ViewStaffProfile` declares no schema and `StaffProfileResource` defines no
+`infolist()`, so Filament falls back to the form — including
+`Select::make('user_id')->options(User::query()->pluck('name', 'id'))`. Every
+account name is disclosed to an actor with no permission to see any user.
+
+Latent under today's seeding and **not** latent under the next role somebody
+adds, which is the shape of every finding in this review. Raise to **Medium**:
+the view page needs its own `infolist()` rather than the form fallback.
+
+### G1-U1 — is the case-variant reachable through the form? **Settled, and it changes no disposition.**
+
+Driving `EditUser` with `roles => ['Super_Admin']` as an `admin`:
+
+| Observation | Value |
+|---|---|
+| `save()` | returned without throwing |
+| `isSuperAdmin()` afterwards | **false** |
+
+The account is not escalated: the Action refuses, as it now must. Which of the
+two — Filament's `Select` validation or `UserPolicy::assignRole()` — did the
+refusing was not isolated, and deliberately so: isolating it would mean reverting
+the fix, and the answer cannot change any disposition now.
+
+What this does settle is the **claim boundary**. No remotely exploitable Filament
+route was demonstrated at any point, and the Critical rating continues to rest
+where the log already says it rests: on `SyncUserRolesAction` being an injectable
+public service that a command, job or portal controller reaches with no `Select`
+in front of it.
+
+### Summary of the seven
+
+| Experiment | Result |
+|---|---|
+| G2-U1 locking `exists()` | **Clears the code.** It locks. |
+| G2-U2 purge race | **Clears the code.** It blocks; no deadlock. |
+| G2-U3 profile view fallback | **Confirms a leak.** Raised to Medium. |
+| G3-U1 blank S3 endpoint | **Confirms the concern.** Constructs silently. |
+| G3-U2 Shield activity permissions | **Confirms L5.** Twelve write options offered. |
+| G3-U3 anonymous causer name | **Confirms M2.** A real name on an anonymous entry. |
+| G1-U1 crafted role payload | **Bounds the claim.** Not escalated; no UI route shown. |
+
+Two of the seven cleared code that a static reading had made look suspect. That is
+the argument for running experiments before writing fixes: without them, both
+would have been "hardened" into a rewrite of correct code.
 
 ---
 
