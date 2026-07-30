@@ -114,10 +114,23 @@ final class SyncUserRolesAction
 
             // Guard 3: only a super-admin removal can shrink the population, so
             // only that write needs the locked, atomic invariant check.
+            /*
+             * THE RESOLVED ROWS, NOT THEIR NAMES.
+             *
+             * Passing names would send them back through Spatie's own lookup —
+             * findByName() on each — so identity would be established twice,
+             * once here by primary key and once again by string. Spatie short
+             * circuits on a model ("if ($role instanceof Role) { return $role; }"
+             * in HasRoles::collectRoles), so handing it the rows keeps the
+             * identity this Action already resolved.
+             *
+             * Canonical NAMES are still what the activity log records below:
+             * they are for a human reading the trail, not for identity.
+             */
             if ($removing->containsSuperAdmin()) {
-                $this->invariant->protect(fn () => $locked->syncRoles($desired->names()));
+                $this->invariant->protect(fn () => $locked->syncRoles($desired->all()));
             } else {
-                $locked->syncRoles($desired->names());
+                $locked->syncRoles($desired->all());
             }
 
             activity()
