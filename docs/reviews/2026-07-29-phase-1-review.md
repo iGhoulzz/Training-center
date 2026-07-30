@@ -67,14 +67,21 @@ verification.
 | 5 | Medium | `AdminPanelProvider.php:79-98` | `ForcePasswordChange` and `AuthenticateSession` are not persistent, so neither runs on `/livewire/update` | Fix now |
 | 6 | Medium (raised from Low) | `PasswordChange.php:37-53` | Self-service password change requires no current password, converting session access into permanent credential ownership | Fix now |
 
-**Finding 2 was demonstrated, not reasoned.** A throwaway probe had an `admin`
-call `SyncUserRolesAction::execute($admin, $puppet, ['Super_Admin'])`: no
-exception was thrown and `roles_after` came back `['super_admin']`. The reviewer
-rated it Medium on the grounds that Filament's `Select` `in` rule blocks the UI
-path. That rule is incidental, and `UserResource.php:50-56` explicitly disclaims
-it — "FILTERING THE OPTIONS LIST IS NOT THE CONTROL ... Every one of these paths
-therefore re-authorizes inside its Action on execute; that is the boundary." The
-boundary is what failed, so the severity belongs to the boundary.
+**Finding 2 was demonstrated at the Action boundary.** A throwaway probe had an
+`admin` call `SyncUserRolesAction::execute($admin, $puppet, ['Super_Admin'])`: no
+exception was thrown and `roles_after` came back `['super_admin']`.
+
+**Scope of that claim, stated precisely.** The escalation is proven at the Action
+boundary and nowhere else. Filament's `Select` `in` validation still rejected that
+exact payload through the UI as shipped, and **no crafted-Livewire experiment was
+run**, so this was never shown to be remotely exploitable through the panel. The
+severity is Critical on the boundary's own terms: `UserResource.php:50-56`
+disclaims the options list as a control — "FILTERING THE OPTIONS LIST IS NOT THE
+CONTROL ... Every one of these paths therefore re-authorizes inside its Action on
+execute; that is the boundary" — and `SyncUserRolesAction` is an injectable public
+service, so a console command, a queued job or a phase-3 portal controller reaches
+the defeated guard with no `Select` in front of it. A boundary that holds only
+because something in front of it happens to filter is not a boundary.
 
 **Finding 1 is wider than group 1's scope could see.** The reviewer correctly
 stayed in its lane and reported `UserPolicy`. The same gap exists in
@@ -92,14 +99,47 @@ add the standard Filament soft-delete idiom is the one who springs it.
 
 | # | Claim | Experiment | Result |
 |---|---|---|---|
-| 1 | Filament's `Select` `in` rule blocks the case-variant from the UI | Drive `EditUser` with `roles => ['Super_Admin']` as an admin | **Superseded.** The Action-layer probe settled severity without it. Still worth an assertion in the regression test. |
-| 2 | Behaviour of Shield's inline `EditAction` on the roles table | Drive `callTableAction('edit', ...)` and observe | Open — resolve while fixing finding 3 |
+| 1 | Filament's `Select` `in` rule blocks the case-variant from the UI | Drive `EditUser` with `roles => ['Super_Admin']` as an admin | **Still open, and it bounds what may be claimed.** The Action-layer probe settled severity without it and the fix landed regardless — but until this runs, no remotely exploitable Filament route has been demonstrated. |
+| 2 | Behaviour of Shield's inline `EditAction` on the roles table | Drive `callTableAction('edit', ...)` and observe | **Moot.** The action no longer exists: `RoleResource::table()` replaces Shield's record actions and empties the toolbar. |
 | 3 | Whether the `ForcePasswordChange` bypass is reachable by a fresh attacker rather than only a stale open page | Obtain a snapshot from the exempt page, drive another component | Open — the stale-page scenario already justifies the fix |
 
-### Gates after group 1 fixes
+### Resolution
 
-_To be recorded with real output: `php artisan test`, `vendor/bin/pint --test`,
-`vendor/bin/phpstan analyse --memory-limit=1G`._
+All six fixed on `p1/t15-security-fixes`, six commits, merged to `main` as
+`1afdb7f`. **Every regression test was run and seen to fail before its fix
+existed** — 23 of the 29 new cases failed on the first run, covering all six
+findings.
+
+Two durable guards came out of it rather than point fixes:
+
+- `tests/Feature/PolicyAbilitySurfaceTest.php` — every policy must state an answer
+  for every Filament ability, and the bulk abilities must refuse rather than
+  merely exist. Both halves mutation-tested: removing a method fails the first,
+  returning `true` fails the second.
+- `app/Domain/Staff/Support/RoleSet.php` — role identity resolved to rows and
+  compared by primary key, so no future caller can reintroduce a name comparison.
+
+**Two existing tests were asserting the vulnerability was safe** and had to be
+inverted: `BatchResourceTest` and `CourseResourceTest` both claimed "there is no
+`*Any` method for Filament to authorize against, so it fails closed". True of the
+Gate, false of the panel. They now assert through the resource, because a
+gate-level assertion passes whether or not the fix is present.
+
+**Gates on `main` at `1afdb7f`, real output:**
+
+| Gate | Result |
+|---|---|
+| `php artisan test` | **781 passed**, 0 failed, 2246 assertions |
+| `vendor/bin/pint --test` | passed |
+| `vendor/bin/phpstan analyse --memory-limit=1G` | 0 errors |
+
+**A verification failure found along the way, recorded because it matters more
+than the findings.** `vendor/` had never been installed in the main checkout, so
+the "748 tests passing on main" reported after the T14 merge was never a real
+verification — that figure came from the T14 worktree pre-merge, and the run
+attributed to `main` could not have executed. Dependencies are now installed there
+and every gate above was run in the main checkout. The reviewer surfaced this
+incidentally by having to work from the Composer cache.
 
 ---
 
