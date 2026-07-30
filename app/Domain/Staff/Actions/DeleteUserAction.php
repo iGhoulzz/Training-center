@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace App\Domain\Staff\Actions;
 
 use App\Domain\Staff\Services\SuperAdminInvariantService;
+use App\Models\Role;
 use App\Models\User;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 
 /**
@@ -25,16 +27,49 @@ final class DeleteUserAction
 
     public function execute(User $actor, User $target): void
     {
-        Gate::forUser($actor)->authorize('delete', $target);
+        /*
+         * LOCK FIRST, DECIDE SECOND (P1-T15, security finding 4).
+         *
+         * The branch below asks whether the target is a super admin, and that
+         * answer used to come from the instance the caller passed — read
+         * outside any transaction and outside any lock. A concurrent role grant
+         * lands in that gap: request A reads "ordinary account" and is
+         * descheduled, request B makes that account a super admin, request C
+         * deletes the only other super admin and passes its own invariant check
+         * because A's target now counts as a survivor, then A resumes and
+         * deletes it. Zero active super admins remain — a state
+         * SuperAdminInvariantService calls "unrecoverable through the
+         * application".
+         *
+         * SyncUserRolesAction already states the rule this now follows: the
+         * super-admin role row is locked BEFORE the user row, always, and
+         * unconditionally, "because whether it IS involved cannot be known
+         * until the current roles are read — and that read is what the lock
+         * protects". Locking only when isSuperAdmin() is already true asks the
+         * very question the lock exists to make safe.
+         *
+         * The lock is retaken inside SuperAdminInvariantService::protect(); a
+         * second acquisition within this transaction is a no-op, and the global
+         * order is identical on either path.
+         */
+        DB::transaction(function () use ($actor, $target): void {
+            Role::lockSuperAdminRow();
 
-        $delete = fn () => $target->delete();
+            $lockedUser = User::query()->lockForUpdate()->findOrFail($target->getKey());
 
-        if ($target->isSuperAdmin()) {
-            $this->invariant->protect($delete);
+            // Authorized against the LOCKED row, never the caller's instance:
+            // rank may have changed since that instance was loaded.
+            Gate::forUser($actor)->authorize('delete', $lockedUser);
 
-            return;
-        }
+            $delete = fn () => $lockedUser->delete();
 
-        $delete();
+            if ($lockedUser->isSuperAdmin()) {
+                $this->invariant->protect($delete);
+
+                return;
+            }
+
+            $delete();
+        });
     }
 }
