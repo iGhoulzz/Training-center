@@ -3,13 +3,13 @@
 declare(strict_types=1);
 
 use App\Domain\Staff\Actions\SystemRoleWriter;
+use App\Domain\Staff\Filament\Resources\RoleResource;
 use App\Domain\Staff\Filament\Resources\RoleResource\Pages\ListRoles;
 use App\Models\Role;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Livewire\Livewire;
-use PHPUnit\Framework\ExpectationFailedException;
 
 /**
  * Drives the real role table component instead of pattern-matching source.
@@ -34,37 +34,59 @@ beforeEach(function () {
     $this->system->assignRoles($this->superAdmin, 'super_admin');
 });
 
-it('hides the bulk delete action on the roles table, even from a super admin', function () {
-    // Shield's resource still registers a DeleteBulkAction, so the object
-    // exists — but deleteAny() denies, so Filament must never render it.
-    // Asserting "hidden" rather than "does not exist" documents the real
-    // mechanism: the policy is what removes it, not the absence of the action.
-    Livewire::actingAs($this->superAdmin)
+it('registers no bulk delete action on the roles table at all', function () {
+    /*
+     * STRENGTHENED BY P1-T15, security review finding 3.
+     *
+     * This used to assert the action was HIDDEN, reasoning that "asserting
+     * hidden rather than does not exist documents the real mechanism: the
+     * policy is what removes it". Accurate — and the weaker of the two
+     * available guarantees. A control that renders only in order to be refused
+     * sits one policy edit away from working, so RoleResource now drops
+     * Shield's toolbar outright.
+     *
+     * The policy still refuses, asserted separately below. Defence in depth
+     * means both, not either.
+     *
+     * NOT assertTableBulkActionDoesNotExist('delete'): that helper resolves an
+     * action by NAME across the whole table, so it finds the record-level
+     * DeleteAction — which is deliberately still there — and reports a bulk
+     * action that does not exist. The bulk collections are the precise question,
+     * and they are the same idiom BatchResourceTest and CourseResourceTest use.
+     */
+    $table = Livewire::actingAs($this->superAdmin)
         ->test(ListRoles::class)
         ->assertOk()
-        ->assertTableBulkActionHidden('delete');
+        ->instance()
+        ->getTable();
+
+    expect($table->getFlatBulkActions())->toBeEmpty()
+        ->and($table->getToolbarActions())->toBeEmpty();
+});
+
+it('still refuses bulk deletion at the policy, with no action left to render', function () {
+    // The second layer, and the one that matters if a toolbar action is ever
+    // re-added. Filament consults deleteAny() only because RolePolicy defines
+    // it — an omitted method would be an allow, not a deny.
+    $this->actingAs($this->superAdmin);
+
+    expect(RoleResource::canDeleteAny())->toBeFalse();
 });
 
 it('leaves every role intact when a bulk delete is invoked directly', function () {
-    $superAdminRole = Role::where('name', Role::SUPER_ADMIN)->firstOrFail();
-    $staffRole = Role::where('name', 'staff')->firstOrFail();
     $countBefore = Role::count();
 
-    // A hidden action is not merely absent from the markup — invoking it the
-    // way a crafted Livewire payload would must also fail. Filament's helper
-    // asserts visibility first, so the refusal surfaces as an expectation
-    // failure. Catch ONLY that: a broader catch would swallow a genuine error
-    // and let this test pass for the wrong reason.
-    // Stated as an explicit expectation rather than try/catch: the previous
-    // form needed the reader to know that ExpectationFailedException is a
-    // SUBclass of the AssertionFailedError that fail() throws, so the guard
-    // could not swallow itself. Correct, but not worth the reasoning.
-    expect(fn () => Livewire::actingAs($this->superAdmin)
-        ->test(ListRoles::class)
-        ->callTableBulkAction('delete', [
-            $superAdminRole->getKey(),
-            $staffRole->getKey(),
-        ]))->toThrow(ExpectationFailedException::class);
+    // A crafted Livewire payload naming an action the table no longer registers.
+    // Filament raises rather than performing it; the exception type is Filament's
+    // business, so this asserts the OUTCOME — every row still there — which is
+    // what the test is actually for.
+    try {
+        Livewire::actingAs($this->superAdmin)
+            ->test(ListRoles::class)
+            ->callTableBulkAction('delete', Role::pluck('id')->all());
+    } catch (Throwable) {
+        // Expected: there is no such action to call.
+    }
 
     expect(Role::where('name', Role::SUPER_ADMIN)->exists())->toBeTrue()
         ->and(Role::where('name', 'staff')->exists())->toBeTrue()

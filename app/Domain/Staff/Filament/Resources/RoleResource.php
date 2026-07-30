@@ -8,7 +8,13 @@ use App\Domain\Staff\Filament\Resources\RoleResource\Pages\CreateRole;
 use App\Domain\Staff\Filament\Resources\RoleResource\Pages\EditRole;
 use App\Domain\Staff\Filament\Resources\RoleResource\Pages\ListRoles;
 use App\Domain\Staff\Filament\Resources\RoleResource\Pages\ViewRole;
+use App\Models\Role;
 use BezhanSalleh\FilamentShield\Resources\Roles\RoleResource as ShieldRoleResource;
+use Filament\Actions\Action;
+use Filament\Actions\DeleteAction;
+use Filament\Support\Icons\Heroicon;
+use Filament\Tables\Table;
+use Illuminate\Support\Facades\Gate;
 
 /**
  * Application-owned role resource (P1-T04c).
@@ -33,6 +39,47 @@ use BezhanSalleh\FilamentShield\Resources\Roles\RoleResource as ShieldRoleResour
  */
 class RoleResource extends ShieldRoleResource
 {
+    /**
+     * Shield's table is inherited except for its write surfaces (P1-T15,
+     * security review finding 3).
+     *
+     * The docblock above says the table is "inherited unchanged". It was — and
+     * the table contained a permission-write path that this resource exists to
+     * remove. Shield's inline EditAction opens a modal built from the same form
+     * and persists it with a bare $record->update($data), which never reaches
+     * EditRole::afterSave() and therefore never reaches
+     * UpdateRolePermissionsAction, "the single sanctioned path".
+     *
+     * Worse than a bypass, it was a silent one. The modal fills from
+     * $record->attributesToArray(), which returns only the roles table columns,
+     * so the permission matrix rendered entirely unchecked whatever the role
+     * actually held. An administrator would see an empty grid, save, and be told
+     * it worked — with no permission change written, and no permissions_changed
+     * entry in the activity log, because Role::auditedAttributes() covers only
+     * name and guard_name.
+     *
+     * UserResource diagnosed this exact hazard and declined to inherit it. This
+     * resource now does the same: edit is a LINK to the app-owned page, so every
+     * permission write goes through the Action and lands in the audit trail.
+     *
+     * The inherited DeleteBulkAction goes too. RolePolicy::deleteAny() already
+     * refuses it, so it rendered only in order to fail — but a control that
+     * works solely because a policy says no is one policy edit from working.
+     */
+    public static function table(Table $table): Table
+    {
+        return parent::table($table)
+            ->recordActions([
+                Action::make('edit')
+                    ->label(__('filament-actions::edit.single.label'))
+                    ->icon(Heroicon::OutlinedPencilSquare)
+                    ->url(fn (Role $record): string => EditRole::getUrl(['record' => $record]))
+                    ->authorize(fn (Role $record): bool => Gate::allows('update', $record)),
+                DeleteAction::make(),
+            ])
+            ->toolbarActions([]);
+    }
+
     public static function getPages(): array
     {
         return [

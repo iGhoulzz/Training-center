@@ -89,12 +89,27 @@ class AdminPanelProvider extends PanelProvider
              * treatment or the first paint would be Arabic and every interaction
              * after it English.
              *
-             * Marked here rather than through authMiddleware(isPersistent: true),
-             * which would also make ForcePasswordChange persistent and quietly
-             * change when that guard fires.
+             * P1-T15, security review finding 5: this list held SetLocale alone.
+             * The note that used to sit here treated persisting
+             * ForcePasswordChange as the RISK — "would quietly change when that
+             * guard fires" — when failing to persist it is what made the guard
+             * skippable. The paragraph above was already correct; it simply was
+             * not applied to the security middleware sitting beside it.
+             *
+             * ForcePasswordChange: an administrator resets someone's password
+             * while that person has a panel page open. Every interaction on it —
+             * filters, modals, saves — posts to Livewire's route, where the
+             * guard did not run, so they kept working on a credential that had
+             * already been revoked and replaced.
+             *
+             * AuthenticateSession: Filament does not persist this one either
+             * (see FilamentServiceProvider::boot), so the session was not being
+             * invalidated by the password-hash change it exists to detect.
              */
             ->persistentMiddleware([
                 SetLocale::class,
+                AuthenticateSession::class,
+                ForcePasswordChange::class,
             ]);
     }
 }

@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Domain\Enrollment\Filament\Resources\CourseResource;
 use App\Domain\Enrollment\Filament\Resources\CourseResource\Pages\CreateCourse;
 use App\Domain\Enrollment\Filament\Resources\CourseResource\Pages\EditCourse;
 use App\Domain\Enrollment\Filament\Resources\CourseResource\Pages\ListCourses;
@@ -267,8 +268,8 @@ it('ignores a default_price smuggled into an edit payload', function () {
 it('registers no bulk actions on the catalogue table', function () {
     // Filament authorizes a bulk action once against the *Any policy method and
     // never consults the per-record one, so a bulk delete could not express
-    // "unless this course has batches". CoursePolicy defines no deleteAny();
-    // this asserts the table offers nothing that would consult it.
+    // "unless this course has batches". CoursePolicy::deleteAny() refuses
+    // outright; this asserts the table offers nothing that would consult it.
     $table = Livewire::actingAs(($this->makeUser)('super_admin'))
         ->test(ListCourses::class)
         ->instance()
@@ -278,10 +279,28 @@ it('registers no bulk actions on the catalogue table', function () {
         ->and($table->getToolbarActions())->toBeEmpty();
 });
 
-it('defines no deleteAny on the course policy', function () {
-    // The other half: even if a bulk action were added, there is no *Any method
-    // for Filament to authorize against, so it fails closed.
-    expect(method_exists(CoursePolicy::class, 'deleteAny'))->toBeFalse();
+it('refuses deleteAny on the course policy, through the panel', function () {
+    /*
+     * INVERTED BY P1-T15, security review finding 1.
+     *
+     * This test used to assert the OPPOSITE — that no deleteAny() existed — on
+     * the stated grounds that "there is no *Any method for Filament to
+     * authorize against, so it fails closed". That is true of Laravel's Gate
+     * and false of Filament, which is the only one of the two a user reaches.
+     *
+     * get_authorization_response() consults the Gate only when
+     * method_exists($policy, $action); otherwise, with strict authorization off
+     * and no Gate::before callback, it returns Response::allow(). The absent
+     * method was an OPEN door, and this test was certifying it as a closed one.
+     *
+     * Asserted through the resource rather than the Gate: Gate::allows() still
+     * returns false for a missing method, so a gate-level assertion passes
+     * whether or not the fix is present.
+     */
+    $this->actingAs(($this->makeUser)('super_admin'));
+
+    expect(method_exists(CoursePolicy::class, 'deleteAny'))->toBeTrue()
+        ->and(CourseResource::canDeleteAny())->toBeFalse();
 });
 
 /*
