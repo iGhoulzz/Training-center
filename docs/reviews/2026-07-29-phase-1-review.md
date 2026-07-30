@@ -297,6 +297,95 @@ shipped.
 
 ---
 
+## Experiment results
+
+Run 2026-07-30 against `main` at `856baf2`, **before any group 2 or 3 code was
+changed**, serialized against `training_center_test`. Recorded here with the
+exact observation rather than a conclusion, because two of them contradicted the
+expectation that prompted them.
+
+### G2-U1 — does `lockForUpdate()->exists()` actually take a lock? **YES. No finding.**
+
+The load-bearing claim under `EnrollmentUpdateRule::allows(locking: true)` and
+"the authorization that binds is the locking one". Two real connections, observed
+blocking, not SQL text.
+
+| Scenario | A holds | B inserts the matching row | Result |
+|---|---|---|---|
+| 1 — control | ordinary `exists()`, no batch lock | must succeed | **INSERTED**, 0.05 s |
+| 2 — probe | `lockForUpdate()->exists()`, no batch lock | blocked ⇒ it locks | **BLOCKED**, 1205 lock wait timeout |
+| 3 — context | batch `lockForUpdate()` only, no `exists` | — | **BLOCKED**, 1205 |
+
+The locking `EXISTS` takes a gap lock and genuinely escapes the REPEATABLE READ
+snapshot. **The T11 design is behaviourally correct**, and the SQL-text test that
+worried the reviewer was asserting a true thing by a weak method rather than
+asserting a false thing.
+
+**The first design of this experiment was invalid and was discarded.** Its control
+held a `lockForUpdate()` on the BATCH row, and B blocked — but
+`batch_instructor.batch_id` is a foreign key, so InnoDB locks the parent row when
+inserting a child. Control and probe both blocked, and the probe measured nothing.
+Scenario 3 is that discarded design, kept as context: it shows the batch lock
+alone already serializes instructor inserts through the FK, which is defence in
+depth nobody had written down.
+
+### G3-U3 — does an anonymous entry leak the signed-in user's name? **YES. M2 confirmed.**
+
+`SystemRoleWriter` run with a super admin signed in produced:
+
+| Field | Value |
+|---|---|
+| `causer_id` | `null` |
+| `causer_type` | `null` |
+| `properties.causer_name` | **"Signed In Person"** |
+
+Correctly anonymous in the columns, and naming a real person in the properties.
+The panel renders "System" from the null `causer_id` while the stored row names
+somebody for a change they did not make — and the "Who" column searches
+`properties->causer_name`, so that person's name matches system rows.
+
+### G3-U2 — does Shield offer activity write permissions? **YES. L5 confirmed.**
+
+`FilamentShield::getAllResourcePermissionsWithLabels()` returns 84 options, of
+which **twelve are `*_activity`**, including `delete_activity`,
+`delete_any_activity`, `force_delete_activity`, `force_delete_any_activity`,
+`restore_activity`, `restore_any_activity` and `reorder_activity` — write
+abilities offered on a log whose non-negotiable rule is that no such path exists.
+The seeder never creates them, so the form advertises capabilities that cannot be
+granted.
+
+### G3-U1 — what does a blank S3 endpoint do? **Partially resolved: it fails silently.**
+
+`config/filesystems.php:138` is `'endpoint' => env('BACKUP_S3_ENDPOINT')` and
+`.env.example:77` ships the key blank. Constructing the disk with an empty
+endpoint **succeeded**: `League\Flysystem\AwsS3V3\AwsS3V3Adapter` was built with
+no exception.
+
+So the actionable half is settled — **nothing fails visibly at configuration
+time**, and `BackupConfiguration::REQUIRED` deliberately omits the endpoint.
+Whether the SDK then resolves to a regional AWS host (sending a Backblaze or
+Wasabi deployment's archives to AWS with credentials that will not authenticate)
+is a live-network question that a local run cannot answer, and it does not change
+the fix: the guard should require an endpoint whenever the deployment is not AWS,
+or the runbook must state that an empty value silently means AWS.
+
+**A measurement error worth recording:** the first probe reported the endpoint key
+as absent. It is present with a `null` value — `$disk['endpoint'] ?? '(absent)'`
+cannot tell null from missing. The corrected reading is above.
+
+### Still to run
+
+- **G2-U2** — whether `PurgeDeletedFileJob::isOwned()` can deadlock against an
+  in-flight upload rather than blocking on it. Needs a held-open upload
+  transaction across the `(disk, path)` index gap on a second connection.
+- **G2-U3** — whether `ViewStaffProfile` falls back to the form schema and
+  discloses the account roster.
+- **G1-U1** — whether Filament's `Select` `in` rule blocks the case-variant
+  through a crafted Livewire payload. This one bounds a claim rather than a fix:
+  the escalation is already fixed and already proven at the Action boundary.
+
+---
+
 ## Known context supplied to reviewers
 
 Recorded here because it shapes what the findings can be trusted to mean.
