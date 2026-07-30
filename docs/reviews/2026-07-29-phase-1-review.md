@@ -145,40 +145,155 @@ incidentally by having to work from the Composer cache.
 
 ## Group 2 — Domain integrity
 
-**Dispatched:** not yet — waits for group 1's fixes to merge
-**Pinned at:** _to be recorded at dispatch_
+**Dispatched:** 2026-07-29, pinned at `0f0e9e0`
 **Scope:** staff files, students, courses, batches, instructor allocations,
 enrolments — database constraints, transactions, locks, concurrency, UI
 reachability.
 
+**Status:** reported; all six findings confirmed by the lead. None rejected.
+
 ### Findings
 
-| # | Severity | File:line | Summary | Disposition | Reasoning |
-|---|---|---|---|---|---|
+| # | Severity | File:line | Summary | Disposition |
+|---|---|---|---|---|
+| 1 | **High** | `routes/web.php:25`, `:34` | The two private-file routes carry only `web` and `throttle`. The stock `web` group has no `AuthenticateSession`, so a stolen session survives the password reset meant to contain it, and keeps streaming scanned identity documents by sequential id | Fix now |
+| 2 | **High** | `PendingFileDeletion.php:41`, `routes/console.php` | `scopeStale()` has **no caller** and no sweep is scheduled. A purge job that exhausts its retries leaves the file on disk permanently, and in every nightly backup, after the centre has decided to destroy it | Fix now |
+| 3 | Medium | `FileStorageException.php:23` | Typed domain exception with no renderer and no catch: a full or read-only disk reaches the administrator as a 500 | Fix now |
+| 4 | Medium | `create_staff_profiles_table.php:30` | `user_id` cascades, so a hard delete of a user destroys profile and certificate rows by database cascade with no deletion receipt, orphaning the bytes | Fix now |
+| 5 | Low | `StaffCertificateDownloadController.php:72` | Validates the stored path but trusts the stored `disk`, which chooses the root that path is resolved against | Fix now |
+| 6 | Low | ten files | Twelve docblocks still assert `deleteAny()` is undefined, four of them teaching the reasoning group 1 disproved | Fix now |
+
+**Verification notes.** Route middleware enumerated at runtime:
+`staff.certificates.download` and `staff.profiles.photo` gather exactly `web` and
+`throttle`. The resolved `web` group is `EncryptCookies`,
+`AddQueuedCookiesToResponse`, `StartSession`, `ShareErrorsFromSession`,
+`PreventRequestForgery`, `SubstituteBindings` — no session-integrity middleware,
+confirming finding 1. A grep for callers of the stale scope across `app/`,
+`tests/`, `routes/` and `database/` returns nothing, and `routes/console.php`
+schedules only the three backup commands, confirming finding 2.
+
+**Finding 6 is self-inflicted and recent.** The group 1 fix added `deleteAny()` to
+six policies without updating their file headers, so four policies now state
+"leaving it undefined makes any bulk delete added later fail closed" eighty lines
+above the block correcting exactly that belief. The next person to read the top of
+a policy before adding a bulk action learns the wrong lesson from the file that was
+just corrected to teach the right one.
+
+**Finding 4 disposition reasoning.** No reachable path exists today:
+`UserPolicy::forceDelete()` returns false and no control is registered. It is still
+fix-now rather than defer, because the constraint should force a caller through
+`DeleteStaffProfileAction` — which reads the paths BEFORE the cascade precisely so
+the bytes can be collected — exactly as `enrollments.batch_id` and
+`batch_instructor.batch_id` already restrict so history cannot be orphaned. A
+trusted operation is still entitled to a constraint that fails loudly.
+
+**What the reviewer cleared, worth recording.** The enrolment domain held up in
+full: consistent lock ordering, every decision input read under `lockForUpdate()`,
+and every code-level refusal also backed by a constraint where one can express it.
+Money is `decimal(12,3)` throughout, with no derived column and no price on any
+screen. Both file controllers re-authorize on the request that serves the bytes. No
+`AttachAction`, `AssociateAction`, `DeleteBulkAction`, `RestoreAction`,
+`ForceDeleteAction` or relationship-bound field exists anywhere in `app/Domain/`.
 
 ### Unverified items
 
-| # | Claim | Experiment | Result | Disposition |
-|---|---|---|---|---|
+| # | Claim | Experiment | Result |
+|---|---|---|---|
+| U1 | Whether a locking `exists()` read actually takes a lock — MySQL may drop the locking clause inside the scalar subquery. This is the load-bearing claim of `EnrollmentUpdateRule` and of "the authorization that binds is the locking one" | Two sessions: A locks the batch then runs the locking EXISTS; B inserts the matching `batch_instructor` row and must block; check `performance_schema.data_locks` for a RECORD or GAP lock | Open — **the highest-value experiment of the three.** If B does not block, the rule is served from the pre-mutex snapshot and the T11 lock test asserts SQL text rather than behaviour |
+| U2 | Whether `PurgeDeletedFileJob::isOwned()` can deadlock against an in-flight upload rather than blocking on it | Force a compensation purge for a path, then hold a second upload open across that path's index gap; read the InnoDB status and `data_lock_waits` | Open |
+| U3 | Whether `ViewStaffProfile` falls back to the form schema and so discloses the full account roster through the user Select | As an actor holding profile read but no user read, GET the view page and inspect for option values drawn from `users` | Open — harmless under the seeded roles, since both holders of `view_staff_profile` also hold `view_any_user` |
 
 ---
 
 ## Group 3 — Cross-cutting operations
 
-**Dispatched:** not yet — concurrent with group 2
-**Pinned at:** _to be recorded at dispatch_
+**Dispatched:** 2026-07-29, pinned at `0f0e9e0`, concurrent with group 2
 **Scope:** append-only activity log, backup and restore, localization, RTL,
 hardcoded-string and CSS enforcement.
 
+**Status:** reported. Sixteen findings. The five load-bearing ones are confirmed
+by the lead; the rest are accepted on the reviewer's reasoning, which quoted
+vendor source throughout and was accurate everywhere it was checked.
+
 ### Findings
 
-| # | Severity | File:line | Summary | Disposition | Reasoning |
-|---|---|---|---|---|---|
+| # | Severity | File:line | Summary | Disposition |
+|---|---|---|---|---|
+| H1 | **High** | `config/activitylog.php:20`, `:123` | `activitylog:clean` is a registered artisan command that bulk-deletes audit rows, and this project has configured it with a live 365-day retention window. The append-only rule has an application code path straight through it | Fix now |
+| H2 | **High** | `AssignInstructorAction.php:107`, `RemoveInstructorAction.php:56` | Instructor-hour pivot writes produce **no audit entry at all**. A `belongsToMany` sync fires no model event and neither Action calls `activity()` | Fix now |
+| M1 | Medium | `config/activitylog.php:14` | `env('ACTIVITYLOG_ENABLED', true)`, and the vendor status class has no `declare(strict_types=1)`, so a **blank** value coerces to false and silently disables the entire audit trail | Fix now |
+| M2 | Medium | `RecordActivityWithContext.php:82` | `causedByAnonymous()` nulls the causer ids but never unsets the relation `associate()` loaded, so anonymous system entries still snapshot a person's name into `properties.causer_name` | Fix now |
+| M3 | Medium | `config/backup.php:23`, `:385` | The bucket directory is `APP_NAME`. Renaming the app — a cosmetic change with no documented backup implication — orphans every existing archive: monitor reports healthy, cleanup never sees them, retention effectively resets to one night | Fix now |
+| M4 | Medium | `config/backup.php:395` | The monitor's 5 GB ceiling is far below what the retention tiers actually store (~112 full archives including both upload roots), so the nightly health alert becomes permanent noise and the one signal the design rests on is lost | Fix now |
+| M5 | Medium | `LocalizationTest.php:77` | The 22 `activity.event.*` and `activity.record_type.*` keys are built by interpolation and are outside every completeness check; their fallbacks make the miss look deliberate | Fix now |
+| L1 | Low | `lang/en/activity.php:66` | Raw database column names and property keys render to users untranslated inside otherwise-translated lines | Defer to phase 4 |
+| L2 | Low | `LocalizationTest.php:566` | The physical-CSS scan covers `resources/` only and filters by extension, so `app/` and `resources/js/` are unscanned; misses `rounded-l-*`, `border-top-left-radius`, and shorthand `margin`/`inset` | Fix now |
+| L3 | Low | `LocalizationTest.php:603` | The hardcoded-string detector is a closed list of 21 setter names on one call shape, with no self-tests, and does not scan `resources/views/` | Fix now |
+| L4 | Low | `ActivityLogTest.php:197` | The secret-exclusion test hardcodes five of the eight `RecordsActivity` models, omitting `StaffCertificate` — the one owning `disk`, `path` and `original_filename` | Fix now |
+| L5 | Low | `config/filament-shield.php:180` | Shield's role form offers twelve `*_activity` write permissions the seeder never creates, on a log whose rule is that no such path exists | Fix now |
+| L6 | Low | `docs/RESTORE.md:57` | The runbook's retention description omits the weekly and yearly tiers, understating real retention by about two and a half years | Fix now |
+| L7 | Low | `AppServiceProvider.php:62` | The production boot guard blocks the runbook's own `migrate` and `tinker` steps during a real restore; correct guard, undocumented ordering | Fix now |
+| L8 | Low | `tests/Pest.php:23` | `RefreshDatabase` is commented out globally on a database every suite shares, so a future author who forgets the opt-in leaves rows behind for whichever file runs next | Fix now |
+| L9 | Low | `ListActivities.php:13` | Stale docblock: claims the resource has no view page; `getPages()` registers one | Fix now |
+
+**Verified by the lead.** H1: `php artisan list` shows `activitylog:clean` live, and
+`clean_after_days => 365` is this project's own value, not a default left alone.
+H2: zero `activity()` calls in either instructor Action. M1: the `env()` call is
+present, and `Spatie\Activitylog\Support\ActivityLogStatus` indeed has no
+`declare(strict_types=1)`, so coercive typing turns `''` into `false`. M2: vendor
+source confirms `causedBy()` calls `->causer()->associate($model)` while
+`causedByAnonymous()` nulls only the two columns. M3/M4: both config values read as
+described, against the additive retention tiers 60/8/12/2.
+
+**M5 was proven by mutation, not by reading.** Deleting
+`activity.event.deleted_by_cascade` from `lang/en/activity.php` and running the
+whole `LocalizationTest` file produced **no failure**. That is a hole in the test
+T14 called "as much the deliverable as the strings are": the scan matches literal
+`__('group.key')` only, and the interpolated-key walk covers exactly four enums.
+`eventLabel()` then falls back to the bare event name, so the miss renders as
+plausible English rather than as a visible gap — the precise failure mode the
+completeness test exists to make loud, reproduced one level up.
+
+**H1 is the most serious finding in this group** and deserves stating plainly:
+`ActivityPolicy` asserts that "no policy, no UI control and no application code
+path can remove or alter an entry". A registered artisan command that issues
+`DELETE FROM activity_log WHERE created_at < ?` is an application code path, and
+`ENGINEERING.md` explicitly places "commands that use application code" inside the
+trust boundary rather than in the raw-SQL escape hatch. The append-only test suite
+proves the policy, the resource and the pages are closed and never looks at the
+console surface at all.
+
+**L1 is the one deferral.** Translating audit field names needs an
+`activity.field.*` group covering every audited column plus every explicit property
+key, and the values are database identifiers whose Arabic wording is a translator's
+decision. Deferring is safe because nothing is lost or misreported — the line
+renders, in English, inside a phase whose Arabic catalogue is deliberately empty.
+It becomes phase 4 work, recorded here so phase 4 inherits it rather than
+rediscovers it.
 
 ### Unverified items
 
-| # | Claim | Experiment | Result | Disposition |
-|---|---|---|---|---|
+| # | Claim | Experiment | Result |
+|---|---|---|---|
+| U1 | Whether a blank `BACKUP_S3_ENDPOINT` — which `.env.example` ships — fails loudly or silently retargets to AWS S3, sending a non-AWS deployment's archives to an unintended host | With `APP_ENV=production` and a full non-AWS `BACKUP_S3_*` set except a blank endpoint, run `backup:run` and record whether it throws at client construction, on upload, or succeeds against the wrong host | Open — decides whether this is a documentation fix or a guard addition |
+| U2 | Whether Shield's role form actually renders the twelve `*_activity` checkboxes, and what saving one does | Drive `EditRole` via Livewire, assert the options contain `delete_activity`, submit it, and record whether it throws `PermissionDoesNotExist`, drops the name, or creates the permission | Open — resolve while fixing L5 |
+| U3 | Whether `properties.causer_name` is in fact written for a `causedByAnonymous()` entry | One assertion in the existing system-write test: the property must be null | Open — will be settled by M2's regression test, which must fail first |
+
+**What the reviewer cleared, worth recording.** The Filament append-only surface is
+genuinely closed — no record, header, toolbar or bulk actions, `canCreate()` false,
+`recordUrl()` rather than a mountable ViewAction, all twelve mutation abilities
+written out false, and the tests drive the real Livewire components rather than
+trusting source. Secret exclusion is correct at both layers and the documented
+precedence is accurate. All eleven explicit `activity()` calls sit inside their
+Action's transaction. Logging is on the model-event boundary, so ordinary Eloquent,
+Filament modal writes, commands and seeders all log identically. The backup boot
+guard is invoked as the first statement of `boot()`. `local` is absent from the
+destination disks, the three scheduled commands share one mutex, and nothing secret
+enters the archive. The literal-key catalogue is complete: 161 keys, none
+unresolved, none empty, none resolving to a group. There are no physical CSS
+properties and no hardcoded label literals anywhere in the repository today — L2
+and L3 are about what the detectors would let through next, not about anything
+shipped.
 
 ---
 
