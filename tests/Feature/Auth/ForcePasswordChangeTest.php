@@ -19,6 +19,8 @@ it('redirects a flagged user to the password change page', function () {
     $user = User::factory()->create([
         'is_active' => true,
         'must_change_password' => true,
+        // Known, because the form requires the current password since P1-T15.
+        'password' => Hash::make('existing-password-1'),
     ]);
     $user->assignRole('admin');
 
@@ -41,6 +43,8 @@ it('does not redirect on the password change page itself', function () {
     $user = User::factory()->create([
         'is_active' => true,
         'must_change_password' => true,
+        // Known, because the form requires the current password since P1-T15.
+        'password' => Hash::make('existing-password-1'),
     ]);
     $user->assignRole('admin');
 
@@ -58,6 +62,8 @@ it('clears the flag once a new password is set', function () {
     $user = User::factory()->create([
         'is_active' => true,
         'must_change_password' => true,
+        // Known, because the form requires the current password since P1-T15.
+        'password' => Hash::make('existing-password-1'),
     ]);
     $user->assignRole('admin');
 
@@ -65,6 +71,7 @@ it('clears the flag once a new password is set', function () {
 
     Livewire::test(PasswordChange::class)
         ->fillForm([
+            'current_password' => 'existing-password-1',
             'password' => 'correct-horse-battery',
             'password_confirmation' => 'correct-horse-battery',
         ])
@@ -81,6 +88,8 @@ it('rejects a password shorter than twelve characters', function () {
     $user = User::factory()->create([
         'is_active' => true,
         'must_change_password' => true,
+        // Known, because the form requires the current password since P1-T15.
+        'password' => Hash::make('existing-password-1'),
     ]);
     $user->assignRole('admin');
 
@@ -88,6 +97,7 @@ it('rejects a password shorter than twelve characters', function () {
 
     Livewire::test(PasswordChange::class)
         ->fillForm([
+            'current_password' => 'existing-password-1',
             'password' => 'short',
             'password_confirmation' => 'short',
         ])

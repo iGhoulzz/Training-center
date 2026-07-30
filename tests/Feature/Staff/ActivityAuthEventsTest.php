@@ -128,11 +128,21 @@ it('records somebody changing their own password', function () {
     // Kept distinct from a reset: they answer different questions, and only one
     // of them involves a second party.
     $user = ($this->actorWith)('admin');
+    // Known, because the form has required the current password since P1-T15.
+    $user->forceFill(['password' => Hash::make('existing-password-1')])->save();
+
     $this->actingAs($user);
 
     Livewire::test(PasswordChange::class)
-        ->fillForm(['password' => 'a-fresh-secret-1', 'password_confirmation' => 'a-fresh-secret-1'])
-        ->call('save');
+        ->fillForm([
+            'current_password' => 'existing-password-1',
+            'password' => 'a-fresh-secret-1',
+            'password_confirmation' => 'a-fresh-secret-1',
+        ])
+        ->call('save')
+        // Without this, a validation failure produces no log entry and the
+        // assertion below reports "no entry" rather than "the form refused".
+        ->assertHasNoFormErrors();
 
     $entry = ($this->entriesForEvent)('password_changed')->first();
 

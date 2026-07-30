@@ -18,6 +18,7 @@ declare(strict_types=1);
 */
 
 return [
+    'current_password' => 'Current password',
     'new_password' => 'New password',
     'confirm_password' => 'Confirm password',
     'update_password' => 'Update password',

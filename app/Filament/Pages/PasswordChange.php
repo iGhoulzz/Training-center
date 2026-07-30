@@ -38,6 +38,32 @@ class PasswordChange extends Page
     {
         return $schema
             ->components([
+                /*
+                 * THE CURRENT PASSWORD IS REQUIRED (P1-T15, security finding 6).
+                 *
+                 * Without it, holding a session was enough to own the account
+                 * permanently: anyone with a stolen or fixated cookie could set
+                 * a new password, lock the legitimate holder out, and need never
+                 * have known the old one. Session access and credential
+                 * ownership are different things, and this is what keeps them
+                 * apart.
+                 *
+                 * ResetUserPasswordAction names the same primitive from the
+                 * other side — "resetting a password is an account-takeover
+                 * primitive" — and guards it with the reset_user_password
+                 * ability. The self-service path had no equivalent gate at all.
+                 *
+                 * Laravel's current_password rule hashes and compares against
+                 * the authenticated user, so the value is never logged or
+                 * persisted; it is dehydrated so it cannot reach save().
+                 */
+                TextInput::make('current_password')
+                    ->label(__('auth.current_password'))
+                    ->password()
+                    ->required()
+                    ->currentPassword()
+                    ->dehydrated(false),
+
                 TextInput::make('password')
                     ->label(__('auth.new_password'))
                     ->password()
