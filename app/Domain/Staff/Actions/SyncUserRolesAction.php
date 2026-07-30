@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Domain\Staff\Actions;
 
 use App\Domain\Staff\Services\SuperAdminInvariantService;
+use App\Domain\Staff\Support\RoleSet;
 use App\Models\Role;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
@@ -39,10 +40,19 @@ final class SyncUserRolesAction
 
     /**
      * @param  array<int, string>  $roles  Role names the account should hold, exactly.
+     *                                     Resolved to rows; spelling is not trusted.
      */
     public function execute(User $actor, User $target, array $roles): void
     {
-        $desired = array_values(array_unique($roles));
+        /*
+         * RESOLVED TO ROWS BEFORE ANYTHING ELSE HAPPENS (P1-T15, finding 2).
+         *
+         * The submitted names are untrusted strings and the database matches
+         * them case-insensitively. Resolving here means every guard below
+         * compares primary keys against the same rows Spatie will attach, and
+         * an unknown name is refused before it reaches a guard at all.
+         */
+        $desired = RoleSet::resolve($roles);
 
         /*
          * EVERYTHING HAPPENS UNDER THE LOCK: READ, DECIDE, AUTHORIZE, WRITE, LOG.
@@ -80,14 +90,14 @@ final class SyncUserRolesAction
 
             $locked = User::query()->lockForUpdate()->findOrFail($target->getKey());
 
-            $current = $locked->roles()->pluck('name')->all();
+            $current = RoleSet::heldBy($locked);
 
-            $adding = array_values(array_diff($desired, $current));
-            $removing = array_values(array_diff($current, $desired));
+            $adding = $desired->diff($current);
+            $removing = $current->diff($desired);
 
             // A no-op change authorizes nothing and touches nothing — this is
             // what lets an unchanged self-save through.
-            if ($adding === [] && $removing === []) {
+            if ($adding->isEmpty() && $removing->isEmpty()) {
                 return;
             }
 
@@ -98,23 +108,23 @@ final class SyncUserRolesAction
             Gate::forUser($actor)->authorize('modifyOwnRoles', $locked);
 
             // Guards 4 and 1: authorize each role entering or leaving the set.
-            foreach ([...$adding, ...$removing] as $role) {
+            foreach ([...$adding->all(), ...$removing->all()] as $role) {
                 Gate::forUser($actor)->authorize('assignRole', [User::class, $role]);
             }
 
             // Guard 3: only a super-admin removal can shrink the population, so
             // only that write needs the locked, atomic invariant check.
-            if (in_array(Role::SUPER_ADMIN, $removing, true)) {
-                $this->invariant->protect(fn () => $locked->syncRoles($desired));
+            if ($removing->containsSuperAdmin()) {
+                $this->invariant->protect(fn () => $locked->syncRoles($desired->names()));
             } else {
-                $locked->syncRoles($desired);
+                $locked->syncRoles($desired->names());
             }
 
             activity()
                 ->causedBy($actor)
                 ->performedOn($locked)
                 ->event('roles_changed')
-                ->withProperties(['added' => $adding, 'removed' => $removing])
+                ->withProperties(['added' => $adding->names(), 'removed' => $removing->names()])
                 ->log('roles_changed');
         });
     }
