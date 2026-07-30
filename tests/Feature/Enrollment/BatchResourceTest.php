@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Domain\Enrollment\Enums\BatchStatus;
+use App\Domain\Enrollment\Filament\Resources\BatchResource;
 use App\Domain\Enrollment\Filament\Resources\BatchResource\Pages\CreateBatch;
 use App\Domain\Enrollment\Filament\Resources\BatchResource\Pages\EditBatch;
 use App\Domain\Enrollment\Filament\Resources\BatchResource\Pages\ListBatches;
@@ -362,10 +363,28 @@ it('registers no bulk actions on the schedule table', function () {
         ->and($table->getToolbarActions())->toBeEmpty();
 });
 
-it('defines no deleteAny on the batch policy', function () {
-    // The other half: even if a bulk action were added, there is no *Any method
-    // for Filament to authorize against, so it fails closed.
-    expect(method_exists(BatchPolicy::class, 'deleteAny'))->toBeFalse();
+it('refuses deleteAny on the batch policy, through the panel', function () {
+    /*
+     * INVERTED BY P1-T15, security review finding 1.
+     *
+     * This test used to assert the OPPOSITE — that no deleteAny() existed — on
+     * the stated grounds that "there is no *Any method for Filament to
+     * authorize against, so it fails closed". That is true of Laravel's Gate
+     * and false of Filament, which is the only one of the two a user reaches.
+     *
+     * get_authorization_response() consults the Gate only when
+     * method_exists($policy, $action); otherwise, with strict authorization off
+     * and no Gate::before callback, it returns Response::allow(). The absent
+     * method was an OPEN door, and this test was certifying it as a closed one.
+     *
+     * Asserted through the resource rather than the Gate: Gate::allows() still
+     * returns false for a missing method, so a gate-level assertion passes
+     * whether or not the fix is present.
+     */
+    $this->actingAs(($this->makeUser)('super_admin'));
+
+    expect(method_exists(BatchPolicy::class, 'deleteAny'))->toBeTrue()
+        ->and(BatchResource::canDeleteAny())->toBeFalse();
 });
 
 /*
