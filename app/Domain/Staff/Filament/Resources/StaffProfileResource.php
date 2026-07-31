@@ -21,6 +21,8 @@ use Filament\Forms\Components\FileUpload;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
+use Filament\Infolists\Components\ImageEntry;
+use Filament\Infolists\Components\TextEntry;
 use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
@@ -108,6 +110,79 @@ class StaffProfileResource extends Resource
         // initials() reads the linked account's name, and the table renders it
         // for every row. Without this the register is one query per staff member.
         return parent::getEloquentQuery()->with('user');
+    }
+
+    /**
+     * The read-only view schema (P1-T15, group 2 review).
+     *
+     * WITHOUT THIS, THE VIEW PAGE RENDERED THE EDIT FORM — AND LEAKED THE ROSTER.
+     *
+     * ViewStaffProfile declared no schema and this resource had no infolist(), so
+     * Filament fell back to form(). That form opens with
+     * Select::make('user_id')->options(User::query()->pluck('name', 'id')): every
+     * account name in the system, rendered as options, to anybody who could reach
+     * the page.
+     *
+     * Proven with a synthetic role holding view_any_staff_profile,
+     * view_staff_profile and access_admin_panel and NO user permission — a shape
+     * no seeded role has, which is why eleven tasks of testing never showed it.
+     * The page returned 200 and the canary account name was in the HTML.
+     *
+     * THIS IS A SEPARATE SCHEMA, NOT THE FORM WITH FIELDS HIDDEN.
+     *
+     * Hiding or disabling the Select would leave the options query in the render
+     * path, one conditional away from disclosure again, and would keep view and
+     * edit coupled so that any future form field is exposed here by default. A
+     * view page shows what this profile IS. It never offers a way to choose a
+     * different owner, so it has no reason to know that any other account exists.
+     *
+     * The owner is shown as text from the profile's OWN relation — one name, the
+     * one the viewer already asked to see.
+     */
+    public static function infolist(Schema $schema): Schema
+    {
+        return $schema->components([
+            TextEntry::make('user.name')
+                ->label(__('staff.user')),
+
+            TextEntry::make('job_title')
+                ->label(__('staff.job_title'))
+                ->placeholder(__('staff.no_job_title')),
+
+            TextEntry::make('employment_type')
+                ->label(__('staff.employment_type'))
+                ->formatStateUsing(fn (EmploymentType|string|null $state): string => $state instanceof EmploymentType
+                    ? $state->label()
+                    : (string) $state),
+
+            TextEntry::make('phone')
+                ->label(__('staff.phone'))
+                ->placeholder(__('enrollment.no_phone')),
+
+            TextEntry::make('hire_date')
+                ->label(__('staff.hire_date'))
+                ->date()
+                ->placeholder(__('staff.no_hire_date')),
+
+            TextEntry::make('qualifications')
+                ->label(__('staff.qualifications'))
+                ->placeholder(__('activity.empty_value'))
+                ->columnSpanFull(),
+
+            ImageEntry::make('profile_photo_path')
+                ->label(__('staff.profile_photo'))
+                // The same authorized route the table uses. The private disk has
+                // no URL, so the photo is never addressable except through the
+                // controller that re-authorizes it.
+                // Nullable record type on purpose: Filament evaluates these
+                // outside a row context too — inspecting the schema, for one —
+                // and a non-nullable hint turns that into a TypeError.
+                ->getStateUsing(fn (?StaffProfile $record): ?string => $record?->profile_photo_path === null
+                    ? null
+                    : route('staff.profiles.photo', ['profile' => $record]))
+                ->visible(fn (?StaffProfile $record): bool => $record?->profile_photo_path !== null)
+                ->columnSpanFull(),
+        ]);
     }
 
     public static function form(Schema $schema): Schema
