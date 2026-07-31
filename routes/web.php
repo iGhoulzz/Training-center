@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Http\Controllers\Staff\StaffCertificateDownloadController;
 use App\Http\Controllers\Staff\StaffProfilePhotoController;
+use App\Http\Middleware\AuthenticatePrivateFileSession;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
@@ -11,26 +12,34 @@ Route::get('/', function () {
 });
 
 /*
- * Staff certificate downloads (P1-T06b).
- *
- * The 'private' disk has no URL and no route of its own, deliberately. This is
- * the one address that serves it, and the controller authorizes every request
- * through StaffCertificatePolicy::view() — see the controller for why a signed
- * URL is not used as the gate.
- *
- * Rate limited because it is an authenticated endpoint that reads from disk;
- * without a limit, a compromised session becomes a bulk export of every scanned
- * identity document at whatever speed the network allows.
- */
-Route::get('staff-certificates/{certificate}/download', StaffCertificateDownloadController::class)
-    ->middleware('throttle:60,1')
-    ->name('staff.certificates.download');
+|--------------------------------------------------------------------------
+| Private file delivery
+|--------------------------------------------------------------------------
+|
+| Two routes serve bytes from the 'private' disk, which has no URL of its own.
+| They are grouped so the session-integrity middleware CANNOT be applied to one
+| and forgotten on the other — the failure this group exists to prevent.
+| P1-T15's review found exactly that gap: both routes carried `web` and
+| `throttle` and nothing else, and the stock `web` group has no
+| AuthenticateSession, so a session survived the password reset meant to revoke
+| it and kept streaming scanned identity documents by sequential id.
+|
+| The group adds session integrity ONLY. Authentication is still the
+| controllers' business: each one refuses a guest with 403 rather than a
+| redirect, so a file endpoint never tells an anonymous caller where to log in.
+| Each also checks is_active and then the policy, per request, before touching
+| the disk.
+|
+| Rate limits stay per route: a register page renders many photos at once, while
+| a certificate download is deliberate and rare. Without them a compromised
+| session becomes a bulk export at whatever speed the network allows.
+*/
+Route::middleware(AuthenticatePrivateFileSession::class)->group(function (): void {
+    Route::get('staff-certificates/{certificate}/download', StaffCertificateDownloadController::class)
+        ->middleware('throttle:60,1')
+        ->name('staff.certificates.download');
 
-/*
- * Inline staff avatars use the same private-disk rule as certificates. The
- * higher limit allows one register page to render many photos without turning
- * a normal refresh into throttling; authorization still runs per image request.
- */
-Route::get('staff-profiles/{profile}/photo', StaffProfilePhotoController::class)
-    ->middleware('throttle:240,1')
-    ->name('staff.profiles.photo');
+    Route::get('staff-profiles/{profile}/photo', StaffProfilePhotoController::class)
+        ->middleware('throttle:240,1')
+        ->name('staff.profiles.photo');
+});
