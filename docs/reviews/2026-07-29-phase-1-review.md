@@ -460,6 +460,21 @@ would have been "hardened" into a rewrite of correct code.
 
 ---
 
+## Wording corrections owed to T16
+
+Recorded as they are noticed, so T16 is a reconciliation pass rather than a
+rediscovery.
+
+- **`PrivateFileAccessTest`, the structural test.** Its comment claims it catches
+  "the third private-file route somebody adds next year without it". It does not:
+  it iterates two hardcoded route names, so it protects the routes that exist and
+  cannot discover a new one. The route GROUP is what makes a third route inherit
+  the middleware; the test only pins that the two current ones carry it. Reword to
+  say so.
+- **`CLAUDE.md` permission example.** `students.delete` matches nothing; Shield
+  generates `delete_student`. Every reviewer had to be told this as an erratum,
+  which is a workaround rather than a fix.
+
 ## Known context supplied to reviewers
 
 Recorded here because it shapes what the findings can be trusted to mean.
