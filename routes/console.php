@@ -86,3 +86,40 @@ Schedule::command('backup:clean')
     ->timezone('Africa/Tripoli')
     ->createMutexNameUsing(fn (): string => 'framework/schedule-backup-pipeline')
     ->withoutOverlapping(180);
+
+/*
+|--------------------------------------------------------------------------
+| File deletion reconciliation (P1-T15)
+|--------------------------------------------------------------------------
+|
+| A pending_file_deletions row is the system's committed intent to destroy a
+| file. PurgeDeletedFileJob retries five times and then lands in failed_jobs,
+| leaving its receipt behind — and until this line existed, nothing ever read
+| one. An exhausted job meant the document stayed on disk permanently, and in
+| every nightly backup from then on, after the centre had decided to destroy it.
+|
+| HOURLY, BECAUSE THE THRESHOLD IS HOURLY. The command calls a receipt stale
+| after an hour. Sweeping daily would mean a file the centre decided to destroy
+| at 02:00 survives the whole day AND the 01:30 backup that follows it, which is
+| the specific harm the finding describes.
+|
+| NO TIMEZONE, DELIBERATELY. The backup commands state one because "01:30" is a
+| different instant in each zone. Every hour is swept whatever the offset, so a
+| zone here would assert a preference that changes nothing.
+|
+| ITS OWN MUTEX, NOT THE BACKUP PIPELINE'S. Joining that lock was considered and
+| rejected: it would let a slow or stuck nightly backup hold file deletion off
+| for hours, and it buys nothing — ordinary purge jobs already run at arbitrary
+| times, including mid-archive, so the sweep introduces no new interaction with
+| the backup window. withoutOverlapping still applies to the sweep against
+| itself, so a run that outlives its hour cannot have the next one re-dispatch
+| the same oldest-first page underneath it.
+|
+| The expiry is generous for the same reason it is on the backup pipeline: a lock
+| left behind by a killed process releases itself rather than blocking every
+| subsequent hour.
+*/
+
+Schedule::command('files:sweep-pending-deletions')
+    ->hourly()
+    ->withoutOverlapping(120);

@@ -204,3 +204,73 @@ it('keeps bytes when a current locking ownership read finds a committed owner', 
             fn (string $sql): bool => str_contains(strtolower($sql), 'for update'),
         ))->toBeTrue();
 });
+
+/*
+|--------------------------------------------------------------------------
+| The reconciliation sweep, end to end (P1-T15, domain-integrity finding 2)
+|--------------------------------------------------------------------------
+|
+| PendingFileDeletionSweepTest covers which receipts a run selects and how it
+| dispatches them. These two cover what actually happens to the BYTES, and they
+| belong here rather than there: the job's ownership read runs on an independent
+| connection, so under RefreshDatabase's wrapping transaction it cannot see rows
+| the test has created and would report every file unowned. DatabaseMigrations
+| commits for real, which is the only way this pair can distinguish an owned file
+| from an orphan.
+|
+| They are a pair on purpose. Either one alone passes for a broken sweep — the
+| first for one that dispatches nothing at all, the second for one that ignores
+| ownership entirely.
+*/
+
+it('leaves bytes a committed row still owns when the sweep reaches their receipt', function () {
+    Storage::fake('private');
+
+    $path = 'staff-photos/'.Str::ulid()->toString().'.png';
+    Storage::disk('private')->put($path, makePngBytes());
+    StaffProfile::factory()->create(['profile_photo_path' => $path]);
+
+    // A provisional upload receipt whose cancellation never landed: the owner
+    // committed, the receipt did not go away, and it has now aged into the
+    // sweep's window. Nothing on the row distinguishes it from an ordinary
+    // deletion receipt, which is why the sweep must never assume.
+    $pending = PendingFileDeletion::query()->create([
+        'disk' => 'private',
+        'path' => $path,
+        'attempts' => 0,
+        'last_error' => null,
+    ]);
+    DB::table('pending_file_deletions')
+        ->where('id', $pending->getKey())
+        ->update(['created_at' => now()->subDay()]);
+
+    // The queue runs synchronously here, so the dispatched job executes inline.
+    $this->artisan('files:sweep-pending-deletions')->assertSuccessful();
+
+    Storage::disk('private')->assertExists($path);
+    expect(PendingFileDeletion::whereKey($pending->getKey())->exists())->toBeFalse();
+});
+
+it('destroys bytes no committed row owns when the sweep reaches their receipt', function () {
+    // The control. Without it, a sweep that dispatched nothing, or one whose
+    // ownership check reported everything owned, would pass the test above.
+    Storage::fake('private');
+
+    $path = 'staff-certificates/'.Str::ulid()->toString().'.pdf';
+    Storage::disk('private')->put($path, 'orphaned-certificate-bytes');
+
+    $pending = PendingFileDeletion::query()->create([
+        'disk' => 'private',
+        'path' => $path,
+        'attempts' => 0,
+        'last_error' => null,
+    ]);
+    DB::table('pending_file_deletions')
+        ->where('id', $pending->getKey())
+        ->update(['created_at' => now()->subDay()]);
+
+    $this->artisan('files:sweep-pending-deletions')->assertSuccessful();
+
+    Storage::disk('private')->assertMissing($path);
+    expect(PendingFileDeletion::whereKey($pending->getKey())->exists())->toBeFalse();
+});
