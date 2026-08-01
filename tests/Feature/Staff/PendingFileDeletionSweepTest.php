@@ -215,21 +215,57 @@ it('dispatches no more than the limit in one run', function () {
 it('takes the oldest receipts first, so a backlog drains instead of starving', function () {
     /*
      * Without an explicit order the bound is unstable: MySQL may return the same
-     * arbitrary page every hour, and the receipts outside it are never reached
-     * no matter how many runs happen. Oldest first makes the backlog a queue.
+     * arbitrary page every run, and the receipts outside it are never reached no
+     * matter how many runs happen. Oldest first makes the backlog a queue.
+     *
+     * THIS ASSERTS THE ORDER CLAUSE AS WELL AS THE ROWS, AND THE REASON IS
+     * MEASURED RATHER THAN ASSUMED.
+     *
+     * Deleting the whole ORDER BY from the command changes nothing observable
+     * here. EXPLAIN on the sweep's own query reports
+     * `type: range, key: pending_file_deletions_created_at_index`, so the
+     * staleness filter is served by an ordered range scan over created_at and
+     * the rows come back oldest first whether or not the code asked. Rearranging
+     * the fixtures does not help — it is index order, not insertion order.
+     *
+     * This project prefers behaviour to SQL text, because SQL text can assert a
+     * true thing by a weak method. Here there is no behaviour to assert against:
+     * the clause is the only thing that CAN fail when somebody removes it, and
+     * the plan that currently hides its absence is an optimizer choice rather
+     * than a guarantee — a dropped index or a different plan on a larger table
+     * takes the ordering away with nothing to catch it.
      */
     Queue::fake();
 
+    $youngest = agedReceipt(100);
     $oldest = agedReceipt(300);
     $middle = agedReceipt(200);
-    agedReceipt(100);
+
+    $statements = captureStatements();
 
     $this->artisan('files:sweep-pending-deletions', ['--limit' => 2])->assertSuccessful();
 
+    // The rows, which the current plan would give us anyway.
     expect(dispatchedReceiptIds())->toBe([
         (int) $oldest->getKey(),
         (int) $middle->getKey(),
-    ]);
+    ])->and(dispatchedReceiptIds())->not->toContain((int) $youngest->getKey());
+
+    // The clause, which nothing else pins.
+    $select = collect($statements)->first(
+        fn (array $statement): bool => str_contains($statement['sql'], 'from `pending_file_deletions`')
+            && str_contains($statement['sql'], 'limit'),
+    );
+
+    expect($select)->not->toBeNull('The sweep ran no bounded select against pending_file_deletions.');
+
+    // str_contains() rather than expect()->toContain(), which is variadic and
+    // reads a failure message as a second expected value — the same trap
+    // tests/Pest.php records against expectOneLevelDeeper().
+    expect(str_contains($select['sql'], 'order by `created_at` asc'))->toBeTrue(
+        'The sweep no longer orders its page, so which receipts a bounded run reaches is '
+        .'whatever the optimizer happens to return. SQL: '.$select['sql'],
+    );
 });
 
 it('reports the backlog it could not reach in one run', function () {
