@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Domain\Staff\Models\StaffCertificate;
 use App\Domain\Staff\Models\StaffProfile;
 use App\Models\User;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Storage;
 
@@ -63,16 +64,41 @@ it('deletes the certificates when the profile is deleted', function () {
     expect(StaffCertificate::count())->toBe(0);
 });
 
-it('deletes the certificates when the user account is force deleted', function () {
-    // Two cascades in a row: users -> staff_profiles -> staff_certificates.
+it('refuses to hard-delete the account rather than cascading through to the certificates', function () {
+    /*
+     * INVERTED BY P1-T15, domain-integrity finding 4.
+     *
+     * This test used to assert "two cascades in a row: users -> staff_profiles
+     * -> staff_certificates" as though the chain were the feature. It was the
+     * defect: a database cascade fires no Eloquent event, so no
+     * pending_file_deletions receipt is written for any certificate removed that
+     * way, and every scanned document is orphaned on disk — with the rows that
+     * named those files already gone, so nothing can reconcile them afterwards.
+     *
+     * The first link is now restricted. The second is deliberately left
+     * cascading: DeleteStaffProfileAction reads every certificate path before
+     * triggering it. That cascade is safe precisely because an Action always
+     * stands in front of it, which is what restricting the first link
+     * guarantees.
+     */
     $user = User::factory()->create();
     $profile = StaffProfile::factory()->for($user)->create();
     StaffCertificate::factory()->for($profile, 'staffProfile')->create();
 
-    $user->forceDelete();
+    try {
+        $user->forceDelete();
+        $thrown = null;
+    } catch (QueryException $exception) {
+        $thrown = $exception;
+    }
 
-    expect(StaffProfile::count())->toBe(0)
-        ->and(StaffCertificate::count())->toBe(0);
+    expect($thrown)->toBeInstanceOf(QueryException::class)
+        // 1451: "Cannot delete or update a parent row: a foreign key constraint
+        // fails". The exact driver code, because any other QueryException would
+        // prove nothing about the restriction.
+        ->and($thrown->errorInfo[1] ?? null)->toBe(1451)
+        ->and(StaffProfile::count())->toBe(1)
+        ->and(StaffCertificate::count())->toBe(1);
 });
 
 it('records which disk holds the file, rather than assuming one', function () {

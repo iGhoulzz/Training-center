@@ -2,18 +2,27 @@
 
 declare(strict_types=1);
 
+use App\Domain\Staff\Actions\DeleteStaffProfileAction;
+use App\Domain\Staff\Actions\SystemRoleWriter;
 use App\Domain\Staff\Enums\EmploymentType;
+use App\Domain\Staff\Models\PendingFileDeletion;
+use App\Domain\Staff\Models\StaffCertificate;
 use App\Domain\Staff\Models\StaffProfile;
 use App\Models\User;
+use Database\Seeders\RolePermissionSeeder;
+use Illuminate\Database\QueryException;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 /**
  * The staff profile is the employment record beside a login account. These
  * tests pin the parts of it that are structural — the 1:1 constraint, the
- * cascade, the enum cast — because each is enforced by the database and would
- * otherwise only be discovered in production.
+ * referential actions, the enum cast — because each is enforced by the database
+ * and would otherwise only be discovered in production.
  */
 uses(RefreshDatabase::class);
 
@@ -64,13 +73,94 @@ it('scopes a query to instructors only', function () {
         ->and(StaffProfile::count())->toBe(3);
 });
 
-it('deletes the profile when the user is force deleted', function () {
+it('refuses at the foreign key to hard-delete a user who still holds an employment record', function () {
+    /*
+     * INVERTED BY P1-T15, domain-integrity finding 4.
+     *
+     * This test previously asserted the cascade — "deletes the profile when the
+     * user is force deleted" — and read as coverage for behaviour that silently
+     * destroyed data. staff_profiles cascaded from users, and staff_certificates
+     * cascades from staff_profiles, so one hard delete removed a profile and
+     * every certificate row by database cascade, wrote no pending_file_deletions
+     * receipt for any of them, and left every scanned identity document on disk
+     * with nothing left in the database pointing at it. Unreconcilable: the
+     * receipt table is the only record of what needs destroying, and the rows
+     * that could have populated it were already gone.
+     *
+     * The constraint now forces the caller through DeleteStaffProfileAction,
+     * which reads those paths BEFORE the cascade precisely so the bytes can be
+     * collected — the same reason enrollments.batch_id and
+     * batch_instructor.batch_id already restrict.
+     */
     $user = User::factory()->create();
     StaffProfile::factory()->for($user)->create();
 
+    try {
+        $user->forceDelete();
+        $thrown = null;
+    } catch (QueryException $exception) {
+        $thrown = $exception;
+    }
+
+    expect($thrown)->toBeInstanceOf(QueryException::class)
+        // 1451: "Cannot delete or update a parent row: a foreign key constraint
+        // fails". The exact driver code, not merely "something threw" — a NOT
+        // NULL violation or a dropped connection is also a QueryException and
+        // would prove nothing about the restriction.
+        ->and($thrown->errorInfo[1] ?? null)->toBe(1451)
+        // Nothing was destroyed on the way to the refusal.
+        ->and(User::withTrashed()->whereKey($user->getKey())->exists())->toBeTrue()
+        ->and(StaffProfile::count())->toBe(1);
+});
+
+it('lets a user with no employment record be hard-deleted', function () {
+    /*
+     * The control for the restriction above. Without it, a users table that
+     * refused every hard delete for some unrelated reason would pass the test
+     * above and look like a working constraint.
+     */
+    $user = User::factory()->create();
+
     $user->forceDelete();
 
-    expect(StaffProfile::count())->toBe(0);
+    expect(User::withTrashed()->whereKey($user->getKey())->exists())->toBeFalse();
+});
+
+it('lets the account go once its employment record has been removed through the Action', function () {
+    /*
+     * The sequence the constraint exists to force, shown working end to end: the
+     * profile leaves through DeleteStaffProfileAction, which writes a receipt for
+     * every file it owned, and only then is the account destroyable.
+     *
+     * This is the assertion that makes the refusal above a redirection rather
+     * than a dead end.
+     */
+    $this->seed(RolePermissionSeeder::class);
+    Storage::fake('private');
+    Queue::fake();
+
+    $admin = User::factory()->create(['is_active' => true]);
+    app(SystemRoleWriter::class)->assignRoles($admin, 'admin');
+
+    $user = User::factory()->create();
+    $profile = StaffProfile::factory()->for($user)->create();
+
+    $path = 'staff-certificates/'.Str::ulid()->toString().'.pdf';
+    Storage::disk('private')->put($path, 'certificate-bytes');
+    StaffCertificate::factory()->for($profile, 'staffProfile')->create([
+        'disk' => 'private',
+        'path' => $path,
+    ]);
+
+    app(DeleteStaffProfileAction::class)->execute($admin->fresh(), $profile);
+
+    // The receipt the cascade would have skipped.
+    expect(PendingFileDeletion::query()->where('path', $path)->exists())->toBeTrue();
+
+    $user->forceDelete();
+
+    expect(User::withTrashed()->whereKey($user->getKey())->exists())->toBeFalse()
+        ->and(StaffProfile::count())->toBe(0);
 });
 
 it('keeps the profile when the user is only soft deleted', function () {
