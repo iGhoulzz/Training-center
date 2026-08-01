@@ -195,6 +195,85 @@ screen. Both file controllers re-authorize on the request that serves the bytes.
 `AttachAction`, `AssociateAction`, `DeleteBulkAction`, `RestoreAction`,
 `ForceDeleteAction` or relationship-bound field exists anywhere in `app/Domain/`.
 
+### Resolution — findings 2 and 4
+
+Both fixed on `p1/t15-file-deletion-sweep`, three commits. **The other four
+findings in this group are not in that branch's scope**: finding 1 landed earlier
+on `p1/t15-private-file-access`; findings 3, 5 and 6 remain open.
+
+**Finding 2 — the sweep that did not exist.** `files:sweep-pending-deletions`
+re-dispatches purge jobs for receipts past a staleness threshold, scheduled hourly
+on its own mutex. Three decisions are recorded because the code alone does not
+argue for them:
+
+- **The ownership check is always on.** The table holds ordinary deletion receipts
+  and provisional upload receipts and **nothing on the row says which**, so a
+  sweep dispatching the unchecked form would unlink bytes a committed row still
+  owns. The checked form is correct for both, because an ordinary receipt has no
+  surviving owner for the check to find. Proven as a pair in
+  `FileLifecycleTransactionTest` — owned bytes survive, orphaned bytes do not.
+  That pair has to live there rather than beside the other sweep tests: the job's
+  ownership read runs on an independent connection and cannot see rows
+  `RefreshDatabase` is holding uncommitted, so under the usual wrapper it would
+  report every file unowned and the test would pass for the wrong reason.
+- **The threshold outlives the job's retry ladder**, asserted against `backoff()`
+  rather than repeated as a literal, so lengthening the ladder fails the build.
+- **No attempt ceiling.** Abandoning a receipt would leave a document the centre
+  is no longer entitled to hold on disk forever — the outcome the feature exists
+  to prevent. The bound is on the batch size instead, oldest first.
+
+Joining the backup pipeline's mutex was considered and **rejected**: it would let
+a slow or stuck nightly backup hold file deletion off for hours, and buys nothing,
+because ordinary purge jobs already run at arbitrary times including mid-archive.
+A test pins the separation so the decision is not silently reversed.
+
+G2-U2's verified locking behaviour is untouched. The sweep decides which receipts
+reach `PurgeDeletedFileJob`, never what it does once they arrive.
+
+**Finding 4 — the cascade.** `staff_profiles.user_id` now restricts.
+**Two existing tests were asserting the defect was the feature** and are inverted:
+`StaffProfileTest`'s "deletes the profile when the user is force deleted" and
+`StaffCertificateTest`'s "deletes the certificates when the user account is force
+deleted — two cascades in a row". The profile→certificate cascade is deliberately
+left in place; it is safe precisely because an Action now always stands in front
+of it.
+
+**A third test needed correcting for a different reason, and it is the more useful
+lesson.** `InstructorHoursTest`'s `makeInstructor` gives every instructor a staff
+profile, so once profiles restricted, its allocation-restriction test began
+raising 1451 from `staff_profiles` — it would have kept reporting
+`batch_instructor.user_id` as enforced even if that constraint were reverted to a
+cascade. Both it and its control now clear the profile first, and the refusal
+asserts which table refused. Verified by reverting `batch_instructor.user_id`: the
+test fails, as it must. **Adding a constraint can silently hollow out an unrelated
+test that was pinning a different one.**
+
+**Mutation testing: twelve mutations, eleven caught, one survived.**
+
+The survivor is the part worth keeping. Deleting the whole `ORDER BY` from the
+sweep left the ordering test green. The first explanation — that InnoDB was
+returning primary-key order — was **wrong**, and rearranging the fixtures so age
+and insertion order disagreed changed nothing. `EXPLAIN` settled it: `type:
+range, key: pending_file_deletions_created_at_index`. The staleness filter is
+served by an ordered range scan over `created_at`, so rows arrive oldest-first
+whether or not the code asks, and **no arrangement of data can make that test
+fail.** It now asserts the clause itself, with the measurement recorded in place
+of the assumption: the clause is the only thing that can fail when somebody
+removes it, and the plan hiding its absence is an optimizer choice rather than a
+guarantee.
+
+A second trap, already documented in `tests/Pest.php` and walked into anyway:
+`expect()->toContain()` is variadic, so a failure message passed as its second
+argument becomes a second expected value.
+
+**Gates on the branch tip, real output:**
+
+| Gate | Result |
+|---|---|
+| `php artisan test` | **822 passed**, 0 failed, 2352 assertions |
+| `vendor/bin/pint --test` | passed |
+| `composer analyse` | 0 errors |
+
 ### Unverified items
 
 | # | Claim | Experiment | Result |
