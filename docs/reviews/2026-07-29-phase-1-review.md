@@ -535,7 +535,7 @@ rediscovers it.
 
 ### Resolution — H1, H2, M1, M2, L4, L5 and L9
 
-Fixed on `p1/t15-activity-log-integrity`, four commits from `main` at `e252f14`.
+Fixed on `p1/t15-activity-log-integrity`, seven commits from `main` at `e252f14`.
 **Group 3's remaining findings (M3, M4, M5, L2, L3, L6, L7, L8) are not in this
 branch's scope** and are planned as `p1/t15-backup-retention` and
 `p1/t15-detector-coverage`, run sequentially — the three share `AppServiceProvider`
@@ -605,16 +605,37 @@ the two read permissions the seeder does create.
 behaviour is already covered — but it mattered, because somebody auditing the
 write surface would have taken the file's word for it.
 
-**Mutation testing: fourteen mutations, fourteen caught**, including both
-directions of M1, M2 and L5, and the two-way L4 pair above. One dataset gap was
-found and closed rather than argued away: no test detached an instructor holding
-no allocation, so logging a removal that never happened was unpinned.
+**Mutation testing: seventeen mutations, seventeen caught**, including both
+directions of M1, M2, L5 and the unchanged-hours guard, plus the two-way L4 pair
+above. One dataset gap was found and closed rather than argued away: no test
+detached an instructor holding no allocation, so logging a removal that never
+happened was unpinned.
+
+**Codex's round on this branch found two more audit-integrity defects in H2's own
+work, and both were about recording things that were not true.**
+
+- **A non-change logged as a change.** Assigning the same hours twice wrote
+  `instructor_hours_changed`. Resubmitting an unchanged form is ordinary, and a
+  reader settling a payroll dispute cannot tell that entry from a real one. **The
+  rule already existed on the other Action** — `RemoveInstructorAction` refuses to
+  log a detach that removed nothing — and was simply missing here. The pivot write
+  is skipped with it.
+- **A caller-supplied name in the audit trail.** The removal entry read
+  `instructor_name` from the `$instructor` argument, so an unsaved edit on the
+  caller's instance stored a name the database never held. Every property now
+  comes from the row the Action queried itself. `AssignInstructorAction` needs no
+  equivalent change, because it takes an id and reloads under a lock — now stated
+  in the code so the asymmetry does not read as an oversight.
+
+The general lesson, and it is the same one twice: **an audit trail must record
+only what actually changed, and only values it read itself.** A false entry is
+worse than a missing one, because nothing distinguishes it from a true one.
 
 **Gates on the branch tip, real output:**
 
 | Gate | Result |
 |---|---|
-| `php artisan test` | **874 passed**, 0 failed, 2475 assertions |
+| `php artisan test` | **876 passed**, 0 failed, 2481 assertions |
 | `vendor/bin/pint --test` | passed |
 | `composer analyse` | 0 errors |
 
