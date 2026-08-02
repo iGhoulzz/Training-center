@@ -123,6 +123,25 @@ final class AssignInstructorAction
                 // analysis is concerned and would only appear to work.
                 : (int) $existing->pivot->getAttribute('assigned_hours');
 
+            /*
+             * NOTHING CHANGED, SO NOTHING IS WRITTEN OR RECORDED.
+             *
+             * Resubmitting an unchanged form is ordinary — an administrator
+             * opens the allocation, looks at it, and saves. Recording that as
+             * instructor_hours_changed puts an event in the trail for a change
+             * that never happened, and a reader settling a phase 2 payroll
+             * dispute cannot tell it from a real one. A false entry is worse
+             * than a missing one, which is exactly why RemoveInstructorAction
+             * refuses to log a detach that removed nothing; this is the same
+             * rule, and it was missing here.
+             *
+             * The pivot write goes with it: rewriting a row to the value it
+             * already holds is a database write for no change at all.
+             */
+            if ($previousHours === $data->assignedHours) {
+                return $batch->refresh();
+            }
+
             $batch->instructors()->syncWithoutDetaching([
                 $instructor->getKey() => ['assigned_hours' => $data->assignedHours],
             ]);
@@ -146,6 +165,14 @@ final class AssignInstructorAction
                 ->performedOn($batch)
                 ->event($event)
                 ->withProperties([
+                    /*
+                     * $instructor is safe to read here, and the reason is worth
+                     * stating because RemoveInstructorAction had to be changed
+                     * for exactly this: it is not a caller-supplied instance.
+                     * This Action takes an INT ID on the DTO and reloads the row
+                     * itself under a lock, so these values are the database's,
+                     * not whatever a caller happened to be holding.
+                     */
                     'instructor_id' => (int) $instructor->getKey(),
                     // Kept beside the id for the same reason the log keeps
                     // causer_name: the account may be gone when this is read.

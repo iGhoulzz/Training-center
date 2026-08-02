@@ -1066,3 +1066,76 @@ it('writes no removal entry when there was no allocation to remove', function ()
     expect(Activity::query()->where('event', 'instructor_removed')->count())->toBe(0)
         ->and(Activity::query()->count())->toBe($before);
 });
+
+it('records nothing when the submitted hours match what is already stored', function () {
+    /*
+     * A FALSE CHANGE EVENT IS WORSE THAN A MISSING ONE.
+     *
+     * Resubmitting an unchanged form is ordinary — an administrator opens the
+     * allocation, looks at it, and saves. Recording that as
+     * instructor_hours_changed puts an event in the trail for a change that
+     * never happened, and a reader in a phase 2 payroll dispute cannot tell it
+     * from a real one. RemoveInstructorAction already refuses to log a detach
+     * that removed nothing; this is the same rule on the other Action, and it
+     * was missing.
+     *
+     * The pivot write is skipped with it. Rewriting a row to the value it
+     * already holds touches updated_at and produces a database write for no
+     * change at all.
+     */
+    $sara = ($this->makeInstructor)('Sara');
+    $assign = fn () => $this->assign->execute($this->admin, new AssignInstructorData(
+        (int) $this->batch->getKey(),
+        (int) $sara->getKey(),
+        18,
+    ));
+
+    $assign();
+
+    $statements = captureStatements();
+    $assign();
+
+    expect(Activity::query()->where('event', 'instructor_hours_changed')->count())->toBe(
+        0,
+        'Resubmitting the same hours recorded a change that did not happen.',
+    )->and(Activity::query()->where('event', 'instructor_assigned')->count())->toBe(1)
+        ->and(writesTo($statements, 'batch_instructor'))->toBeEmpty(
+            'The pivot was rewritten to the value it already held.',
+        );
+
+    // And the allocation is untouched, so skipping is not losing anything.
+    expect((int) $this->batch->fresh()->instructors->first()->pivot->assigned_hours)->toBe(18);
+});
+
+it('snapshots the removed instructor\'s persisted name, not the caller\'s instance', function () {
+    /*
+     * THE AUDIT TRAIL MUST NOT TAKE THE CALLER'S WORD FOR IT.
+     *
+     * The name was read from the $instructor argument, which is whatever
+     * instance the caller happens to hold — and an unsaved change on it wrote a
+     * name into the log that was never in the database. An audit entry a caller
+     * can dictate is not an audit entry.
+     *
+     * $existing is the freshly queried row the Action already loads to read the
+     * hours, so the correct value was there the whole time.
+     */
+    $sara = ($this->makeInstructor)('Persisted Instructor');
+    $this->assign->execute($this->admin, new AssignInstructorData(
+        (int) $this->batch->getKey(),
+        (int) $sara->getKey(),
+        30,
+    ));
+
+    // A real record with an unsaved edit on it — never persisted.
+    $dirty = User::query()->findOrFail($sara->getKey());
+    $dirty->name = 'Unsaved Forged Name';
+
+    $this->remove->execute($this->admin, $this->batch->fresh(), $dirty);
+
+    $entry = Activity::query()->where('event', 'instructor_removed')->sole();
+
+    expect($entry->properties['instructor_name'])->toBe(
+        'Persisted Instructor',
+        'The log stored a name the caller supplied in memory and the database never held.',
+    )->and(User::query()->findOrFail($sara->getKey())->name)->toBe('Persisted Instructor');
+});

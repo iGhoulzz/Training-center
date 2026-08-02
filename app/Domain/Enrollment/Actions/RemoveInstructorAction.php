@@ -83,8 +83,24 @@ final class RemoveInstructorAction
                 ->performedOn($locked)
                 ->event('instructor_removed')
                 ->withProperties([
-                    'instructor_id' => (int) $instructor->getKey(),
-                    'instructor_name' => $instructor->name,
+                    /*
+                     * EVERY VALUE COMES FROM $existing, THE ROW THIS ACTION READ.
+                     *
+                     * The name used to be taken from the $instructor argument —
+                     * whatever instance the caller happened to hold. An unsaved
+                     * edit on it wrote a name into the audit log that the
+                     * database never contained, demonstrated with a dirty
+                     * instance whose forged name was recorded while MySQL still
+                     * held the real one. An audit entry a caller can dictate is
+                     * not an audit entry.
+                     *
+                     * $existing was already being loaded to read the hours, so
+                     * the trustworthy value was there the whole time. The id is
+                     * taken from it too, for the same reason and so the three
+                     * properties cannot describe two different people.
+                     */
+                    'instructor_id' => (int) $existing->getKey(),
+                    'instructor_name' => $existing->name,
                     // getAttribute() rather than a dynamic property — see
                     // AssignInstructorAction for why.
                     'assigned_hours' => (int) $existing->pivot->getAttribute('assigned_hours'),
