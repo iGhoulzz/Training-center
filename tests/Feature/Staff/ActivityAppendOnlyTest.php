@@ -6,6 +6,7 @@ use App\Domain\Enrollment\Models\Course;
 use App\Domain\Enrollment\Models\Student;
 use App\Domain\Staff\Actions\SyncUserRolesAction;
 use App\Domain\Staff\Actions\SystemRoleWriter;
+use App\Domain\Staff\Exceptions\ActivityLogIsAppendOnlyException;
 use App\Domain\Staff\Filament\Resources\ActivityResource;
 use App\Domain\Staff\Filament\Resources\ActivityResource\Pages\ListActivities;
 use App\Domain\Staff\Filament\Resources\ActivityResource\Pages\ViewActivity;
@@ -15,6 +16,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Gate;
 use Livewire\Livewire;
 use Spatie\Activitylog\Models\Activity;
+use Spatie\Activitylog\Support\Config;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
 
@@ -36,6 +38,83 @@ beforeEach(function () {
         activity()->event('created')->log('created'),
         fn () => null,
     );
+});
+
+/*
+|--------------------------------------------------------------------------
+| The console surface (P1-T15, group 3 finding H1)
+|--------------------------------------------------------------------------
+|
+| THE HOLE THIS SUITE COULD NOT SEE. Every other test here proves the policy,
+| the resource and the pages are closed, and none of them ever looked at the
+| command line. `activitylog:clean` is a registered artisan command that issues
+| `DELETE FROM activity_log WHERE created_at < ?`, and this project configured it
+| with a live 365-day window — so ActivityPolicy's claim that "no policy, no UI
+| control and no application code path can remove or alter an entry" was false,
+| and docs/ENGINEERING.md explicitly places commands that use application code
+| inside the trust boundary rather than in the raw-SQL escape hatch.
+|
+| The refusal is placed in the ACTION rather than only in the command, because
+| the action is what any future caller reaches — a queued job, a scheduled task,
+| another package. Closing only the CLI would leave the code path open and merely
+| hide its most obvious door.
+*/
+
+it('refuses to clean the activity log from the command line', function () {
+    $old = ($this->entry)();
+    $old->forceFill(['created_at' => now()->subYears(3)])->saveQuietly();
+
+    $this->artisan('activitylog:clean')->assertFailed();
+
+    expect(Activity::whereKey($old->getKey())->exists())->toBeTrue(
+        'activitylog:clean deleted an audit entry, so the append-only rule has an '
+        .'application code path straight through it.',
+    );
+});
+
+it('refuses even when the caller names its own retention window', function () {
+    /*
+     * --days overrides config, so a fix that only neutralised clean_after_days
+     * would be bypassed by the most obvious next thing an operator types. This
+     * path gets past that barrier and is stopped by the action instead.
+     *
+     * ASSERTED AS A THROW RATHER THAN AN EXIT CODE, and the difference is the
+     * test harness rather than the behaviour: PendingCommand::run() calls the
+     * console kernel directly, so the exception propagates here, while in
+     * production the kernel's own handler renders it and exits non-zero. Either
+     * way the operator gets the refusal and the entry survives, which is what
+     * the assertions below check.
+     */
+    $old = ($this->entry)();
+    $old->forceFill(['created_at' => now()->subYears(3)])->saveQuietly();
+
+    try {
+        $this->artisan('activitylog:clean', ['--days' => 1])->run();
+        $thrown = null;
+    } catch (ActivityLogIsAppendOnlyException $exception) {
+        $thrown = $exception;
+    }
+
+    expect($thrown)->toBeInstanceOf(ActivityLogIsAppendOnlyException::class)
+        ->and(Activity::whereKey($old->getKey())->exists())->toBeTrue(
+            'activitylog:clean --days deleted an audit entry, so neutralising the configured '
+            .'retention window was the only barrier and it is trivially bypassed.',
+        );
+});
+
+it('refuses the cleaning action itself, not merely the command that calls it', function () {
+    /*
+     * THE BOUNDARY, NOT THE DOOR. A queued job or another package resolving the
+     * configured action reaches this without an artisan command in front of it,
+     * exactly as SyncUserRolesAction can be reached without a Filament Select.
+     */
+    $old = ($this->entry)();
+    $old->forceFill(['created_at' => now()->subYears(3)])->saveQuietly();
+
+    expect(fn () => Config::cleanActivityLogAction()->execute(1))
+        ->toThrow(ActivityLogIsAppendOnlyException::class);
+
+    expect(Activity::whereKey($old->getKey())->exists())->toBeTrue();
 });
 
 /*
