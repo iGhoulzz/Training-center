@@ -299,13 +299,49 @@ A second trap, already documented in `tests/Pest.php` and walked into anyway:
 `expect()->toContain()` is variadic, so a failure message passed as its second
 argument becomes a second expected value.
 
+**Round two found the same starvation through the error path.** The catch that
+kept one poisoned receipt from blocking the page called `report($exception)`
+unguarded — and Laravel's handler may throw when its logging transport is
+unavailable. The exception escaped the catch, ended the loop at the first failed
+receipt, and left it unstamped and still first in sweep order, so every later run
+stopped on it again.
+
+**The two failures are correlated rather than independent**, which is what makes
+it realistic: a full disk is the condition this feature exists to reconcile, and
+it takes the log channel down with it.
+
+**And the codebase already knew.** `FileLifecycleService::reportWithoutThrowing()`
+exists for this exact hazard and its docblock says so. This was an established
+pattern not applied, not a subtle one missed — the general lesson being that a
+hazard solved once in a codebase should be searched for, not rediscovered.
+
+Two smaller notes recorded so they are not re-litigated:
+
+- **Counting the failure before reporting it is not load-bearing**, and the
+  comment says so. Once the helper cannot throw, the order changes no outcome and
+  no test pins it; a mutation moving it survives, correctly. It is kept only as
+  cheap insurance against a later edit restoring a bare `report()`.
+- **The helper is a near-copy of the service's rather than a shared extraction.**
+  Extracting means editing that service — well-reviewed, unchanged on this
+  branch, no behavioural gain from the move. A third caller is the point at which
+  it should become one thing; **raised for T16**.
+
 **Gates on the branch tip, real output:**
 
 | Gate | Result |
 |---|---|
-| `php artisan test` | **828 passed**, 0 failed, 2376 assertions |
+| `php artisan test` | **829 passed**, 0 failed, 2380 assertions |
 | `vendor/bin/pint --test` | passed |
 | `composer analyse` | 0 errors |
+
+**A verification hazard this task hit for real, recorded because the log already
+warned about it and it happened anyway.** Both T15 worktrees share
+`training_center_test`, and `RefreshDatabase` runs `migrate:fresh` against it. A
+review run and an implementation run overlapping produced 27 errors of the shape
+`Table 'users' already exists` / `migrations doesn't exist` / a deadlock on
+`drop table` — failures belonging to neither branch, in a shape that reads like
+broken code. **Runs across worktrees must be serialized until each worktree has
+its own test database.** Pint and PHPStan are unaffected, being database-independent.
 
 Codex independently verified the pre-rotation tip at 822 tests / 2352 assertions,
 Pint and PHPStan clean, and approved everything except the starvation finding —
