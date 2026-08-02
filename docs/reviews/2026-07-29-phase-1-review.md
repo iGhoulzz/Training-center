@@ -253,7 +253,37 @@ claim about the policy surface. `appCommentsOnly()` joins
 test checking what comments CLAIM must see only comments, or
 `public function deleteAny()` satisfies the search for "no deleteAny()".
 
-**Mutation testing: seven mutations, seven caught.** Disk allowlist removed;
+**Round two found a cross-namespace disclosure the disk fix did not close.**
+The disk guard settled WHICH ROOT a path resolves against and said nothing about
+WHERE UNDER IT — and **the private disk is shared.** Staff photos sit beside
+certificates today, and the `pending_file_deletions` migration states that phase
+2 receipts and phase 3 student certificates will reuse it. A certificate row
+naming `staff-photos/{ULID}.png` was perfectly contained, passed the disk check,
+and made the route authorize the CERTIFICATE while streaming the PHOTO. Confirmed
+by driving it: a certificate-only actor received **200 and the photo bytes**.
+
+`StaffProfilePhotoController` has always required its own generated shape, so the
+asymmetry was the defect. The route now requires parity, and the extension
+alternation is **derived from `UploadStaffCertificateAction::EXTENSIONS`** rather
+than copied — a hand-maintained list would silently 404 an entire credential type
+the day that map grows, and the symptom would look like missing files rather than
+a stale regex.
+
+**Mutation testing found the first dataset incomplete, and the gap was real.**
+Dropping the two-segment requirement broke nothing, because every malformed
+sample happened to put something non-ULID in the SECOND segment: the shape regex
+caught them all and the count never got a say. A valid certificate name with a
+segment after it passes both checks, and the bytes are reachable when a directory
+of that name exists on disk. The sample was added rather than the check removed.
+
+Two non-blocking items from the same round: the storage-failure tests now assert
+`assertTableActionHalted()` and `assertNotified()` — the row count alone also
+passed for an action that failed silently and closed the modal — and the drift
+detector is renamed `claimsABulkOrSoftDeleteAbilityIsUndefined()` with its gap
+stated outright, having been named for more than it covered.
+
+**Mutation testing: ten mutations, ten caught** (seven in round one, three on the
+shape guard). Disk allowlist removed;
 renderer made never to match; each Filament catch removed separately; a stale
 claim reintroduced; a detector rule deleted; the detector over-broadened to bare
 `delete()`. The last two are the pair that matters — deleting a rule fails the
@@ -263,7 +293,7 @@ must-catch set, over-broadening fails the must-not-catch set.
 
 | Gate | Result |
 |---|---|
-| `php artisan test` | **824 passed**, 0 failed, 2338 assertions |
+| `php artisan test` | **835 passed**, 0 failed, 2365 assertions |
 | `vendor/bin/pint --test` | passed |
 | `composer analyse` | 0 errors |
 
