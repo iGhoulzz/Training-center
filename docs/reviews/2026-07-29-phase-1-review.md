@@ -639,6 +639,68 @@ worse than a missing one, because nothing distinguishes it from a true one.
 | `vendor/bin/pint --test` | passed |
 | `composer analyse` | 0 errors |
 
+### Resolution — M3, M4, L6 and L7
+
+Fixed on `p1/t15-backup-retention`, branched from `main` at `2049eb5` — that is,
+**after branch A merged**, so the diff reflects the tree it will land on and the
+two do not collide in this file. **M5, L2, L3 and L8 are not in scope** and are
+planned as `p1/t15-detector-coverage`.
+
+**M3 — a rename would have orphaned every archive.** The destination directory
+and the directory the monitor inspects were both `env('APP_NAME')`. Every
+consequence was invisible: tonight's backup succeeds, the monitor finds that one
+fresh archive and reports healthy, cleanup never sees the old directory again so
+nothing is deleted and nothing is reported. **Retention silently resets to one
+night**, and the first sign is a restore that finds two years missing.
+`BACKUP_ARCHIVE_NAME` is now its own setting, defaulting to the name
+`docs/RESTORE.md` already told operators to look for.
+
+**M4 — the storage alert fired below normal operation.** 5 GB against tiers that
+keep roughly a hundred full archives, each holding the database and both upload
+roots. **A threshold below steady state is worse than none**: it fires every
+night for ever, people learn to ignore the backup alert, and the one signal this
+design rests on is lost in the noise it generates. The ceiling is now computed
+from the tiers themselves — hoisted into variables so the two cannot drift — and
+is bounded on both sides, because raising it to infinity would satisfy the fix
+and remove the growth warning `config/backup.php` promises elsewhere.
+
+**L6 and L7 are documentation, and both are tested.** The runbook now carries the
+full retention table, with each figure read from config so changing a tier
+without updating the document fails the build. And it records that
+`assertReadyForProduction()` gates every artisan command including the `migrate`
+the runbook itself prescribes — quoting the exact error, because on a rebuilt
+server that message appears in the middle of restoring from a backup and reads
+like a broken restore rather than a working guard.
+
+**A vacuous test was written and discarded on the way, and the trap is worth
+recording.** The `$_ENV` override technique used throughout
+`BackupConfigurationTest` **works only for a key that was absent at bootstrap** —
+Laravel's Env repository is immutable, so `APP_NAME`, which is in `.env`, keeps
+its original value however `$_ENV` is written afterwards. The first M3 test
+therefore passed against the unfixed code. The "must not derive from `APP_NAME`"
+half is now asserted against the config source with comments stripped, which is
+the only thing that can fail, and the positive half through
+`BACKUP_ARCHIVE_NAME`, which really is absent. **Checked rather than assumed:
+`ACTIVITYLOG_ENABLED` and `BACKUP_ALERT_EMAIL` are both absent from `.env`, so
+their existing tests are sound.**
+
+`expect()->toContain()` caught me a second time — it is variadic, so a failure
+message passed as its second argument becomes a second expected value. Fixed, and
+the whole suite scanned; the one remaining match is a legitimate multi-value
+assertion.
+
+**Mutation testing: four mutations, four caught**, including both bounds of the
+storage alert and the monitor/destination coupling — the latter mattering because
+that assertion passed on arrival, when both names still came from `APP_NAME`.
+
+**Gates on the branch tip, real output:**
+
+| Gate | Result |
+|---|---|
+| `php artisan test` | **884 passed**, 0 failed, 2496 assertions |
+| `vendor/bin/pint --test` | passed |
+| `composer analyse` | 0 errors |
+
 ### Unverified items
 
 | # | Claim | Experiment | Result |
