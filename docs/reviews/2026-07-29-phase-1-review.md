@@ -195,6 +195,85 @@ screen. Both file controllers re-authorize on the request that serves the bytes.
 `AttachAction`, `AssociateAction`, `DeleteBulkAction`, `RestoreAction`,
 `ForceDeleteAction` or relationship-bound field exists anywhere in `app/Domain/`.
 
+### Resolution — findings 3, 5 and 6
+
+Fixed on `p1/t15-storage-errors-and-doc-drift`, three commits, **branched from
+`main` rather than from the unmerged sweep branch**: the file scopes do not
+overlap, and basing on it would have put the sweep's whole diff inside this
+branch's review. Findings 1, 2 and 4 are recorded against their own branches.
+
+**Finding 3 — a storage failure had no answer.** Handled at both levels, the same
+way `LastSuperAdminException` already is. `bootstrap/app.php` renders it as
+**503**: the request was well-formed and the actor entitled, so the honest code is
+"the server's storage cannot accept this, retry" rather than 500. The exception's
+own message is deliberately **not** used — it carries the disk name and stored
+path for the log, and a response body is not a log.
+
+The two Filament write paths catch it and raise a translated notification,
+because the renderer is the wrong answer inside the panel: it would replace the
+page with a bare status response and lose the rollback with it. **The rollback is
+what the photo test asserts, not the notification text.** Without it the job title
+commits while the photo silently does not, leaving a record the administrator
+believes they updated in full.
+
+`PurgeDeletedFileJob` is deliberately untouched and a test now says so. Throwing
+is how it retries, and a renderer reaches HTTP paths only — "handle the exception
+everywhere" is exactly the change that would quietly convert a retryable
+data-destruction failure into a silent success.
+
+**Finding 5 — the download route trusted its own row's disk.** The path guard and
+the disk are not independent guards: `staff-certificates/x.pdf` is a perfectly
+contained path under every root there is, so a foreign `disk` value did not BREAK
+the containment rule — **it moved the boundary the rule was measured against.**
+And unlike a traversal, which Flysystem refuses as a second line of defence,
+reading a contained path from the wrong disk is a completely legitimate
+filesystem operation that nothing downstream objects to; this controller was the
+only place it could be refused. An allowlist rather than the Action's constant,
+because the `disk` column exists precisely so a later move does not orphan the
+rows already written.
+
+The regression test was **seen to return 200 and stream the canary** before the
+fix, and asserts the body lacks that canary rather than only the status.
+`StaffProfilePhotoController` needed no change: it already resolves the Action's
+constant rather than any stored value.
+
+**Finding 6 — and the guard that matters more than the wording.** Ten files
+corrected. Four had gone past staleness into teaching the reasoning group 1
+disproved, eighty lines above the block correcting that very belief.
+
+A wording fix alone would drift again, so the claim is now enforced.
+`PolicyAbilitySurfaceTest` already guarantees every policy states an answer for
+every ability, which makes **any** comment asserting otherwise false by
+construction — so a scan can simply reject all of them. The detector is a named
+function with two sample sets rather than an inline regex, per the rule T14 paid
+for; its ability list excludes bare `view`/`create`/`update`/`delete`, which are
+ordinary English in this codebase's prose and would fire on sentences making no
+claim about the policy surface. `appCommentsOnly()` joins
+`appSourceWithoutComments()` in `tests/Pest.php` — the exact inverse, because a
+test checking what comments CLAIM must see only comments, or
+`public function deleteAny()` satisfies the search for "no deleteAny()".
+
+**Mutation testing: seven mutations, seven caught.** Disk allowlist removed;
+renderer made never to match; each Filament catch removed separately; a stale
+claim reintroduced; a detector rule deleted; the detector over-broadened to bare
+`delete()`. The last two are the pair that matters — deleting a rule fails the
+must-catch set, over-broadening fails the must-not-catch set.
+
+**Gates on the branch tip, real output:**
+
+| Gate | Result |
+|---|---|
+| `php artisan test` | **824 passed**, 0 failed, 2338 assertions |
+| `vendor/bin/pint --test` | passed |
+| `composer analyse` | 0 errors |
+
+**Group 2 is now fully dispositioned** across three branches: finding 1 on
+`p1/t15-private-file-access` (merged), 2 and 4 on `p1/t15-file-deletion-sweep`
+(in review), 3, 5 and 6 here. **This section and the sweep branch's both insert
+at the same point in this file and will conflict on merge.** That is expected —
+they are additions to one list, and the resolution is to keep both, in finding
+order.
+
 ### Unverified items
 
 | # | Claim | Experiment | Result |
