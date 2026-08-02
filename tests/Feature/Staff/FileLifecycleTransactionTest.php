@@ -204,3 +204,125 @@ it('keeps bytes when a current locking ownership read finds a committed owner', 
             fn (string $sql): bool => str_contains(strtolower($sql), 'for update'),
         ))->toBeTrue();
 });
+
+/*
+|--------------------------------------------------------------------------
+| The reconciliation sweep, end to end (P1-T15, domain-integrity finding 2)
+|--------------------------------------------------------------------------
+|
+| PendingFileDeletionSweepTest covers which receipts a run selects and how it
+| dispatches them. These two cover what actually happens to the BYTES, and they
+| belong here rather than there: the job's ownership read runs on an independent
+| connection, so under RefreshDatabase's wrapping transaction it cannot see rows
+| the test has created and would report every file unowned. DatabaseMigrations
+| commits for real, which is the only way this pair can distinguish an owned file
+| from an orphan.
+|
+| They are a pair on purpose. Either one alone passes for a broken sweep — the
+| first for one that dispatches nothing at all, the second for one that ignores
+| ownership entirely.
+*/
+
+it('leaves bytes a committed row still owns when the sweep reaches their receipt', function () {
+    Storage::fake('private');
+
+    $path = 'staff-photos/'.Str::ulid()->toString().'.png';
+    Storage::disk('private')->put($path, makePngBytes());
+    StaffProfile::factory()->create(['profile_photo_path' => $path]);
+
+    // A provisional upload receipt whose cancellation never landed: the owner
+    // committed, the receipt did not go away, and it has now aged into the
+    // sweep's window. Nothing on the row distinguishes it from an ordinary
+    // deletion receipt, which is why the sweep must never assume.
+    $pending = PendingFileDeletion::query()->create([
+        'disk' => 'private',
+        'path' => $path,
+        'attempts' => 0,
+        'last_error' => null,
+    ]);
+    DB::table('pending_file_deletions')
+        ->where('id', $pending->getKey())
+        ->update(['created_at' => now()->subDay()]);
+
+    // The queue runs synchronously here, so the dispatched job executes inline.
+    $this->artisan('files:sweep-pending-deletions')->assertSuccessful();
+
+    Storage::disk('private')->assertExists($path);
+    expect(PendingFileDeletion::whereKey($pending->getKey())->exists())->toBeFalse();
+});
+
+it('is harmless to run the same purge twice', function () {
+    /*
+     * HANDOFF GUARANTEE 2.
+     *
+     * The sweep re-dispatches a receipt whose original job may still be queued,
+     * and it stamps a receipt only after the dispatch returns — so a stamp that
+     * fails after a successful dispatch produces a second job for the same
+     * receipt on the next run. Duplicate execution therefore has to be a
+     * non-event, not merely unlikely.
+     *
+     * Both shapes are covered, because they take different branches: the second
+     * job may find the receipt already gone, or may find it still present with
+     * the bytes already unlinked. The second is the one worth pinning — it
+     * depends on Storage::delete() reporting success for a file that is already
+     * absent, which is the assumption PurgeDeletedFileJob's own comment rests on
+     * when it treats a false return as a real failure.
+     */
+    Storage::fake('private');
+
+    $path = 'staff-certificates/'.Str::ulid()->toString().'.pdf';
+    Storage::disk('private')->put($path, 'orphaned-certificate-bytes');
+
+    $pending = PendingFileDeletion::query()->create([
+        'disk' => 'private',
+        'path' => $path,
+        'attempts' => 0,
+        'last_error' => null,
+    ]);
+
+    // Shape one: the receipt is gone by the time the duplicate runs.
+    (new PurgeDeletedFileJob((int) $pending->getKey(), true))->handle();
+    (new PurgeDeletedFileJob((int) $pending->getKey(), true))->handle();
+
+    Storage::disk('private')->assertMissing($path);
+    expect(PendingFileDeletion::whereKey($pending->getKey())->exists())->toBeFalse();
+
+    // Shape two: the receipt is still there, but the bytes are already gone.
+    $survivor = PendingFileDeletion::query()->create([
+        'disk' => 'private',
+        'path' => $path,
+        'attempts' => 0,
+        'last_error' => null,
+    ]);
+
+    (new PurgeDeletedFileJob((int) $survivor->getKey(), true))->handle();
+
+    expect(PendingFileDeletion::whereKey($survivor->getKey())->exists())->toBeFalse(
+        'A purge for bytes that are already absent was treated as a failure, so a duplicate '
+        .'job leaves its receipt behind and the sweep re-dispatches it forever.',
+    );
+});
+
+it('destroys bytes no committed row owns when the sweep reaches their receipt', function () {
+    // The control. Without it, a sweep that dispatched nothing, or one whose
+    // ownership check reported everything owned, would pass the test above.
+    Storage::fake('private');
+
+    $path = 'staff-certificates/'.Str::ulid()->toString().'.pdf';
+    Storage::disk('private')->put($path, 'orphaned-certificate-bytes');
+
+    $pending = PendingFileDeletion::query()->create([
+        'disk' => 'private',
+        'path' => $path,
+        'attempts' => 0,
+        'last_error' => null,
+    ]);
+    DB::table('pending_file_deletions')
+        ->where('id', $pending->getKey())
+        ->update(['created_at' => now()->subDay()]);
+
+    $this->artisan('files:sweep-pending-deletions')->assertSuccessful();
+
+    Storage::disk('private')->assertMissing($path);
+    expect(PendingFileDeletion::whereKey($pending->getKey())->exists())->toBeFalse();
+});

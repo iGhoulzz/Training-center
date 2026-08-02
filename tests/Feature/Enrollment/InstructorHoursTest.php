@@ -769,6 +769,17 @@ it('refuses at the foreign key to hard-delete an instructor holding allocations'
     $sara = ($this->makeInstructor)('Sara');
     $this->assign->execute($this->admin, new AssignInstructorData((int) $this->batch->getKey(), (int) $sara->getKey(), 30));
 
+    /*
+     * THE EMPLOYMENT RECORD IS REMOVED FIRST, AND THAT IS THE POINT (P1-T15).
+     *
+     * staff_profiles.user_id now restricts too, so leaving the profile in place
+     * would make this test pass on a 1451 raised by the WRONG constraint — it
+     * would keep reporting the allocation guarantee as enforced even if
+     * batch_instructor.user_id were reverted to a cascade. Clearing the profile
+     * leaves the allocation as the only thing that can refuse.
+     */
+    $sara->staffProfile?->delete();
+
     try {
         $sara->forceDelete();
         $thrown = null;
@@ -782,6 +793,9 @@ it('refuses at the foreign key to hard-delete an instructor holding allocations'
         // a NOT NULL violation or a lost connection would also be a
         // QueryException and would prove nothing about the restriction.
         ->and($thrown->errorInfo[1] ?? null)->toBe(1451)
+        // And named, so the refusal cannot silently migrate to another table's
+        // constraint the way it just did.
+        ->and($thrown->getMessage())->toContain('batch_instructor')
         ->and(User::withTrashed()->whereKey($sara->getKey())->exists())->toBeTrue()
         ->and(DB::table('batch_instructor')->count())->toBe(1);
 });
@@ -790,6 +804,12 @@ it('lets an instructor with no allocations be hard-deleted', function () {
     // The control for the restriction above: the foreign key refuses instructors
     // with hours, not instructors in general.
     $spare = ($this->makeInstructor)('Spare');
+
+    // Same reason as above — every instructor here has an employment record, and
+    // since P1-T15 that record restricts hard deletion on its own. Removing it
+    // keeps this a control for the ALLOCATION constraint rather than turning it
+    // into a second test of the profile one.
+    $spare->staffProfile?->delete();
 
     $spare->forceDelete();
 

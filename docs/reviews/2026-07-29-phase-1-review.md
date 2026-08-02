@@ -195,6 +195,159 @@ screen. Both file controllers re-authorize on the request that serves the bytes.
 `AttachAction`, `AssociateAction`, `DeleteBulkAction`, `RestoreAction`,
 `ForceDeleteAction` or relationship-bound field exists anywhere in `app/Domain/`.
 
+### Resolution — findings 2 and 4
+
+Both fixed on `p1/t15-file-deletion-sweep`, three commits. **The other four
+findings in this group are not in that branch's scope**: finding 1 landed earlier
+on `p1/t15-private-file-access`; findings 3, 5 and 6 remain open.
+
+**Finding 2 — the sweep that did not exist.** `files:sweep-pending-deletions`
+re-dispatches purge jobs for receipts past a staleness threshold, scheduled hourly
+on its own mutex. Three decisions are recorded because the code alone does not
+argue for them:
+
+- **The ownership check is always on.** The table holds ordinary deletion receipts
+  and provisional upload receipts and **nothing on the row says which**, so a
+  sweep dispatching the unchecked form would unlink bytes a committed row still
+  owns. The checked form is correct for both, because an ordinary receipt has no
+  surviving owner for the check to find. Proven as a pair in
+  `FileLifecycleTransactionTest` — owned bytes survive, orphaned bytes do not.
+  That pair has to live there rather than beside the other sweep tests: the job's
+  ownership read runs on an independent connection and cannot see rows
+  `RefreshDatabase` is holding uncommitted, so under the usual wrapper it would
+  report every file unowned and the test would pass for the wrong reason.
+- **The threshold outlives the job's retry ladder**, asserted against `backoff()`
+  rather than repeated as a literal, so lengthening the ladder fails the build.
+- **No attempt ceiling.** Abandoning a receipt would leave a document the centre
+  is no longer entitled to hold on disk forever — the outcome the feature exists
+  to prevent. The bound is on the batch size instead, and it rotates.
+
+**The bound did not rotate on the first attempt, and Codex caught it.** The run
+selected its page by `created_at`, which never changes, so a page that never
+drained was selected again by every subsequent run and the receipts behind it
+were never dispatched at all — the bound became a permanent ceiling rather than a
+rate limit. `pending_file_deletions.last_swept_at` is now stamped after each
+successful dispatch; `scopeStale()` additionally requires never-swept or
+swept-longer-ago-than-the-threshold, and `scopeInSweepOrder()` puts never-swept
+receipts ahead of every swept one. **Neither half works alone** — with only the
+filter, a stamp aging past the threshold makes the head eligible again and a
+`created_at`-led order picks it ahead of everything behind it, which is the same
+starvation an hour later. Each half has its own test.
+
+**The part worth carrying forward is not the defect but the claim.** Both the
+command's comment and this document stated "successive runs will reach them".
+That sentence was written from the intent and never from the behaviour, and **no
+single-run test can tell those apart** — starvation only becomes visible on a
+second run. The single-run ordering test below looked like coverage of exactly
+this property and was not.
+
+Two handoff guarantees were missing and are now pinned. **Dispatch, then stamp**:
+a stamp written first marks a receipt as handed off when it was not, so a queue
+outage would push the whole backlog a full threshold into the future for work
+that never happened. A dispatch failure leaves `last_swept_at` untouched, is
+reported and counted, and the rest of the page is still attempted; the run exits
+non-zero. **Duplicate purge execution is a non-event**, pinned in both shapes —
+the receipt already gone, and the receipt still present with the bytes already
+unlinked. The second matters most, because it rests on `Storage::delete()`
+reporting success for an absent file, which is the assumption
+`PurgeDeletedFileJob` makes when it treats a `false` return as a real failure.
+
+Joining the backup pipeline's mutex was considered and **rejected**: it would let
+a slow or stuck nightly backup hold file deletion off for hours, and buys nothing,
+because ordinary purge jobs already run at arbitrary times including mid-archive.
+A test pins the separation so the decision is not silently reversed.
+
+G2-U2's verified locking behaviour is untouched. The sweep decides which receipts
+reach `PurgeDeletedFileJob`, never what it does once they arrive.
+
+**Finding 4 — the cascade.** `staff_profiles.user_id` now restricts.
+**Two existing tests were asserting the defect was the feature** and are inverted:
+`StaffProfileTest`'s "deletes the profile when the user is force deleted" and
+`StaffCertificateTest`'s "deletes the certificates when the user account is force
+deleted — two cascades in a row". The profile→certificate cascade is deliberately
+left in place; it is safe precisely because an Action now always stands in front
+of it.
+
+**A third test needed correcting for a different reason, and it is the more useful
+lesson.** `InstructorHoursTest`'s `makeInstructor` gives every instructor a staff
+profile, so once profiles restricted, its allocation-restriction test began
+raising 1451 from `staff_profiles` — it would have kept reporting
+`batch_instructor.user_id` as enforced even if that constraint were reverted to a
+cascade. Both it and its control now clear the profile first, and the refusal
+asserts which table refused. Verified by reverting `batch_instructor.user_id`: the
+test fails, as it must. **Adding a constraint can silently hollow out an unrelated
+test that was pinning a different one.**
+
+**Mutation testing: eighteen mutations, seventeen caught, one survived.** Twelve
+on the original branch, six more on the rotation repair (stamp removed,
+nulls-first term removed, whole sweep order removed, eligibility condition
+removed, stamp moved before dispatch, dispatch failure rethrown).
+
+The survivor is the part worth keeping. Deleting the whole `ORDER BY` from the
+sweep left the ordering test green. The first explanation — that InnoDB was
+returning primary-key order — was **wrong**, and rearranging the fixtures so age
+and insertion order disagreed changed nothing. `EXPLAIN` settled it: `type:
+range, key: pending_file_deletions_created_at_index`. The staleness filter is
+served by an ordered range scan over `created_at`, so rows arrive oldest-first
+whether or not the code asks, and **no arrangement of data can make that test
+fail.** It now asserts the clause itself, with the measurement recorded in place
+of the assumption: the clause is the only thing that can fail when somebody
+removes it, and the plan hiding its absence is an optimizer choice rather than a
+guarantee.
+
+A second trap, already documented in `tests/Pest.php` and walked into anyway:
+`expect()->toContain()` is variadic, so a failure message passed as its second
+argument becomes a second expected value.
+
+**Round two found the same starvation through the error path.** The catch that
+kept one poisoned receipt from blocking the page called `report($exception)`
+unguarded — and Laravel's handler may throw when its logging transport is
+unavailable. The exception escaped the catch, ended the loop at the first failed
+receipt, and left it unstamped and still first in sweep order, so every later run
+stopped on it again.
+
+**The two failures are correlated rather than independent**, which is what makes
+it realistic: a full disk is the condition this feature exists to reconcile, and
+it takes the log channel down with it.
+
+**And the codebase already knew.** `FileLifecycleService::reportWithoutThrowing()`
+exists for this exact hazard and its docblock says so. This was an established
+pattern not applied, not a subtle one missed — the general lesson being that a
+hazard solved once in a codebase should be searched for, not rediscovered.
+
+Two smaller notes recorded so they are not re-litigated:
+
+- **Counting the failure before reporting it is not load-bearing**, and the
+  comment says so. Once the helper cannot throw, the order changes no outcome and
+  no test pins it; a mutation moving it survives, correctly. It is kept only as
+  cheap insurance against a later edit restoring a bare `report()`.
+- **The helper is a near-copy of the service's rather than a shared extraction.**
+  Extracting means editing that service — well-reviewed, unchanged on this
+  branch, no behavioural gain from the move. A third caller is the point at which
+  it should become one thing; **raised for T16**.
+
+**Gates on the branch tip, real output:**
+
+| Gate | Result |
+|---|---|
+| `php artisan test` | **829 passed**, 0 failed, 2380 assertions |
+| `vendor/bin/pint --test` | passed |
+| `composer analyse` | 0 errors |
+
+**A verification hazard this task hit for real, recorded because the log already
+warned about it and it happened anyway.** Both T15 worktrees share
+`training_center_test`, and `RefreshDatabase` runs `migrate:fresh` against it. A
+review run and an implementation run overlapping produced 27 errors of the shape
+`Table 'users' already exists` / `migrations doesn't exist` / a deadlock on
+`drop table` — failures belonging to neither branch, in a shape that reads like
+broken code. **Runs across worktrees must be serialized until each worktree has
+its own test database.** Pint and PHPStan are unaffected, being database-independent.
+
+Codex independently verified the pre-rotation tip at 822 tests / 2352 assertions,
+Pint and PHPStan clean, and approved everything except the starvation finding —
+including the restrictive staff-profile foreign key and the corrected
+instructor-allocation test.
+
 ### Unverified items
 
 | # | Claim | Experiment | Result |
