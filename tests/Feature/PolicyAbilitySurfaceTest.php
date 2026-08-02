@@ -181,20 +181,25 @@ it('refuses the dormant abilities rather than merely defining them', function ()
 */
 
 /**
- * Does this comment text claim a policy leaves an ability undefined?
+ * Does this comment claim a policy leaves a BULK or SOFT-DELETE ability
+ * undefined?
+ *
+ * NAMED FOR WHAT IT COVERS, WHICH IS NOT EVERY POLICY ABILITY. The list below is
+ * deliberately narrower than FILAMENT_POLICY_ABILITIES: bare `view()`,
+ * `create()`, `update()` and `delete()` are ordinary English in this codebase's
+ * prose ("there is no delete() path for the activity log"), and including them
+ * would fire on sentences making no claim about the policy surface at all.
+ *
+ * So a comment asserting "StudentPolicy defines no delete()" would NOT be
+ * caught, and that gap is stated here rather than left to be discovered — the
+ * families that actually drifted, and the ones a reader is most likely to reason
+ * wrongly about, are the bulk and soft-delete abilities.
  *
  * A named function with its own sample sets below rather than an inline regex,
  * because an inline pattern can only ever be tested against the codebase as it
- * happens to be today — which is precisely the case where it passes vacuously.
- *
- * The ability list is deliberately NOT the full FILAMENT_POLICY_ABILITIES set.
- * Bare `view()`, `create()`, `update()` and `delete()` are ordinary English in
- * this codebase's prose ("there is no delete() path for the activity log"), and
- * including them would fire on sentences that make no claim about the policy
- * surface at all. The families that actually drifted, and the ones a reader is
- * most likely to reason wrongly about, are the bulk and soft-delete abilities.
+ * happens to be today — precisely the case where it passes vacuously.
  */
-function claimsAPolicyAbilityIsUndefined(string $comments): bool
+function claimsABulkOrSoftDeleteAbilityIsUndefined(string $comments): bool
 {
     $abilities = '(?:deleteAny|restoreAny|forceDeleteAny|restore|forceDelete|replicate|reorder)';
 
@@ -217,7 +222,7 @@ function claimsAPolicyAbilityIsUndefined(string $comments): bool
 
 it('detects the claims it is meant to detect', function (string $sample) {
     // Deleting a rule from the detector fails here.
-    expect(claimsAPolicyAbilityIsUndefined($sample))->toBeTrue();
+    expect(claimsABulkOrSoftDeleteAbilityIsUndefined($sample))->toBeTrue();
 })->with([
     'EnrollmentPolicy defines no deleteAny().',
     'There is no deleteAny(): BatchResource registers no bulk actions.',
@@ -230,7 +235,7 @@ it('detects the claims it is meant to detect', function (string $sample) {
 it('leaves correct statements about those abilities alone', function (string $sample) {
     // Over-broadening the detector fails here. Every one of these is a true
     // sentence that some file in app/ needs to be able to say.
-    expect(claimsAPolicyAbilityIsUndefined($sample))->toBeFalse();
+    expect(claimsABulkOrSoftDeleteAbilityIsUndefined($sample))->toBeFalse();
 })->with([
     'StaffCertificatePolicy::deleteAny() gates nothing here because there is no bulk delete to authorize.',
     'RolePolicy::deleteAny() already refuses, so the inherited action would fail anyway.',
@@ -240,7 +245,7 @@ it('leaves correct statements about those abilities alone', function (string $sa
     'There is no delete() path for the activity log, by design.',
 ]);
 
-it('has no comment claiming a policy leaves an ability undefined', function () {
+it('has no comment claiming a policy leaves a bulk or soft-delete ability undefined', function () {
     $offenders = [];
 
     foreach (File::allFiles(app_path()) as $file) {
@@ -250,7 +255,7 @@ it('has no comment claiming a policy leaves an ability undefined', function () {
 
         $path = (string) $file->getRealPath();
 
-        if (claimsAPolicyAbilityIsUndefined(appCommentsOnly($path))) {
+        if (claimsABulkOrSoftDeleteAbilityIsUndefined(appCommentsOnly($path))) {
             $offenders[] = str_replace(base_path().DIRECTORY_SEPARATOR, '', $path);
         }
     }

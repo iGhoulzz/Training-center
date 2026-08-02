@@ -196,7 +196,9 @@ it('rolls the whole profile save back when the disk cannot take the photo', func
             'job_title' => 'Edited title',
             'profile_photo' => livewirePngUpload('avatar.png'),
         ])
-        ->call('save');
+        ->call('save')
+        // The administrator is told why, not merely left on an unchanged form.
+        ->assertNotified(__('staff.storage_unavailable'));
 
     $profile = $profile->fresh();
 
@@ -226,7 +228,17 @@ it('records no certificate when the disk cannot take the uploaded file', functio
             'issued_on' => '2024-01-01',
             'expires_on' => '2030-01-01',
             'certificate_file' => livewirePngUpload('credential.png'),
-        ]);
+        ])
+        /*
+         * The Halt and the notification, pinned rather than described.
+         *
+         * The row count below is the harm, but on its own it also passes for an
+         * action that failed silently and closed the modal — losing the metadata
+         * the administrator had typed and telling them nothing. These two assert
+         * the outcome the comment in the relation manager actually claims.
+         */
+        ->assertTableActionHalted('create')
+        ->assertNotified(__('staff.storage_unavailable'));
 
     expect(StaffCertificate::count())->toBe(
         0,

@@ -169,6 +169,115 @@ it('404s when the stored disk is not one this route may serve from', function ()
     Storage::disk('local')->assertExists($strayPath);
 });
 
+it('404s when a certificate row points into another feature\'s namespace on the same disk', function () {
+    /*
+     * P1-T15, round-two review finding: cross-namespace disclosure.
+     *
+     * The disk guard fixed WHICH ROOT the path resolves against. It said nothing
+     * about WHERE UNDER THAT ROOT, and the private disk is shared — staff photos
+     * live beside certificates today, and the pending_file_deletions migration
+     * states that phase 2 receipts and phase 3 student certificates will reuse
+     * the same disk.
+     *
+     * So a certificate row naming `staff-photos/{ULID}.png` passed the
+     * containment check and the disk check, and the route then authorized the
+     * CERTIFICATE and streamed the PHOTO. An actor holding view_staff_certificate
+     * and no profile permission at all could read it — and once the phase 2 and 3
+     * namespaces exist, the same hole reaches a financial receipt or a student's
+     * document across a permission boundary that was never consulted.
+     *
+     * StaffProfilePhotoController has always required the exact generated shape
+     * for precisely this reason. The asymmetry was the bug.
+     */
+    $canary = 'staff-photo-bytes-a-certificate-grant-must-not-reach';
+    $photoPath = 'staff-photos/'.Str::ulid()->toString().'.png';
+    Storage::disk('private')->put($photoPath, $canary);
+
+    $crossed = StaffCertificate::factory()->for($this->profile, 'staffProfile')->create([
+        'disk' => 'private',
+        'path' => $photoPath,
+        'original_filename' => 'not-really-a-certificate.png',
+    ]);
+
+    // A certificate grant and nothing else. Asserted rather than assumed: if this
+    // actor happened to hold a profile permission the test would prove nothing
+    // about the boundary it exists to check.
+    $actor = ($this->userWith)('view_staff_certificate');
+    expect($actor->can('view_any_staff_profile'))->toBeFalse()
+        ->and($actor->can('view_staff_profile'))->toBeFalse();
+
+    $response = $this->actingAs($actor)->get(route('staff.certificates.download', $crossed));
+
+    $response->assertNotFound();
+
+    expect($response->getContent())->not->toContain($canary);
+
+    // The photo is untouched — this is a refusal to serve, not a side effect.
+    Storage::disk('private')->assertExists($photoPath);
+});
+
+it('404s on a stored path that is not the exact generated certificate shape', function (string $path) {
+    /*
+     * The shape is the boundary, so every way of missing it is refused: a
+     * directory the feature does not own, a nested path inside one it does, a
+     * name that is not a ULID, and an extension the upload Action never
+     * produces. Each is written out because each fails a different clause, and
+     * a single sample would let the others rot.
+     */
+    Storage::disk('private')->put($path, 'bytes-behind-a-malformed-row');
+
+    $malformed = StaffCertificate::factory()->for($this->profile, 'staffProfile')->create([
+        'disk' => 'private',
+        'path' => $path,
+        'original_filename' => 'whatever.pdf',
+    ]);
+
+    $this->actingAs(($this->userWith)('view_staff_certificate'))
+        ->get(route('staff.certificates.download', $malformed))
+        ->assertNotFound();
+})->with([
+    'a sibling namespace on the same disk' => 'staff-photos/01J0000000000000000000000A.png',
+    'nested below the certificate directory' => 'staff-certificates/nested/01J0000000000000000000000A.pdf',
+    'a bare filename with no directory' => '01J0000000000000000000000A.pdf',
+    'a name that is not a ULID' => 'staff-certificates/payroll-export.pdf',
+    'an extension the upload Action never writes' => 'staff-certificates/01J0000000000000000000000A.exe',
+    /*
+     * ADDED BECAUSE MUTATION TESTING FOUND THE SET INCOMPLETE.
+     *
+     * Deleting the two-segment requirement broke nothing, and the reason was
+     * this gap rather than a redundant check: every other malformed sample
+     * happens to put something non-ULID in the SECOND segment, so the shape
+     * regex catches it and the count never gets a say. A valid certificate name
+     * with a segment after it passes the directory check and the shape check on
+     * segment two, and the bytes really are reachable when a directory of that
+     * name exists on disk.
+     */
+    'a trailing segment after a valid certificate name' => 'staff-certificates/01J0000000000000000000000A.pdf/extra',
+]);
+
+it('serves every extension the upload Action does produce', function (string $extension) {
+    /*
+     * The control for the shape check, and it is a dataset rather than one case
+     * because a regex that accidentally admitted only PDFs would pass a single
+     * sample while silently 404ing every image credential already on disk.
+     */
+    $path = 'staff-certificates/'.Str::ulid()->toString().'.'.$extension;
+    $bytes = 'credential-bytes-'.$extension;
+    Storage::disk('private')->put($path, $bytes);
+
+    $certificate = StaffCertificate::factory()->for($this->profile, 'staffProfile')->create([
+        'disk' => 'private',
+        'path' => $path,
+        'original_filename' => 'credential.'.$extension,
+    ]);
+
+    $response = $this->actingAs(($this->userWith)('view_staff_certificate'))
+        ->get(route('staff.certificates.download', $certificate));
+
+    $response->assertOk();
+    expect($response->streamedContent())->toBe($bytes);
+})->with(['pdf', 'jpg', 'png', 'webp']);
+
 it('serves a certificate whose stored disk is the one the feature writes to', function () {
     /*
      * The control for the refusal above. Without it, a disk guard that refused
