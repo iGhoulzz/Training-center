@@ -7,6 +7,8 @@ namespace App\Console\Commands;
 use App\Domain\Staff\Jobs\PurgeDeletedFileJob;
 use App\Domain\Staff\Models\PendingFileDeletion;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Bus;
+use Throwable;
 
 /**
  * Re-dispatch purge jobs for deletion receipts nothing has consumed.
@@ -43,14 +45,27 @@ use Illuminate\Console\Command;
  * BLOCKS on an in-flight upload rather than deadlocking against it. This command
  * changes nothing about that ordering; it only decides which receipts reach it.
  *
- * THE RUN IS BOUNDED
- * ------------------
+ * THE RUN IS BOUNDED, AND THE BOUND ROTATES
+ * -----------------------------------------
  * A mass profile deletion, or a queue that was down overnight, leaves a large
  * backlog. Each dispatched job opens a transaction and takes locking reads
  * against staff_certificates and staff_profiles, so an unbounded run would turn
- * a backlog into a lock storm on the tables the panel is serving from. Oldest
- * first, so successive runs drain the backlog as a queue rather than re-reading
- * whichever arbitrary page MySQL happens to return.
+ * a backlog into a lock storm on the tables the panel is serving from.
+ *
+ * THE FIRST VERSION OF THIS COMMAND BOUNDED THE RUN AND THEN STARVED THE TABLE.
+ * It ordered by created_at, which never changes, so a page that never drained —
+ * a disk that is gone, an ownership check that keeps finding an owner — was
+ * selected again by every subsequent run and the receipts behind it were never
+ * dispatched at all. The bound stopped being a rate limit and became a permanent
+ * ceiling. This docblock claimed the opposite, which is the more useful half of
+ * the lesson: the claim was written from the intent rather than from the
+ * behaviour, and only a two-run test could tell them apart.
+ *
+ * last_swept_at is stamped after each successful dispatch, and the sweep order
+ * puts never-swept receipts ahead of every swept one. So one pass reaches the
+ * whole backlog before any receipt takes a second turn, and rotation continues
+ * from there. See PendingFileDeletion::scopeStale() and scopeInSweepOrder() —
+ * the two halves of that rule, neither of which works without the other.
  *
  * THERE IS NO ATTEMPT CEILING
  * ---------------------------
@@ -58,7 +73,21 @@ use Illuminate\Console\Command;
  * would leave a document the centre is no longer entitled to hold sitting on
  * disk forever, which is the outcome this feature exists to prevent. A
  * permanently failing receipt is meant to stay noisy; the backlog line below is
- * what makes it visible.
+ * what makes it visible. Rotation is what stops that noise drowning out the rest
+ * of the table.
+ *
+ * THE HANDOFF, IN ORDER
+ * ---------------------
+ * Dispatch, then stamp — never the reverse. A stamp written first would mark a
+ * receipt as handed off when it was not, so a queue outage would push the entire
+ * backlog a full threshold into the future for work that never happened. A
+ * dispatch failure leaves last_swept_at untouched and the receipt immediately
+ * eligible, and the rest of the page is still attempted.
+ *
+ * The reverse risk — dispatched but not stamped — is a duplicate purge on the
+ * next run, and a duplicate purge is a non-event: the job returns early when the
+ * receipt is gone, and Storage::delete() reports success for bytes that are
+ * already absent.
  *
  * CONSOLE OUTPUT IS NOT PART OF THE TRANSLATED SURFACE. lang/ carries the panel
  * and public-site copy that phase 4 translates into Arabic. This is operator
@@ -122,18 +151,56 @@ final class SweepPendingFileDeletionsCommand extends Command
         $backlog = (int) $stale->clone()->count();
 
         $receipts = $stale->clone()
-            ->orderBy('created_at')
-            ->orderBy('id')
+            ->inSweepOrder()
             ->limit($limit)
-            ->get(['id']);
+            ->get(['id', 'last_swept_at']);
+
+        $dispatched = 0;
+        $failed = 0;
 
         foreach ($receipts as $receipt) {
-            // true: run the ownership check. Never conditional — see the class
-            // docblock. An unchecked dispatch here deletes owned bytes.
-            PurgeDeletedFileJob::dispatch((int) $receipt->getKey(), true);
-        }
+            try {
+                /*
+                 * Bus::dispatch rather than PurgeDeletedFileJob::dispatch, so
+                 * the queue write happens HERE and its failure is catchable
+                 * here. The static helper returns a PendingDispatch that only
+                 * reaches the queue when the temporary is destructed, which
+                 * makes "did this dispatch fail" depend on refcount timing
+                 * rather than on control flow.
+                 *
+                 * true: run the ownership check. Never conditional — see the
+                 * class docblock. An unchecked dispatch here deletes owned bytes.
+                 */
+                Bus::dispatch(new PurgeDeletedFileJob((int) $receipt->getKey(), true));
+            } catch (Throwable $exception) {
+                /*
+                 * ONE POISONED RECEIPT MUST NOT BLOCK THE PAGE BEHIND IT, and an
+                 * unstamped receipt is immediately eligible again — which is the
+                 * whole reason the stamp comes after the dispatch rather than
+                 * before it. A queue outage therefore costs nothing: every
+                 * receipt is retried on the next run rather than pushed an hour
+                 * into the future for a handoff that never happened.
+                 */
+                report($exception);
+                $failed++;
 
-        $dispatched = $receipts->count();
+                continue;
+            }
+
+            $dispatched++;
+
+            /*
+             * Only now, and deliberately not inside the try above: a failure
+             * writing this stamp is not something to swallow. The SELECT that
+             * produced this row used the same connection moments ago, so an
+             * UPDATE failing here means the database is in a state the rest of
+             * the run has no business continuing through. It propagates, the
+             * scheduler reports it, and the receipts already dispatched are
+             * simply swept again next run — a duplicate purge is a non-event,
+             * which FileLifecycleTransactionTest pins in both of its shapes.
+             */
+            $receipt->update(['last_swept_at' => now()]);
+        }
 
         $this->components->info("Swept {$dispatched} of {$backlog} stale deletion receipt(s).");
 
@@ -141,12 +208,19 @@ final class SweepPendingFileDeletionsCommand extends Command
          * Says so out loud when the bound bites, on its own line and short
          * enough not to wrap. Without it, a run reporting "swept 100" is
          * indistinguishable between a healthy trickle and a backlog growing
-         * faster than the sweep drains it. Successive runs do reach the
-         * remainder — they are ordered oldest first — so this is a signal to
-         * look at why the purge jobs are failing, not an error in itself.
+         * faster than the sweep drains it. Successive runs reach the remainder
+         * because a dispatched receipt is stamped and sorts behind every
+         * untouched one, so this is a signal to look at why the purge jobs are
+         * failing rather than an error in itself.
          */
         if ($backlog > $dispatched) {
             $this->components->warn(($backlog - $dispatched).' receipt(s) left for later runs.');
+        }
+
+        if ($failed > 0) {
+            $this->components->error($failed.' receipt(s) could not be handed to the queue.');
+
+            return self::FAILURE;
         }
 
         return self::SUCCESS;

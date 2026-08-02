@@ -251,6 +251,58 @@ it('leaves bytes a committed row still owns when the sweep reaches their receipt
     expect(PendingFileDeletion::whereKey($pending->getKey())->exists())->toBeFalse();
 });
 
+it('is harmless to run the same purge twice', function () {
+    /*
+     * HANDOFF GUARANTEE 2.
+     *
+     * The sweep re-dispatches a receipt whose original job may still be queued,
+     * and it stamps a receipt only after the dispatch returns — so a stamp that
+     * fails after a successful dispatch produces a second job for the same
+     * receipt on the next run. Duplicate execution therefore has to be a
+     * non-event, not merely unlikely.
+     *
+     * Both shapes are covered, because they take different branches: the second
+     * job may find the receipt already gone, or may find it still present with
+     * the bytes already unlinked. The second is the one worth pinning — it
+     * depends on Storage::delete() reporting success for a file that is already
+     * absent, which is the assumption PurgeDeletedFileJob's own comment rests on
+     * when it treats a false return as a real failure.
+     */
+    Storage::fake('private');
+
+    $path = 'staff-certificates/'.Str::ulid()->toString().'.pdf';
+    Storage::disk('private')->put($path, 'orphaned-certificate-bytes');
+
+    $pending = PendingFileDeletion::query()->create([
+        'disk' => 'private',
+        'path' => $path,
+        'attempts' => 0,
+        'last_error' => null,
+    ]);
+
+    // Shape one: the receipt is gone by the time the duplicate runs.
+    (new PurgeDeletedFileJob((int) $pending->getKey(), true))->handle();
+    (new PurgeDeletedFileJob((int) $pending->getKey(), true))->handle();
+
+    Storage::disk('private')->assertMissing($path);
+    expect(PendingFileDeletion::whereKey($pending->getKey())->exists())->toBeFalse();
+
+    // Shape two: the receipt is still there, but the bytes are already gone.
+    $survivor = PendingFileDeletion::query()->create([
+        'disk' => 'private',
+        'path' => $path,
+        'attempts' => 0,
+        'last_error' => null,
+    ]);
+
+    (new PurgeDeletedFileJob((int) $survivor->getKey(), true))->handle();
+
+    expect(PendingFileDeletion::whereKey($survivor->getKey())->exists())->toBeFalse(
+        'A purge for bytes that are already absent was treated as a failure, so a duplicate '
+        .'job leaves its receipt behind and the sweep re-dispatches it forever.',
+    );
+});
+
 it('destroys bytes no committed row owns when the sweep reaches their receipt', function () {
     // The control. Without it, a sweep that dispatched nothing, or one whose
     // ownership check reported everything owned, would pass the test above.

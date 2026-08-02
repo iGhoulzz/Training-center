@@ -262,10 +262,175 @@ it('takes the oldest receipts first, so a backlog drains instead of starving', f
     // str_contains() rather than expect()->toContain(), which is variadic and
     // reads a failure message as a second expected value — the same trap
     // tests/Pest.php records against expectOneLevelDeeper().
-    expect(str_contains($select['sql'], 'order by `created_at` asc'))->toBeTrue(
-        'The sweep no longer orders its page, so which receipts a bounded run reaches is '
+    expect(str_contains($select['sql'], 'order by `last_swept_at` is not null'))->toBeTrue(
+        'The sweep no longer leads on the nulls-first term, so a database that sorts NULLs '
+        .'last would put every never-swept receipt at the back of the backlog and starve it '
+        .'with every other test still green. SQL: '.$select['sql'],
+    );
+
+    expect(str_contains($select['sql'], '`created_at` asc'))->toBeTrue(
+        'The sweep no longer breaks ties by age, so which receipts a bounded run reaches is '
         .'whatever the optimizer happens to return. SQL: '.$select['sql'],
     );
+});
+
+/*
+|--------------------------------------------------------------------------
+| Rotation — the bound must not become a permanent ceiling
+|--------------------------------------------------------------------------
+|
+| The first version of this command selected purely by created_at, which never
+| changes. A first page that never drains is therefore selected again by every
+| subsequent run, and receipt 101 is never dispatched at all: the bound stops
+| being a rate limit and becomes a permanent ceiling over the rest of the table.
+| The command's own comment claimed "successive runs will reach them", and that
+| claim was false.
+|
+| last_swept_at is what makes it true. These four tests are the ones that can
+| tell the difference; the single-run ordering test above cannot, because
+| starvation needs two runs to be visible at all.
+*/
+
+it('reaches new receipts on the next run when the first page never drains', function () {
+    /*
+     * THE STARVATION TEST.
+     *
+     * Queue::fake() is doing real work here: it holds every job, so no receipt
+     * is ever consumed and the head of the backlog stays exactly where it is.
+     * That is the permanent-failure case — a disk that is gone, or an owner the
+     * ownership check keeps finding — reproduced without needing either.
+     */
+    $receipts = [];
+    for ($i = 0; $i < 4; $i++) {
+        $receipts[] = (int) agedReceipt(300 - $i)->getKey();
+    }
+
+    Queue::fake();
+    $this->artisan('files:sweep-pending-deletions', ['--limit' => 2])->assertSuccessful();
+    $first = dispatchedReceiptIds();
+
+    Queue::fake();
+    $this->artisan('files:sweep-pending-deletions', ['--limit' => 2])->assertSuccessful();
+    $second = dispatchedReceiptIds();
+
+    expect($first)->toBe([$receipts[0], $receipts[1]])
+        ->and($second)->toBe(
+            [$receipts[2], $receipts[3]],
+            'The second run dispatched the same page as the first, so every receipt behind '
+            .'it is unreachable for as long as the head keeps failing.',
+        );
+});
+
+it('gives a receipt it has never swept priority over one it swept long ago', function () {
+    /*
+     * The filter alone does not fix starvation, and this is the test that says
+     * so. Once the first page's last_swept_at ages past the threshold it becomes
+     * eligible again, and an order that still leads on created_at picks it over
+     * the receipts behind it — forever. Never-swept receipts have to outrank
+     * swept ones, whatever their age.
+     */
+    $older = agedReceipt(500);
+    $newer = agedReceipt(100);
+
+    DB::table('pending_file_deletions')
+        ->where('id', $older->getKey())
+        ->update(['last_swept_at' => now()->subDay()]);
+
+    Queue::fake();
+    $this->artisan('files:sweep-pending-deletions', ['--limit' => 1])->assertSuccessful();
+
+    expect(dispatchedReceiptIds())->toBe(
+        [(int) $newer->getKey()],
+        'The older receipt was picked again despite already having had a turn, so the '
+        .'newer one waits behind it indefinitely.',
+    );
+});
+
+it('waits out the threshold again before re-sweeping a receipt it just dispatched', function () {
+    /*
+     * A re-dispatched receipt gets a fresh purge job with its own retry ladder.
+     * Sweeping it again before that ladder is spent stacks jobs against one path
+     * for no gain, which is the same reason a receipt is not swept the moment it
+     * is written. The same threshold governs both, deliberately.
+     */
+    agedReceipt(300);
+
+    Queue::fake();
+    $this->artisan('files:sweep-pending-deletions')->assertSuccessful();
+    expect(dispatchedReceiptIds())->toHaveCount(1);
+
+    Queue::fake();
+    $this->artisan('files:sweep-pending-deletions')->assertSuccessful();
+
+    Queue::assertNothingPushed();
+});
+
+it('comes back to the head of the backlog once every receipt has had a turn', function () {
+    // Rotation, not a one-shot pass: a receipt that still needs destroying must
+    // keep being retried after everything else has had its turn.
+    $receipts = [];
+    for ($i = 0; $i < 4; $i++) {
+        $receipts[] = (int) agedReceipt(300 - $i)->getKey();
+    }
+
+    Queue::fake();
+    $this->artisan('files:sweep-pending-deletions', ['--limit' => 2])->assertSuccessful();
+
+    Queue::fake();
+    $this->artisan('files:sweep-pending-deletions', ['--limit' => 2])->assertSuccessful();
+    expect(dispatchedReceiptIds())->toBe([$receipts[2], $receipts[3]]);
+
+    // Everything has now been swept, so nothing is eligible yet.
+    Queue::fake();
+    $this->artisan('files:sweep-pending-deletions', ['--limit' => 2])->assertSuccessful();
+    Queue::assertNothingPushed();
+
+    $this->travel(61)->minutes();
+
+    Queue::fake();
+    $this->artisan('files:sweep-pending-deletions', ['--limit' => 2])->assertSuccessful();
+
+    expect(dispatchedReceiptIds())->toBe(
+        [$receipts[0], $receipts[1]],
+        'The sweep never returned to the oldest receipts, so a file that keeps failing to '
+        .'delete is eventually abandoned in practice even though nothing abandons it in code.',
+    );
+});
+
+it('leaves a receipt immediately retryable when the dispatch itself fails', function () {
+    /*
+     * HANDOFF GUARANTEE 1.
+     *
+     * Stamping before dispatching would mark a receipt as handed off when it was
+     * not, and a queue outage would push the whole backlog an hour into the
+     * future for nothing. The stamp therefore follows a dispatch that actually
+     * returned, and a failure leaves last_swept_at exactly as it was.
+     *
+     * The queue is pointed at a connection that does not exist, which is what a
+     * misconfigured or unreachable queue store looks like from in here.
+     */
+    $pending = agedReceipt(300);
+
+    config([
+        'queue.default' => 'database',
+        'queue.connections.database' => [
+            'driver' => 'database',
+            'connection' => 'sweep_test_absent_connection',
+            'table' => 'jobs',
+            'queue' => 'default',
+            'retry_after' => 90,
+        ],
+    ]);
+
+    $this->artisan('files:sweep-pending-deletions')->assertFailed();
+
+    $pending->refresh();
+
+    expect($pending->exists)->toBeTrue()
+        ->and($pending->last_swept_at)->toBeNull(
+            'A receipt the sweep failed to hand off was stamped anyway, so it now waits out '
+            .'the full threshold before anything tries again.',
+        );
 });
 
 it('reports the backlog it could not reach in one run', function () {
