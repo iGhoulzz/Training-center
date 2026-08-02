@@ -82,9 +82,15 @@ final class UploadStaffCertificateAction
      * Derived from the validated mime type rather than the uploaded name: the
      * uploader never chooses what this file is called or what it ends in.
      *
+     * PUBLIC because StaffCertificateDownloadController derives the path shape
+     * it will serve from this map rather than repeating it. A copied alternation
+     * there would silently stop serving a whole credential type the day this
+     * list grows, and the symptom would look like missing files rather than like
+     * a stale regex.
+     *
      * @var array<string, string>
      */
-    private const EXTENSIONS = [
+    public const EXTENSIONS = [
         'application/pdf' => 'pdf',
         'image/jpeg' => 'jpg',
         'image/png' => 'png',

@@ -62,10 +62,14 @@ use Illuminate\Database\Eloquent\Builder;
  * NO BULK ACTIONS
  * ---------------
  * Filament authorizes a bulk action once against the *Any policy method and
- * never consults the per-record one. BatchPolicy defines no deleteAny(), so a
- * bulk delete added later fails closed rather than inheriting a rule nobody
- * decided — which matters here more than anywhere, because P1-T11 makes a batch
- * with enrolments undeletable and a bulk action could not express that.
+ * never consults the per-record one. BatchPolicy::deleteAny() is written out and
+ * refuses, which is what stops a bulk delete added later inheriting a rule nobody
+ * decided — and that matters here more than anywhere, because P1-T11 makes a
+ * batch with enrolments undeletable and a bulk action could not express it.
+ *
+ * The refusal has to be WRITTEN, not merely absent. Filament resolves a missing
+ * policy method to Response::allow(); an earlier version of this comment said
+ * omission would "fail closed", which is true of the Gate and false of the panel.
  *
  * The generic tag below is load-bearing, not decoration. Filament's Resource is
  * generic over its model and defaults the parameter to Model, so without it

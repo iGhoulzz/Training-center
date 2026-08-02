@@ -62,7 +62,9 @@ use Illuminate\Support\Facades\Gate;
  * ---------------
  * Filament authorizes a bulk action once against a *Any policy method and never
  * consults the per-record one, so a bulk withdrawal could not express the
- * assigned-batch rule at all. EnrollmentPolicy defines no deleteAny().
+ * assigned-batch rule at all. EnrollmentPolicy::deleteAny() is written out and
+ * refuses, which is what keeps it that way — Filament resolves a MISSING policy
+ * method to Response::allow(), so the refusal has to be stated, not implied.
  */
 class EnrollmentsRelationManager extends RelationManager
 {

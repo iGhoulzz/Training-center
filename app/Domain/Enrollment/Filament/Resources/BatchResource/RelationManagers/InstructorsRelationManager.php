@@ -58,7 +58,9 @@ use Illuminate\Support\Facades\Gate;
  * Filament authorizes a bulk action once against a *Any policy method and never
  * consults the per-record one, so a bulk detach could not express the
  * closed-batch refusal at all, and would call the relation's detach() directly.
- * BatchPolicy defines no deleteAny(); nothing here would consult it anyway.
+ * BatchPolicy::deleteAny() is written out and refuses; nothing here would consult
+ * it anyway, but the refusal has to be stated rather than left implied, because
+ * Filament resolves a MISSING policy method to Response::allow().
  */
 class InstructorsRelationManager extends RelationManager
 {

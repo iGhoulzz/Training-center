@@ -6,6 +6,7 @@ namespace App\Domain\Staff\Filament\Resources\StaffProfileResource\RelationManag
 
 use App\Domain\Staff\Actions\DeleteStaffCertificateAction;
 use App\Domain\Staff\Actions\UploadStaffCertificateAction;
+use App\Domain\Staff\Exceptions\FileStorageException;
 use App\Domain\Staff\Models\StaffCertificate;
 use App\Domain\Staff\Models\StaffProfile;
 use App\Models\User;
@@ -18,6 +19,7 @@ use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Schemas\Schema;
+use Filament\Support\Exceptions\Halt;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
@@ -162,16 +164,41 @@ class CertificatesRelationManager extends RelationManager
                 /** @var StaffProfile $profile */
                 $profile = $livewire->getOwnerRecord();
 
-                return app(UploadStaffCertificateAction::class)->execute(
-                    $actor,
-                    $profile,
-                    self::uploadedFileFrom($data),
-                    [
-                        'title' => $data['title'] ?? null,
-                        'issued_on' => $data['issued_on'] ?? null,
-                        'expires_on' => $data['expires_on'] ?? null,
-                    ],
-                );
+                try {
+                    return app(UploadStaffCertificateAction::class)->execute(
+                        $actor,
+                        $profile,
+                        self::uploadedFileFrom($data),
+                        [
+                            'title' => $data['title'] ?? null,
+                            'issued_on' => $data['issued_on'] ?? null,
+                            'expires_on' => $data['expires_on'] ?? null,
+                        ],
+                    );
+                } catch (FileStorageException) {
+                    /*
+                     * P1-T15, domain-integrity finding 3. A full or read-only
+                     * disk reached the administrator as an unexplained 500 in
+                     * the middle of an upload modal.
+                     *
+                     * Halt rather than a bare notification: ->using() must
+                     * return a record, and letting the modal close would report
+                     * a certificate that does not exist. Halt is what tells
+                     * Filament to stop the action and leave the form standing,
+                     * so the metadata already typed is still there to retry with.
+                     *
+                     * The Action wrote no row and left no untracked bytes — the
+                     * provisional receipt is dispatched for cleanup by the same
+                     * failure — so there is nothing here to undo.
+                     */
+                    Notification::make()
+                        ->title(__('staff.storage_unavailable'))
+                        ->danger()
+                        ->persistent()
+                        ->send();
+
+                    throw new Halt;
+                }
             });
     }
 

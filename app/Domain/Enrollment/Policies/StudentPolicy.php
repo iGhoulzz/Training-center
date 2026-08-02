@@ -30,11 +30,19 @@ use App\Models\User;
  *                         with a separate guard, and this policy governs the
  *                         staff dashboard only.
  *
- * There is no deleteAny(): StudentResource registers no bulk actions. Filament
- * authorizes a bulk action once against the *Any method and never consults the
- * per-record one, so leaving it undefined makes any bulk delete added later
- * fail closed until someone decides the rule on purpose. See
- * docs/ENGINEERING.md, "Bulk actions cannot be authorized per record".
+ * deleteAny() is written out and refuses. StudentResource registers no bulk
+ * actions, and Filament authorizes one ONCE against the *Any method without ever
+ * consulting the per-record rule, so a bulk delete could not express this
+ * policy's protections at all.
+ *
+ * WRITING IT OUT IS WHAT MAKES THE REFUSAL REAL, and an earlier version of this
+ * comment had it backwards: it said leaving the method undefined made a later
+ * bulk delete "fail closed". It does the opposite. Filament resolves a MISSING
+ * policy method to Response::allow() where the Gate resolves it to false, so an
+ * unmentioned ability is denied everywhere a test would look and allowed
+ * everywhere a user would click. See docs/ENGINEERING.md, "Bulk actions cannot
+ * be authorized per record", and tests/Feature/PolicyAbilitySurfaceTest.php,
+ * which now enforces both halves.
  */
 class StudentPolicy
 {

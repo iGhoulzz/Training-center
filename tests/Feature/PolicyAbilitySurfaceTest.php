@@ -158,3 +158,111 @@ it('refuses the dormant abilities rather than merely defining them', function ()
         ."is skipped entirely:\n  ".implode("\n  ", $permissive),
     );
 });
+
+/*
+|--------------------------------------------------------------------------
+| And no comment may claim otherwise (P1-T15, domain-integrity finding 6)
+|--------------------------------------------------------------------------
+|
+| The group 1 fix above added deleteAny() to six policies and left every file
+| header still saying the method did not exist. Four of them went further and
+| taught the reasoning this test disproves — "leaving it undefined makes any bulk
+| delete added later fail closed" — sitting eighty lines above the block that
+| corrects exactly that belief.
+|
+| That is worse than an ordinary stale comment. The next person to read the top
+| of a policy before adding a bulk action learns the wrong lesson from the file
+| that was just corrected to teach the right one, and the lesson they learn is
+| the one that opens the door.
+|
+| The test above makes the claim checkable rather than a matter of discipline:
+| every policy now states an answer for every ability, so ANY comment asserting
+| that some policy lacks one is false by construction.
+*/
+
+/**
+ * Does this comment claim a policy leaves a BULK or SOFT-DELETE ability
+ * undefined?
+ *
+ * NAMED FOR WHAT IT COVERS, WHICH IS NOT EVERY POLICY ABILITY. The list below is
+ * deliberately narrower than FILAMENT_POLICY_ABILITIES: bare `view()`,
+ * `create()`, `update()` and `delete()` are ordinary English in this codebase's
+ * prose ("there is no delete() path for the activity log"), and including them
+ * would fire on sentences making no claim about the policy surface at all.
+ *
+ * So a comment asserting "StudentPolicy defines no delete()" would NOT be
+ * caught, and that gap is stated here rather than left to be discovered — the
+ * families that actually drifted, and the ones a reader is most likely to reason
+ * wrongly about, are the bulk and soft-delete abilities.
+ *
+ * A named function with its own sample sets below rather than an inline regex,
+ * because an inline pattern can only ever be tested against the codebase as it
+ * happens to be today — precisely the case where it passes vacuously.
+ */
+function claimsABulkOrSoftDeleteAbilityIsUndefined(string $comments): bool
+{
+    $abilities = '(?:deleteAny|restoreAny|forceDeleteAny|restore|forceDelete|replicate|reorder)';
+
+    $patterns = [
+        // "defines no deleteAny()", "There is no deleteAny():", "has no restore()"
+        '/\bno\s+'.$abilities.'\s*\(\)/i',
+        // The disproved reasoning itself, which is harmful even without naming a
+        // method: it is the sentence that teaches a missing method fails closed.
+        '/leaving it undefined/i',
+    ];
+
+    foreach ($patterns as $pattern) {
+        if (preg_match($pattern, $comments) === 1) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+it('detects the claims it is meant to detect', function (string $sample) {
+    // Deleting a rule from the detector fails here.
+    expect(claimsABulkOrSoftDeleteAbilityIsUndefined($sample))->toBeTrue();
+})->with([
+    'EnrollmentPolicy defines no deleteAny().',
+    'There is no deleteAny(): BatchResource registers no bulk actions.',
+    'BatchPolicy defines no deleteAny(); nothing here would consult it anyway.',
+    'StudentPolicy has no forceDelete() and never will.',
+    'so leaving it undefined makes any bulk delete added later fail closed',
+    'There is no restoreAny().',
+]);
+
+it('leaves correct statements about those abilities alone', function (string $sample) {
+    // Over-broadening the detector fails here. Every one of these is a true
+    // sentence that some file in app/ needs to be able to say.
+    expect(claimsABulkOrSoftDeleteAbilityIsUndefined($sample))->toBeFalse();
+})->with([
+    'StaffCertificatePolicy::deleteAny() gates nothing here because there is no bulk delete to authorize.',
+    'RolePolicy::deleteAny() already refuses, so the inherited action would fail anyway.',
+    'No bulk actions are registered on this resource.',
+    'deleteAny() returns false because bulk authorization skips the per-record rule.',
+    'Filament authorizes a bulk action once against the *Any policy method.',
+    'There is no delete() path for the activity log, by design.',
+]);
+
+it('has no comment claiming a policy leaves a bulk or soft-delete ability undefined', function () {
+    $offenders = [];
+
+    foreach (File::allFiles(app_path()) as $file) {
+        if ($file->getExtension() !== 'php') {
+            continue;
+        }
+
+        $path = (string) $file->getRealPath();
+
+        if (claimsABulkOrSoftDeleteAbilityIsUndefined(appCommentsOnly($path))) {
+            $offenders[] = str_replace(base_path().DIRECTORY_SEPARATOR, '', $path);
+        }
+    }
+
+    expect($offenders)->toBeEmpty(
+        'Every policy states an answer for every ability, so these comments are false — and '
+        ."the ones about bulk deletion teach the reasoning this file exists to disprove:\n  "
+        .implode("\n  ", $offenders),
+    );
+});

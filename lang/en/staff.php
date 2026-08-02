@@ -84,6 +84,20 @@ return [
     'profile_delete_refused_certificates' => 'This profile holds certificates you are not allowed to delete.',
 
     /*
+     * Storage failures (P1-T15, domain-integrity finding 3).
+     *
+     * Says nothing was saved, because nothing was: the write is refused before
+     * the owning row commits, and the provisional receipt is dispatched for
+     * cleanup. The administrator's next question is whether to re-enter the
+     * form, and this answers it.
+     *
+     * It names no disk and no path. Those ride on the exception for the log,
+     * where an operator can act on them; in the panel they are an internal
+     * storage layout nobody can do anything with.
+     */
+    'storage_unavailable' => 'The file could not be stored, because the server is out of space or its storage is unavailable. Nothing was saved. Report this to whoever administers the server, then try again.',
+
+    /*
      * Escalation-guard messages (P1-T04c). The guards raise these as exception
      * messages, so they must exist or a refusal surfaces as a raw key.
      */

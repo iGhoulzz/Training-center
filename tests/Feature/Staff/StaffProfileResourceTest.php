@@ -15,6 +15,7 @@ use App\Domain\Staff\Services\FileLifecycleService;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Filament\Tables\Columns\ImageColumn;
+use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -136,6 +137,114 @@ it('writes a real profile photo through the edit page save hook', function () {
     expect($path)->toBeString()
         ->and($path)->toStartWith('staff-photos/');
     Storage::disk('private')->assertExists($path);
+});
+
+/*
+|--------------------------------------------------------------------------
+| A full or read-only disk (P1-T15, domain-integrity finding 3)
+|--------------------------------------------------------------------------
+|
+| The private disk is configured with throw => false, so the Actions turn a
+| false return into FileStorageException rather than pretending the write
+| succeeded. Nothing caught it, so a full disk reached the administrator as an
+| unexplained 500 mid-save.
+|
+| Both tests assert the SAVE OUTCOME rather than the notification text. A polite
+| notification with a committed half-save behind it is the actual harm, and it is
+| the half a wording change must not be able to hide.
+*/
+
+/**
+ * Make every write to the private disk report failure, as a full disk does.
+ *
+ * Storage::set() replaces that ONE disk. Storage::shouldReceive('disk') would
+ * mock the whole facade, and Livewire's own temporary-upload disk then arrives
+ * at a mock with no expectations — the failure is unrelated to the code under
+ * test and reads as if the guard misfired.
+ */
+function failThePrivateDisk(): void
+{
+    $failing = Mockery::mock(Filesystem::class);
+    $failing->shouldReceive('putFileAs')->andReturn(false);
+    // The compensation receipt written before the bytes is purged on the sync
+    // queue, and that cleanup must still be able to run.
+    $failing->shouldReceive('delete')->andReturn(true);
+    $failing->shouldReceive('exists')->andReturn(false);
+
+    Storage::set('private', $failing);
+}
+
+it('rolls the whole profile save back when the disk cannot take the photo', function () {
+    /*
+     * THE ROLLBACK IS THE ASSERTION.
+     *
+     * Without it the job title commits while the photo silently does not, and
+     * the administrator is left looking at a record they believe they updated in
+     * full. EditStaffProfile sets $hasDatabaseTransactions = true and the refusal
+     * throws Halt::rollBackDatabaseTransaction(), which is what unwinds it.
+     */
+    $profile = StaffProfile::factory()->create([
+        'profile_photo_path' => null,
+        'job_title' => 'Original title',
+    ]);
+
+    failThePrivateDisk();
+
+    Livewire::actingAs(($this->makeRole)('admin'))
+        ->test(EditStaffProfile::class, ['record' => $profile->getKey()])
+        ->fillForm([
+            'job_title' => 'Edited title',
+            'profile_photo' => livewirePngUpload('avatar.png'),
+        ])
+        ->call('save')
+        // The administrator is told why, not merely left on an unchanged form.
+        ->assertNotified(__('staff.storage_unavailable'));
+
+    $profile = $profile->fresh();
+
+    expect($profile->profile_photo_path)->toBeNull()
+        ->and($profile->job_title)->toBe(
+            'Original title',
+            'The attribute write survived a refused photo, so the save committed in part and '
+            .'the record now disagrees with what the administrator was shown.',
+        );
+});
+
+it('records no certificate when the disk cannot take the uploaded file', function () {
+    // The upload path has no half-save to undo — the Action writes no row when
+    // the bytes fail — so what matters is that no phantom certificate is
+    // recorded for a document that was never stored.
+    $profile = StaffProfile::factory()->create();
+
+    failThePrivateDisk();
+
+    Livewire::actingAs(($this->makeRole)('admin'))
+        ->test(CertificatesRelationManager::class, [
+            'ownerRecord' => $profile,
+            'pageClass' => ViewStaffProfile::class,
+        ])
+        ->callTableAction('create', null, [
+            'title' => 'Credential that never landed',
+            'issued_on' => '2024-01-01',
+            'expires_on' => '2030-01-01',
+            'certificate_file' => livewirePngUpload('credential.png'),
+        ])
+        /*
+         * The Halt and the notification, pinned rather than described.
+         *
+         * The row count below is the harm, but on its own it also passes for an
+         * action that failed silently and closed the modal — losing the metadata
+         * the administrator had typed and telling them nothing. These two assert
+         * the outcome the comment in the relation manager actually claims.
+         */
+        ->assertTableActionHalted('create')
+        ->assertNotified(__('staff.storage_unavailable'));
+
+    expect(StaffCertificate::count())->toBe(
+        0,
+        'A certificate row exists for bytes the disk refused, so the register lists a '
+        .'document that was never stored.',
+    );
 });
 
 it('renders an authorized photo route and falls back to initials when no photo exists', function () {
