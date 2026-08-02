@@ -220,7 +220,37 @@ argue for them:
   rather than repeated as a literal, so lengthening the ladder fails the build.
 - **No attempt ceiling.** Abandoning a receipt would leave a document the centre
   is no longer entitled to hold on disk forever — the outcome the feature exists
-  to prevent. The bound is on the batch size instead, oldest first.
+  to prevent. The bound is on the batch size instead, and it rotates.
+
+**The bound did not rotate on the first attempt, and Codex caught it.** The run
+selected its page by `created_at`, which never changes, so a page that never
+drained was selected again by every subsequent run and the receipts behind it
+were never dispatched at all — the bound became a permanent ceiling rather than a
+rate limit. `pending_file_deletions.last_swept_at` is now stamped after each
+successful dispatch; `scopeStale()` additionally requires never-swept or
+swept-longer-ago-than-the-threshold, and `scopeInSweepOrder()` puts never-swept
+receipts ahead of every swept one. **Neither half works alone** — with only the
+filter, a stamp aging past the threshold makes the head eligible again and a
+`created_at`-led order picks it ahead of everything behind it, which is the same
+starvation an hour later. Each half has its own test.
+
+**The part worth carrying forward is not the defect but the claim.** Both the
+command's comment and this document stated "successive runs will reach them".
+That sentence was written from the intent and never from the behaviour, and **no
+single-run test can tell those apart** — starvation only becomes visible on a
+second run. The single-run ordering test below looked like coverage of exactly
+this property and was not.
+
+Two handoff guarantees were missing and are now pinned. **Dispatch, then stamp**:
+a stamp written first marks a receipt as handed off when it was not, so a queue
+outage would push the whole backlog a full threshold into the future for work
+that never happened. A dispatch failure leaves `last_swept_at` untouched, is
+reported and counted, and the rest of the page is still attempted; the run exits
+non-zero. **Duplicate purge execution is a non-event**, pinned in both shapes —
+the receipt already gone, and the receipt still present with the bytes already
+unlinked. The second matters most, because it rests on `Storage::delete()`
+reporting success for an absent file, which is the assumption
+`PurgeDeletedFileJob` makes when it treats a `false` return as a real failure.
 
 Joining the backup pipeline's mutex was considered and **rejected**: it would let
 a slow or stuck nightly backup hold file deletion off for hours, and buys nothing,
@@ -248,7 +278,10 @@ asserts which table refused. Verified by reverting `batch_instructor.user_id`: t
 test fails, as it must. **Adding a constraint can silently hollow out an unrelated
 test that was pinning a different one.**
 
-**Mutation testing: twelve mutations, eleven caught, one survived.**
+**Mutation testing: eighteen mutations, seventeen caught, one survived.** Twelve
+on the original branch, six more on the rotation repair (stamp removed,
+nulls-first term removed, whole sweep order removed, eligibility condition
+removed, stamp moved before dispatch, dispatch failure rethrown).
 
 The survivor is the part worth keeping. Deleting the whole `ORDER BY` from the
 sweep left the ordering test green. The first explanation — that InnoDB was
@@ -270,9 +303,14 @@ argument becomes a second expected value.
 
 | Gate | Result |
 |---|---|
-| `php artisan test` | **822 passed**, 0 failed, 2352 assertions |
+| `php artisan test` | **828 passed**, 0 failed, 2376 assertions |
 | `vendor/bin/pint --test` | passed |
 | `composer analyse` | 0 errors |
+
+Codex independently verified the pre-rotation tip at 822 tests / 2352 assertions,
+Pint and PHPStan clean, and approved everything except the starvation finding —
+including the restrictive staff-profile foreign key and the corrected
+instructor-allocation test.
 
 ### Unverified items
 
