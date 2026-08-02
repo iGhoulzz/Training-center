@@ -5,12 +5,16 @@ declare(strict_types=1);
 use App\Domain\Enrollment\Models\Course;
 use App\Domain\Enrollment\Models\Student;
 use App\Domain\Staff\Actions\SystemRoleWriter;
+use App\Domain\Staff\Models\StaffCertificate;
 use App\Domain\Staff\Models\StaffProfile;
+use App\Domain\Staff\Support\RecordsActivity;
 use App\Models\Role;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\File;
 use Spatie\Activitylog\Models\Activity;
 use Spatie\Activitylog\Support\ActivityBuffer;
 
@@ -183,6 +187,40 @@ it('pins the global exclusion list', function () {
         ->toContain('remember_token');
 });
 
+/**
+ * Every model that records activity, found rather than listed.
+ *
+ * @return array<int, class-string<Model>>
+ */
+function recordsActivityModels(): array
+{
+    $classes = [];
+
+    foreach (File::allFiles(app_path()) as $file) {
+        if ($file->getExtension() !== 'php') {
+            continue;
+        }
+
+        $class = 'App\\'.str_replace(
+            [app_path().DIRECTORY_SEPARATOR, '.php', DIRECTORY_SEPARATOR],
+            ['', '', '\\'],
+            (string) $file->getRealPath(),
+        );
+
+        if (! class_exists($class) || ! is_subclass_of($class, Model::class)) {
+            continue;
+        }
+
+        if (in_array(RecordsActivity::class, class_uses_recursive($class), true)) {
+            $classes[] = $class;
+        }
+    }
+
+    sort($classes);
+
+    return $classes;
+}
+
 it('keeps secrets out of every model allowlist', function () {
     /*
      * The layer the runtime test above cannot isolate.
@@ -191,16 +229,26 @@ it('keeps secrets out of every model allowlist', function () {
      * User::auditedAttributes() leaks nothing today — and would leak everything
      * the day somebody trims the global list. Asserted directly so the two
      * controls fail independently rather than only in combination.
+     *
+     * THE MODEL LIST IS DERIVED (P1-T15, group 3 finding L4). It used to be five
+     * class names written out by hand while eight models used the trait, and the
+     * omissions were not harmless: StaffCertificate is the one that owns `disk`,
+     * `path` and `original_filename`, and an uploaded filename routinely carries
+     * somebody's name or national ID. A hand-written list protects whichever
+     * models were remembered on the day and silently stops covering every model
+     * added afterwards.
      */
     $secrets = ['password', 'remember_token'];
+    $models = recordsActivityModels();
 
-    $models = [
-        User::class,
-        Role::class,
-        StaffProfile::class,
-        Student::class,
-        Course::class,
-    ];
+    /*
+     * The scan must have found something, and specifically the model the old
+     * list forgot. Without this the loop below passes vacuously the moment the
+     * derivation breaks — an empty array satisfies every assertion inside it.
+     */
+    expect($models)->not->toBeEmpty(
+        'No model was found using RecordsActivity, so nothing below was actually checked.',
+    )->and($models)->toContain(StaffCertificate::class);
 
     foreach ($models as $model) {
         $named = array_intersect((new $model)->auditedAttributes(), $secrets);

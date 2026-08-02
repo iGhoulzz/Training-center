@@ -104,9 +104,83 @@ final class AssignInstructorAction
 
             $this->assertEligible($instructor, $profile);
 
+            /*
+             * READ BEFORE THE WRITE, because afterwards the old figure is gone.
+             *
+             * syncWithoutDetaching() either inserts or updates and tells the
+             * caller nothing about which. "Sara went from 18 to 30" is the
+             * question a payroll dispute asks in phase 2, and an entry that only
+             * records 30 cannot answer it.
+             */
+            $existing = $batch->instructors()
+                ->where('users.id', $instructor->getKey())
+                ->first();
+
+            $previousHours = $existing === null
+                ? null
+                // getAttribute() rather than a dynamic property: the pivot has no
+                // typed model, so ->assigned_hours is undefined as far as static
+                // analysis is concerned and would only appear to work.
+                : (int) $existing->pivot->getAttribute('assigned_hours');
+
+            /*
+             * NOTHING CHANGED, SO NOTHING IS WRITTEN OR RECORDED.
+             *
+             * Resubmitting an unchanged form is ordinary — an administrator
+             * opens the allocation, looks at it, and saves. Recording that as
+             * instructor_hours_changed puts an event in the trail for a change
+             * that never happened, and a reader settling a phase 2 payroll
+             * dispute cannot tell it from a real one. A false entry is worse
+             * than a missing one, which is exactly why RemoveInstructorAction
+             * refuses to log a detach that removed nothing; this is the same
+             * rule, and it was missing here.
+             *
+             * The pivot write goes with it: rewriting a row to the value it
+             * already holds is a database write for no change at all.
+             */
+            if ($previousHours === $data->assignedHours) {
+                return $batch->refresh();
+            }
+
             $batch->instructors()->syncWithoutDetaching([
                 $instructor->getKey() => ['assigned_hours' => $data->assignedHours],
             ]);
+
+            /*
+             * A belongsToMany sync fires NO ELOQUENT EVENT, so the LogsActivity
+             * concern never sees this write and nothing else recorded it
+             * (P1-T15, group 3 finding H2). Instructor hours are what phase 2
+             * pays wages from — the one place "who changed this, and to what" is
+             * a money question — and they were the only mutation in the system
+             * with no audit entry at all.
+             *
+             * Inside the transaction and after the authorization check, so a
+             * refusal or a rollback takes the entry with it. Same placement as
+             * DeleteStaffProfileAction's cascade entries, for the same reason.
+             */
+            $event = $previousHours === null ? 'instructor_assigned' : 'instructor_hours_changed';
+
+            activity()
+                ->causedBy($actor)
+                ->performedOn($batch)
+                ->event($event)
+                ->withProperties([
+                    /*
+                     * $instructor is safe to read here, and the reason is worth
+                     * stating because RemoveInstructorAction had to be changed
+                     * for exactly this: it is not a caller-supplied instance.
+                     * This Action takes an INT ID on the DTO and reloads the row
+                     * itself under a lock, so these values are the database's,
+                     * not whatever a caller happened to be holding.
+                     */
+                    'instructor_id' => (int) $instructor->getKey(),
+                    // Kept beside the id for the same reason the log keeps
+                    // causer_name: the account may be gone when this is read.
+                    'instructor_name' => $instructor->name,
+                    'assigned_hours' => $data->assignedHours,
+                    'previous_hours' => $previousHours,
+                ])
+                ->log($event);
 
             return $batch->refresh();
         });

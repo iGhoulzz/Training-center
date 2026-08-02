@@ -98,6 +98,13 @@ return [
     'storage_unavailable' => 'The file could not be stored, because the server is out of space or its storage is unavailable. Nothing was saved. Report this to whoever administers the server, then try again.',
 
     /*
+     * The append-only refusal (P1-T15, group 3 finding H1).
+     * ActivityLogIsAppendOnlyException raises this as its exception message, so
+     * it must exist or the refusal surfaces as a raw key.
+     */
+    'activity_log_append_only' => 'The activity log is append-only. Entries are never removed, and no retention window applies to it.',
+
+    /*
      * Escalation-guard messages (P1-T04c). The guards raise these as exception
      * messages, so they must exist or a refusal surfaces as a raw key.
      */

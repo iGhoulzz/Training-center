@@ -2,22 +2,59 @@
 
 declare(strict_types=1);
 
+use App\Domain\Staff\Actions\RefuseActivityLogCleaning;
 use App\Domain\Staff\Support\RecordActivityWithContext;
-use Spatie\Activitylog\Actions\CleanActivityLogAction;
 use Spatie\Activitylog\Models\Activity;
+
+/*
+ * Read once into a variable so the blank check and the coercion below see the
+ * same value without calling env() twice.
+ */
+$activityLogEnabled = env('ACTIVITYLOG_ENABLED');
 
 return [
 
     /*
      * If set to false, no activities will be saved to the database.
+     *
+     * COERCED, BECAUSE A BLANK VALUE SILENTLY DISABLED THE WHOLE AUDIT TRAIL
+     * (P1-T15, group 3 finding M1).
+     *
+     * env()'s second argument is a default for a MISSING key. A key that exists
+     * and is empty returns '', sails straight past the default, and Spatie's
+     * ActivityLogStatus has no declare(strict_types=1) — so coercive typing
+     * turned '' into false and nothing was recorded from that deploy onward.
+     * Nothing failed and nothing warned; the panel kept rendering the entries
+     * written before it, so the first sign was the log stopping at a date.
+     *
+     * THE BLANK IS HANDLED BEFORE filter_var, NOT BY IT. FILTER_VALIDATE_BOOL
+     * treats an empty string as a recognised FALSE — it is listed alongside
+     * '0', 'off' and 'no' — so FILTER_NULL_ON_FAILURE never fires for it and a
+     * filter_var-only fix reproduces the bug exactly. Only a genuinely
+     * unrecognisable value reaches the ?? below.
+     *
+     * A deliberate "false" or "0" still reads as false, which a test asserts —
+     * otherwise this would be a hardcoded true with the setting removed.
      */
-    'enabled' => env('ACTIVITYLOG_ENABLED', true),
+    'enabled' => $activityLogEnabled === null || $activityLogEnabled === ''
+        ? true
+        : filter_var($activityLogEnabled, FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE) ?? true,
 
     /*
-     * When the clean command is executed, all recording activities older than
-     * the number of days specified here will be deleted.
+     * NULL BECAUSE NOTHING MAY BE CLEANED (P1-T15, group 3 finding H1).
+     *
+     * This was 365 — a live retention window on a log whose non-negotiable rule
+     * is that no delete path exists for any role, including super admin. The
+     * real barrier is the cleaning action below, which refuses every caller;
+     * this is the second one, and it fails `activitylog:clean` on its own
+     * validation ("The days option must be a positive integer") before the
+     * action is reached at all.
+     *
+     * Two barriers because neither covers the other's case: this one does not
+     * survive an explicit `--days=30`, and the action does not make the bare
+     * command fail early and legibly.
      */
-    'clean_after_days' => 365,
+    'clean_after_days' => null,
 
     /*
      * If no log name is passed to the activity() helper
@@ -120,6 +157,20 @@ return [
          * one point both paths pass through.
          */
         'log_activity' => RecordActivityWithContext::class,
-        'clean_log' => CleanActivityLogAction::class,
+
+        /*
+         * THE APPEND-ONLY RULE'S LAST OPEN DOOR, CLOSED (P1-T15, finding H1).
+         *
+         * This was the package's own CleanActivityLogAction, which issues
+         * `DELETE FROM activity_log WHERE created_at < ?`. ActivityPolicy claims
+         * "no policy, no UI control and no application code path can remove or
+         * alter an entry", and that was false while this line pointed at a
+         * deleting action reachable from `activitylog:clean` and from any job or
+         * package that resolves it.
+         *
+         * Replaced rather than merely unscheduled, because the action is what
+         * every caller reaches; the command is only its most obvious door.
+         */
+        'clean_log' => RefuseActivityLogCleaning::class,
     ],
 ];

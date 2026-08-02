@@ -19,6 +19,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Spatie\Activitylog\Models\Activity;
 
 /**
  * Instructor hour allocation (P1-T10).
@@ -945,3 +946,196 @@ it('lets a super admin assign instructors', function () {
  * ActionBoundaryArchTest, with the shared KNOWN_PIVOT_MUTATORS constant and the
  * reflection guard that keeps that constant honest against framework upgrades.
  */
+
+/*
+|--------------------------------------------------------------------------
+| The audit trail (P1-T15, group 3 finding H2)
+|--------------------------------------------------------------------------
+|
+| Instructor hours are what phase 2 pays wages from, and until now changing them
+| left NO AUDIT ENTRY AT ALL. A belongsToMany sync or detach fires no Eloquent
+| event, so the LogsActivity concern never sees it, and neither Action called
+| activity(). Every other mutation in the system is attributable and these were
+| not — the one place where "who changed this, and to what" is a money question.
+|
+| Logged inside each Action's own transaction, so a rollback takes the entry with
+| it, exactly as DeleteStaffProfileAction does for its cascade.
+*/
+
+it('records who assigned an instructor, and how many hours', function () {
+    $sara = ($this->makeInstructor)('Sara');
+
+    $this->assign->execute($this->admin, new AssignInstructorData(
+        (int) $this->batch->getKey(),
+        (int) $sara->getKey(),
+        18,
+    ));
+
+    $entry = Activity::query()->where('event', 'instructor_assigned')->sole();
+
+    expect((int) $entry->causer_id)->toBe((int) $this->admin->getKey())
+        ->and($entry->subject_type)->toBe(Batch::class)
+        ->and((int) $entry->subject_id)->toBe((int) $this->batch->getKey())
+        ->and((int) $entry->properties['instructor_id'])->toBe((int) $sara->getKey())
+        ->and($entry->properties['instructor_name'])->toBe('Sara')
+        ->and((int) $entry->properties['assigned_hours'])->toBe(18)
+        // Null rather than absent: this was a new allocation, not a change.
+        ->and($entry->properties['previous_hours'])->toBeNull();
+});
+
+it('records an hours change as a change, with the figure it replaced', function () {
+    // "Sara went from 18 to 30" is the question a payroll dispute asks. An entry
+    // that only says "30" cannot answer it.
+    $sara = ($this->makeInstructor)('Sara');
+    $assign = fn (int $hours) => $this->assign->execute($this->admin, new AssignInstructorData(
+        (int) $this->batch->getKey(),
+        (int) $sara->getKey(),
+        $hours,
+    ));
+
+    $assign(18);
+    $assign(30);
+
+    $entry = Activity::query()->where('event', 'instructor_hours_changed')->sole();
+
+    expect((int) $entry->properties['assigned_hours'])->toBe(30)
+        ->and((int) $entry->properties['previous_hours'])->toBe(18);
+});
+
+it('records who removed an instructor, and the hours they held', function () {
+    $sara = ($this->makeInstructor)('Sara');
+    $this->assign->execute($this->admin, new AssignInstructorData(
+        (int) $this->batch->getKey(),
+        (int) $sara->getKey(),
+        30,
+    ));
+
+    $this->remove->execute($this->admin, $this->batch->fresh(), $sara);
+
+    $entry = Activity::query()->where('event', 'instructor_removed')->sole();
+
+    expect((int) $entry->causer_id)->toBe((int) $this->admin->getKey())
+        ->and((int) $entry->properties['instructor_id'])->toBe((int) $sara->getKey())
+        // The hours are read BEFORE the detach, or there is nothing left to read.
+        ->and((int) $entry->properties['assigned_hours'])->toBe(30);
+});
+
+it('writes no audit entry when the allocation is refused', function () {
+    /*
+     * The control. A logger placed outside the transaction, or before the
+     * authorization check, would record attempts that never happened — and an
+     * audit trail that logs refusals as though they were changes is worse than
+     * one that misses them, because it is actively wrong.
+     */
+    $sara = ($this->makeInstructor)('Sara');
+    $viewer = User::factory()->create(['is_active' => true]);
+    $viewer->givePermissionTo('view_any_batch');
+
+    $before = Activity::query()->count();
+
+    try {
+        $this->assign->execute($viewer->fresh(), new AssignInstructorData(
+            (int) $this->batch->getKey(),
+            (int) $sara->getKey(),
+            30,
+        ));
+    } catch (AuthorizationException) {
+        // Expected.
+    }
+
+    expect(Activity::query()->count())->toBe($before)
+        ->and(DB::table('batch_instructor')->count())->toBe(0);
+});
+
+it('writes no removal entry when there was no allocation to remove', function () {
+    /*
+     * ADDED BECAUSE MUTATION TESTING FOUND THE SET INCOMPLETE. Deleting the
+     * "did a row actually go?" guard broke nothing, because every other removal
+     * test detaches an instructor who really held hours.
+     *
+     * detach() on an instructor with no allocation removes nothing and reports
+     * success. Logging that as a removal puts an event in the audit trail for a
+     * change that never happened — worse than the silence this finding fixes,
+     * because a reader cannot tell it from a real one.
+     */
+    $sara = ($this->makeInstructor)('Sara');
+    $before = Activity::query()->count();
+
+    $this->remove->execute($this->admin, $this->batch, $sara);
+
+    expect(Activity::query()->where('event', 'instructor_removed')->count())->toBe(0)
+        ->and(Activity::query()->count())->toBe($before);
+});
+
+it('records nothing when the submitted hours match what is already stored', function () {
+    /*
+     * A FALSE CHANGE EVENT IS WORSE THAN A MISSING ONE.
+     *
+     * Resubmitting an unchanged form is ordinary — an administrator opens the
+     * allocation, looks at it, and saves. Recording that as
+     * instructor_hours_changed puts an event in the trail for a change that
+     * never happened, and a reader in a phase 2 payroll dispute cannot tell it
+     * from a real one. RemoveInstructorAction already refuses to log a detach
+     * that removed nothing; this is the same rule on the other Action, and it
+     * was missing.
+     *
+     * The pivot write is skipped with it. Rewriting a row to the value it
+     * already holds touches updated_at and produces a database write for no
+     * change at all.
+     */
+    $sara = ($this->makeInstructor)('Sara');
+    $assign = fn () => $this->assign->execute($this->admin, new AssignInstructorData(
+        (int) $this->batch->getKey(),
+        (int) $sara->getKey(),
+        18,
+    ));
+
+    $assign();
+
+    $statements = captureStatements();
+    $assign();
+
+    expect(Activity::query()->where('event', 'instructor_hours_changed')->count())->toBe(
+        0,
+        'Resubmitting the same hours recorded a change that did not happen.',
+    )->and(Activity::query()->where('event', 'instructor_assigned')->count())->toBe(1)
+        ->and(writesTo($statements, 'batch_instructor'))->toBeEmpty(
+            'The pivot was rewritten to the value it already held.',
+        );
+
+    // And the allocation is untouched, so skipping is not losing anything.
+    expect((int) $this->batch->fresh()->instructors->first()->pivot->assigned_hours)->toBe(18);
+});
+
+it('snapshots the removed instructor\'s persisted name, not the caller\'s instance', function () {
+    /*
+     * THE AUDIT TRAIL MUST NOT TAKE THE CALLER'S WORD FOR IT.
+     *
+     * The name was read from the $instructor argument, which is whatever
+     * instance the caller happens to hold — and an unsaved change on it wrote a
+     * name into the log that was never in the database. An audit entry a caller
+     * can dictate is not an audit entry.
+     *
+     * $existing is the freshly queried row the Action already loads to read the
+     * hours, so the correct value was there the whole time.
+     */
+    $sara = ($this->makeInstructor)('Persisted Instructor');
+    $this->assign->execute($this->admin, new AssignInstructorData(
+        (int) $this->batch->getKey(),
+        (int) $sara->getKey(),
+        30,
+    ));
+
+    // A real record with an unsaved edit on it — never persisted.
+    $dirty = User::query()->findOrFail($sara->getKey());
+    $dirty->name = 'Unsaved Forged Name';
+
+    $this->remove->execute($this->admin, $this->batch->fresh(), $dirty);
+
+    $entry = Activity::query()->where('event', 'instructor_removed')->sole();
+
+    expect($entry->properties['instructor_name'])->toBe(
+        'Persisted Instructor',
+        'The log stored a name the caller supplied in memory and the database never held.',
+    )->and(User::query()->findOrFail($sara->getKey())->name)->toBe('Persisted Instructor');
+});

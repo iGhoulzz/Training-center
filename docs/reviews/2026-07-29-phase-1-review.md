@@ -533,6 +533,112 @@ renders, in English, inside a phase whose Arabic catalogue is deliberately empty
 It becomes phase 4 work, recorded here so phase 4 inherits it rather than
 rediscovers it.
 
+### Resolution — H1, H2, M1, M2, L4, L5 and L9
+
+Fixed on `p1/t15-activity-log-integrity`, seven commits from `main` at `e252f14`.
+**Group 3's remaining findings (M3, M4, M5, L2, L3, L6, L7, L8) are not in this
+branch's scope** and are planned as `p1/t15-backup-retention` and
+`p1/t15-detector-coverage`, run sequentially — the three share `AppServiceProvider`
+and one test database.
+
+**H1 — the append-only rule had a live delete path.** `activitylog:clean` was
+registered and issuing `DELETE FROM activity_log WHERE created_at < ?` against a
+365-day window this project had set itself. **The refusal goes in the ACTION, not
+the command**: `Config::cleanActivityLogAction()` is what a queued job or another
+package resolves, with no artisan invocation in front of it — the same shape as
+`SyncUserRolesAction` being reachable with no Filament `Select` in front of it.
+It throws rather than returning zero, because returning zero prints "Deleted 0
+record(s) … All done!" and exits successfully, which reads as a retention policy
+that ran and found nothing.
+
+Two barriers, and **mutation testing proved neither redundant**: `clean_after_days`
+is null so the bare command fails its own validation early and legibly, which does
+not survive an explicit `--days=30`; the action covers that and does not make the
+bare command fail cleanly. Restoring either one alone fails a different test.
+
+**H2 — instructor hours had no audit entry at all.** A `belongsToMany`
+`syncWithoutDetaching()`/`detach()` fires no Eloquent event, so `LogsActivity`
+never saw these writes and neither Action called `activity()`. This is what phase 2
+pays wages from — the one place "who changed this, and to what" is a money
+question. Three distinct events, with the previous figure recorded on a change,
+because "who moved Sara from 18 to 30" is what a payroll dispute asks. Both reads
+happen before their write, since afterwards the old figure is gone.
+
+**M1 — a blank `ACTIVITYLOG_ENABLED` disabled all recording**, silently: nothing
+failed, nothing warned, and the panel kept rendering entries written before the
+deploy. **The first fix reproduced the bug exactly.** `FILTER_VALIDATE_BOOL`
+treats `''` as a recognised FALSE, listed alongside `'0'` and `'off'`, so
+`FILTER_NULL_ON_FAILURE` never fires for it and a `filter_var`-only fix changes
+nothing. The blank is handled before the filter.
+
+**M2 — system entries named a real person.** `causedByAnonymous()` nulls the
+causer columns and leaves the relation `causedBy()` associated, so the recorder
+still found a Model and snapshotted its name. The panel renders "System" from the
+null `causer_id` while the row names somebody for a change they did not make, and
+the Who column searches `properties->causer_name`. The column now gates the
+snapshot. Pinned in both directions — never writing `causer_name` fails three
+existing tests that depend on the snapshot surviving a deletion or a rename.
+
+**L4 — and the mutation that made it more than cosmetic.** The secret-exclusion
+test named five models by hand while eight use `RecordsActivity`, and the misses
+included `StaffCertificate`, the only one carrying `disk`, `path` and
+`original_filename`. A coverage fix passes on arrival and proves nothing, so it
+was run both ways: injecting `password` into
+`StaffCertificate::auditedAttributes()` **fails the derived test and passes the
+old hand-written one.** The hole was real. The test also asserts the scan is
+non-empty and contains `StaffCertificate`, because an empty array satisfies every
+assertion inside the loop.
+
+**L5 — and a decorative config it exposed.** Shield's role form offered twelve
+`*_activity` write permissions on a log with no write path. Nothing was
+exploitable — `ActivityPolicy` refuses all of them — but it teaches the wrong
+thing, and the next person to act on that belief builds a feature to match.
+Fixing it revealed that **`policies.merge` was true, which combines a resource's
+`manage` list with the full default set instead of replacing it — so the existing
+entry restricting `RoleResource` to five abilities had never taken effect.**
+`merge` is now false, which is what the config's own comment already claimed.
+`manage` rather than `exclude`, because excluding the resource would also remove
+the two read permissions the seeder does create.
+
+**L9** is editorial: `ListActivities`' docblock claimed no view page existed while
+`getPages()` registers one. No test of its own — the view page's read-only
+behaviour is already covered — but it mattered, because somebody auditing the
+write surface would have taken the file's word for it.
+
+**Mutation testing: seventeen mutations, seventeen caught**, including both
+directions of M1, M2, L5 and the unchanged-hours guard, plus the two-way L4 pair
+above. One dataset gap was found and closed rather than argued away: no test
+detached an instructor holding no allocation, so logging a removal that never
+happened was unpinned.
+
+**Codex's round on this branch found two more audit-integrity defects in H2's own
+work, and both were about recording things that were not true.**
+
+- **A non-change logged as a change.** Assigning the same hours twice wrote
+  `instructor_hours_changed`. Resubmitting an unchanged form is ordinary, and a
+  reader settling a payroll dispute cannot tell that entry from a real one. **The
+  rule already existed on the other Action** — `RemoveInstructorAction` refuses to
+  log a detach that removed nothing — and was simply missing here. The pivot write
+  is skipped with it.
+- **A caller-supplied name in the audit trail.** The removal entry read
+  `instructor_name` from the `$instructor` argument, so an unsaved edit on the
+  caller's instance stored a name the database never held. Every property now
+  comes from the row the Action queried itself. `AssignInstructorAction` needs no
+  equivalent change, because it takes an id and reloads under a lock — now stated
+  in the code so the asymmetry does not read as an oversight.
+
+The general lesson, and it is the same one twice: **an audit trail must record
+only what actually changed, and only values it read itself.** A false entry is
+worse than a missing one, because nothing distinguishes it from a true one.
+
+**Gates on the branch tip, real output:**
+
+| Gate | Result |
+|---|---|
+| `php artisan test` | **876 passed**, 0 failed, 2481 assertions |
+| `vendor/bin/pint --test` | passed |
+| `composer analyse` | 0 errors |
+
 ### Unverified items
 
 | # | Claim | Experiment | Result |

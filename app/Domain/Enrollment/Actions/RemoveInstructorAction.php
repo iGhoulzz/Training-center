@@ -53,7 +53,59 @@ final class RemoveInstructorAction
 
             $this->authorize($actor, $locked);
 
+            /*
+             * The hours are read BEFORE the detach, or there is nothing left to
+             * read them from — the same ordering DeleteStaffProfileAction uses
+             * to collect file paths ahead of its cascade.
+             */
+            $existing = $locked->instructors()
+                ->where('users.id', $instructor->getKey())
+                ->first();
+
             $locked->instructors()->detach($instructor->getKey());
+
+            /*
+             * detach() fires no Eloquent event, so nothing recorded that an
+             * allocation phase 2 pays wages from was removed, or by whom
+             * (P1-T15, group 3 finding H2).
+             *
+             * Only when a row actually went. Detaching an instructor who holds
+             * no allocation removes nothing, and logging that as a removal would
+             * put an event in the trail for a change that never happened —
+             * worse than the silence this fixes, because it is actively wrong.
+             */
+            if ($existing === null) {
+                return;
+            }
+
+            activity()
+                ->causedBy($actor)
+                ->performedOn($locked)
+                ->event('instructor_removed')
+                ->withProperties([
+                    /*
+                     * EVERY VALUE COMES FROM $existing, THE ROW THIS ACTION READ.
+                     *
+                     * The name used to be taken from the $instructor argument —
+                     * whatever instance the caller happened to hold. An unsaved
+                     * edit on it wrote a name into the audit log that the
+                     * database never contained, demonstrated with a dirty
+                     * instance whose forged name was recorded while MySQL still
+                     * held the real one. An audit entry a caller can dictate is
+                     * not an audit entry.
+                     *
+                     * $existing was already being loaded to read the hours, so
+                     * the trustworthy value was there the whole time. The id is
+                     * taken from it too, for the same reason and so the three
+                     * properties cannot describe two different people.
+                     */
+                    'instructor_id' => (int) $existing->getKey(),
+                    'instructor_name' => $existing->name,
+                    // getAttribute() rather than a dynamic property — see
+                    // AssignInstructorAction for why.
+                    'assigned_hours' => (int) $existing->pivot->getAttribute('assigned_hours'),
+                ])
+                ->log('instructor_removed');
         });
     }
 

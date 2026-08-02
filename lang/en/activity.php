@@ -43,6 +43,15 @@ return [
         'logged_in' => 'Signed in',
         'logged_out' => 'Signed out',
         'login_failed' => 'Failed sign-in attempt',
+        /*
+         * Instructor hour allocations (P1-T15, group 3 finding H2). Assignment
+         * and a change of hours are separate events because they answer
+         * different questions in a phase 2 payroll dispute: "who put Sara on
+         * this batch" and "who moved her from 18 hours to 30".
+         */
+        'instructor_assigned' => 'Instructor assigned',
+        'instructor_hours_changed' => 'Instructor hours changed',
+        'instructor_removed' => 'Instructor removed',
     ],
 
     /*

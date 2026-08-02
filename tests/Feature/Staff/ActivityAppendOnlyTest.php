@@ -6,15 +6,18 @@ use App\Domain\Enrollment\Models\Course;
 use App\Domain\Enrollment\Models\Student;
 use App\Domain\Staff\Actions\SyncUserRolesAction;
 use App\Domain\Staff\Actions\SystemRoleWriter;
+use App\Domain\Staff\Exceptions\ActivityLogIsAppendOnlyException;
 use App\Domain\Staff\Filament\Resources\ActivityResource;
 use App\Domain\Staff\Filament\Resources\ActivityResource\Pages\ListActivities;
 use App\Domain\Staff\Filament\Resources\ActivityResource\Pages\ViewActivity;
 use App\Models\User;
+use BezhanSalleh\FilamentShield\Facades\FilamentShield;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Gate;
 use Livewire\Livewire;
 use Spatie\Activitylog\Models\Activity;
+use Spatie\Activitylog\Support\Config;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
 
@@ -36,6 +39,83 @@ beforeEach(function () {
         activity()->event('created')->log('created'),
         fn () => null,
     );
+});
+
+/*
+|--------------------------------------------------------------------------
+| The console surface (P1-T15, group 3 finding H1)
+|--------------------------------------------------------------------------
+|
+| THE HOLE THIS SUITE COULD NOT SEE. Every other test here proves the policy,
+| the resource and the pages are closed, and none of them ever looked at the
+| command line. `activitylog:clean` is a registered artisan command that issues
+| `DELETE FROM activity_log WHERE created_at < ?`, and this project configured it
+| with a live 365-day window — so ActivityPolicy's claim that "no policy, no UI
+| control and no application code path can remove or alter an entry" was false,
+| and docs/ENGINEERING.md explicitly places commands that use application code
+| inside the trust boundary rather than in the raw-SQL escape hatch.
+|
+| The refusal is placed in the ACTION rather than only in the command, because
+| the action is what any future caller reaches — a queued job, a scheduled task,
+| another package. Closing only the CLI would leave the code path open and merely
+| hide its most obvious door.
+*/
+
+it('refuses to clean the activity log from the command line', function () {
+    $old = ($this->entry)();
+    $old->forceFill(['created_at' => now()->subYears(3)])->saveQuietly();
+
+    $this->artisan('activitylog:clean')->assertFailed();
+
+    expect(Activity::whereKey($old->getKey())->exists())->toBeTrue(
+        'activitylog:clean deleted an audit entry, so the append-only rule has an '
+        .'application code path straight through it.',
+    );
+});
+
+it('refuses even when the caller names its own retention window', function () {
+    /*
+     * --days overrides config, so a fix that only neutralised clean_after_days
+     * would be bypassed by the most obvious next thing an operator types. This
+     * path gets past that barrier and is stopped by the action instead.
+     *
+     * ASSERTED AS A THROW RATHER THAN AN EXIT CODE, and the difference is the
+     * test harness rather than the behaviour: PendingCommand::run() calls the
+     * console kernel directly, so the exception propagates here, while in
+     * production the kernel's own handler renders it and exits non-zero. Either
+     * way the operator gets the refusal and the entry survives, which is what
+     * the assertions below check.
+     */
+    $old = ($this->entry)();
+    $old->forceFill(['created_at' => now()->subYears(3)])->saveQuietly();
+
+    try {
+        $this->artisan('activitylog:clean', ['--days' => 1])->run();
+        $thrown = null;
+    } catch (ActivityLogIsAppendOnlyException $exception) {
+        $thrown = $exception;
+    }
+
+    expect($thrown)->toBeInstanceOf(ActivityLogIsAppendOnlyException::class)
+        ->and(Activity::whereKey($old->getKey())->exists())->toBeTrue(
+            'activitylog:clean --days deleted an audit entry, so neutralising the configured '
+            .'retention window was the only barrier and it is trivially bypassed.',
+        );
+});
+
+it('refuses the cleaning action itself, not merely the command that calls it', function () {
+    /*
+     * THE BOUNDARY, NOT THE DOOR. A queued job or another package resolving the
+     * configured action reaches this without an artisan command in front of it,
+     * exactly as SyncUserRolesAction can be reached without a Filament Select.
+     */
+    $old = ($this->entry)();
+    $old->forceFill(['created_at' => now()->subYears(3)])->saveQuietly();
+
+    expect(fn () => Config::cleanActivityLogAction()->execute(1))
+        ->toThrow(ActivityLogIsAppendOnlyException::class);
+
+    expect(Activity::whereKey($old->getKey())->exists())->toBeTrue();
 });
 
 /*
@@ -260,6 +340,52 @@ it('says System only when there genuinely was no actor', function () {
         ->and(ActivityResource::actorLabel($entry))->toBe(__('activity.system'));
 });
 
+it('names nobody in the properties of a system entry either', function () {
+    /*
+     * P1-T15, group 3 finding M2, confirmed by experiment before the fix: a
+     * system write made while a super admin was signed in produced causer_id
+     * null, causer_type null, and properties.causer_name "Signed In Person".
+     *
+     * causedByAnonymous() nulls the two COLUMNS and leaves the relation that
+     * causedBy() associated, so the context recorder still found a Model and
+     * snapshotted its name. The panel then renders "System" from the null
+     * causer_id while the stored row names somebody for a change they did not
+     * make — and the Who column searches properties->causer_name, so that
+     * person's name MATCHES system rows.
+     *
+     * Signed in deliberately: with nobody authenticated there is no name to
+     * leak and the test would pass against the bug.
+     */
+    $signedIn = ($this->actorWith)('super_admin');
+    $this->actingAs($signedIn);
+
+    $target = User::factory()->create(['is_active' => true]);
+    $this->system->assignRoles($target, 'staff');
+
+    $entry = Activity::query()->where('event', 'roles_changed')->latest('id')->first();
+
+    expect($entry->causer_id)->toBeNull()
+        ->and($entry->getProperty('causer_name'))->toBeNull(
+            'A system entry carries a real person\'s name in its properties, so the log '
+            .'attributes to them a change they did not make.',
+        );
+});
+
+it('still records the name on an entry that genuinely has an actor', function () {
+    // The control. Dropping causer_name altogether would satisfy the test above
+    // and destroy the snapshot that lets the log name someone after their
+    // account is deleted.
+    $actor = ($this->actorWith)('super_admin');
+    $target = User::factory()->create(['is_active' => true]);
+
+    app(SyncUserRolesAction::class)->execute($actor, $target, ['staff']);
+
+    $entry = Activity::query()->where('event', 'roles_changed')->latest('id')->first();
+
+    expect($entry->causer_id)->toBe($actor->getKey())
+        ->and($entry->getProperty('causer_name'))->toBe($actor->name);
+});
+
 /*
 |--------------------------------------------------------------------------
 | Explicit-event detail and subject identity are visible
@@ -461,5 +587,119 @@ it('compares the date filter against a bare column so the index is usable', func
         0,
         'The date filter wrapped created_at in DATE(), which makes the comparison non-sargable '
         .'and the created_at index unusable. Statements: '.describeStatements($statements),
+    );
+});
+
+/*
+|--------------------------------------------------------------------------
+| The audit trail cannot be switched off by an empty string (finding M1)
+|--------------------------------------------------------------------------
+*/
+
+it('stays enabled when ACTIVITYLOG_ENABLED is present but blank', function () {
+    /*
+     * env()'s second argument is a default for a MISSING key. A key that exists
+     * and is empty returns '', sails past the default, and Spatie's
+     * ActivityLogStatus has no declare(strict_types=1) — so coercive typing
+     * turns '' into false and the ENTIRE AUDIT TRAIL silently stops recording.
+     *
+     * Nothing fails, nothing warns, and the panel keeps rendering the entries
+     * written before the deploy. The first time anyone notices is when they go
+     * looking for who did something and the log stops at a date.
+     *
+     * Re-evaluates the config file with the variable blank, because the booted
+     * config was resolved before this test ran. Same technique
+     * BackupConfigurationTest uses for a blank BACKUP_ALERT_EMAIL, which is the
+     * same class of bug in a different package.
+     */
+    $original = $_ENV['ACTIVITYLOG_ENABLED'] ?? null;
+
+    $_ENV['ACTIVITYLOG_ENABLED'] = '';
+    putenv('ACTIVITYLOG_ENABLED=');
+
+    try {
+        $resolved = (require config_path('activitylog.php'))['enabled'];
+    } finally {
+        if ($original === null) {
+            unset($_ENV['ACTIVITYLOG_ENABLED']);
+            putenv('ACTIVITYLOG_ENABLED');
+        } else {
+            $_ENV['ACTIVITYLOG_ENABLED'] = $original;
+            putenv('ACTIVITYLOG_ENABLED='.$original);
+        }
+    }
+
+    expect($resolved)->toBeTrue(
+        'A blank ACTIVITYLOG_ENABLED disables the audit trail, and nothing anywhere '
+        .'reports that it happened.',
+    );
+});
+
+it('can still be switched off deliberately', function () {
+    // The control: the coercion must read a real "off" as off, or the fix has
+    // simply hardcoded true and removed the setting.
+    $original = $_ENV['ACTIVITYLOG_ENABLED'] ?? null;
+
+    $_ENV['ACTIVITYLOG_ENABLED'] = 'false';
+    putenv('ACTIVITYLOG_ENABLED=false');
+
+    try {
+        $resolved = (require config_path('activitylog.php'))['enabled'];
+    } finally {
+        if ($original === null) {
+            unset($_ENV['ACTIVITYLOG_ENABLED']);
+            putenv('ACTIVITYLOG_ENABLED');
+        } else {
+            $_ENV['ACTIVITYLOG_ENABLED'] = $original;
+            putenv('ACTIVITYLOG_ENABLED='.$original);
+        }
+    }
+
+    expect($resolved)->toBeFalse();
+});
+
+/*
+|--------------------------------------------------------------------------
+| The role form must not advertise write abilities (finding L5)
+|--------------------------------------------------------------------------
+*/
+
+it('offers no activity write permission on the role form', function () {
+    /*
+     * P1-T15, group 3 finding L5, confirmed by experiment before the fix:
+     * FilamentShield::getAllResourcePermissionsWithLabels() returned 84 options
+     * of which TWELVE were *_activity, including delete_activity,
+     * force_delete_any_activity, restore_activity and reorder_activity.
+     *
+     * The seeder deliberately creates only view_any_activity and view_activity,
+     * so the form advertised capabilities that cannot be granted — on a log
+     * whose non-negotiable rule is that no such path exists. Nothing was
+     * exploitable: ActivityPolicy refuses every one of them regardless. The harm
+     * is that it TEACHES THE WRONG THING. An administrator reading a checkbox
+     * labelled "delete activity" reasonably concludes the log is deletable by
+     * someone, and the next person to act on that belief writes a feature to
+     * match it.
+     */
+    $writeAbilities = ['create', 'update', 'delete', 'delete_any', 'force_delete',
+        'force_delete_any', 'restore', 'restore_any', 'replicate', 'reorder'];
+
+    $offered = collect(FilamentShield::getAllResourcePermissionsWithLabels())
+        ->keys()
+        ->filter(fn (string $permission): bool => str_ends_with($permission, '_activity'))
+        ->values();
+
+    // The read permissions must survive: excluding the resource outright would
+    // also remove the two the seeder really does create, and the panel needs.
+    expect($offered)->toContain('view_any_activity')
+        ->and($offered)->toContain('view_activity');
+
+    $writes = $offered->filter(
+        fn (string $permission): bool => collect($writeAbilities)
+            ->contains(fn (string $ability): bool => $permission === $ability.'_activity'),
+    )->values()->all();
+
+    expect($writes)->toBeEmpty(
+        'The role form offers activity write permissions the seeder never creates, on a log '
+        .'that has no write path at all: '.implode(', ', $writes),
     );
 });
