@@ -48,11 +48,15 @@ use Filament\Tables\Table;
  * NO BULK ACTIONS
  * ---------------
  * Filament authorizes a bulk action once against the *Any policy method and
- * never consults the per-record one. CoursePolicy defines no deleteAny(), so a
- * bulk delete added later fails closed rather than inheriting a rule nobody
+ * never consults the per-record one. CoursePolicy::deleteAny() is written out and
+ * refuses, which is what stops a bulk delete added later inheriting a rule nobody
  * decided. It would also be the worst possible place for one: a course with
- * batches is refused by the foreign key, and a bulk delete would surface that
- * as a raw database error part-way through a selection.
+ * batches is refused by the foreign key, and a bulk delete would surface that as
+ * a raw database error part-way through a selection.
+ *
+ * The refusal has to be WRITTEN, not merely absent. Filament resolves a missing
+ * policy method to Response::allow(); an earlier version of this comment said
+ * omission would "fail closed", which is true of the Gate and false of the panel.
  */
 class CourseResource extends Resource
 {

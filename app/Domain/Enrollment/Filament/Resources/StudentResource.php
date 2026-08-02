@@ -37,9 +37,13 @@ use Filament\Tables\Table;
  * NO BULK ACTIONS
  * ---------------
  * Filament authorizes a bulk action once against the *Any policy method and
- * never consults the per-record one. StudentPolicy defines no deleteAny(), so a
- * bulk delete added later fails closed rather than inheriting a rule nobody
- * decided. Delete students one at a time, from the edit page.
+ * never consults the per-record one. StudentPolicy::deleteAny() is written out
+ * and refuses, which is what stops a bulk delete added later inheriting a rule
+ * nobody decided. Delete students one at a time, from the edit page.
+ *
+ * The refusal has to be WRITTEN, not merely absent. Filament resolves a missing
+ * policy method to Response::allow(); an earlier version of this comment said
+ * omission would "fail closed", which is true of the Gate and false of the panel.
  *
  * user_id IS NOT ON THE FORM
  * --------------------------

@@ -47,9 +47,17 @@ use App\Models\User;
  * spec's own reasoning at line 122 — registering somebody is a front-desk act,
  * amending an existing record is not.
  *
- * There is no deleteAny(): nothing registers a bulk action. Filament authorizes
- * a bulk action once against the *Any method and never consults the per-record
- * one, so leaving it undefined makes any bulk delete added later fail closed.
+ * deleteAny() is written out and refuses. Nothing registers a bulk action, and
+ * Filament authorizes one ONCE against the *Any method without ever consulting
+ * the per-record rule — so a bulk delete could not express the assigned-batch
+ * scoping that update() turns on, which is the whole point of this policy.
+ *
+ * WRITING IT OUT IS WHAT MAKES THE REFUSAL REAL, and an earlier version of this
+ * comment had it backwards: it said leaving the method undefined made a later
+ * bulk delete "fail closed". It does the opposite. Filament resolves a MISSING
+ * policy method to Response::allow() where the Gate resolves it to false, so an
+ * unmentioned ability is denied everywhere a test would look and allowed
+ * everywhere a user would click. See tests/Feature/PolicyAbilitySurfaceTest.php.
  */
 class EnrollmentPolicy
 {

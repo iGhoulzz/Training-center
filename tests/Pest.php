@@ -287,6 +287,28 @@ function expectOneLevelDeeper(array $statement, int $baseline, int $rowId, strin
 | helper defined in one of them is only sometimes there for the other.
 */
 
+/**
+ * The file's comments and docblocks, with all executable code removed.
+ *
+ * The exact inverse of appSourceWithoutComments(), for the mirror-image reason:
+ * a test that checks what the comments CLAIM must see only comments, or the code
+ * implementing the claim satisfies the search for it. P1-T15's docblock-drift
+ * check needs this — "there is no deleteAny()" and `public function deleteAny()`
+ * both contain the name.
+ */
+function appCommentsOnly(string $path): string
+{
+    $comments = '';
+
+    foreach (token_get_all((string) file_get_contents($path)) as $token) {
+        if (is_array($token) && in_array($token[0], [T_COMMENT, T_DOC_COMMENT], true)) {
+            $comments .= $token[1]."\n";
+        }
+    }
+
+    return $comments;
+}
+
 /** The file's PHP source with all comments and docblocks removed. */
 function appSourceWithoutComments(string $path): string
 {

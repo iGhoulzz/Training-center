@@ -26,7 +26,9 @@ use Illuminate\Support\Facades\Gate;
  * SINGLE RECORD ONLY. No bulk deletion exists anywhere: Filament authorizes a
  * bulk action once against a *Any policy method and never consults the
  * per-record one, so a bulk delete could not express a per-record rule at all.
- * EnrollmentPolicy defines no deleteAny().
+ * EnrollmentPolicy::deleteAny() is written out and refuses, which is what keeps
+ * it that way — Filament resolves a MISSING policy method to Response::allow(),
+ * so the refusal has to be stated rather than left implied.
  *
  * delete_enrollment is unscoped — it carries no "own batches" variant — so the
  * decision here needs no locking read of the pivot the way withdrawal does. The
