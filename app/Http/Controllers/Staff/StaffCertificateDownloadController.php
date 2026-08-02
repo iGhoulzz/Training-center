@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Staff;
 
+use App\Domain\Staff\Actions\UploadStaffCertificateAction;
 use App\Domain\Staff\Models\StaffCertificate;
 use App\Http\Controllers\Controller;
 use App\Models\User;
@@ -45,6 +46,19 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
  */
 final class StaffCertificateDownloadController extends Controller
 {
+    /**
+     * The disks a certificate row is allowed to name.
+     *
+     * An allowlist rather than a straight comparison against the Action's
+     * constant, because the `disk` column exists precisely so that moving to a
+     * different disk later does not orphan the rows already written. Adding one
+     * here is then a deliberate act, visible in review, and anything not named
+     * fails closed.
+     *
+     * @var array<int, string>
+     */
+    private const SERVEABLE_DISKS = [UploadStaffCertificateAction::DISK];
+
     public function __invoke(Request $request, StaffCertificate $certificate): StreamedResponse
     {
         $actor = $request->user();
@@ -66,6 +80,28 @@ final class StaffCertificateDownloadController extends Controller
         // this route reads an arbitrary file from the server and streams it to
         // whoever is authorized to see certificates.
         if (! $this->isContainedRelativePath($path)) {
+            abort(404);
+        }
+
+        /*
+         * The disk is guarded for the same reason the path is, and the two are
+         * not independent: the check above proves the path cannot escape THE
+         * DISK ROOT, and until this existed the row itself chose which root that
+         * was. `staff-certificates/x.pdf` is perfectly contained under every
+         * root there is, so a foreign disk did not BREAK the containment rule —
+         * it moved the boundary the rule was measured against.
+         *
+         * Unlike a traversal, which Flysystem refuses as a second line of
+         * defence, reading a contained path from the wrong disk is a completely
+         * legitimate filesystem operation that nothing downstream objects to.
+         * This is the only place it can be refused.
+         *
+         * The stored value arrives the same way a traversing path would —
+         * UploadStaffCertificateAction sets `disk` server-side and never from
+         * request input, so anything else means a manual database edit, a
+         * restored backup, or a future importer.
+         */
+        if (! in_array($certificate->disk, self::SERVEABLE_DISKS, true)) {
             abort(404);
         }
 

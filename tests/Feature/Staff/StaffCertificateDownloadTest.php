@@ -116,6 +116,76 @@ it('404s when the stored path attempts to traverse out of the disk root', functi
         ->assertNotFound();
 });
 
+it('404s when the stored disk is not one this route may serve from', function () {
+    /*
+     * P1-T15, domain-integrity finding 5.
+     *
+     * The path guard above proves the path cannot escape THE DISK ROOT. Which
+     * root that is came from the row's own `disk` column, so a row naming a
+     * different disk moved the whole containment boundary somewhere else — and
+     * `staff-certificates/x.pdf` is a perfectly contained path under every root
+     * there is. The guard was doing real work against a value that decided what
+     * it was guarding.
+     *
+     * UploadStaffCertificateAction sets `disk` server-side and never from
+     * request input, so this arrives the same way a traversing path would: a
+     * manual database edit, a restored backup, a future importer. The consequence
+     * is different in kind, though — a traversal is refused by Flysystem as a
+     * second line of defence, whereas a swapped disk is a completely legitimate
+     * read of a completely different tree, and nothing downstream objects.
+     */
+    $canary = 'bytes-from-a-disk-this-route-must-not-serve';
+    $strayPath = 'staff-certificates/'.Str::ulid()->toString().'.pdf';
+
+    Storage::fake('local');
+    Storage::disk('local')->put($strayPath, $canary);
+
+    $stray = StaffCertificate::factory()->for($this->profile, 'staffProfile')->create([
+        'disk' => 'local',
+        'path' => $strayPath,
+        'original_filename' => 'elsewhere.pdf',
+    ]);
+
+    // Authorized actor, so the refusal comes from the disk guard rather than
+    // from authorization.
+    $response = $this->actingAs(($this->userWith)('view_staff_certificate'))
+        ->get(route('staff.certificates.download', $stray));
+
+    $response->assertNotFound();
+
+    /*
+     * The status alone is not the assertion. A refusal that still wrote the
+     * bytes would satisfy a status check and leak the file anyway.
+     *
+     * getContent() rather than streamedContent(): a refusal is an ordinary
+     * response, and streamedContent() fails outright on one. That asymmetry is
+     * itself part of the check — reaching the streaming branch at all would show
+     * up here as "the response is not a streamed response" inverted.
+     */
+    expect($response->getContent())->not->toContain($canary);
+
+    // And the bytes are still sitting where they were, so the refusal is a
+    // refusal to SERVE rather than some side effect that moved them.
+    Storage::disk('local')->assertExists($strayPath);
+});
+
+it('serves a certificate whose stored disk is the one the feature writes to', function () {
+    /*
+     * The control for the refusal above. Without it, a disk guard that refused
+     * everything — or a route that had simply stopped working — would look
+     * identical to a correct one.
+     *
+     * The main streaming test above covers the same ground, but this states the
+     * pairing explicitly so the two cannot drift apart if that test is ever
+     * rewritten for another reason.
+     */
+    $response = $this->actingAs(($this->userWith)('view_staff_certificate'))->get($this->url);
+
+    $response->assertOk();
+
+    expect($response->streamedContent())->toBe($this->bytes);
+});
+
 it('404s when the row outlived its file', function () {
     $orphanRow = StaffCertificate::factory()->for($this->profile, 'staffProfile')->create([
         'disk' => 'private',
