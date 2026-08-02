@@ -53,7 +53,43 @@ final class RemoveInstructorAction
 
             $this->authorize($actor, $locked);
 
+            /*
+             * The hours are read BEFORE the detach, or there is nothing left to
+             * read them from — the same ordering DeleteStaffProfileAction uses
+             * to collect file paths ahead of its cascade.
+             */
+            $existing = $locked->instructors()
+                ->where('users.id', $instructor->getKey())
+                ->first();
+
             $locked->instructors()->detach($instructor->getKey());
+
+            /*
+             * detach() fires no Eloquent event, so nothing recorded that an
+             * allocation phase 2 pays wages from was removed, or by whom
+             * (P1-T15, group 3 finding H2).
+             *
+             * Only when a row actually went. Detaching an instructor who holds
+             * no allocation removes nothing, and logging that as a removal would
+             * put an event in the trail for a change that never happened —
+             * worse than the silence this fixes, because it is actively wrong.
+             */
+            if ($existing === null) {
+                return;
+            }
+
+            activity()
+                ->causedBy($actor)
+                ->performedOn($locked)
+                ->event('instructor_removed')
+                ->withProperties([
+                    'instructor_id' => (int) $instructor->getKey(),
+                    'instructor_name' => $instructor->name,
+                    // getAttribute() rather than a dynamic property — see
+                    // AssignInstructorAction for why.
+                    'assigned_hours' => (int) $existing->pivot->getAttribute('assigned_hours'),
+                ])
+                ->log('instructor_removed');
         });
     }
 
