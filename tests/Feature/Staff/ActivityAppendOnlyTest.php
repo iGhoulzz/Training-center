@@ -11,6 +11,7 @@ use App\Domain\Staff\Filament\Resources\ActivityResource;
 use App\Domain\Staff\Filament\Resources\ActivityResource\Pages\ListActivities;
 use App\Domain\Staff\Filament\Resources\ActivityResource\Pages\ViewActivity;
 use App\Models\User;
+use BezhanSalleh\FilamentShield\Facades\FilamentShield;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Gate;
@@ -655,4 +656,50 @@ it('can still be switched off deliberately', function () {
     }
 
     expect($resolved)->toBeFalse();
+});
+
+/*
+|--------------------------------------------------------------------------
+| The role form must not advertise write abilities (finding L5)
+|--------------------------------------------------------------------------
+*/
+
+it('offers no activity write permission on the role form', function () {
+    /*
+     * P1-T15, group 3 finding L5, confirmed by experiment before the fix:
+     * FilamentShield::getAllResourcePermissionsWithLabels() returned 84 options
+     * of which TWELVE were *_activity, including delete_activity,
+     * force_delete_any_activity, restore_activity and reorder_activity.
+     *
+     * The seeder deliberately creates only view_any_activity and view_activity,
+     * so the form advertised capabilities that cannot be granted — on a log
+     * whose non-negotiable rule is that no such path exists. Nothing was
+     * exploitable: ActivityPolicy refuses every one of them regardless. The harm
+     * is that it TEACHES THE WRONG THING. An administrator reading a checkbox
+     * labelled "delete activity" reasonably concludes the log is deletable by
+     * someone, and the next person to act on that belief writes a feature to
+     * match it.
+     */
+    $writeAbilities = ['create', 'update', 'delete', 'delete_any', 'force_delete',
+        'force_delete_any', 'restore', 'restore_any', 'replicate', 'reorder'];
+
+    $offered = collect(FilamentShield::getAllResourcePermissionsWithLabels())
+        ->keys()
+        ->filter(fn (string $permission): bool => str_ends_with($permission, '_activity'))
+        ->values();
+
+    // The read permissions must survive: excluding the resource outright would
+    // also remove the two the seeder really does create, and the panel needs.
+    expect($offered)->toContain('view_any_activity')
+        ->and($offered)->toContain('view_activity');
+
+    $writes = $offered->filter(
+        fn (string $permission): bool => collect($writeAbilities)
+            ->contains(fn (string $ability): bool => $permission === $ability.'_activity'),
+    )->values()->all();
+
+    expect($writes)->toBeEmpty(
+        'The role form offers activity write permissions the seeder never creates, on a log '
+        .'that has no write path at all: '.implode(', ', $writes),
+    );
 });

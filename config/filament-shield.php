@@ -1,6 +1,7 @@
 <?php
 
 declare(strict_types=1);
+use App\Domain\Staff\Filament\Resources\ActivityResource;
 use BezhanSalleh\FilamentShield\Resources\Roles\RoleResource;
 use Filament\Pages\Dashboard;
 use Filament\Widgets\AccountWidget;
@@ -123,7 +124,21 @@ return [
 
     'policies' => [
         'path' => app_path('Policies'),
-        'merge' => true,
+
+        /*
+         * FALSE SO THAT `manage` ACTUALLY OVERRIDES (P1-T15, finding L5).
+         *
+         * With merge enabled, a resource's `manage` list is combined with the
+         * full default method set below rather than replacing it — so the entry
+         * restricting RoleResource to five abilities had been decorative since
+         * it was written, and restricting ActivityResource to two would have
+         * been too. The config's own comment describes `manage` as an override;
+         * this is what makes that true.
+         *
+         * Resources absent from `manage` are unaffected and still get the full
+         * set. Only the two that opt in are narrowed.
+         */
+        'merge' => false,
         'generate' => true,
         'methods' => [
             'viewAny', 'view', 'create', 'update', 'delete', 'deleteAny', 'restore',
@@ -175,6 +190,32 @@ return [
                 'create',
                 'update',
                 'delete',
+            ],
+
+            /*
+             * READ ONLY, BECAUSE THE LOG HAS NO WRITE PATH (P1-T15, finding L5).
+             *
+             * Shield generates the full CRUD set per resource, so the role form
+             * offered twelve *_activity permissions — create, update, delete,
+             * delete_any, force_delete, force_delete_any, restore, restore_any,
+             * replicate and reorder among them. RolePermissionSeeder creates
+             * exactly two, so the rest could never be granted.
+             *
+             * Nothing was exploitable: ActivityPolicy refuses every one of them
+             * whether or not it exists. The harm is that it TEACHES THE WRONG
+             * THING — an administrator reading a checkbox labelled "delete
+             * activity" reasonably concludes the log is deletable by somebody,
+             * and the next person to act on that belief builds a feature to
+             * match. The append-only rule should not be contradicted by the
+             * permission screen.
+             *
+             * `manage` rather than `exclude`: excluding the resource would also
+             * remove view_any_activity and view_activity, which the seeder does
+             * create and the panel does need.
+             */
+            ActivityResource::class => [
+                'viewAny',
+                'view',
             ],
         ],
         'exclude' => [
