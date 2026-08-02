@@ -6,12 +6,39 @@ use App\Domain\Staff\Actions\RefuseActivityLogCleaning;
 use App\Domain\Staff\Support\RecordActivityWithContext;
 use Spatie\Activitylog\Models\Activity;
 
+/*
+ * Read once into a variable so the blank check and the coercion below see the
+ * same value without calling env() twice.
+ */
+$activityLogEnabled = env('ACTIVITYLOG_ENABLED');
+
 return [
 
     /*
      * If set to false, no activities will be saved to the database.
+     *
+     * COERCED, BECAUSE A BLANK VALUE SILENTLY DISABLED THE WHOLE AUDIT TRAIL
+     * (P1-T15, group 3 finding M1).
+     *
+     * env()'s second argument is a default for a MISSING key. A key that exists
+     * and is empty returns '', sails straight past the default, and Spatie's
+     * ActivityLogStatus has no declare(strict_types=1) — so coercive typing
+     * turned '' into false and nothing was recorded from that deploy onward.
+     * Nothing failed and nothing warned; the panel kept rendering the entries
+     * written before it, so the first sign was the log stopping at a date.
+     *
+     * THE BLANK IS HANDLED BEFORE filter_var, NOT BY IT. FILTER_VALIDATE_BOOL
+     * treats an empty string as a recognised FALSE — it is listed alongside
+     * '0', 'off' and 'no' — so FILTER_NULL_ON_FAILURE never fires for it and a
+     * filter_var-only fix reproduces the bug exactly. Only a genuinely
+     * unrecognisable value reaches the ?? below.
+     *
+     * A deliberate "false" or "0" still reads as false, which a test asserts —
+     * otherwise this would be a hardcoded true with the setting removed.
      */
-    'enabled' => env('ACTIVITYLOG_ENABLED', true),
+    'enabled' => $activityLogEnabled === null || $activityLogEnabled === ''
+        ? true
+        : filter_var($activityLogEnabled, FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE) ?? true,
 
     /*
      * NULL BECAUSE NOTHING MAY BE CLEANED (P1-T15, group 3 finding H1).

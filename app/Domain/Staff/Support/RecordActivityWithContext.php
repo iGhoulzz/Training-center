@@ -79,7 +79,27 @@ final class RecordActivityWithContext extends LogActivityAction
          * causer_id stays on the row, so the account is still identifiable even
          * when its name has changed or the record is gone.
          */
-        $causer = $activity->getAttribute('causer');
+        /*
+         * THE COLUMN DECIDES, NOT THE RELATION (P1-T15, group 3 finding M2).
+         *
+         * causedByAnonymous() nulls causer_id and causer_type and LEAVES THE
+         * RELATION that causedBy() associated. Reading getAttribute('causer')
+         * alone therefore still returned a Model for a deliberately anonymous
+         * entry, and snapshotted a real person's name onto it.
+         *
+         * The damage was not cosmetic. The panel renders "System" from the null
+         * causer_id while the stored row names somebody for a change they did
+         * not make, and the Who column searches properties->causer_name — so
+         * that person's name matches system rows. Confirmed by experiment: a
+         * SystemRoleWriter call with a super admin signed in produced causer_id
+         * null and causer_name "Signed In Person".
+         *
+         * causer_id is the authoritative answer to "was there an actor", so it
+         * is what gates the snapshot.
+         */
+        $causer = $activity->getAttribute('causer_id') === null
+            ? null
+            : $activity->getAttribute('causer');
 
         if ($causer instanceof Model) {
             $name = $causer->getAttribute('name');

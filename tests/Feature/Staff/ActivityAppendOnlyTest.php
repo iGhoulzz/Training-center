@@ -339,6 +339,52 @@ it('says System only when there genuinely was no actor', function () {
         ->and(ActivityResource::actorLabel($entry))->toBe(__('activity.system'));
 });
 
+it('names nobody in the properties of a system entry either', function () {
+    /*
+     * P1-T15, group 3 finding M2, confirmed by experiment before the fix: a
+     * system write made while a super admin was signed in produced causer_id
+     * null, causer_type null, and properties.causer_name "Signed In Person".
+     *
+     * causedByAnonymous() nulls the two COLUMNS and leaves the relation that
+     * causedBy() associated, so the context recorder still found a Model and
+     * snapshotted its name. The panel then renders "System" from the null
+     * causer_id while the stored row names somebody for a change they did not
+     * make — and the Who column searches properties->causer_name, so that
+     * person's name MATCHES system rows.
+     *
+     * Signed in deliberately: with nobody authenticated there is no name to
+     * leak and the test would pass against the bug.
+     */
+    $signedIn = ($this->actorWith)('super_admin');
+    $this->actingAs($signedIn);
+
+    $target = User::factory()->create(['is_active' => true]);
+    $this->system->assignRoles($target, 'staff');
+
+    $entry = Activity::query()->where('event', 'roles_changed')->latest('id')->first();
+
+    expect($entry->causer_id)->toBeNull()
+        ->and($entry->getProperty('causer_name'))->toBeNull(
+            'A system entry carries a real person\'s name in its properties, so the log '
+            .'attributes to them a change they did not make.',
+        );
+});
+
+it('still records the name on an entry that genuinely has an actor', function () {
+    // The control. Dropping causer_name altogether would satisfy the test above
+    // and destroy the snapshot that lets the log name someone after their
+    // account is deleted.
+    $actor = ($this->actorWith)('super_admin');
+    $target = User::factory()->create(['is_active' => true]);
+
+    app(SyncUserRolesAction::class)->execute($actor, $target, ['staff']);
+
+    $entry = Activity::query()->where('event', 'roles_changed')->latest('id')->first();
+
+    expect($entry->causer_id)->toBe($actor->getKey())
+        ->and($entry->getProperty('causer_name'))->toBe($actor->name);
+});
+
 /*
 |--------------------------------------------------------------------------
 | Explicit-event detail and subject identity are visible
@@ -541,4 +587,72 @@ it('compares the date filter against a bare column so the index is usable', func
         'The date filter wrapped created_at in DATE(), which makes the comparison non-sargable '
         .'and the created_at index unusable. Statements: '.describeStatements($statements),
     );
+});
+
+/*
+|--------------------------------------------------------------------------
+| The audit trail cannot be switched off by an empty string (finding M1)
+|--------------------------------------------------------------------------
+*/
+
+it('stays enabled when ACTIVITYLOG_ENABLED is present but blank', function () {
+    /*
+     * env()'s second argument is a default for a MISSING key. A key that exists
+     * and is empty returns '', sails past the default, and Spatie's
+     * ActivityLogStatus has no declare(strict_types=1) — so coercive typing
+     * turns '' into false and the ENTIRE AUDIT TRAIL silently stops recording.
+     *
+     * Nothing fails, nothing warns, and the panel keeps rendering the entries
+     * written before the deploy. The first time anyone notices is when they go
+     * looking for who did something and the log stops at a date.
+     *
+     * Re-evaluates the config file with the variable blank, because the booted
+     * config was resolved before this test ran. Same technique
+     * BackupConfigurationTest uses for a blank BACKUP_ALERT_EMAIL, which is the
+     * same class of bug in a different package.
+     */
+    $original = $_ENV['ACTIVITYLOG_ENABLED'] ?? null;
+
+    $_ENV['ACTIVITYLOG_ENABLED'] = '';
+    putenv('ACTIVITYLOG_ENABLED=');
+
+    try {
+        $resolved = (require config_path('activitylog.php'))['enabled'];
+    } finally {
+        if ($original === null) {
+            unset($_ENV['ACTIVITYLOG_ENABLED']);
+            putenv('ACTIVITYLOG_ENABLED');
+        } else {
+            $_ENV['ACTIVITYLOG_ENABLED'] = $original;
+            putenv('ACTIVITYLOG_ENABLED='.$original);
+        }
+    }
+
+    expect($resolved)->toBeTrue(
+        'A blank ACTIVITYLOG_ENABLED disables the audit trail, and nothing anywhere '
+        .'reports that it happened.',
+    );
+});
+
+it('can still be switched off deliberately', function () {
+    // The control: the coercion must read a real "off" as off, or the fix has
+    // simply hardcoded true and removed the setting.
+    $original = $_ENV['ACTIVITYLOG_ENABLED'] ?? null;
+
+    $_ENV['ACTIVITYLOG_ENABLED'] = 'false';
+    putenv('ACTIVITYLOG_ENABLED=false');
+
+    try {
+        $resolved = (require config_path('activitylog.php'))['enabled'];
+    } finally {
+        if ($original === null) {
+            unset($_ENV['ACTIVITYLOG_ENABLED']);
+            putenv('ACTIVITYLOG_ENABLED');
+        } else {
+            $_ENV['ACTIVITYLOG_ENABLED'] = $original;
+            putenv('ACTIVITYLOG_ENABLED='.$original);
+        }
+    }
+
+    expect($resolved)->toBeFalse();
 });
