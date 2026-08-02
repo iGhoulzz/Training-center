@@ -7,6 +7,7 @@ use App\Domain\Staff\Jobs\PurgeDeletedFileJob;
 use App\Domain\Staff\Models\PendingFileDeletion;
 use Illuminate\Console\Scheduling\Event;
 use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
@@ -430,6 +431,62 @@ it('leaves a receipt immediately retryable when the dispatch itself fails', func
         ->and($pending->last_swept_at)->toBeNull(
             'A receipt the sweep failed to hand off was stamped anyway, so it now waits out '
             .'the full threshold before anything tries again.',
+        );
+});
+
+it('keeps sweeping the page when reporting the dispatch failure also fails', function () {
+    /*
+     * THE SAME STARVATION, REACHED THROUGH THE ERROR PATH (Codex, round two).
+     *
+     * The catch above reports and continues, so one poisoned receipt cannot
+     * block the page behind it. But report() can itself throw — Laravel's
+     * handler is allowed to fail when its logging transport is unavailable, and
+     * FileLifecycleService::reportWithoutThrowing() already exists in this
+     * codebase precisely because of that. An unguarded report() escapes the
+     * catch, aborts the loop at the FIRST failed receipt, and leaves that
+     * receipt unstamped and still first in sweep order. Every later run stops on
+     * it again, and everything behind it starves exactly as it did before
+     * last_swept_at existed.
+     *
+     * THE TWO FAILURES ARE CORRELATED, NOT INDEPENDENT. A full disk is the
+     * condition this whole feature exists to reconcile, and it breaks the log
+     * channel at the same time. This is the realistic case, not a contrived one.
+     *
+     * Two receipts, because one cannot show that the loop continued.
+     */
+    $first = agedReceipt(300);
+    $second = agedReceipt(200);
+
+    // The queue store is unreachable.
+    config([
+        'queue.default' => 'database',
+        'queue.connections.database' => [
+            'driver' => 'database',
+            'connection' => 'sweep_test_absent_connection',
+            'table' => 'jobs',
+            'queue' => 'default',
+            'retry_after' => 90,
+        ],
+    ]);
+
+    // ...and so is the channel the failure would be reported to.
+    $handler = Mockery::mock(ExceptionHandler::class);
+    $handler->shouldReceive('report')->andThrow(new RuntimeException('the log channel is gone'));
+    $handler->shouldIgnoreMissing();
+    app()->instance(ExceptionHandler::class, $handler);
+
+    $this->artisan('files:sweep-pending-deletions')
+        // Two, not one: the count is the proof that the loop reached the second
+        // receipt rather than aborting on the first.
+        ->expectsOutputToContain('2 receipt(s) could not be handed to the queue.')
+        ->assertFailed();
+
+    // Neither was handed off, so neither may be stamped — both must be
+    // immediately eligible again rather than parked for a full threshold.
+    expect($first->refresh()->last_swept_at)->toBeNull()
+        ->and($second->refresh()->last_swept_at)->toBeNull(
+            'A receipt the sweep never handed off was stamped anyway, so it now waits out '
+            .'the threshold before anything tries again.',
         );
 });
 

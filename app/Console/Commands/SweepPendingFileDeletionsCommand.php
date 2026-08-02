@@ -180,9 +180,28 @@ final class SweepPendingFileDeletionsCommand extends Command
                  * before it. A queue outage therefore costs nothing: every
                  * receipt is retried on the next run rather than pushed an hour
                  * into the future for a handoff that never happened.
+                 *
+                 * REPORTED WITHOUT THROWING, AND THAT IS THE LOAD-BEARING PART.
+                 * An unguarded report() re-created the starvation this command
+                 * was just fixed for: Laravel's handler may throw when its
+                 * logging transport is unavailable, the exception escapes this
+                 * catch, the loop aborts at the FIRST failed receipt, and that
+                 * receipt stays unstamped and first in sweep order — so every
+                 * later run stops on it again and everything behind it starves.
+                 *
+                 * The two failures are correlated rather than independent: a
+                 * full disk is the condition this feature exists to reconcile,
+                 * and it takes the log channel down with it.
+                 *
+                 * Counting before reporting is secondary, and honestly so:
+                 * reportWithoutThrowing() cannot throw, so the order no longer
+                 * changes any outcome and no test pins it. It is kept because it
+                 * costs nothing and bounds the damage if a later edit puts a
+                 * bare report() back.
                  */
-                report($exception);
                 $failed++;
+
+                $this->reportWithoutThrowing($exception);
 
                 continue;
             }
@@ -224,5 +243,32 @@ final class SweepPendingFileDeletionsCommand extends Command
         }
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Observability must never abort the sweep.
+     *
+     * Laravel's exception handler is allowed to throw while reporting — when its
+     * logging transport is unavailable, for instance — and letting that escape
+     * would end the run on its first failed receipt, leaving everything behind
+     * that receipt unreachable for as long as the condition lasts.
+     *
+     * Deliberately a near-copy of FileLifecycleService::reportWithoutThrowing(),
+     * whose docblock records the same hazard for the same reason. They are eight
+     * lines each and duplicated rather than shared, because extracting a helper
+     * would mean editing that service — well-reviewed, unchanged on this branch,
+     * and carrying no behavioural gain from the move. A third caller is the
+     * point at which it should become one thing; noted for T16 rather than done
+     * unilaterally here.
+     */
+    private function reportWithoutThrowing(Throwable $exception): void
+    {
+        try {
+            report($exception);
+        } catch (Throwable) {
+            // Nothing safer to do: the receipt is already unstamped and will be
+            // attempted again on the next run, and the run's exit code still
+            // says the page did not fully hand off.
+        }
     }
 }
