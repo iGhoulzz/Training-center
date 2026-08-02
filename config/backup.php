@@ -13,6 +13,61 @@ use Spatie\Backup\Tasks\Cleanup\Strategies\DefaultStrategy;
 use Spatie\Backup\Tasks\Monitor\HealthChecks\MaximumAgeInDays;
 use Spatie\Backup\Tasks\Monitor\HealthChecks\MaximumStorageInMegabytes;
 
+/*
+|--------------------------------------------------------------------------
+| Values used in more than one place below (P1-T15, findings M3 and M4)
+|--------------------------------------------------------------------------
+*/
+
+/*
+ * THE ARCHIVE DIRECTORY, AND WHY IT IS NOT APP_NAME.
+ *
+ * This names the directory inside the bucket that archives are written to, AND
+ * the one the monitor looks in. It used to be env('APP_NAME'), so renaming the
+ * application — a cosmetic change with no documented backup implication —
+ * silently started a NEW directory.
+ *
+ * Every consequence of that was invisible. Tonight's backup succeeds. The
+ * monitor, looking up the same new name, finds that one fresh archive and
+ * reports healthy. Cleanup never sees the old directory again, so nothing is
+ * deleted and nothing is reported. Retention has effectively reset to one night,
+ * and the first sign is a restore that finds two years of history missing.
+ *
+ * It is now a setting of its own with a fixed default, changed only by somebody
+ * who means to change where backups live. docs/RESTORE.md tells the operator to
+ * look for `training-center-*.zip`, and a test asserts the two agree.
+ */
+$backupName = (string) env('BACKUP_ARCHIVE_NAME', 'training-center');
+
+/*
+ * The retention tiers, hoisted so the storage alert below can be sized from the
+ * same numbers rather than from a literal that drifts away from them.
+ */
+$keepAllForDays = 30;
+$keepDailyForDays = 60;
+$keepWeeklyForWeeks = 8;
+$keepMonthlyForMonths = 12;
+$keepYearlyForYears = 2;
+
+/*
+ * How many archives the tiers above imply, counted generously: the periods
+ * overlap, so summing them OVER-estimates. That is the safe direction for a
+ * warning threshold — an alert set too low is the defect being fixed.
+ */
+$retainedArchives = $keepAllForDays
+    + $keepDailyForDays
+    + $keepWeeklyForWeeks
+    + $keepMonthlyForMonths
+    + $keepYearlyForYears;
+
+/*
+ * What one archive weighs on this deployment: the whole database plus both
+ * upload roots, encrypted. Deployment-specific, so it is a setting — a centre
+ * holding thousands of scanned documents should raise it rather than let the
+ * nightly alert start crying wolf.
+ */
+$expectedArchiveMegabytes = (int) env('BACKUP_EXPECTED_ARCHIVE_MB', 250);
+
 return [
 
     'backup' => [
@@ -20,7 +75,7 @@ return [
          * The name of this application. You can use this name to monitor
          * the backups.
          */
-        'name' => env('APP_NAME', 'laravel-backup'),
+        'name' => $backupName,
 
         'source' => [
             'files' => [
@@ -380,9 +435,18 @@ return [
      * If a backup does not meet the specified requirements the
      * UnHealthyBackupWasFound event will be fired.
      */
+    /*
+     * What one archive is expected to weigh, in megabytes. Read by the storage
+     * health check below and by the test that keeps the two consistent; exposed
+     * as config so an operator can size it without editing the alert directly.
+     */
+    'expected_archive_megabytes' => $expectedArchiveMegabytes,
+
     'monitor_backups' => [
         [
-            'name' => env('APP_NAME', 'laravel-backup'),
+            // The same directory the archives are written to. Two settings that
+            // must not drift: a monitor pointed elsewhere reports healthy forever.
+            'name' => $backupName,
             /*
              * The disk backups are actually WRITTEN to. The package ships 'local'
              * here, which would health-check a disk this application never backs
@@ -392,7 +456,28 @@ return [
             'disks' => ['backups'],
             'health_checks' => [
                 MaximumAgeInDays::class => 1,
-                MaximumStorageInMegabytes::class => 5000,
+
+                /*
+                 * SIZED FROM THE RETENTION TIERS, NOT LEFT AT THE PACKAGE'S 5 GB
+                 * (P1-T15, group 3 finding M4).
+                 *
+                 * The tiers keep roughly a hundred full archives, each holding
+                 * the database AND both upload roots, so steady-state storage
+                 * passes 5 GB within the first month or two. The nightly health
+                 * check then fails every night, for ever, about a system that is
+                 * working exactly as designed.
+                 *
+                 * A THRESHOLD BELOW NORMAL OPERATION IS WORSE THAN NO THRESHOLD.
+                 * It fires constantly, people learn to ignore the backup alert,
+                 * and the one signal this whole design rests on — "a backup did
+                 * not happen" — is lost inside the noise it generates.
+                 *
+                 * Doubling gives headroom for archives larger than the estimate
+                 * before anyone is paged, while still catching genuine runaway
+                 * growth. The cleanup ceiling stays null: this WARNS, and
+                 * nothing deletes an archive to satisfy a number.
+                 */
+                MaximumStorageInMegabytes::class => $retainedArchives * $expectedArchiveMegabytes * 2,
             ],
         ],
 
@@ -430,33 +515,33 @@ return [
              * weeks later — a bad import, a wrong bulk edit — needs a backup from
              * before it, not from last night.
              */
-            'keep_all_backups_for_days' => 30,
+            'keep_all_backups_for_days' => $keepAllForDays,
 
             /*
              * After the "keep_all_backups_for_days" period is over, the most recent backup
              * of that day will be kept. Older backups within the same day will be removed.
              * If you create backups only once a day, no backups will be removed yet.
              */
-            'keep_daily_backups_for_days' => 60,
+            'keep_daily_backups_for_days' => $keepDailyForDays,
 
             /*
              * After the "keep_daily_backups_for_days" period is over, the most recent backup
              * of that week will be kept. Older backups within the same week will be removed.
              * If you create backups only once a week, no backups will be removed yet.
              */
-            'keep_weekly_backups_for_weeks' => 8,
+            'keep_weekly_backups_for_weeks' => $keepWeeklyForWeeks,
 
             /*
              * After the "keep_weekly_backups_for_weeks" period is over, the most recent backup
              * of that month will be kept. Older backups within the same month will be removed.
              */
-            'keep_monthly_backups_for_months' => 12,
+            'keep_monthly_backups_for_months' => $keepMonthlyForMonths,
 
             /*
              * After the "keep_monthly_backups_for_months" period is over, the most recent backup
              * of that year will be kept. Older backups within the same year will be removed.
              */
-            'keep_yearly_backups_for_years' => 2,
+            'keep_yearly_backups_for_years' => $keepYearlyForYears,
 
             /*
              * After cleaning up the backups remove the oldest backup until

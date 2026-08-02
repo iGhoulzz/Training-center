@@ -54,8 +54,26 @@ From the storage provider's console, or with any S3 client pointed at
 `training-center-*.zip` from before whatever went wrong — for a bad import or a
 mistaken bulk edit, that is **not** last night's.
 
-Retention is 30 days of every backup, then daily for 60 days, then monthly for a
-year.
+**Retention goes back further than most people assume, so look before concluding
+an archive is gone.** The tiers are additive:
+
+| Tier | Kept |
+|---|---|
+| Every backup | 30 days |
+| One per day | 60 days |
+| One per week | 8 weeks |
+| One per month | 12 months |
+| One per year | 2 years |
+
+So a mistake discovered a year later still has an archive from before it, and the
+oldest recoverable point is roughly **three years back**, not one. An earlier
+version of this section listed only the first, second and fourth rows and
+understated that by about two and a half years — which matters because the
+instruction above is to pick an archive from *before* whatever went wrong, and
+somebody who believes retention stops at a year will not go looking for the one
+that exists.
+
+Nothing is ever deleted to stay under a size limit; see `config/backup.php`.
 
 ### 2. Unpack it
 
@@ -107,6 +125,21 @@ migration:
 ```bash
 php artisan migrate
 ```
+
+> **Set `BACKUP_S3_BUCKET` and the rest of the `BACKUP_S3_*` values before you
+> run this, or it will refuse to start.** The application checks that off-server
+> backups are configured as the first thing it does on boot, and that check runs
+> for *every* artisan command — including this one. On a rebuilt server whose
+> backup credentials are not in place yet, `php artisan migrate` fails with:
+>
+> ```
+> Backups are not configured for production
+> ```
+>
+> That is the guard working, not a broken restore. Put the `BACKUP_S3_*` values
+> and `BACKUP_ARCHIVE_PASSWORD` into `.env` first — you needed them in step 1 to
+> fetch the archive at all — and the command runs normally. The same applies to
+> `php artisan tinker` and anything else you reach for while investigating.
 
 ### 4. Restore the files
 

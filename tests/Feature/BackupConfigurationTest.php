@@ -7,6 +7,7 @@ use Illuminate\Console\Scheduling\Event;
 use Illuminate\Console\Scheduling\Schedule;
 use Spatie\Backup\Notifications\Notifications\BackupHasFailedNotification;
 use Spatie\Backup\Notifications\Notifications\UnhealthyBackupWasFoundNotification;
+use Spatie\Backup\Tasks\Monitor\HealthChecks\MaximumStorageInMegabytes;
 
 /*
 |--------------------------------------------------------------------------
@@ -450,4 +451,216 @@ it('does not require backup credentials outside production', function () {
     }
 
     expect(true)->toBeTrue();
+});
+
+/*
+|--------------------------------------------------------------------------
+| The archive directory must not move when the app is renamed (finding M3)
+|--------------------------------------------------------------------------
+*/
+
+/*
+|--------------------------------------------------------------------------
+| The archive directory must not move when the app is renamed (finding M3)
+|--------------------------------------------------------------------------
+|
+| A NOTE ON TESTING env() HERE, BECAUSE IT COST A VACUOUS TEST.
+|
+| The usual trick in this file — write $_ENV, re-require the config, restore —
+| WORKS ONLY FOR A KEY THAT WAS ABSENT AT BOOTSTRAP. Laravel's Env repository is
+| immutable, so a key already loaded from .env keeps its original value no matter
+| what is written to $_ENV afterwards. APP_NAME is in .env; ACTIVITYLOG_ENABLED
+| and BACKUP_ALERT_EMAIL are not, which is why their tests are sound and a first
+| attempt at the one below passed against the unfixed code.
+|
+| So the "APP_NAME must not reach this" half is asserted against the config
+| SOURCE with comments stripped, which is the only thing that can fail, and the
+| positive half is asserted behaviourally through a key that really is absent.
+*/
+
+it('does not derive any backup name from APP_NAME', function () {
+    /*
+     * P1-T15, group 3 finding M3. The destination directory inside the bucket
+     * was env('APP_NAME'), so renaming the application — a cosmetic change with
+     * no documented backup implication — silently starts a NEW directory.
+     *
+     * Every consequence is invisible. Tonight's backup succeeds. The monitor,
+     * which looks up the same APP_NAME, finds that one fresh archive and reports
+     * healthy. Cleanup never sees the old directory again, so nothing is deleted
+     * and nothing is reported. Retention has effectively reset to one night, and
+     * the first sign is a restore that finds two years of history missing.
+     *
+     * Comments are stripped before scanning, so the package's commented-out
+     * second-application example does not count — and neither does this note.
+     */
+    $source = appSourceWithoutComments(config_path('backup.php'));
+
+    expect(str_contains($source, 'APP_NAME'))->toBeFalse(
+        'A backup name is still derived from APP_NAME, so renaming the application orphans '
+        .'every archive already written.',
+    );
+});
+
+it('takes the archive directory from its own setting', function () {
+    /*
+     * The positive half, and it can fail: BACKUP_ARCHIVE_NAME is absent from
+     * .env, so an override genuinely reaches env() here.
+     *
+     * Both names move together. They are separate settings that would otherwise
+     * drift apart silently, leaving the monitor health-checking a directory
+     * nothing writes to and reporting healthy forever.
+     */
+    $original = $_ENV['BACKUP_ARCHIVE_NAME'] ?? null;
+
+    $_ENV['BACKUP_ARCHIVE_NAME'] = 'explicitly-named-archive';
+    putenv('BACKUP_ARCHIVE_NAME=explicitly-named-archive');
+
+    try {
+        $config = require config_path('backup.php');
+    } finally {
+        if ($original === null) {
+            unset($_ENV['BACKUP_ARCHIVE_NAME']);
+            putenv('BACKUP_ARCHIVE_NAME');
+        } else {
+            $_ENV['BACKUP_ARCHIVE_NAME'] = $original;
+            putenv('BACKUP_ARCHIVE_NAME='.$original);
+        }
+    }
+
+    expect($config['backup']['name'])->toBe('explicitly-named-archive')
+        ->and($config['monitor_backups'][0]['name'])->toBe('explicitly-named-archive');
+});
+
+it('monitors the same directory it writes to', function () {
+    // The two settings must agree as shipped, not only under an override.
+    expect(config('backup.monitor_backups.0.name'))->toBe(config('backup.backup.name'));
+});
+
+it('writes the archive name the runbook tells people to look for', function () {
+    // docs/RESTORE.md instructs the operator to pick the newest
+    // `training-center-*.zip`. If the configured name and that instruction
+    // disagree, the runbook sends somebody hunting for a file that never exists.
+    $runbook = (string) file_get_contents(base_path('docs/RESTORE.md'));
+
+    expect($runbook)->toContain((string) config('backup.backup.name').'-');
+});
+
+/*
+|--------------------------------------------------------------------------
+| The storage alert must sit above normal operation (finding M4)
+|--------------------------------------------------------------------------
+*/
+
+it('sets a storage alert above what its own retention policy stores', function () {
+    /*
+     * P1-T15, group 3 finding M4. The ceiling was the package's 5 GB default
+     * while the retention tiers keep roughly 112 full archives, each holding the
+     * database AND both upload roots. Steady-state storage is far above 5 GB, so
+     * the nightly health check fails every night from the first month onward.
+     *
+     * A THRESHOLD BELOW NORMAL OPERATION IS WORSE THAN NO THRESHOLD. It fires
+     * constantly, people learn to ignore the backup alert, and the one signal
+     * this whole design rests on — "a backup did not happen" — is lost in noise.
+     *
+     * Derived from the tiers rather than compared against a literal, so changing
+     * a retention setting without revisiting the alert fails here.
+     */
+    $strategy = config('backup.cleanup.default_strategy');
+
+    $retainedArchives = $strategy['keep_all_backups_for_days']
+        + $strategy['keep_daily_backups_for_days']
+        + $strategy['keep_weekly_backups_for_weeks']
+        + $strategy['keep_monthly_backups_for_months']
+        + $strategy['keep_yearly_backups_for_years'];
+
+    $expectedArchiveMb = (int) config('backup.expected_archive_megabytes');
+    $ceiling = config('backup.monitor_backups.0.health_checks.'.MaximumStorageInMegabytes::class);
+
+    expect($expectedArchiveMb)->toBeGreaterThan(
+        0,
+        'No expected archive size is configured, so the alert is not sized from anything.',
+    )->and($ceiling)->toBeGreaterThanOrEqual(
+        $retainedArchives * $expectedArchiveMb,
+        "The storage alert fires below steady state: retention keeps about {$retainedArchives} "
+        ."archives of ~{$expectedArchiveMb} MB each, so the nightly check would fail forever.",
+    );
+});
+
+it('still alerts on growth well beyond the retention policy', function () {
+    /*
+     * The control for the test above. Raising the ceiling to infinity would
+     * satisfy it and remove the one warning that unbounded growth is happening
+     * at all — config/backup.php's own comment on the destructive cleanup
+     * ceiling promises this check keeps growth visible.
+     */
+    $ceiling = config('backup.monitor_backups.0.health_checks.'.MaximumStorageInMegabytes::class);
+
+    expect($ceiling)->not->toBeNull('The storage health check was removed, so growth is invisible.')
+        ->and($ceiling)->toBeLessThan(1_000_000);
+});
+
+/*
+|--------------------------------------------------------------------------
+| The runbook must describe the retention it actually has (finding L6)
+|--------------------------------------------------------------------------
+*/
+
+it('documents every retention tier in the runbook', function () {
+    /*
+     * P1-T15, group 3 finding L6. The runbook described 30 days, then daily for
+     * 60, then monthly for a year — omitting the weekly and yearly tiers and
+     * understating real retention by about two and a half years.
+     *
+     * Not a harmless omission: the runbook's first instruction is to pick an
+     * archive from BEFORE whatever went wrong, and somebody told they have one
+     * year will not go looking for the two-year-old archive that exists.
+     *
+     * Each figure is read from config, so changing a tier without updating the
+     * runbook fails here rather than quietly making the document wrong again.
+     */
+    $strategy = config('backup.cleanup.default_strategy');
+    $runbook = (string) file_get_contents(base_path('docs/RESTORE.md'));
+
+    foreach ([
+        'keep_weekly_backups_for_weeks' => 'weekly',
+        'keep_monthly_backups_for_months' => 'monthly',
+        'keep_yearly_backups_for_years' => 'yearly',
+    ] as $setting => $tier) {
+        /*
+         * str_contains() with toBeTrue(), not expect()->toContain($value, $msg).
+         * toContain() is VARIADIC: a failure message passed as its second
+         * argument becomes a second expected value, so the assertion silently
+         * starts checking that the runbook contains the error text. Recorded in
+         * tests/Pest.php, and walked into here anyway.
+         */
+        expect(str_contains($runbook, (string) $strategy[$setting]))->toBeTrue(
+            "The runbook does not state the {$tier} retention figure ({$strategy[$setting]}), so "
+            .'it understates how far back an archive can be recovered from.',
+        );
+    }
+});
+
+/*
+|--------------------------------------------------------------------------
+| The production guard gates the runbook's own steps (finding L7)
+|--------------------------------------------------------------------------
+*/
+
+it('warns the runbook reader that the boot guard gates its own steps', function () {
+    /*
+     * P1-T15, group 3 finding L7. BackupConfiguration::assertReadyForProduction()
+     * is the first statement of AppServiceProvider::boot(), so it runs for EVERY
+     * artisan command — including the `migrate` the runbook itself tells an
+     * operator to run during a restore.
+     *
+     * On a rebuilt server, where the backup credentials have not been set up
+     * yet, that step throws "Backups are not configured for production" and the
+     * restore stops with an error about backups in the middle of restoring from
+     * one. The guard is correct and stays; the ordering has to be written down,
+     * including the exact message so the operator recognises it.
+     */
+    $runbook = (string) file_get_contents(base_path('docs/RESTORE.md'));
+
+    expect($runbook)->toContain('Backups are not configured for production')
+        ->and($runbook)->toContain('BACKUP_S3_BUCKET');
 });
