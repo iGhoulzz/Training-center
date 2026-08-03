@@ -50,9 +50,14 @@ $keepMonthlyForMonths = 12;
 $keepYearlyForYears = 2;
 
 /*
- * How many archives the tiers above imply, counted generously: the periods
- * overlap, so summing them OVER-estimates. That is the safe direction for a
- * warning threshold — an alert set too low is the defect being fixed.
+ * How many archives the tiers above imply.
+ *
+ * The sum is EXACT, not an estimate. DefaultStrategy builds each period where
+ * the previous one ends — `subDays($keepAll)` then
+ * `subDays($keepAll)->subDays($keepDaily)`, and so on — so the ranges are
+ * successive rather than overlapping and one archive is retained per unit of
+ * each tier. An earlier version of this comment called them overlapping and the
+ * total an over-estimate; the vendor source says otherwise.
  */
 $retainedArchives = $keepAllForDays
     + $keepDailyForDays
@@ -67,6 +72,17 @@ $retainedArchives = $keepAllForDays
  * nightly alert start crying wolf.
  */
 $expectedArchiveMegabytes = (int) env('BACKUP_EXPECTED_ARCHIVE_MB', 250);
+
+/*
+ * How much room to leave above the calculated steady state before the storage
+ * check complains. Named rather than written inline so the test can pin the
+ * exact relationship without copying a literal that would then drift.
+ *
+ * Two is deliberate and bounded at both ends by a test: less than that and a
+ * deployment whose archives merely run larger than the estimate is paged about
+ * nothing, much more and the check stops being able to see runaway growth at all.
+ */
+$storageAlertHeadroom = 2;
 
 return [
 
@@ -243,7 +259,14 @@ return [
             /*
              * The filename prefix used for the backup zip file.
              */
-            'filename_prefix' => 'training-center-',
+            /*
+             * DERIVED, so the directory, the filename and the runbook cannot
+             * disagree (P1-T15, review of finding M3). This was a third
+             * hardcoded copy of the same word: changing it would have left the
+             * bucket directory alone and quietly made docs/RESTORE.md — which
+             * tells the operator to look for `training-center-*.zip` — wrong.
+             */
+            'filename_prefix' => $backupName.'-',
 
             /*
              * OFF-SERVER ONLY. `local` is deliberately absent.
@@ -442,6 +465,13 @@ return [
      */
     'expected_archive_megabytes' => $expectedArchiveMegabytes,
 
+    /*
+     * The multiplier applied to the calculated steady state to get the storage
+     * alert threshold. Exposed so BackupConfigurationTest can assert the exact
+     * relationship rather than re-stating the number.
+     */
+    'storage_alert_headroom' => $storageAlertHeadroom,
+
     'monitor_backups' => [
         [
             // The same directory the archives are written to. Two settings that
@@ -472,12 +502,14 @@ return [
                  * and the one signal this whole design rests on — "a backup did
                  * not happen" — is lost inside the noise it generates.
                  *
-                 * Doubling gives headroom for archives larger than the estimate
-                 * before anyone is paged, while still catching genuine runaway
-                 * growth. The cleanup ceiling stays null: this WARNS, and
-                 * nothing deletes an archive to satisfy a number.
+                 * The headroom multiplier below absorbs archives larger than the
+                 * estimate before anyone is paged, while still catching genuine
+                 * runaway growth. The cleanup ceiling stays null: this WARNS,
+                 * and nothing deletes an archive to satisfy a number.
                  */
-                MaximumStorageInMegabytes::class => $retainedArchives * $expectedArchiveMegabytes * 2,
+                MaximumStorageInMegabytes::class => $retainedArchives
+                    * $expectedArchiveMegabytes
+                    * $storageAlertHeadroom,
             ],
         ],
 

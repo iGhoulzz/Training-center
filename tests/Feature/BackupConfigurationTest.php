@@ -536,13 +536,36 @@ it('monitors the same directory it writes to', function () {
     expect(config('backup.monitor_backups.0.name'))->toBe(config('backup.backup.name'));
 });
 
-it('writes the archive name the runbook tells people to look for', function () {
-    // docs/RESTORE.md instructs the operator to pick the newest
-    // `training-center-*.zip`. If the configured name and that instruction
-    // disagree, the runbook sends somebody hunting for a file that never exists.
+it('writes archives under the filename the runbook tells people to look for', function () {
+    /*
+     * THE FILENAME PREFIX, NOT THE BUCKET DIRECTORY.
+     *
+     * An earlier version of this test read backup.name, which is the DIRECTORY
+     * inside the bucket. Filenames come from destination.filename_prefix, a
+     * separate setting that was a third hardcoded copy of the same word — so
+     * changing the prefix left this test green while docs/RESTORE.md, which
+     * tells the operator to pick the newest `training-center-*.zip`, quietly
+     * became wrong.
+     *
+     * The prefix is now derived from the same $backupName, and this asserts the
+     * value an operator actually types into a file listing.
+     */
     $runbook = (string) file_get_contents(base_path('docs/RESTORE.md'));
+    $prefix = (string) config('backup.backup.destination.filename_prefix');
 
-    expect($runbook)->toContain((string) config('backup.backup.name').'-');
+    expect($prefix)->not->toBe('', 'No filename prefix is configured.');
+
+    expect(str_contains($runbook, $prefix))->toBeTrue(
+        "The runbook does not mention the archive filename prefix ({$prefix}), so it sends "
+        .'somebody hunting for a file that never exists.',
+    );
+});
+
+it('derives the archive filename from the same name as the directory', function () {
+    // Three places used to say "training-center" independently. Two of them
+    // moving without the third is the drift this pins.
+    expect(config('backup.backup.destination.filename_prefix'))
+        ->toBe(config('backup.backup.name').'-');
 });
 
 /*
@@ -586,17 +609,40 @@ it('sets a storage alert above what its own retention policy stores', function (
     );
 });
 
-it('still alerts on growth well beyond the retention policy', function () {
+it('sizes the storage alert at exactly the configured headroom', function () {
     /*
-     * The control for the test above. Raising the ceiling to infinity would
-     * satisfy it and remove the one warning that unbounded growth is happening
-     * at all — config/backup.php's own comment on the destructive cleanup
-     * ceiling promises this check keeps growth visible.
+     * THE EXACT RELATIONSHIP, NOT A RANGE.
+     *
+     * A first version only required the ceiling to sit between steady state and
+     * 1 TB, which a headroom of twenty would have satisfied — and twenty means
+     * the check can no longer see runaway growth at all. Pinned to the
+     * configured multiplier, which is itself bounded below so the alert keeps
+     * real headroom and above so it keeps its purpose.
      */
+    $strategy = config('backup.cleanup.default_strategy');
+
+    $retainedArchives = $strategy['keep_all_backups_for_days']
+        + $strategy['keep_daily_backups_for_days']
+        + $strategy['keep_weekly_backups_for_weeks']
+        + $strategy['keep_monthly_backups_for_months']
+        + $strategy['keep_yearly_backups_for_years'];
+
+    $expectedArchiveMb = (int) config('backup.expected_archive_megabytes');
+    $headroom = (int) config('backup.storage_alert_headroom');
     $ceiling = config('backup.monitor_backups.0.health_checks.'.MaximumStorageInMegabytes::class);
 
-    expect($ceiling)->not->toBeNull('The storage health check was removed, so growth is invisible.')
-        ->and($ceiling)->toBeLessThan(1_000_000);
+    expect($headroom)->toBeGreaterThanOrEqual(
+        2,
+        'Too little headroom: a deployment whose archives merely run larger than the estimate '
+        .'would be paged about nothing.',
+    )->and($headroom)->toBeLessThanOrEqual(
+        4,
+        'So much headroom that the check can no longer see runaway growth.',
+    )->and($ceiling)->toBe(
+        $retainedArchives * $expectedArchiveMb * $headroom,
+        'The storage alert is not the configured multiple of the steady state the retention '
+        .'tiers imply, so the two have drifted apart.',
+    );
 });
 
 /*
@@ -611,31 +657,33 @@ it('documents every retention tier in the runbook', function () {
      * 60, then monthly for a year — omitting the weekly and yearly tiers and
      * understating real retention by about two and a half years.
      *
-     * Not a harmless omission: the runbook's first instruction is to pick an
-     * archive from BEFORE whatever went wrong, and somebody told they have one
-     * year will not go looking for the two-year-old archive that exists.
+     * Not harmless: the runbook's first instruction is to pick an archive from
+     * BEFORE whatever went wrong, and somebody told they have one year will not
+     * go looking for the two-year-old archive that exists.
      *
-     * Each figure is read from config, so changing a tier without updating the
-     * runbook fails here rather than quietly making the document wrong again.
+     * COMPLETE ROWS, NOT BARE NUMBERS. A first version searched for "8" and "2"
+     * and stayed green when the weekly and yearly rows were deleted, because
+     * those digits appear all over the document. Each row is rebuilt from config
+     * and matched whole, so deleting one fails, and changing a tier without
+     * updating the table fails too.
      */
     $strategy = config('backup.cleanup.default_strategy');
     $runbook = (string) file_get_contents(base_path('docs/RESTORE.md'));
 
-    foreach ([
-        'keep_weekly_backups_for_weeks' => 'weekly',
-        'keep_monthly_backups_for_months' => 'monthly',
-        'keep_yearly_backups_for_years' => 'yearly',
-    ] as $setting => $tier) {
-        /*
-         * str_contains() with toBeTrue(), not expect()->toContain($value, $msg).
-         * toContain() is VARIADIC: a failure message passed as its second
-         * argument becomes a second expected value, so the assertion silently
-         * starts checking that the runbook contains the error text. Recorded in
-         * tests/Pest.php, and walked into here anyway.
-         */
-        expect(str_contains($runbook, (string) $strategy[$setting]))->toBeTrue(
-            "The runbook does not state the {$tier} retention figure ({$strategy[$setting]}), so "
-            .'it understates how far back an archive can be recovered from.',
+    $rows = [
+        'Every backup' => $strategy['keep_all_backups_for_days'].' days',
+        'One per day' => $strategy['keep_daily_backups_for_days'].' days',
+        'One per week' => $strategy['keep_weekly_backups_for_weeks'].' weeks',
+        'One per month' => $strategy['keep_monthly_backups_for_months'].' months',
+        'One per year' => $strategy['keep_yearly_backups_for_years'].' years',
+    ];
+
+    foreach ($rows as $label => $kept) {
+        $row = "| {$label} | {$kept} |";
+
+        expect(str_contains($runbook, $row))->toBeTrue(
+            "The runbook is missing the retention row \"{$row}\", so it understates how far "
+            .'back an archive can be recovered from.',
         );
     }
 });
@@ -646,21 +694,60 @@ it('documents every retention tier in the runbook', function () {
 |--------------------------------------------------------------------------
 */
 
-it('warns the runbook reader that the boot guard gates its own steps', function () {
+it('tells the operator to configure credentials before the migrate step', function () {
     /*
      * P1-T15, group 3 finding L7. BackupConfiguration::assertReadyForProduction()
      * is the first statement of AppServiceProvider::boot(), so it runs for EVERY
-     * artisan command — including the `migrate` the runbook itself tells an
-     * operator to run during a restore.
+     * artisan command — including the `migrate` the runbook itself prescribes.
+     * On a rebuilt server whose backup credentials are not in place yet, that
+     * step fails with "Backups are not configured for production" in the middle
+     * of restoring from a backup. The guard is correct and stays; the ordering
+     * has to be written down.
      *
-     * On a rebuilt server, where the backup credentials have not been set up
-     * yet, that step throws "Backups are not configured for production" and the
-     * restore stops with an error about backups in the middle of restoring from
-     * one. The guard is correct and stays; the ordering has to be written down,
-     * including the exact message so the operator recognises it.
+     * ORDERING IS ASSERTED, NOT MERE PRESENCE. A first version only checked that
+     * the error message and BACKUP_S3_BUCKET appeared somewhere in the document,
+     * which they already did — the deployment section names the credentials and
+     * the guard's message could sit anywhere. Finding both proves nothing about
+     * whether the operator is told to set them BEFORE running migrate.
+     *
+     * So: the instruction must carry ordering language, must name the variable,
+     * and must sit between the migrate command and the step that follows it,
+     * where somebody working through the runbook will actually read it.
      */
     $runbook = (string) file_get_contents(base_path('docs/RESTORE.md'));
 
-    expect($runbook)->toContain('Backups are not configured for production')
-        ->and($runbook)->toContain('BACKUP_S3_BUCKET');
+    $migrate = strpos($runbook, 'php artisan migrate');
+    $nextStep = strpos($runbook, '### 4.');
+
+    expect($migrate)->not->toBeFalse('The runbook no longer runs migrate during a restore.')
+        ->and($nextStep)->not->toBeFalse('The restore steps have been renumbered; this test needs updating.');
+
+    /*
+     * FLATTENED BEFORE MATCHING, in two steps.
+     *
+     * Markdown wraps prose wherever the author happened to stop, and this
+     * passage is a blockquote, so a sentence reads "before you\n> run this" in
+     * the file. Stripping the quote markers and then collapsing whitespace lets
+     * the assertions below be about what the runbook SAYS rather than about
+     * where its lines break — a test that fails on re-wrapping is dictating
+     * formatting, not checking content.
+     */
+    $section = substr($runbook, $migrate, $nextStep - $migrate);
+    $section = (string) preg_replace('/^\s*>\s?/m', '', $section);
+    $betweenMigrateAndNextStep = (string) preg_replace('/\s+/', ' ', $section);
+
+    expect(str_contains($betweenMigrateAndNextStep, 'BACKUP_S3_BUCKET'))->toBeTrue(
+        'The migrate step does not name the credentials it needs, so an operator meets the '
+        .'refusal with no idea what to set.',
+    );
+
+    expect(str_contains($betweenMigrateAndNextStep, 'before you run this'))->toBeTrue(
+        'The migrate step does not say the credentials must be set BEFORE it runs, which is '
+        .'the whole of the ordering this finding is about.',
+    );
+
+    expect(str_contains($betweenMigrateAndNextStep, 'Backups are not configured for production'))->toBeTrue(
+        'The runbook does not quote the exact error its own step produces, so an operator '
+        .'cannot recognise the guard working and reads it as a broken restore.',
+    );
 });
