@@ -823,6 +823,77 @@ reachable. Neither was visible from inside the change that caused it.
 | `vendor/bin/pint --test` | passed |
 | `composer analyse` | 0 errors |
 
+### Resolution — M5, L2, L3 and L8
+
+Fixed on `p1/t15-detector-coverage`, branched from `main` after branch B merged.
+**This closes group 3, and with it every fix-now finding in the review.** Only
+L1 remains, deferred to phase 4 as recorded above.
+
+All four were checks that did not cover what they appeared to.
+
+**M5 — and a source scan could not have fixed it.** `eventLabel()` returns the
+RAW EVENT when a key is missing, so a forgotten translation renders as
+`deleted_by_cascade` and reads like a deliberate technical label; the review
+proved it by deleting that key and watching nothing fail. But two call sites pass
+a **variable** rather than a literal — `SystemRoleWriter` routes three events
+through a private helper, `AssignInstructorAction` picks between two on a branch
+— so a regex over `->event('…')` silently misses five of seventeen. **A detector
+with a hole reads as coverage**, so the vocabulary is declared once in
+`ActivityEvent` and the tests walk it. A reverse check also fails on a label
+nothing can emit, keeping the catalogue honest in both directions.
+
+**L2** scanned `resources/` only and accepted `.css`/`.php`, leaving `app/`
+invisible — the very place Filament class strings get written next. Both roots
+and `.js` are now covered, along with the three shapes the finding named:
+`rounded-tl-*`, `border-top-left-radius`, and three-or-four-value
+`margin`/`padding`/`inset` shorthand, **which names left and right without ever
+writing the words**.
+
+**L3** was an inline regex with no self-tests, and `resources/views/` was outside
+it entirely. Now a named function with two datasets, and Blade is scanned.
+
+**L8** — `RefreshDatabase` is deliberately not global, because
+`FileLifecycleTransactionTest` needs real transactions. That left isolation as
+something each author must remember, on a database every suite shares. It is now
+enforced, and `tests/Pest.php` records why the commented line stays and what
+replaced it.
+
+**The isolation guard found a false positive in itself, and was fixed rather than
+exempted.** `ActionBoundaryArchTest` carries `'/::factory\s*\(/'` as *data*, so
+reading raw text called a source scanner a database writer. It now strips
+comments and string literals first. An exemption list would have hidden that —
+and would have exempted the file from the whole rule the day it did start writing
+rows.
+
+**Two sample sets were incomplete in exactly the way branch B's were.** Deleting
+the new `rounded` rule, and the `::factory` rule, broke nothing: every existing
+sample also matched a different clause, so those clauses never got a say. Each
+rule now has a sample that fails only itself. **This is the third branch on which
+that specific mistake appeared**, which is why it is written down rather than
+quietly fixed.
+
+**Mutation testing: thirteen mutations, thirteen caught** after that correction —
+including the review's own `deleted_by_cascade` experiment, a new event declared
+without a label, an orphaned label, a physical property planted in `app/`, a
+hardcoded label in a Blade view, and an unisolated feature test.
+
+**Gates on the branch tip, real output:**
+
+| Gate | Result |
+|---|---|
+| `php artisan test` | **935 passed**, 0 failed, 2575 assertions |
+| `vendor/bin/pint --test` | passed |
+| `composer analyse` | 0 errors |
+
+---
+
+## Where the review stands
+
+**Every fix-now finding across all three groups is now closed.** Group 1 (6),
+group 2 (6) and group 3 (15) are merged or in review; L1 is the single deferral,
+recorded above for phase 4. T16 inherits the rejections and deferrals from this
+document.
+
 ### Unverified items
 
 | # | Claim | Experiment | Result |
