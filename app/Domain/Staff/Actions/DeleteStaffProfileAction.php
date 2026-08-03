@@ -7,6 +7,7 @@ namespace App\Domain\Staff\Actions;
 use App\Domain\Staff\Models\StaffCertificate;
 use App\Domain\Staff\Models\StaffProfile;
 use App\Domain\Staff\Services\FileLifecycleService;
+use App\Domain\Staff\Support\ActivityEvent;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
@@ -113,12 +114,12 @@ final class DeleteStaffProfileAction
                 activity()
                     ->causedBy($actor)
                     ->performedOn($certificate)
-                    ->event('deleted_by_cascade')
+                    ->event(ActivityEvent::DELETED_BY_CASCADE)
                     ->withProperties([
                         'staff_profile_id' => $lockedProfile->getKey(),
                         'title' => $certificate->title,
                     ])
-                    ->log('deleted_by_cascade');
+                    ->log(ActivityEvent::DELETED_BY_CASCADE);
             }
 
             // Cascades to staff_certificates. The receipts above were written

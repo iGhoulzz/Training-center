@@ -18,6 +18,7 @@ use App\Domain\Staff\Policies\ActivityPolicy;
 use App\Domain\Staff\Policies\StaffCertificatePolicy;
 use App\Domain\Staff\Policies\StaffProfilePolicy;
 use App\Domain\Staff\Policies\UserPolicy;
+use App\Domain\Staff\Support\ActivityEvent;
 use App\Domain\Staff\Support\BackupConfiguration;
 use App\Models\User;
 use Illuminate\Auth\Events\Failed;
@@ -99,8 +100,8 @@ class AppServiceProvider extends ServiceProvider
 
             activity(self::AUTH_LOG)
                 ->causedBy($event->user)
-                ->event('logged_in')
-                ->log('logged_in');
+                ->event(ActivityEvent::LOGGED_IN)
+                ->log(ActivityEvent::LOGGED_IN);
         });
 
         Event::listen(Logout::class, function (Logout $event): void {
@@ -111,8 +112,8 @@ class AppServiceProvider extends ServiceProvider
 
             activity(self::AUTH_LOG)
                 ->causedBy($event->user)
-                ->event('logged_out')
-                ->log('logged_out');
+                ->event(ActivityEvent::LOGGED_OUT)
+                ->log(ActivityEvent::LOGGED_OUT);
         });
 
         /*
@@ -126,9 +127,9 @@ class AppServiceProvider extends ServiceProvider
          */
         Event::listen(Failed::class, function (Failed $event): void {
             activity(self::AUTH_LOG)
-                ->event('login_failed')
+                ->event(ActivityEvent::LOGIN_FAILED)
                 ->withProperties(['email' => $event->credentials['email'] ?? null])
-                ->log('login_failed');
+                ->log(ActivityEvent::LOGIN_FAILED);
         });
     }
 }

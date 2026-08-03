@@ -450,6 +450,24 @@ function firstPhysicalCssProperty(string $source): ?string
          * `border-s` / `border-e` never enter the alternation at all.
          */
         '/(?<![\w-])border-(l|r)(?![\w])/i',
+
+        /*
+         * CORNER RADIUS, both spellings (P1-T15, finding L2). A corner is
+         * physical in exactly the way a side is: `rounded-tl-lg` stays on the
+         * visual left when the page flips, so a card's cut corner ends up on the
+         * wrong side in Arabic. The logical forms are rounded-ss/se/es/ee and
+         * border-start-start-radius.
+         */
+        '/border-(top|bottom)-(left|right)-radius\s*:/i',
+        '/(?<![\w-])rounded-(tl|tr|bl|br|l|r)(?![\w])/i',
+
+        /*
+         * DIRECTIONAL SHORTHAND. `margin: 0 4px 0 8px` names left and right
+         * without ever writing the words, so every pattern above misses it.
+         * Three or four values are directional; one or two are not (`margin: 0`
+         * and `margin: 0 auto` are symmetric and flip harmlessly).
+         */
+        '/(margin|padding|inset)\s*:\s*[^;{}]*\S\s+\S[^;{}]*\S\s+\S[^;{}]*(;|\})/i',
     ];
 
     foreach ($patterns as $pattern) {
@@ -508,6 +526,20 @@ it('catches every physical form the stylesheet rules forbid', function (string $
     '<div class="border-l-4 border-gray-200">',
     '<div class="border-l-[3px]">',
     '<div class="border-l-red-500">',
+
+    /*
+     * The three shapes finding L2 named, each with a sample that fails ONLY its
+     * own rule. Mutation testing found the first version wanting: the pattern
+     * was added without a sample, so deleting the rule again broke nothing.
+     */
+    '<div class="rounded-tl-lg">',
+    '<div class="rounded-r">',
+    'border-top-left-radius: 4px;',
+    'border-bottom-right-radius: 2px;',
+    // Four- and three-value shorthand name left and right without saying so.
+    'margin: 0 4px 0 8px;',
+    'padding: 1px 2px 3px;',
+    'inset: 0 4px 0 8px;',
 ]);
 
 it('passes the logical forms that replace them', function (string $sample) {
@@ -541,6 +573,17 @@ it('passes the logical forms that replace them', function (string $sample) {
     '<div class="border-s-[3px]">',
     '<div class="border-s-red-500">',
 
+    // The logical counterparts of the three rules added by finding L2.
+    '<div class="rounded-ss-lg">',
+    '<div class="rounded-e">',
+    '<div class="rounded-lg">',
+    'border-start-start-radius: 4px;',
+    // One and two values are symmetric: nothing to flip.
+    'margin: 0;',
+    'margin: 0 auto;',
+    'padding: 1rem 2rem;',
+    'inset: 0;',
+
     // Inline styles that are already logical.
     '<div style="inset-inline-start: 0">',
     '<div style="margin-inline-end: 4px">',
@@ -561,9 +604,26 @@ it('passes the logical forms that replace them', function (string $sample) {
 ]);
 
 it('uses logical CSS properties only', function () {
+    /*
+     * BOTH ROOTS, AND JAVASCRIPT TOO (P1-T15, finding L2).
+     *
+     * This scanned resources/ alone and accepted only .css and .php, so app/ was
+     * invisible — and app/ is where every Filament resource lives, the place
+     * class strings are most likely to be written next. resources/js/ was
+     * excluded by the extension filter for the same reason.
+     *
+     * Markdown is still not scanned: resources/css/README.md's "Never" column
+     * spells out every forbidden property, so scanning documentation would make
+     * the rule report itself as a violation.
+     */
     $offenders = [];
 
-    foreach (File::allFiles(resource_path()) as $file) {
+    $files = array_merge(
+        File::allFiles(app_path()),
+        File::allFiles(resource_path()),
+    );
+
+    foreach ($files as $file) {
         $name = $file->getFilename();
         $path = (string) $file->getRealPath();
 
@@ -571,10 +631,7 @@ it('uses logical CSS properties only', function () {
             continue;
         }
 
-        // css and php only. resources/css/README.md is deliberately not scanned:
-        // its "Never" column spells out every forbidden property, so scanning
-        // documentation would report the rule as its own violation.
-        if (! in_array($file->getExtension(), ['css', 'php'], true)) {
+        if (! in_array($file->getExtension(), ['css', 'php', 'js'], true)) {
             continue;
         }
 
@@ -595,33 +652,118 @@ it('uses logical CSS properties only', function () {
 |--------------------------------------------------------------------------
 */
 
-it('has no hardcoded user-facing strings in the application', function () {
-    // Without this test, "everything goes through __()" is a guideline, and the
-    // catalogue this task just completed starts rotting from the next resource
-    // somebody writes. It held for eleven tasks on discipline alone; it should
-    // not have to.
+/**
+ * The first hardcoded user-facing string in this source, or null.
+ *
+ * A NAMED FUNCTION WITH SAMPLE SETS (P1-T15, finding L3). This was an inline
+ * regex with no self-tests, and an inline pattern can only ever be exercised
+ * against the codebase as it happens to be today — which is exactly the case
+ * where it passes vacuously. The two datasets below are what make deleting a
+ * rule fail, and over-broadening one fail differently.
+ *
+ * The setter list is closed and hand-maintained, which is fail-open by nature:
+ * a labelling method Filament adds tomorrow is not on it. That is stated rather
+ * than hidden — the list covers every setter this codebase actually calls, and
+ * the samples pin the SHAPES it must catch so the pattern cannot quietly narrow.
+ */
+function firstHardcodedLabel(string $source): ?string
+{
     $labelling = '(label|placeholder|helperText|hint|description|heading|modalHeading'
         .'|modalDescription|modalSubmitActionLabel|emptyStateHeading|emptyStateDescription'
-        .'|navigationLabel|navigationGroup|tooltip|title|body|badge|suffix|prefix)';
+        .'|navigationLabel|navigationGroup|tooltip|title|body|badge|suffix|prefix'
+        // Added with the detector's own tests: these are called in this codebase
+        // and were never covered.
+        .'|helperText|trueLabel|falseLabel|displayName|breadcrumb|subheading)';
 
+    /*
+     * A literal single- or double-quoted string passed straight to a labelling
+     * call. Anything non-empty is an offence — including a lone space, which is
+     * how a "harmless" separator becomes untranslatable.
+     *
+     * \s* after the paren catches the multi-line call style, where the argument
+     * sits on the next line.
+     */
+    if (preg_match("/->{$labelling}\(\s*['\"][^'\"]/", $source, $match) === 1) {
+        return trim($match[0]);
+    }
+
+    return null;
+}
+
+it('detects the hardcoded labels it is meant to detect', function (string $sample) {
+    // Deleting a rule from the detector fails here.
+    expect(firstHardcodedLabel($sample))->not->toBeNull();
+})->with([
+    "TextInput::make('name')->label('Name')",
+    'TextInput::make("name")->label("Name")',
+    "->placeholder('Search')",
+    "->helperText('A PDF or an image.')",
+    "->navigationLabel('Students')",
+    "->modalHeading('Delete user')",
+    // A lone space is still a user-facing string.
+    "->suffix(' ')",
+    // The multi-line call style.
+    "->description(\n    'Something explanatory'\n)",
+    // Setters added with this detector's own tests.
+    "->trueLabel('Active only')",
+    "->breadcrumb('Edit')",
+]);
+
+it('leaves translated and non-label calls alone', function (string $sample) {
+    // Over-broadening the detector fails here. Every one of these is something
+    // the codebase legitimately does.
+    expect(firstHardcodedLabel($sample))->toBeNull();
+})->with([
+    "->label(__('staff.name'))",
+    '->label(__("staff.name"))',
+    "->label(fn (): string => __('staff.name'))",
+    // Not a labelling setter at all.
+    "->name('email')",
+    "->rules('required')",
+    '->schema([])',
+    // A method whose name merely ENDS in a labelling word.
+    "->columnLabel('x')",
+    // Empty string: nothing user-facing to translate.
+    "->label('')",
+]);
+
+it('has no hardcoded user-facing strings in the application', function () {
+    /*
+     * Without this test, "everything goes through __()" is a guideline, and the
+     * catalogue T14 completed starts rotting from the next resource somebody
+     * writes. It held for eleven tasks on discipline alone; it should not have
+     * to.
+     *
+     * VIEWS ARE SCANNED TOO (finding L3). Blade templates render user-facing
+     * text as readily as a Filament resource does, and resources/views/ was
+     * outside this check entirely.
+     */
     $offenders = [];
 
-    foreach (File::allFiles(app_path()) as $file) {
+    $files = array_merge(
+        File::allFiles(app_path()),
+        File::allFiles(resource_path('views')),
+    );
+
+    foreach ($files as $file) {
         if ($file->getExtension() !== 'php') {
             continue;
         }
 
         $path = (string) $file->getRealPath();
 
-        // A literal single- or double-quoted string passed straight to a
-        // labelling call. Anything non-empty is an offence — including a lone
-        // space, which is how a "harmless" separator becomes untranslatable.
-        if (preg_match("/->{$labelling}\(\s*['\"][^'\"]/", appSourceWithoutComments($path))) {
-            $offenders[] = str_replace(base_path().DIRECTORY_SEPARATOR, '', $path);
+        // Blade is read whole; comments there are HTML/Blade rather than PHP
+        // tokens, and token_get_all() would mangle the template.
+        $source = str_ends_with($path, '.blade.php')
+            ? (string) file_get_contents($path)
+            : appSourceWithoutComments($path);
+
+        if (($match = firstHardcodedLabel($source)) !== null) {
+            $offenders[] = str_replace(base_path().DIRECTORY_SEPARATOR, '', $path).' → '.$match;
         }
     }
 
     expect($offenders)->toBeEmpty(
-        'User-facing strings must go through __(): '.implode(', ', $offenders),
+        "User-facing strings must go through __():\n  ".implode("\n  ", $offenders),
     );
 });

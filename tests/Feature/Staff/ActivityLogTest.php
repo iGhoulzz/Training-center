@@ -7,14 +7,12 @@ use App\Domain\Enrollment\Models\Student;
 use App\Domain\Staff\Actions\SystemRoleWriter;
 use App\Domain\Staff\Models\StaffCertificate;
 use App\Domain\Staff\Models\StaffProfile;
-use App\Domain\Staff\Support\RecordsActivity;
 use App\Models\Role;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\File;
 use Spatie\Activitylog\Models\Activity;
 use Spatie\Activitylog\Support\ActivityBuffer;
 
@@ -186,40 +184,6 @@ it('pins the global exclusion list', function () {
         ->toContain('password')
         ->toContain('remember_token');
 });
-
-/**
- * Every model that records activity, found rather than listed.
- *
- * @return array<int, class-string<Model>>
- */
-function recordsActivityModels(): array
-{
-    $classes = [];
-
-    foreach (File::allFiles(app_path()) as $file) {
-        if ($file->getExtension() !== 'php') {
-            continue;
-        }
-
-        $class = 'App\\'.str_replace(
-            [app_path().DIRECTORY_SEPARATOR, '.php', DIRECTORY_SEPARATOR],
-            ['', '', '\\'],
-            (string) $file->getRealPath(),
-        );
-
-        if (! class_exists($class) || ! is_subclass_of($class, Model::class)) {
-            continue;
-        }
-
-        if (in_array(RecordsActivity::class, class_uses_recursive($class), true)) {
-            $classes[] = $class;
-        }
-    }
-
-    sort($classes);
-
-    return $classes;
-}
 
 it('keeps secrets out of every model allowlist', function () {
     /*

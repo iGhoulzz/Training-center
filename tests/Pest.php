@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use App\Domain\Staff\Support\RecordsActivity;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Testing\File;
@@ -20,6 +22,24 @@ use Tests\TestCase;
 |
 */
 
+/*
+ * RefreshDatabase is NOT applied globally, and that is deliberate rather than an
+ * oversight (P1-T15, group 3 finding L8).
+ *
+ * FileLifecycleTransactionTest uses DatabaseMigrations instead, because
+ * RefreshDatabase wraps every test in a transaction and that transaction is
+ * precisely the machinery those tests exist to exercise. Applying both would
+ * quietly defeat them.
+ *
+ * The cost is that isolation becomes something each author has to remember, on a
+ * database every suite shares — a file that writes rows without opting in leaves
+ * them for whichever file runs next, and the failure then surfaces somewhere
+ * else entirely.
+ *
+ * ENFORCED RATHER THAN REMEMBERED: tests/Feature/DatabaseIsolationTest.php fails
+ * the build when a test looks like it writes rows and names no isolation trait.
+ * The commented line below stays as the record of what was considered.
+ */
 pest()->extend(TestCase::class)
  // ->use(RefreshDatabase::class)
     ->in('Feature');
@@ -307,6 +327,52 @@ function appCommentsOnly(string $path): string
     }
 
     return $comments;
+}
+
+/**
+ * Every model that records activity, found rather than listed.
+ *
+ * Lives here rather than in a test file because two of them need it now —
+ * ActivityLogTest for the secret-exclusion scan and LocalizationTest for the
+ * record-type labels — and Pest gives no guarantee about the order test files
+ * are loaded, so a helper defined in one is only sometimes there for the other.
+ *
+ * @return array<int, class-string<Model>>
+ */
+function recordsActivityModels(): array
+{
+    $classes = [];
+
+    /*
+     * Fully qualified deliberately: this file imports Illuminate\Http\Testing\File
+     * for the upload helpers above, so a bare `File` here resolves to that and
+     * fails with "Method Illuminate\Http\Testing\File::allFiles does not exist".
+     * Moving a helper into a file with a different import table is exactly how
+     * that happens.
+     */
+    foreach (Illuminate\Support\Facades\File::allFiles(app_path()) as $file) {
+        if ($file->getExtension() !== 'php') {
+            continue;
+        }
+
+        $class = 'App\\'.str_replace(
+            [app_path().DIRECTORY_SEPARATOR, '.php', DIRECTORY_SEPARATOR],
+            ['', '', '\\'],
+            (string) $file->getRealPath(),
+        );
+
+        if (! class_exists($class) || ! is_subclass_of($class, Model::class)) {
+            continue;
+        }
+
+        if (in_array(RecordsActivity::class, class_uses_recursive($class), true)) {
+            $classes[] = $class;
+        }
+    }
+
+    sort($classes);
+
+    return $classes;
 }
 
 /** The file's PHP source with all comments and docblocks removed. */

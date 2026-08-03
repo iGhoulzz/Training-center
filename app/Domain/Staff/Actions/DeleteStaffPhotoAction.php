@@ -6,6 +6,7 @@ namespace App\Domain\Staff\Actions;
 
 use App\Domain\Staff\Models\StaffProfile;
 use App\Domain\Staff\Services\FileLifecycleService;
+use App\Domain\Staff\Support\ActivityEvent;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
@@ -65,8 +66,8 @@ final class DeleteStaffPhotoAction
             activity()
                 ->causedBy($actor)
                 ->performedOn($lockedProfile)
-                ->event('photo_removed')
-                ->log('photo_removed');
+                ->event(ActivityEvent::PHOTO_REMOVED)
+                ->log(ActivityEvent::PHOTO_REMOVED);
 
             return $ids;
         });

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Pages;
 
+use App\Domain\Staff\Support\ActivityEvent;
 use App\Models\User;
 use Filament\Facades\Filament;
 use Filament\Forms\Components\TextInput;
@@ -115,8 +116,8 @@ class PasswordChange extends Page
                 // the day this runs anywhere but a web request.
                 ->causedBy($user)
                 ->performedOn($user)
-                ->event('password_changed')
-                ->log('password_changed');
+                ->event(ActivityEvent::PASSWORD_CHANGED)
+                ->log(ActivityEvent::PASSWORD_CHANGED);
         });
 
         Notification::make()->title(__('auth.password_updated'))->success()->send();

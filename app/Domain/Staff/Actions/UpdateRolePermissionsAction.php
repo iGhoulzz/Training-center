@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Staff\Actions;
 
+use App\Domain\Staff\Support\ActivityEvent;
 use App\Models\Role;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -89,9 +90,9 @@ final class UpdateRolePermissionsAction
             activity()
                 ->causedBy($actor)
                 ->performedOn($locked)
-                ->event('permissions_changed')
+                ->event(ActivityEvent::PERMISSIONS_CHANGED)
                 ->withProperties(['added' => $adding, 'removed' => $removing])
-                ->log('permissions_changed');
+                ->log(ActivityEvent::PERMISSIONS_CHANGED);
         });
     }
 }

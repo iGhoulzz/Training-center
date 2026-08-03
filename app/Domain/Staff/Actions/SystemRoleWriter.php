@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Domain\Staff\Actions;
 
 use App\Domain\Staff\Services\SuperAdminInvariantService;
+use App\Domain\Staff\Support\ActivityEvent;
 use App\Models\Role;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Model;
@@ -69,7 +70,7 @@ final class SystemRoleWriter
 
             $locked->assignRole($requested);
 
-            self::recordSystemEvent($locked, 'roles_changed', ['added' => $adding, 'removed' => []]);
+            self::recordSystemEvent($locked, ActivityEvent::ROLES_CHANGED, ['added' => $adding, 'removed' => []]);
         });
     }
 
@@ -121,7 +122,7 @@ final class SystemRoleWriter
                 $locked->syncRoles($desired);
             }
 
-            self::recordSystemEvent($locked, 'roles_changed', ['added' => $adding, 'removed' => $removing]);
+            self::recordSystemEvent($locked, ActivityEvent::ROLES_CHANGED, ['added' => $adding, 'removed' => $removing]);
         });
     }
 
@@ -155,7 +156,7 @@ final class SystemRoleWriter
 
             $locked->syncPermissions($permissions);
 
-            self::recordSystemEvent($locked, 'permissions_changed', [
+            self::recordSystemEvent($locked, ActivityEvent::PERMISSIONS_CHANGED, [
                 'added' => $adding,
                 'removed' => $removing,
             ]);

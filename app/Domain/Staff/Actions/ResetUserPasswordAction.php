@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Staff\Actions;
 
+use App\Domain\Staff\Support\ActivityEvent;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
@@ -65,8 +66,8 @@ final class ResetUserPasswordAction
             activity()
                 ->causedBy($actor)
                 ->performedOn($target)
-                ->event('password_reset')
-                ->log('password_reset');
+                ->event(ActivityEvent::PASSWORD_RESET)
+                ->log(ActivityEvent::PASSWORD_RESET);
         });
 
         return $plain;

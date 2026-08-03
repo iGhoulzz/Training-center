@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Domain\Staff\Actions;
 
 use App\Domain\Staff\Services\SuperAdminInvariantService;
+use App\Domain\Staff\Support\ActivityEvent;
 use App\Domain\Staff\Support\RoleSet;
 use App\Models\Role;
 use App\Models\User;
@@ -136,9 +137,9 @@ final class SyncUserRolesAction
             activity()
                 ->causedBy($actor)
                 ->performedOn($locked)
-                ->event('roles_changed')
+                ->event(ActivityEvent::ROLES_CHANGED)
                 ->withProperties(['added' => $adding->names(), 'removed' => $removing->names()])
-                ->log('roles_changed');
+                ->log(ActivityEvent::ROLES_CHANGED);
         });
     }
 }

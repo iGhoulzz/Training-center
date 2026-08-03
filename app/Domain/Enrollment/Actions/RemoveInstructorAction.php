@@ -6,6 +6,7 @@ namespace App\Domain\Enrollment\Actions;
 
 use App\Domain\Enrollment\Exceptions\BatchClosedException;
 use App\Domain\Enrollment\Models\Batch;
+use App\Domain\Staff\Support\ActivityEvent;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
@@ -81,7 +82,7 @@ final class RemoveInstructorAction
             activity()
                 ->causedBy($actor)
                 ->performedOn($locked)
-                ->event('instructor_removed')
+                ->event(ActivityEvent::INSTRUCTOR_REMOVED)
                 ->withProperties([
                     /*
                      * EVERY VALUE COMES FROM $existing, THE ROW THIS ACTION READ.
@@ -105,7 +106,7 @@ final class RemoveInstructorAction
                     // AssignInstructorAction for why.
                     'assigned_hours' => (int) $existing->pivot->getAttribute('assigned_hours'),
                 ])
-                ->log('instructor_removed');
+                ->log(ActivityEvent::INSTRUCTOR_REMOVED);
         });
     }
 

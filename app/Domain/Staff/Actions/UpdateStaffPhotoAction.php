@@ -7,6 +7,7 @@ namespace App\Domain\Staff\Actions;
 use App\Domain\Staff\Exceptions\FileStorageException;
 use App\Domain\Staff\Models\StaffProfile;
 use App\Domain\Staff\Services\FileLifecycleService;
+use App\Domain\Staff\Support\ActivityEvent;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\UploadedFile;
@@ -136,9 +137,9 @@ final class UpdateStaffPhotoAction
                 activity()
                     ->causedBy($actor)
                     ->performedOn($lockedProfile)
-                    ->event('photo_updated')
+                    ->event(ActivityEvent::PHOTO_UPDATED)
                     ->withProperties(['replaced_existing' => $ids !== []])
-                    ->log('photo_updated');
+                    ->log(ActivityEvent::PHOTO_UPDATED);
 
                 return $ids;
             },

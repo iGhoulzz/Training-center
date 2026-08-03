@@ -10,6 +10,7 @@ use App\Domain\Enrollment\Exceptions\InstructorNotEligibleException;
 use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Staff\Enums\EmploymentType;
 use App\Domain\Staff\Models\StaffProfile;
+use App\Domain\Staff\Support\ActivityEvent;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
@@ -158,7 +159,7 @@ final class AssignInstructorAction
              * refusal or a rollback takes the entry with it. Same placement as
              * DeleteStaffProfileAction's cascade entries, for the same reason.
              */
-            $event = $previousHours === null ? 'instructor_assigned' : 'instructor_hours_changed';
+            $event = $previousHours === null ? ActivityEvent::INSTRUCTOR_ASSIGNED : ActivityEvent::INSTRUCTOR_HOURS_CHANGED;
 
             activity()
                 ->causedBy($actor)
