@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Domain\Staff\Support\BackupConfiguration;
 use Spatie\Backup\Notifications\Notifiable;
 use Spatie\Backup\Notifications\Notifications\BackupHasFailedNotification;
 use Spatie\Backup\Notifications\Notifications\BackupWasSuccessfulNotification;
@@ -37,7 +38,20 @@ use Spatie\Backup\Tasks\Monitor\HealthChecks\MaximumStorageInMegabytes;
  * who means to change where backups live. docs/RESTORE.md tells the operator to
  * look for `training-center-*.zip`, and a test asserts the two agree.
  */
-$backupName = (string) env('BACKUP_ARCHIVE_NAME', 'training-center');
+/*
+ * A BLANK VALUE FALLS BACK, because env()'s second argument is a default for a
+ * MISSING key only. A key that exists and is empty returns '' and sails straight
+ * past it — the same trap that silently disabled the whole audit trail in
+ * finding M1, and .env.example now ships this key, so a fresh checkout with the
+ * value cleared is a realistic state rather than a hypothetical one.
+ *
+ * An empty archive name would put every backup in the bucket root and make the
+ * monitor look there too, which is the M3 failure with no rename required.
+ */
+$configuredBackupName = env('BACKUP_ARCHIVE_NAME');
+$backupName = is_string($configuredBackupName) && trim($configuredBackupName) !== ''
+    ? trim($configuredBackupName)
+    : BackupConfiguration::DEFAULT_ARCHIVE_NAME;
 
 /*
  * The retention tiers, hoisted so the storage alert below can be sized from the
@@ -83,7 +97,16 @@ $retainedArchives = $keepAllForDays
  * holding thousands of scanned documents should raise it rather than let the
  * nightly alert start crying wolf.
  */
-$expectedArchiveMegabytes = (int) env('BACKUP_EXPECTED_ARCHIVE_MB', 250);
+/*
+ * Blank-safe for the same reason, and the consequence here is sharper: (int) ''
+ * is 0, which would size the storage alert at zero megabytes and report every
+ * backup unhealthy from the first night. A non-numeric value falls back too
+ * rather than silently becoming 0.
+ */
+$configuredArchiveMegabytes = env('BACKUP_EXPECTED_ARCHIVE_MB');
+$expectedArchiveMegabytes = is_numeric($configuredArchiveMegabytes) && (int) $configuredArchiveMegabytes > 0
+    ? (int) $configuredArchiveMegabytes
+    : 250;
 
 /*
  * How much room to leave above the calculated steady state before the storage

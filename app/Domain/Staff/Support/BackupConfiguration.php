@@ -36,6 +36,17 @@ use RuntimeException;
 final class BackupConfiguration
 {
     /**
+     * The archive directory and filename prefix when BACKUP_ARCHIVE_NAME is unset.
+     *
+     * ONE PLACE, because four things have to agree about it: config/backup.php's
+     * env default, .env.example's documented value, docs/RESTORE.md's "with the
+     * default configuration" note, and the test that keeps them consistent.
+     * Written out four times, the runbook is the copy that goes stale — and a
+     * runbook that names the wrong file is read during an incident.
+     */
+    public const DEFAULT_ARCHIVE_NAME = 'training-center';
+
+    /**
      * Values that must be present before production may run.
      *
      * The bucket and credentials are what make the destination off-server; the

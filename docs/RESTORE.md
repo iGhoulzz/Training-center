@@ -21,9 +21,14 @@ Both halves are required. The database stores only the **paths** to uploaded
 files, so restoring the database alone gives you rows pointing at certificates
 that no longer exist, and no way to reconstruct them.
 
-Archives are named `training-center-*` and live on the `backups` disk — an
-S3-compatible bucket that is **not** on the application server. That is the
-point: a backup on the same VPS as the application dies with it.
+Archives are named `<BACKUP_ARCHIVE_NAME>-*` — `training-center-*` with the
+default configuration — and live on the `backups` disk, an S3-compatible bucket
+that is **not** on the application server. That is the point: a backup on the
+same VPS as the application dies with it.
+
+`BACKUP_ARCHIVE_NAME` also names the directory they sit in inside the bucket. If
+this deployment sets it to something else, substitute that value everywhere this
+document writes `training-center-`.
 
 ---
 
@@ -51,8 +56,9 @@ other than whoever set the system up.
 
 From the storage provider's console, or with any S3 client pointed at
 `BACKUP_S3_ENDPOINT` and `BACKUP_S3_BUCKET`. Pick the newest
-`training-center-*.zip` from before whatever went wrong — for a bad import or a
-mistaken bulk edit, that is **not** last night's.
+`<BACKUP_ARCHIVE_NAME>-*.zip` — `training-center-*.zip` with the default
+configuration — from before whatever went wrong. For a bad import or a mistaken
+bulk edit, that is **not** last night's.
 
 **Retention goes back further than most people assume, so look before concluding
 an archive is gone.** The tiers are additive:
@@ -82,7 +88,8 @@ shipped by most Linux distributions only understands the legacy ZipCrypto
 scheme. It typically reports `unsupported compression method 99` or simply an
 incorrect password, which is misleading — the password is fine, the tool is not.
 
-Use 7-Zip:
+Use 7-Zip — the filename below is an example under the default
+`BACKUP_ARCHIVE_NAME`; use whatever you actually downloaded in step 1:
 
 ```bash
 7z x -p"$BACKUP_ARCHIVE_PASSWORD" training-center-2026-07-28-01-30-00.zip -orestore/

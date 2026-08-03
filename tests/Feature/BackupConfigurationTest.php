@@ -533,6 +533,7 @@ function backupConfigWithEnvironment(array $environment): array
             "'name' => config('backup.backup.name')",
             "'monitor' => config('backup.monitor_backups.0.name')",
             "'prefix' => config('backup.backup.destination.filename_prefix')",
+            "'expected_mb' => config('backup.expected_archive_megabytes')",
         ]),
     );
 
@@ -584,29 +585,103 @@ it('monitors the same directory it writes to', function () {
     expect(config('backup.monitor_backups.0.name'))->toBe(config('backup.backup.name'));
 });
 
-it('writes archives under the filename the runbook tells people to look for', function () {
+it('tells the operator how the archive is named rather than assuming a default', function () {
     /*
-     * THE FILENAME PREFIX, NOT THE BUCKET DIRECTORY.
+     * THE RUNBOOK IS STATIC; THE ARCHIVE NAME IS A SETTING.
      *
-     * An earlier version of this test read backup.name, which is the DIRECTORY
-     * inside the bucket. Filenames come from destination.filename_prefix, a
-     * separate setting that was a third hardcoded copy of the same word — so
-     * changing the prefix left this test green while docs/RESTORE.md, which
-     * tells the operator to pick the newest `training-center-*.zip`, quietly
-     * became wrong.
+     * An earlier version asserted that the runbook contained THIS machine's
+     * configured filename prefix. On a deployment that legitimately sets
+     * BACKUP_ARCHIVE_NAME — which .env.example explicitly invites — that
+     * assertion fails, and it fails for a real reason: the document said "pick
+     * the newest `training-center-*.zip`" while the bucket actually held
+     * `preexisting-from-env-*.zip`. A runbook naming the wrong file is read
+     * during an incident, by somebody who then concludes the backups are gone.
      *
-     * The prefix is now derived from the same $backupName, and this asserts the
-     * value an operator actually types into a file listing.
+     * Coupling a static document to a per-deployment value was the mistake. The
+     * runbook now names the SETTING and states its default, so it is true on
+     * every deployment, and this asserts exactly that — no reference to whatever
+     * the current machine happens to be configured with.
      */
-    $runbook = (string) file_get_contents(base_path('docs/RESTORE.md'));
-    $prefix = (string) config('backup.backup.destination.filename_prefix');
+    $runbook = str_replace("\r\n", "\n", (string) file_get_contents(base_path('docs/RESTORE.md')));
 
-    expect($prefix)->not->toBe('', 'No filename prefix is configured.');
+    /*
+     * SCOPED TO THE STEP THAT TELLS THEM WHICH FILE TO DOWNLOAD, not the whole
+     * document. Mutation testing caught the looser version: deleting the setting
+     * name from step 1 changed nothing, because the word still appeared in the
+     * overview and in a later note — so the test passed while the one paragraph
+     * an operator reads before picking a file had gone back to naming a single
+     * hardcoded default. The same presence-versus-position mistake as the
+     * migrate-ordering assertion below.
+     */
+    $stepStart = strpos($runbook, '### 1.');
+    $stepEnd = strpos($runbook, '### 2.');
 
-    expect(str_contains($runbook, $prefix))->toBeTrue(
-        "The runbook does not mention the archive filename prefix ({$prefix}), so it sends "
-        .'somebody hunting for a file that never exists.',
+    expect($stepStart)->not->toBeFalse('The restore steps have been renumbered; this test needs updating.')
+        ->and($stepEnd)->not->toBeFalse('The restore steps have been renumbered; this test needs updating.');
+
+    $step = (string) preg_replace('/\s+/', ' ', substr($runbook, $stepStart, $stepEnd - $stepStart));
+
+    expect(str_contains($step, 'BACKUP_ARCHIVE_NAME'))->toBeTrue(
+        'The step that tells an operator which archive to download never names the setting '
+        .'that decides the filename, so on a renamed deployment they have nothing to substitute.',
     );
+
+    expect(str_contains($step, BackupConfiguration::DEFAULT_ARCHIVE_NAME.'-'))->toBeTrue(
+        'That step does not state the default archive prefix, so an operator on a stock install '
+        .'has no concrete name to look for.',
+    );
+});
+
+it('keeps the documented default and the configured default in step', function () {
+    /*
+     * Four places have to agree about this name: the constant, the env default
+     * in config, .env.example, and the runbook. The constant is the single
+     * source; these two assertions catch the copies drifting from it.
+     *
+     * The config default is checked through a subprocess with the variable
+     * explicitly unset, because on a machine that sets BACKUP_ARCHIVE_NAME the
+     * booted config legitimately holds something else — the same coupling
+     * mistake this whole test replaced.
+     */
+    $envExample = (string) file_get_contents(base_path('.env.example'));
+
+    expect(str_contains($envExample, 'BACKUP_ARCHIVE_NAME='.BackupConfiguration::DEFAULT_ARCHIVE_NAME))
+        ->toBeTrue('.env.example documents a different default from BackupConfiguration.');
+
+    /*
+     * Blank rather than absent, deliberately. .env.example now ships this key,
+     * so "present but cleared" is the realistic way a deployment ends up without
+     * a value — and env()'s default does not cover it, which is the M1 trap.
+     * An empty name would put every archive in the bucket root.
+     */
+    $config = backupConfigWithEnvironment(['BACKUP_ARCHIVE_NAME' => '']);
+
+    expect($config['name'])->toBe(
+        BackupConfiguration::DEFAULT_ARCHIVE_NAME,
+        'A blank BACKUP_ARCHIVE_NAME does not fall back to the documented default, so archives '
+        .'would be written to the bucket root.',
+    );
+});
+
+it('falls back when the expected archive size is blank or nonsense', function () {
+    /*
+     * The sharper half of the same trap. (int) '' is 0, so a cleared
+     * BACKUP_EXPECTED_ARCHIVE_MB would size the storage alert at ZERO megabytes
+     * and report every backup unhealthy from the first night — the M4 defect in
+     * its most extreme form, reached without anyone touching the threshold.
+     *
+     * Non-numeric is covered too: a typo like "250MB" would otherwise cast to
+     * 250 by luck, and something like "large" to 0.
+     */
+    foreach (['', 'not-a-number', '0', '-5'] as $value) {
+        $config = backupConfigWithEnvironment(['BACKUP_EXPECTED_ARCHIVE_MB' => $value]);
+
+        expect((int) $config['expected_mb'])->toBeGreaterThan(
+            0,
+            "BACKUP_EXPECTED_ARCHIVE_MB of '{$value}' produced a non-positive archive size, so "
+            .'the storage alert would fire on every backup.',
+        );
+    }
 });
 
 it('derives the archive filename from the same name as the directory', function () {
