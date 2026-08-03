@@ -689,15 +689,58 @@ message passed as its second argument becomes a second expected value. Fixed, an
 the whole suite scanned; the one remaining match is a legitimate multi-value
 assertion.
 
-**Mutation testing: four mutations, four caught**, including both bounds of the
-storage alert and the monitor/destination coupling — the latter mattering because
-that assertion passed on arrival, when both names still came from `APP_NAME`.
+**Codex's round found four assertions that overclaimed, and one comment that was
+simply wrong.** Every one is worth recording, because the code was right and the
+tests were not — the failure mode this whole review exists to catch.
+
+- **The runbook check read the wrong setting.** `backup.name` is the bucket
+  DIRECTORY; filenames come from `destination.filename_prefix`, which was a
+  *third* hardcoded copy of the same word. Changing the prefix left the test
+  green and made the runbook wrong. The prefix is now derived from the same
+  name, and a second test pins the two together.
+- **The retention check searched for bare numbers.** Deleting the weekly and
+  yearly rows changed nothing, because `8` and `2` appear all over the document.
+  Each row is now rebuilt from config and matched whole.
+- **The storage alert only had to sit below 1 TB**, which a headroom of twenty
+  would satisfy while making the check blind to the growth it exists to see. The
+  multiplier is now a named config value, asserted as an exact product and
+  bounded at both ends.
+- **The L7 assertion proved nothing about ordering.** Finding the error message
+  and `BACKUP_S3_BUCKET` *somewhere* in a document that already named both is not
+  evidence that the operator is told to set them BEFORE running `migrate`. The
+  text between the migrate command and the next step is now extracted and must
+  carry ordering language, the variable, and the exact error.
+- **Two new settings were undocumented.** `BACKUP_ARCHIVE_NAME` and
+  `BACKUP_EXPECTED_ARCHIVE_MB` are now in `.env.example`, with the warnings that
+  matter: renaming the archive on a live deployment orphans the bucket unless the
+  directory is moved first, and the expected size should be MEASURED from real
+  archives rather than left at a guess.
+
+**And a factual correction, not a stylistic one.** The comment called the
+retention periods overlapping and the archive total an over-estimate.
+`DefaultStrategy` builds each period where the previous one ends
+(`subDays($keepAll)` then `subDays($keepAll)->subDays($keepDaily)`), so they are
+successive and the total of 112 is exact.
+
+**Mutation testing: nine mutations, nine caught.** Four on the original work —
+including both bounds of the storage alert and the monitor/destination coupling,
+which mattered because that assertion passed on arrival while both names still
+came from `APP_NAME` — and five replaying the reviewer's own scenarios: the
+prefix drifting, each retention row deleted, the headroom widened from 2 to 20,
+and the ordering language removed.
+
+**One more test-shape lesson.** The tightened L7 assertion first failed on
+`"before you
+> run this"`: markdown wraps prose wherever the author stopped, and
+this passage is a blockquote. A test that fails on re-wrapping is dictating
+formatting rather than checking content, so the section is now flattened — quote
+markers stripped, whitespace collapsed — before matching.
 
 **Gates on the branch tip, real output:**
 
 | Gate | Result |
 |---|---|
-| `php artisan test` | **884 passed**, 0 failed, 2496 assertions |
+| `php artisan test` | **885 passed**, 0 failed, 2506 assertions |
 | `vendor/bin/pint --test` | passed |
 | `composer analyse` | 0 errors |
 
