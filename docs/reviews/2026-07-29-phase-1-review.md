@@ -729,18 +729,59 @@ came from `APP_NAME` — and five replaying the reviewer's own scenarios: the
 prefix drifting, each retention row deleted, the headroom widened from 2 to 20,
 and the ordering language removed.
 
-**One more test-shape lesson.** The tightened L7 assertion first failed on
-`"before you
-> run this"`: markdown wraps prose wherever the author stopped, and
-this passage is a blockquote. A test that fails on re-wrapping is dictating
-formatting rather than checking content, so the section is now flattened — quote
-markers stripped, whitespace collapsed — before matching.
+**One more test-shape lesson.** The tightened L7 assertion first failed because
+the phrase it searched for was split across a line break by a blockquote marker.
+Markdown wraps prose wherever the author stopped, so a test matching raw text is
+dictating where the document wraps rather than checking what it says. The section
+is now flattened — quote markers stripped, whitespace collapsed — before matching.
+
+**A third round found three more, and the first is the one worth remembering.**
+
+- **One fix broke another.** Documenting `BACKUP_ARCHIVE_NAME` in `.env.example`
+  — the correction from the previous round — means a fresh install copies it into
+  `.env`, which puts the key in the bootstrap set, which is *exactly* the
+  condition under which the `$_ENV` override technique does not work. **The
+  round-three fix invalidated the round-two one**, and the test then failed on
+  any machine with a normal `.env`, before reaching any application behaviour.
+
+  The override now runs in a **subprocess** with the variable supplied before
+  Laravel boots. Dotenv's immutable loading leaves an existing environment
+  variable alone rather than overwriting it from `.env`, so the passed value wins
+  regardless of what the developer has locally. It also makes the *negative* half
+  provable: `APP_NAME` can now be set before boot, so "a rename must not move the
+  archive directory" is asserted behaviourally rather than only by scanning
+  source. Verified by adding the key to `.env` and re-running — still green.
+
+- **The archive count is not exact, and the comment was wrong in the opposite
+  direction from the one before it.** The periods are successive, but
+  `DefaultStrategy` keeps one backup per CALENDAR GROUP (`YW`, `Ym`, `Y`), so
+  eight weeks can touch nine ISO weeks, twelve months thirteen calendar months,
+  and two years three calendar years. Each calendar-grouped tier now carries a
+  +1 — 115, described as a conservative upper bound. Pinned as an equality rather
+  than a floor, because a floor passes for an estimate with the allowance dropped.
+
+- **The migrate warning sat below the command it warns about.** An operator works
+  down a runbook and runs each block as they reach it, so that warning is read
+  after the failure it predicts. Moved above, and the test now asserts position
+  rather than presence — locating the fenced command rather than a mention of it,
+  since the warning text itself names artisan commands.
+
+**Running total: thirteen mutations, thirteen caught**, plus one control — the
+reproduction Codex supplied, with the key present in `.env`, must leave every
+test passing, and does.
+
+**The theme across all three rounds is one thing.** Every finding was a test or a
+comment that claimed more than it enforced: the wrong setting read, bare numbers
+matched, a range where an equality was needed, presence where ordering was meant,
+an environment assumption that a later fix invalidated, and two successive wrong
+descriptions of the same vendor algorithm. **The implementation was right each
+time.** What needed work was the evidence for it.
 
 **Gates on the branch tip, real output:**
 
 | Gate | Result |
 |---|---|
-| `php artisan test` | **885 passed**, 0 failed, 2506 assertions |
+| `php artisan test` | **886 passed**, 0 failed, 2515 assertions |
 | `vendor/bin/pint --test` | passed |
 | `composer analyse` | 0 errors |
 
