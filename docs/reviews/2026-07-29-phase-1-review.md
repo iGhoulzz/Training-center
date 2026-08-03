@@ -770,18 +770,56 @@ is now flattened — quote markers stripped, whitespace collapsed — before mat
 reproduction Codex supplied, with the key present in `.env`, must leave every
 test passing, and does.
 
-**The theme across all three rounds is one thing.** Every finding was a test or a
+**A fourth round found one more, and it was a documentation defect rather than a
+test problem.** With `BACKUP_ARCHIVE_NAME` set to a custom value, the runbook
+said "pick the newest `training-center-*.zip`" while the bucket held
+`preexisting-from-env-*.zip`. **A runbook that names the wrong file is read
+during an incident**, by somebody who then concludes the backups are gone.
+`.env.example` explicitly invites changing that name, so coupling a static
+document to a per-deployment value was the mistake — the runbook now names the
+SETTING and states its default, and the test asserts that rather than requiring
+the current machine's value to appear in a static document.
+
+The default now lives in one place, `BackupConfiguration::DEFAULT_ARCHIVE_NAME`,
+because four things must agree about it: the env default, `.env.example`, the
+runbook, and the test. Written out four times, the runbook is the copy that goes
+stale.
+
+**Fixing it surfaced a real bug introduced by the previous round.** `env()`'s
+default covers a MISSING key, not an empty one — the M1 trap, reproduced here the
+moment `.env.example` started shipping these keys. A blank `BACKUP_ARCHIVE_NAME`
+would write every archive to the bucket root with the monitor looking there too:
+**the M3 failure with no rename required.** A blank `BACKUP_EXPECTED_ARCHIVE_MB`
+is sharper still — `(int) ''` is `0`, sizing the storage alert at zero megabytes
+and reporting every backup unhealthy from the first night. Both now fall back,
+non-numeric input included, and both are tested.
+
+**And one mutation survived, in the same file and the same shape as a finding
+already fixed.** Deleting the setting name from step 1 alone changed nothing,
+because the word still appeared elsewhere in the document — presence rather than
+position, exactly what the migrate-ordering assertion had already been corrected
+for. The assertion is now scoped to the step that tells an operator which file to
+download.
+
+**Final total: nineteen mutations, nineteen caught**, plus two environment
+controls — a custom archive name and a blank one both leave the whole suite green.
+
+**The theme across all four rounds is one thing.** Every finding was a test or a
 comment that claimed more than it enforced: the wrong setting read, bare numbers
 matched, a range where an equality was needed, presence where ordering was meant,
 an environment assumption that a later fix invalidated, and two successive wrong
-descriptions of the same vendor algorithm. **The implementation was right each
-time.** What needed work was the evidence for it.
+descriptions of the same vendor algorithm. The last round is the exception that
+proves it: there the *document* was wrong, and the test was right to notice.
+
+**Twice a fix created the next round's finding** — documenting the setting broke
+the override test, and shipping the keys in `.env.example` made blank values
+reachable. Neither was visible from inside the change that caused it.
 
 **Gates on the branch tip, real output:**
 
 | Gate | Result |
 |---|---|
-| `php artisan test` | **886 passed**, 0 failed, 2515 assertions |
+| `php artisan test` | **888 passed**, 0 failed, 2528 assertions |
 | `vendor/bin/pint --test` | passed |
 | `composer analyse` | 0 errors |
 
