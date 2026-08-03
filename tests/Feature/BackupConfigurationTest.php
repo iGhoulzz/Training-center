@@ -5,6 +5,8 @@ declare(strict_types=1);
 use App\Domain\Staff\Support\BackupConfiguration;
 use Illuminate\Console\Scheduling\Event;
 use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Contracts\Console\Kernel;
+use Illuminate\Support\Facades\Process;
 use Spatie\Backup\Notifications\Notifications\BackupHasFailedNotification;
 use Spatie\Backup\Notifications\Notifications\UnhealthyBackupWasFoundNotification;
 use Spatie\Backup\Tasks\Monitor\HealthChecks\MaximumStorageInMegabytes;
@@ -501,34 +503,80 @@ it('does not derive any backup name from APP_NAME', function () {
     );
 });
 
+/**
+ * Boot the application in a SEPARATE PROCESS with extra environment variables,
+ * and return the backup config it resolves.
+ *
+ * WHY A SUBPROCESS. Writing $_ENV inside the test only works for a key that was
+ * absent when Laravel booted — its Env repository is immutable, so anything
+ * already loaded from .env keeps its original value. That made the first version
+ * of this test depend on the developer's .env: once BACKUP_ARCHIVE_NAME was
+ * documented in .env.example, a normal fresh install copies it across and the
+ * test failed before reaching any application behaviour.
+ *
+ * A child process is deterministic either way. The variable is present before
+ * Laravel starts, and Dotenv's immutable loading leaves an existing environment
+ * variable alone rather than overwriting it from .env — so the value passed here
+ * wins on every machine.
+ *
+ * @param  array<string, string>  $environment
+ * @return array<string, string>
+ */
+function backupConfigWithEnvironment(array $environment): array
+{
+    $code = sprintf(
+        'require %s; $app = require %s; $app->make(%s)->bootstrap(); echo json_encode([%s]);',
+        var_export(base_path('vendor/autoload.php'), true),
+        var_export(base_path('bootstrap/app.php'), true),
+        var_export(Kernel::class, true),
+        implode(',', [
+            "'name' => config('backup.backup.name')",
+            "'monitor' => config('backup.monitor_backups.0.name')",
+            "'prefix' => config('backup.backup.destination.filename_prefix')",
+        ]),
+    );
+
+    $result = Process::env($environment)
+        ->path(base_path())
+        ->run([PHP_BINARY, '-r', $code]);
+
+    expect($result->successful())->toBeTrue(
+        'The child process could not boot the application: '.$result->errorOutput(),
+    );
+
+    /** @var array<string, string> $decoded */
+    $decoded = json_decode(trim($result->output()), true, 512, JSON_THROW_ON_ERROR);
+
+    return $decoded;
+}
+
 it('takes the archive directory from its own setting', function () {
     /*
-     * The positive half, and it can fail: BACKUP_ARCHIVE_NAME is absent from
-     * .env, so an override genuinely reaches env() here.
-     *
-     * Both names move together. They are separate settings that would otherwise
+     * The positive half of M3: the name really is controlled by
+     * BACKUP_ARCHIVE_NAME, and the directory, the monitor and the filename
+     * prefix all move together. They are separate settings that would otherwise
      * drift apart silently, leaving the monitor health-checking a directory
-     * nothing writes to and reporting healthy forever.
+     * nothing writes to and reporting healthy for ever.
      */
-    $original = $_ENV['BACKUP_ARCHIVE_NAME'] ?? null;
+    $config = backupConfigWithEnvironment(['BACKUP_ARCHIVE_NAME' => 'explicitly-named-archive']);
 
-    $_ENV['BACKUP_ARCHIVE_NAME'] = 'explicitly-named-archive';
-    putenv('BACKUP_ARCHIVE_NAME=explicitly-named-archive');
+    expect($config['name'])->toBe('explicitly-named-archive')
+        ->and($config['monitor'])->toBe('explicitly-named-archive')
+        ->and($config['prefix'])->toBe('explicitly-named-archive-');
+});
 
-    try {
-        $config = require config_path('backup.php');
-    } finally {
-        if ($original === null) {
-            unset($_ENV['BACKUP_ARCHIVE_NAME']);
-            putenv('BACKUP_ARCHIVE_NAME');
-        } else {
-            $_ENV['BACKUP_ARCHIVE_NAME'] = $original;
-            putenv('BACKUP_ARCHIVE_NAME='.$original);
-        }
-    }
+it('ignores APP_NAME when choosing the archive directory', function () {
+    /*
+     * The negative half, now provable rather than asserted against source alone.
+     * A child process can set APP_NAME before boot, which is exactly what the
+     * in-process technique could not do — and it is the scenario the finding is
+     * about: somebody renames the application and every archive is orphaned.
+     */
+    $config = backupConfigWithEnvironment(['APP_NAME' => 'Renamed Centre']);
 
-    expect($config['backup']['name'])->toBe('explicitly-named-archive')
-        ->and($config['monitor_backups'][0]['name'])->toBe('explicitly-named-archive');
+    expect($config['name'])->not->toBe('Renamed Centre')
+        ->and($config['monitor'])->not->toBe('Renamed Centre')
+        ->and($config['prefix'])->not->toBe('Renamed Centre-');
 });
 
 it('monitors the same directory it writes to', function () {
@@ -590,11 +638,40 @@ it('sets a storage alert above what its own retention policy stores', function (
      */
     $strategy = config('backup.cleanup.default_strategy');
 
-    $retainedArchives = $strategy['keep_all_backups_for_days']
+    $rawTierSum = $strategy['keep_all_backups_for_days']
         + $strategy['keep_daily_backups_for_days']
         + $strategy['keep_weekly_backups_for_weeks']
         + $strategy['keep_monthly_backups_for_months']
         + $strategy['keep_yearly_backups_for_years'];
+
+    /*
+     * Read rather than recomputed: the config accounts for calendar-boundary
+     * straddle — an eight-week range can touch nine ISO weeks — and restating
+     * that arithmetic here would just create a second copy to drift.
+     *
+     * It must not fall BELOW the naive tier sum, which is what pins the estimate
+     * as conservative rather than optimistic.
+     */
+    $retainedArchives = (int) config('backup.retained_archives');
+
+    /*
+     * Exactly three more than the naive sum, one for each CALENDAR-GROUPED tier.
+     *
+     * DefaultStrategy keeps one backup per YW / Ym / Y group rather than per
+     * elapsed unit, so an eight-week range can touch nine ISO weeks, twelve
+     * months thirteen calendar months, and two years three calendar years. The
+     * weekly, monthly and yearly tiers therefore each carry a +1; the daily
+     * tiers group by Ymd and cannot straddle.
+     *
+     * Asserted as an equality rather than a floor, because a floor would pass
+     * for an estimate with the +1s dropped again — which is the correction this
+     * pins.
+     */
+    expect($retainedArchives)->toBe(
+        $rawTierSum + 3,
+        'The retained-archive estimate no longer allows for calendar-boundary straddle, so the '
+        .'storage alert is sized from an optimistic figure.',
+    );
 
     $expectedArchiveMb = (int) config('backup.expected_archive_megabytes');
     $ceiling = config('backup.monitor_backups.0.health_checks.'.MaximumStorageInMegabytes::class);
@@ -621,11 +698,40 @@ it('sizes the storage alert at exactly the configured headroom', function () {
      */
     $strategy = config('backup.cleanup.default_strategy');
 
-    $retainedArchives = $strategy['keep_all_backups_for_days']
+    $rawTierSum = $strategy['keep_all_backups_for_days']
         + $strategy['keep_daily_backups_for_days']
         + $strategy['keep_weekly_backups_for_weeks']
         + $strategy['keep_monthly_backups_for_months']
         + $strategy['keep_yearly_backups_for_years'];
+
+    /*
+     * Read rather than recomputed: the config accounts for calendar-boundary
+     * straddle — an eight-week range can touch nine ISO weeks — and restating
+     * that arithmetic here would just create a second copy to drift.
+     *
+     * It must not fall BELOW the naive tier sum, which is what pins the estimate
+     * as conservative rather than optimistic.
+     */
+    $retainedArchives = (int) config('backup.retained_archives');
+
+    /*
+     * Exactly three more than the naive sum, one for each CALENDAR-GROUPED tier.
+     *
+     * DefaultStrategy keeps one backup per YW / Ym / Y group rather than per
+     * elapsed unit, so an eight-week range can touch nine ISO weeks, twelve
+     * months thirteen calendar months, and two years three calendar years. The
+     * weekly, monthly and yearly tiers therefore each carry a +1; the daily
+     * tiers group by Ymd and cannot straddle.
+     *
+     * Asserted as an equality rather than a floor, because a floor would pass
+     * for an estimate with the +1s dropped again — which is the correction this
+     * pins.
+     */
+    expect($retainedArchives)->toBe(
+        $rawTierSum + 3,
+        'The retained-archive estimate no longer allows for calendar-boundary straddle, so the '
+        .'storage alert is sized from an optimistic figure.',
+    );
 
     $expectedArchiveMb = (int) config('backup.expected_archive_megabytes');
     $headroom = (int) config('backup.storage_alert_headroom');
@@ -698,56 +804,60 @@ it('tells the operator to configure credentials before the migrate step', functi
     /*
      * P1-T15, group 3 finding L7. BackupConfiguration::assertReadyForProduction()
      * is the first statement of AppServiceProvider::boot(), so it runs for EVERY
-     * artisan command — including the `migrate` the runbook itself prescribes.
-     * On a rebuilt server whose backup credentials are not in place yet, that
-     * step fails with "Backups are not configured for production" in the middle
-     * of restoring from a backup. The guard is correct and stays; the ordering
-     * has to be written down.
+     * artisan command — including the `migrate` the runbook prescribes. On a
+     * rebuilt server whose backup credentials are not in place yet, that step
+     * fails with "Backups are not configured for production" in the middle of
+     * restoring from a backup. The guard is correct and stays; the ordering has
+     * to be written down.
      *
-     * ORDERING IS ASSERTED, NOT MERE PRESENCE. A first version only checked that
-     * the error message and BACKUP_S3_BUCKET appeared somewhere in the document,
-     * which they already did — the deployment section names the credentials and
-     * the guard's message could sit anywhere. Finding both proves nothing about
-     * whether the operator is told to set them BEFORE running migrate.
-     *
-     * So: the instruction must carry ordering language, must name the variable,
-     * and must sit between the migrate command and the step that follows it,
-     * where somebody working through the runbook will actually read it.
+     * POSITION IS ASSERTED, NOT JUST PRESENCE. An operator works down a runbook
+     * and runs each code block as they reach it, so a warning printed AFTER the
+     * command is a warning they read once it has already failed. Earlier
+     * versions of this test checked only that the words appeared somewhere in
+     * the document, which they already did, and then only that they appeared
+     * within the step — which the warning satisfied while sitting below the
+     * command.
      */
-    $runbook = (string) file_get_contents(base_path('docs/RESTORE.md'));
+    $runbook = str_replace("\r\n", "\n", (string) file_get_contents(base_path('docs/RESTORE.md')));
 
-    $migrate = strpos($runbook, 'php artisan migrate');
-    $nextStep = strpos($runbook, '### 4.');
+    $stepStart = strpos($runbook, '### 3.');
+    $stepEnd = strpos($runbook, '### 4.');
 
-    expect($migrate)->not->toBeFalse('The runbook no longer runs migrate during a restore.')
-        ->and($nextStep)->not->toBeFalse('The restore steps have been renumbered; this test needs updating.');
+    expect($stepStart)->not->toBeFalse('The restore steps have been renumbered; this test needs updating.')
+        ->and($stepEnd)->not->toBeFalse('The restore steps have been renumbered; this test needs updating.');
+
+    $step = substr($runbook, $stepStart, $stepEnd - $stepStart);
 
     /*
-     * FLATTENED BEFORE MATCHING, in two steps.
-     *
-     * Markdown wraps prose wherever the author happened to stop, and this
-     * passage is a blockquote, so a sentence reads "before you\n> run this" in
-     * the file. Stripping the quote markers and then collapsing whitespace lets
-     * the assertions below be about what the runbook SAYS rather than about
-     * where its lines break — a test that fails on re-wrapping is dictating
-     * formatting, not checking content.
+     * The fenced command, not a mention of it. The warning itself talks about
+     * artisan commands, so searching for the bare words would find the warning
+     * and compare it against itself.
      */
-    $section = substr($runbook, $migrate, $nextStep - $migrate);
-    $section = (string) preg_replace('/^\s*>\s?/m', '', $section);
-    $betweenMigrateAndNextStep = (string) preg_replace('/\s+/', ' ', $section);
+    $command = strpos($step, "```bash\nphp artisan migrate");
 
-    expect(str_contains($betweenMigrateAndNextStep, 'BACKUP_S3_BUCKET'))->toBeTrue(
-        'The migrate step does not name the credentials it needs, so an operator meets the '
-        .'refusal with no idea what to set.',
+    expect($command)->not->toBeFalse('The migrate step no longer runs migrate.');
+
+    /*
+     * Flattened for the content checks: quote markers stripped, then whitespace
+     * collapsed. Markdown wraps prose wherever the author stopped and this
+     * passage is a blockquote, so a test matching raw text would be dictating
+     * where the document wraps rather than checking what it says.
+     */
+    $before = substr($step, 0, $command);
+    $beforeFlat = (string) preg_replace('/\s+/', ' ', (string) preg_replace('/^\s*>\s?/m', '', $before));
+
+    expect(str_contains($beforeFlat, 'BACKUP_S3_BUCKET'))->toBeTrue(
+        'Nothing before the migrate command names the credentials it needs, so an operator '
+        .'meets the refusal having already run it.',
     );
 
-    expect(str_contains($betweenMigrateAndNextStep, 'before you run this'))->toBeTrue(
-        'The migrate step does not say the credentials must be set BEFORE it runs, which is '
+    expect(str_contains($beforeFlat, 'before you run this'))->toBeTrue(
+        'Nothing before the migrate command says the credentials must be set first, which is '
         .'the whole of the ordering this finding is about.',
     );
 
-    expect(str_contains($betweenMigrateAndNextStep, 'Backups are not configured for production'))->toBeTrue(
-        'The runbook does not quote the exact error its own step produces, so an operator '
-        .'cannot recognise the guard working and reads it as a broken restore.',
+    expect(str_contains($beforeFlat, 'Backups are not configured for production'))->toBeTrue(
+        'The exact error is not quoted before the command, so an operator cannot recognise '
+        .'the guard working and reads it as a broken restore.',
     );
 });

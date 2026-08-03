@@ -120,26 +120,26 @@ mysql -u USER -p TARGET_DATABASE < restore/db-dumps/mysql-training_center.sql
 ```
 
 Then bring the schema up to the current release, in case the archive predates a
-migration:
+migration.
 
-```bash
-php artisan migrate
-```
-
-> **Set `BACKUP_S3_BUCKET` and the rest of the `BACKUP_S3_*` values before you
-> run this, or it will refuse to start.** The application checks that off-server
-> backups are configured as the first thing it does on boot, and that check runs
-> for *every* artisan command — including this one. On a rebuilt server whose
-> backup credentials are not in place yet, `php artisan migrate` fails with:
+> **Put `BACKUP_S3_BUCKET` and the rest of the `BACKUP_S3_*` values into `.env`
+> before you run this, or it will refuse to start.** The application checks that
+> off-server backups are configured as the first thing it does on boot, and that
+> check runs for *every* artisan command — including the one below. On a rebuilt
+> server whose backup credentials are not in place yet, it fails with:
 >
 > ```
 > Backups are not configured for production
 > ```
 >
-> That is the guard working, not a broken restore. Put the `BACKUP_S3_*` values
-> and `BACKUP_ARCHIVE_PASSWORD` into `.env` first — you needed them in step 1 to
-> fetch the archive at all — and the command runs normally. The same applies to
+> That is the guard working, not a broken restore. You needed those values in
+> step 1 to fetch the archive at all, so copy them across — together with
+> `BACKUP_ARCHIVE_PASSWORD` — and the command runs normally. The same applies to
 > `php artisan tinker` and anything else you reach for while investigating.
+
+```bash
+php artisan migrate
+```
 
 ### 4. Restore the files
 

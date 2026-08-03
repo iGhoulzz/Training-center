@@ -50,20 +50,32 @@ $keepMonthlyForMonths = 12;
 $keepYearlyForYears = 2;
 
 /*
- * How many archives the tiers above imply.
+ * How many archives the tiers above imply — a CONSERVATIVE UPPER BOUND.
  *
- * The sum is EXACT, not an estimate. DefaultStrategy builds each period where
- * the previous one ends — `subDays($keepAll)` then
- * `subDays($keepAll)->subDays($keepDaily)`, and so on — so the ranges are
- * successive rather than overlapping and one archive is retained per unit of
- * each tier. An earlier version of this comment called them overlapping and the
- * total an over-estimate; the vendor source says otherwise.
+ * Two earlier versions of this comment were wrong in opposite directions: first
+ * that the periods overlap and the sum over-estimates, then that the sum is
+ * exact. Neither. DefaultStrategy builds each period where the previous one
+ * ends, so the ranges are successive — but it then keeps one backup per
+ * CALENDAR GROUP, not per elapsed unit:
+ *
+ *     $backupsPerPeriod['weekly']  = groupByDateFormat(..., 'YW');
+ *     $backupsPerPeriod['monthly'] = groupByDateFormat(..., 'Ym');
+ *     $backupsPerPeriod['yearly']  = groupByDateFormat(..., 'Y');
+ *
+ * A range of eight weeks can touch nine ISO weeks, twelve months thirteen
+ * calendar months, and two years three calendar years, depending on where the
+ * range happens to start. Replaying the algorithm against nightly backups gives
+ * 30 + 60 + 9 + 13 + 3 = 115 rather than 112.
+ *
+ * So each calendar-grouped tier carries a +1. Over-estimating is the safe
+ * direction here: this figure sizes a WARNING threshold, and setting that too
+ * low is the defect being fixed.
  */
 $retainedArchives = $keepAllForDays
     + $keepDailyForDays
-    + $keepWeeklyForWeeks
-    + $keepMonthlyForMonths
-    + $keepYearlyForYears;
+    + ($keepWeeklyForWeeks + 1)
+    + ($keepMonthlyForMonths + 1)
+    + ($keepYearlyForYears + 1);
 
 /*
  * What one archive weighs on this deployment: the whole database plus both
@@ -464,6 +476,13 @@ return [
      * as config so an operator can size it without editing the alert directly.
      */
     'expected_archive_megabytes' => $expectedArchiveMegabytes,
+
+    /*
+     * The upper bound on retained archives derived above. Exposed so the test
+     * can assert the alert threshold against it without restating the
+     * calendar-boundary arithmetic and letting the two copies drift.
+     */
+    'retained_archives' => $retainedArchives,
 
     /*
      * The multiplier applied to the calculated steady state to get the storage
