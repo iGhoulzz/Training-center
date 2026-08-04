@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Domain\Staff\Support\BackupConfiguration;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
@@ -17,7 +18,7 @@ Artisan::command('inspire', function () {
 |
 | Three commands, in this order, every night:
 |
-|   backup:run      make the archive and ship it off-server
+|   backup:run      make the archive and write it to the backup destination
 |   backup:monitor  check the destination actually holds a recent, sane backup
 |   backup:clean    remove archives past the retention window
 |
@@ -66,7 +67,26 @@ Artisan::command('inspire', function () {
  * cleanup its own lock.
  */
 
+/*
+ * THE DRIVE IS CHECKED HERE, NOT AT BOOT (P1-T17, review).
+ *
+ * Whether the removable drive is mounted is a transient fact about hardware.
+ * Asserting it in AppServiceProvider::boot() — where the first version put it —
+ * meant unplugging the USB stick would stop /admin from loading and block every
+ * artisan command. A backup mechanism must not be able to halt the centre it
+ * protects.
+ *
+ * Failing here stops the night's run and reports through the exception handler;
+ * backup:monitor then finds no fresh archive and raises the unhealthy-backup
+ * notification, which is the alert an operator acts on.
+ *
+ * It guards cleanup too: cleaning against an unmounted mount point would
+ * evaluate retention over the wrong directory entirely.
+ */
+$assertDestinationReady = static fn () => BackupConfiguration::assertDestinationReady();
+
 Schedule::command('backup:run')
+    ->before($assertDestinationReady)
     ->daily()
     ->at('01:30')
     ->timezone('Africa/Tripoli')
@@ -74,6 +94,7 @@ Schedule::command('backup:run')
     ->withoutOverlapping(180);
 
 Schedule::command('backup:monitor')
+    ->before($assertDestinationReady)
     ->daily()
     ->at('02:30')
     ->timezone('Africa/Tripoli')
@@ -81,6 +102,7 @@ Schedule::command('backup:monitor')
     ->withoutOverlapping(180);
 
 Schedule::command('backup:clean')
+    ->before($assertDestinationReady)
     ->daily()
     ->at('03:00')
     ->timezone('Africa/Tripoli')

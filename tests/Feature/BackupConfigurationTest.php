@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Domain\Staff\Support\BackupConfiguration;
+use App\Domain\Staff\Support\BackupVolume;
 use Illuminate\Console\Scheduling\Event;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Console\Kernel;
@@ -134,75 +135,6 @@ it('makes both destinations throw rather than fail silently', function () {
     // silently fails produces a run reporting success and storing nothing.
     expect(config('filesystems.disks.backups_local.throw'))->toBeTrue()
         ->and(config('filesystems.disks.backups_s3.throw'))->toBeTrue();
-});
-
-it('refuses a removable-drive path inside the application itself', function () {
-    /*
-     * THE RULE T13 WAS PROTECTING, NOW STATED DIRECTLY.
-     *
-     * `/mnt/backups` is a different device that survives the server. A folder
-     * under the project — storage/backups, say — is the same disk the
-     * application lives on, so the archive and the thing it protects fail
-     * together. Nothing can verify a drive is genuinely removable, but this can
-     * refuse the case that is definitely not.
-     */
-    /*
-     * A path that EXISTS and is WRITABLE and is inside the project, so the
-     * mount check and the writable check both pass and only the containment
-     * rule can fire. Mutation testing found the first version wanting: it used a
-     * non-existent in-project path, so deleting this check changed nothing —
-     * the not-mounted rule caught it instead and the test still passed.
-     */
-    config([
-        'backup.destination_disk' => 'backups_local',
-        'filesystems.disks.backups_local.root' => storage_path('app'),
-        'backup.backup.password' => 'a-password',
-    ]);
-
-    expect(fn () => BackupConfiguration::assertReadyForProduction('production'))
-        ->toThrow(RuntimeException::class, 'inside the application itself');
-});
-
-it('accepts a removable-drive path outside the application', function () {
-    // The control. A guard that refused every local path would satisfy the test
-    // above and make the feature unusable.
-    $mount = sys_get_temp_dir().DIRECTORY_SEPARATOR.'p1t17-mount';
-
-    if (! is_dir($mount)) {
-        mkdir($mount, 0777, true);
-    }
-
-    config([
-        'backup.destination_disk' => 'backups_local',
-        'filesystems.disks.backups_local.root' => $mount,
-        'backup.backup.password' => 'a-password',
-    ]);
-
-    BackupConfiguration::assertReadyForProduction('production');
-
-    expect(true)->toBeTrue();
-});
-
-it('refuses a removable-drive path that does not exist', function () {
-    /*
-     * An unmounted drive is the failure this catches. The path is configured,
-     * the nightly run writes into an empty mount point on the root filesystem,
-     * and the monitor reports healthy against archives that are not on the drive
-     * at all.
-     */
-    config([
-        'backup.destination_disk' => 'backups_local',
-        'filesystems.disks.backups_local.root' => sys_get_temp_dir().'/p1t17-not-mounted-'.uniqid(),
-        'backup.backup.password' => 'a-password',
-    ]);
-
-    /*
-     * The MESSAGE is asserted, not merely a throw. A missing directory is also
-     * not writable, so the writability rule masks this one — deleting the mount
-     * check left the test green until it named what it expected to read.
-     */
-    expect(fn () => BackupConfiguration::assertReadyForProduction('production'))
-        ->toThrow(RuntimeException::class, 'it is not mounted');
 });
 
 it('still demands the S3 credentials when S3 is the selected destination', function () {
@@ -560,6 +492,315 @@ it('requires a region before production may boot', function () {
     BackupConfiguration::assertReadyForProduction('production');
 })->throws(RuntimeException::class, 'region');
 
+/*
+|--------------------------------------------------------------------------
+| The removable drive (P1-T17, after review)
+|--------------------------------------------------------------------------
+|
+| Split in two on purpose, and the split is the point.
+|
+| BOOT-TIME checks are things wrong in .env that no amount of waiting fixes.
+| RUNTIME checks are facts about hardware. The first version asserted both at
+| boot, so unplugging the USB stick would have stopped /admin from loading — a
+| backup mechanism able to halt the centre it protects.
+|
+| The volume itself is reached through BackupVolume, which the suite substitutes.
+| A test cannot mount a USB stick, and the first attempt's "positive control"
+| used sys_get_temp_dir() — which on the machine it ran on is THE SAME DEVICE as
+| the project, so the test certified the dangerous case as safe.
+*/
+
+/** A BackupVolume that answers whatever the test needs. */
+function fakeVolume(array $answers = []): void
+{
+    $volume = new class($answers) extends BackupVolume
+    {
+        /** @param array<string, mixed> $answers */
+        public function __construct(private array $answers) {}
+
+        public function deviceIdFor(string $path): ?int
+        {
+            $isApplication = str_starts_with(
+                str_replace('\\', '/', $path),
+                str_replace('\\', '/', base_path()),
+            );
+
+            return $isApplication
+                ? ($this->answers['applicationDevice'] ?? 1)
+                : ($this->answers['destinationDevice'] ?? 2);
+        }
+
+        public function isDirectory(string $path): bool
+        {
+            return $this->answers['isDirectory'] ?? true;
+        }
+
+        public function isWritable(string $path): bool
+        {
+            return $this->answers['isWritable'] ?? true;
+        }
+
+        public function hasMarker(string $path, string $marker): bool
+        {
+            return $this->answers['hasMarker'] ?? true;
+        }
+    };
+
+    app()->instance(BackupVolume::class, $volume);
+}
+
+/** Point the configuration at a drive, with everything else valid. */
+function useDrive(string $root = '/mnt/backups'): void
+{
+    config([
+        'backup.destination_disk' => 'backups_local',
+        'filesystems.disks.backups_local.root' => $root,
+        'backup.volume_marker' => '.training-center-backup-volume',
+        'backup.backup.password' => 'a-long-archive-password',
+    ]);
+}
+
+/*
+| Boot: only what .env can be wrong about
+*/
+
+it('refuses to boot when the drive path is inside the application', function () {
+    useDrive(storage_path('app'));
+
+    expect(fn () => BackupConfiguration::assertReadyForProduction('production'))
+        ->toThrow(RuntimeException::class, 'inside the application itself');
+});
+
+it('refuses a drive path that only reaches the application through ..', function () {
+    /*
+     * THE BYPASS THE REVIEW FOUND, BUILT SO IT ACTUALLY BYPASSES.
+     *
+     * A first version used base_path('storage/../'), which the naive prefix
+     * check already caught — the string still begins with the project path, so
+     * deleting realpath() broke nothing and the test proved nothing. Mutation
+     * testing said so.
+     *
+     * This one leaves the project directory textually and comes back:
+     *
+     *   …/worktrees/../worktrees/P1-T17/storage
+     *
+     * The string does not begin with …/worktrees/P1-T17/, so only resolving it
+     * reveals that it lands inside the application. Every segment exists, which
+     * realpath() requires.
+     */
+    $parent = dirname(base_path());
+
+    useDrive($parent.'/../'.basename($parent).'/'.basename(base_path()).'/storage');
+
+    expect(fn () => BackupConfiguration::assertReadyForProduction('production'))
+        ->toThrow(RuntimeException::class, 'inside the application itself');
+});
+
+/**
+ * Link $link to $target, however this OS is willing to.
+ *
+ * PHP's symlink() needs a privilege on Windows that a normal account does not
+ * have, but a junction does the same job for a directory and realpath() resolves
+ * it identically. Without this fallback the symlink case below skips on every
+ * Windows machine — which is how a test stops testing anything without ever
+ * going red.
+ */
+function linkDirectory(string $target, string $link): bool
+{
+    if (@symlink($target, $link)) {
+        return true;
+    }
+
+    if (DIRECTORY_SEPARATOR !== '\\') {
+        return false;
+    }
+
+    $windowsTarget = str_replace('/', '\\', $target);
+    $windowsLink = str_replace('/', '\\', $link);
+
+    @exec(sprintf('mklink /J "%s" "%s" 2>nul', $windowsLink, $windowsTarget));
+
+    return is_dir($link);
+}
+
+it('refuses a link that points into the application', function () {
+    /*
+     * The other shape of the containment bypass, and the one an operator is most
+     * likely to create by accident: /mnt/backups is a link, and what it points
+     * at is inside the project. Nothing in the string it is configured with says
+     * so — only resolving it does.
+     */
+    $link = sys_get_temp_dir().DIRECTORY_SEPARATOR.'tc-backup-link-'.uniqid();
+
+    if (! linkDirectory(base_path('storage'), $link)) {
+        test()->markTestSkipped('This OS permitted neither a symlink nor a junction.');
+    }
+
+    try {
+        useDrive($link);
+
+        expect(fn () => BackupConfiguration::assertReadyForProduction('production'))
+            ->toThrow(RuntimeException::class, 'inside the application itself');
+    } finally {
+        // Removes the link, never what it points at.
+        is_link($link) ? @unlink($link) : @rmdir($link);
+    }
+});
+
+it('refuses the plain .. form too', function () {
+    // The simpler shape, kept because it is what somebody would actually type.
+    useDrive(base_path('storage/../'));
+
+    expect(fn () => BackupConfiguration::assertReadyForProduction('production'))
+        ->toThrow(RuntimeException::class, 'inside the application itself');
+});
+
+it('refuses the project root itself', function () {
+    useDrive(base_path());
+
+    expect(fn () => BackupConfiguration::assertReadyForProduction('production'))
+        ->toThrow(RuntimeException::class, 'inside the application itself');
+});
+
+it('accepts a sibling directory whose name merely starts the same way', function () {
+    /*
+     * The over-broadening control: /…/P1-T17-backups is NOT inside /…/P1-T17,
+     * and a prefix comparison without a trailing separator would say it is.
+     */
+    useDrive(base_path().'-backups');
+
+    BackupConfiguration::assertReadyForProduction('production');
+
+    expect(true)->toBeTrue();
+});
+
+it('does not check whether the drive is mounted at boot', function () {
+    /*
+     * THE FINDING THAT MATTERS MOST. If this throws, unplugging the USB stick
+     * stops /admin from loading, blocks every artisan command, and takes the
+     * centre offline to protect data nobody can reach anyway.
+     */
+    useDrive('/mnt/definitely-not-mounted-'.uniqid());
+
+    BackupConfiguration::assertReadyForProduction('production');
+
+    expect(true)->toBeTrue();
+});
+
+/*
+| Runtime: the pipeline refuses, the application keeps serving
+*/
+
+it('refuses to back up onto the application own filesystem', function () {
+    /*
+     * The unmounted-drive case, and the one existence and writability cannot
+     * see: /mnt/backups is an ordinary writable directory when nothing is
+     * mounted on it, and archives written there die with the server while
+     * backup:monitor reports them healthy.
+     */
+    useDrive();
+    fakeVolume(['applicationDevice' => 7, 'destinationDevice' => 7]);
+
+    expect(fn () => BackupConfiguration::assertDestinationReady())
+        ->toThrow(RuntimeException::class, 'the drive is not mounted');
+});
+
+it('backs up to a drive on its own filesystem', function () {
+    // The positive control, and it is now a control: a DIFFERENT device.
+    useDrive();
+    fakeVolume(['applicationDevice' => 7, 'destinationDevice' => 9]);
+
+    BackupConfiguration::assertDestinationReady();
+
+    expect(true)->toBeTrue();
+});
+
+it('refuses a mount point that does not exist', function () {
+    useDrive();
+    fakeVolume(['isDirectory' => false]);
+
+    expect(fn () => BackupConfiguration::assertDestinationReady())
+        ->toThrow(RuntimeException::class, 'does not exist');
+});
+
+it('refuses a drive that was never prepared for these backups', function () {
+    /*
+     * Device identity proves SOME filesystem is mounted, not that it is the
+     * right one. Without the marker, rotating in an unprepared drive quietly
+     * starts filling it with the centre's records.
+     */
+    useDrive();
+    fakeVolume(['hasMarker' => false]);
+
+    expect(fn () => BackupConfiguration::assertDestinationReady())
+        ->toThrow(RuntimeException::class, 'volume marker');
+});
+
+it('skips the marker check when the centre has switched it off', function () {
+    // The control for the marker: an empty setting disables it rather than
+    // failing every night.
+    useDrive();
+    config(['backup.volume_marker' => '']);
+    fakeVolume(['hasMarker' => false]);
+
+    BackupConfiguration::assertDestinationReady();
+
+    expect(true)->toBeTrue();
+});
+
+it('refuses a drive it cannot write to', function () {
+    useDrive();
+    fakeVolume(['isWritable' => false]);
+
+    expect(fn () => BackupConfiguration::assertDestinationReady())
+        ->toThrow(RuntimeException::class, 'not writable');
+});
+
+it('checks nothing about the volume when S3 is the destination', function () {
+    // S3 reachability needs a network call, and a failed upload already fails
+    // the run loudly. Asserting anything here would be theatre.
+    config(['backup.destination_disk' => 'backups_s3']);
+
+    BackupConfiguration::assertDestinationReady();
+
+    expect(true)->toBeTrue();
+});
+
+it('guards every scheduled backup command with the readiness check', function () {
+    /*
+     * The wiring, without which every runtime check above is unreachable.
+     * Reflection because Laravel keeps the callbacks protected; the assertion is
+     * that each command has one and that it is the readiness check, proven by
+     * invoking it against a destination that must be refused.
+     */
+    useDrive();
+    fakeVolume(['isDirectory' => false]);
+
+    foreach (['backup:run', 'backup:monitor', 'backup:clean'] as $command) {
+        $event = scheduledBackupCommand($command);
+
+        expect($event)->not->toBeNull("{$command} is not scheduled.");
+
+        $callbacks = (new ReflectionProperty($event, 'beforeCallbacks'))->getValue($event);
+
+        expect($callbacks)->not->toBeEmpty("{$command} runs with no destination check.");
+
+        $refused = false;
+
+        foreach ($callbacks as $callback) {
+            try {
+                $callback();
+            } catch (RuntimeException) {
+                $refused = true;
+            }
+        }
+
+        expect($refused)->toBeTrue(
+            "{$command} would run against a destination that is not there.",
+        );
+    }
+});
+
 it('never ships the package placeholder alert address', function () {
     /*
      * The package defaults to your@example.com. Left in place, every failure
@@ -578,13 +819,13 @@ it('notifies on failure and on an unhealthy backup', function () {
 
 /*
 |--------------------------------------------------------------------------
-| Production refuses to run without off-server backups
+| Production refuses to run without a configured backup destination
 |--------------------------------------------------------------------------
 */
 
 it('refuses to boot production without backup credentials', function () {
-    // The whole point: an unset bucket does not stop the scheduler, it produces a
-    // nightly run that stores nothing and reports success.
+    // The whole point: an unset destination does not stop the scheduler, it
+    // produces a nightly run that stores nothing and reports success.
     config([
         'backup.destination_disk' => 'backups_s3',
         'filesystems.disks.backups_s3.key' => null,
@@ -1114,10 +1355,19 @@ it('tells the operator to configure credentials before the migrate step', functi
     $before = substr($step, 0, $command);
     $beforeFlat = (string) preg_replace('/\s+/', ' ', (string) preg_replace('/^\s*>\s?/m', '', $before));
 
-    expect(str_contains($beforeFlat, 'BACKUP_S3_BUCKET'))->toBeTrue(
-        'Nothing before the migrate command names the credentials it needs, so an operator '
-        .'meets the refusal having already run it.',
-    );
+    /*
+     * UPDATED BY P1-T17. This required BACKUP_S3_BUCKET, which was the right
+     * thing to name while a bucket was the only destination and is the wrong
+     * thing now — an operator restoring onto a drive would be told to set a
+     * value they do not have. What must be named is the setting that DECIDES,
+     * and both branches it leads to.
+     */
+    foreach (['BACKUP_DISK', 'BACKUP_LOCAL_PATH', 'BACKUP_S3_'] as $needed) {
+        expect(str_contains($beforeFlat, $needed))->toBeTrue(
+            "Nothing before the migrate command mentions {$needed}, so an operator meets the "
+            .'refusal without being told what to set for their destination.',
+        );
+    }
 
     expect(str_contains($beforeFlat, 'before you run this'))->toBeTrue(
         'Nothing before the migrate command says the credentials must be set first, which is '

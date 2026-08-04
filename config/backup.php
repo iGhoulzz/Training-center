@@ -130,6 +130,14 @@ $storageAlertHeadroom = 2;
  */
 $destinationDisk = (string) env('BACKUP_DISK', 'backups_local');
 
+/*
+ * A file the operator creates once on each prepared drive. Device identity
+ * proves SOME filesystem is mounted; this proves it is the right one, so a
+ * rotated-in drive that was never prepared does not quietly start receiving the
+ * centre's records. Set it empty to disable the check.
+ */
+$volumeMarker = (string) env('BACKUP_VOLUME_MARKER', '.training-center-backup-volume');
+
 return [
 
     'backup' => [
@@ -309,19 +317,27 @@ return [
              * DERIVED, so the directory, the filename and the runbook cannot
              * disagree (P1-T15, review of finding M3). This was a third
              * hardcoded copy of the same word: changing it would have left the
-             * bucket directory alone and quietly made docs/RESTORE.md — which
-             * tells the operator to look for `training-center-*.zip` — wrong.
+             * destination directory alone and quietly made docs/RESTORE.md —
+             * which tells the operator to look for `training-center-*.zip` —
+             * wrong.
              */
             'filename_prefix' => $backupName.'-',
 
             /*
-             * OFF-SERVER ONLY. `local` is deliberately absent.
+             * A SEPARATE FAILURE DOMAIN, WHICH IS THE REAL RULE (P1-T17).
              *
-             * A backup on the same VPS as the application dies with it, which is
-             * the scenario a backup exists for. Spec section 11 requires
-             * off-server storage, and listing `local` alongside it would let a
-             * misconfigured deployment keep "succeeding" against the one disk
-             * that guarantees nothing — a silent same-VPS fallback.
+             * This said "off-server only, `local` is deliberately absent" while
+             * the only destination was a bucket. The property it was protecting
+             * is not the driver: a backup that shares a fate with the thing it
+             * protects is not a backup, because dying together is the scenario a
+             * backup exists for.
+             *
+             * A REMOVABLE drive satisfies that and uses the local driver, so the
+             * name check would have forbidden the very thing the centre asked
+             * for. BackupConfiguration enforces the property instead — refusing
+             * a path inside the project at boot, and refusing at backup time a
+             * path that turns out to be on the application's own filesystem,
+             * which is what an unmounted drive looks like.
              *
              * AppServiceProvider fails loudly in production when this disk has no
              * credentials, rather than letting the scheduler run nightly against
@@ -514,6 +530,8 @@ return [
      * that keep the destination and the monitor pointed at the same place.
      */
     'destination_disk' => $destinationDisk,
+
+    'volume_marker' => $volumeMarker,
 
     'expected_archive_megabytes' => $expectedArchiveMegabytes,
 

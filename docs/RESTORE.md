@@ -22,13 +22,25 @@ files, so restoring the database alone gives you rows pointing at certificates
 that no longer exist, and no way to reconstruct them.
 
 Archives are named `<BACKUP_ARCHIVE_NAME>-*` — `training-center-*` with the
-default configuration — and live on the `backups` disk, an S3-compatible bucket
-that is **not** on the application server. That is the point: a backup on the
-same VPS as the application dies with it.
+default configuration — and live on whichever destination `BACKUP_DISK` names:
 
-`BACKUP_ARCHIVE_NAME` also names the directory they sit in inside the bucket. If
-this deployment sets it to something else, substitute that value everywhere this
-document writes `training-center-`.
+| `BACKUP_DISK` | Where the archives are |
+|---|---|
+| `backups_local` (default) | The removable drive mounted at `BACKUP_LOCAL_PATH` |
+| `backups_s3` | An S3-compatible bucket |
+
+**The invariant is a separate failure domain, not a particular technology.** A
+backup that shares a fate with the thing it protects is not a backup: an archive
+on the application's own disk dies with that disk. A rotated external drive and
+an off-site bucket both satisfy this; a folder on the server does not, and the
+application refuses to boot if `BACKUP_LOCAL_PATH` points inside itself.
+
+A drive that never leaves the building survives a dead server and not a fire.
+Rotate two, and keep one elsewhere.
+
+`BACKUP_ARCHIVE_NAME` also names the directory the archives sit in on whichever
+destination is in use. If this deployment sets it to something else, substitute
+that value everywhere this document writes `training-center-`.
 
 ---
 
@@ -143,20 +155,24 @@ mysql -u USER -p TARGET_DATABASE < restore/db-dumps/mysql-training_center.sql
 Then bring the schema up to the current release, in case the archive predates a
 migration.
 
-> **Put `BACKUP_S3_BUCKET` and the rest of the `BACKUP_S3_*` values into `.env`
-> before you run this, or it will refuse to start.** The application checks that
-> off-server backups are configured as the first thing it does on boot, and that
-> check runs for *every* artisan command — including the one below. On a rebuilt
-> server whose backup credentials are not in place yet, it fails with:
+> **Set the backup configuration in `.env` before you run this, or it will
+> refuse to start.** The application checks its backup *configuration* as the
+> first thing it does on boot, and that check runs for *every* artisan command —
+> including the one below. On a rebuilt server it fails with:
 >
 > ```
 > Backups are not configured for production
 > ```
 >
-> That is the guard working, not a broken restore. You needed those values in
-> step 1 to fetch the archive at all, so copy them across — together with
-> `BACKUP_ARCHIVE_PASSWORD` — and the command runs normally. The same applies to
+> That is the guard working, not a broken restore. What it needs depends on
+> `BACKUP_DISK`: `BACKUP_LOCAL_PATH` for a drive, or the `BACKUP_S3_*` values
+> for a bucket — plus `BACKUP_ARCHIVE_PASSWORD` either way. The same applies to
 > `php artisan tinker` and anything else you reach for while investigating.
+>
+> **It does not check whether the drive is plugged in.** That is deliberate: a
+> missing drive must never stop the centre from working. Whether the drive is
+> mounted is checked immediately before each nightly backup instead, so an
+> absent drive fails that night's run and leaves `/admin` serving.
 
 ```bash
 php artisan migrate
@@ -204,7 +220,20 @@ is deliberate — see `BackupConfiguration`.
   Without it nothing is scheduled, no exception is raised, and the failure is
   completely silent. This is the most common way backups stop.
 
-- **`BACKUP_S3_*` and `BACKUP_ARCHIVE_PASSWORD` must be set.**
+- **A backup destination must be configured, and `BACKUP_ARCHIVE_PASSWORD`
+  must be set.** For `BACKUP_DISK=backups_local`, that means `BACKUP_LOCAL_PATH`
+  pointing at a mounted removable drive, outside the project directory. For
+  `backups_s3`, the `BACKUP_S3_*` values including an explicit endpoint.
+
+- **Prepare each drive once**, so a drive that was never intended for these
+  backups cannot silently start receiving them:
+
+  ```bash
+  touch /mnt/backups/.training-center-backup-volume
+  ```
+
+  The nightly run refuses a drive without that marker. Set
+  `BACKUP_VOLUME_MARKER=` empty to switch the check off.
 
 - **`BACKUP_ALERT_EMAIL` must be a mailbox somebody reads**, and the application
   needs a real mailer. It cannot be blank: the package validates the address at
@@ -217,10 +246,15 @@ is deliberate — see `BackupConfiguration`.
   php artisan backup:run
   ```
 
-  Then confirm the file appears in the bucket. This is the only step that proves
-  the credentials, the endpoint, `mysqldump` and the archive password all
-  actually work together — the test suite deliberately never contacts external
-  storage, so it cannot tell you this.
+  Then confirm the file appears where you expect it — on the drive under
+  `BACKUP_LOCAL_PATH`, or in the bucket. This is the only step that proves the
+  destination, `mysqldump` and the archive password all actually work together;
+  the test suite deliberately never touches real storage, so it cannot tell you
+  this.
+
+  With a drive, unmount it and run `backup:run` again. It must FAIL. If it
+  succeeds, the archives are going to the server's own disk through an empty
+  mount point, and every one of them dies with the machine.
 
 - **`mysqldump` must be on the PATH** of the user the scheduler runs as. If it
   is not, set `dump.dump_binary_path` on the `mysql` connection in
@@ -260,9 +294,10 @@ only thing that turns this document from a plan into a procedure.
    php artisan backup:run
    ```
 
-2. **Download it from the bucket**, using the provider's console or an S3 client.
-   Do not copy it off the application server — the drill is worthless if it only
-   proves the copy you already had is readable.
+2. **Take it from the real destination** — the removable drive, or the bucket
+   via the provider's console or an S3 client. Do not copy it off the
+   application server: the drill is worthless if it only proves the copy you
+   already had is readable.
 
 3. **Extract it with the tool you would actually reach for**, per step 2 above.
    If `unzip` fails here, that is the finding: note which tool works on your

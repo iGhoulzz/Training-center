@@ -53,12 +53,18 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         /*
-         * Refuse to run production without working off-server backups.
+         * Refuse to run production without a usable backup configuration.
          *
          * Placed first so it fires before anything else has a chance to succeed:
-         * an install missing its bucket credentials or archive password looks
-         * completely healthy until a restore is needed, and that is exactly when
-         * discovering it is worst. See BackupConfiguration.
+         * an install missing its destination or archive password looks completely
+         * healthy until a restore is needed, and that is exactly when discovering
+         * it is worst.
+         *
+         * CONFIGURATION ONLY (P1-T17). Whether the removable drive is actually
+         * plugged in is deliberately NOT checked here — this runs for every
+         * request and every artisan command, so an absent drive would take the
+         * centre offline to protect data nobody could then reach. That check runs
+         * before each scheduled backup instead. See BackupConfiguration.
          */
         BackupConfiguration::assertReadyForProduction($this->app->environment());
 

@@ -73,7 +73,26 @@ final class BackupConfiguration
     ];
 
     /**
-     * @throws RuntimeException when production is missing off-server backup configuration.
+     * Refuse to boot production on a configuration that can never work.
+     *
+     * STATIC FACTS ONLY (P1-T17, review). This runs as the first statement of
+     * AppServiceProvider::boot(), so it runs for every request and every artisan
+     * command — which means anything checked here can take the whole application
+     * down. The first version checked whether the removable drive was mounted
+     * and writable from here, so UNPLUGGING THE USB STICK WOULD HAVE STOPPED
+     * /admin FROM LOADING. A backup mechanism that can halt the centre it exists
+     * to protect is worse than the risk it covers.
+     *
+     * What stays: the things that are wrong in the .env file itself and cannot
+     * change while the process runs — a missing archive password, an unknown
+     * destination, absent S3 credentials, a drive path pointing inside the
+     * project. Those are deployment mistakes and should refuse loudly.
+     *
+     * What moved to assertDestinationReady(): mounted, right volume, writable.
+     * Those are transient facts about hardware, and they now fail the BACKUP
+     * PIPELINE instead of the application.
+     *
+     * @throws RuntimeException when production has no usable backup destination.
      */
     public static function assertReadyForProduction(string $environment): void
     {
@@ -97,7 +116,7 @@ final class BackupConfiguration
 
         $problems = match ($driver) {
             's3' => array_merge($problems, self::s3Problems($disk)),
-            'local' => array_merge($problems, self::removableDriveProblems($disk)),
+            'local' => array_merge($problems, self::drivePathProblems($disk)),
             default => array_merge($problems, [
                 "BACKUP_DISK is set to '{$disk}', which is not a configured backup destination. "
                 .'Use backups_local or backups_s3.',
@@ -112,6 +131,88 @@ final class BackupConfiguration
             "Backups are not configured for production:\n  - ".implode("\n  - ", $problems)
             ."\nSee docs/RESTORE.md. Until this is fixed the install would run nightly backups "
             .'that store nothing recoverable.'
+        );
+    }
+
+    /**
+     * Refuse to run the backup pipeline against a destination that is not there.
+     *
+     * TRANSIENT FACTS (P1-T17, review). Called from routes/console.php before
+     * each scheduled backup command, never at boot: the drive can be unplugged,
+     * rotated or fail at any moment, and none of that should stop the centre
+     * from enrolling a student. A failure here stops the night's backup and
+     * surfaces through the exception handler; backup:monitor then reports the
+     * destination unhealthy the following day, which is the alert.
+     *
+     * @throws RuntimeException when the destination is not usable right now.
+     */
+    public static function assertDestinationReady(): void
+    {
+        $disk = (string) config('backup.destination_disk');
+
+        if ((string) config("filesystems.disks.{$disk}.driver") !== 'local') {
+            // S3 reachability is not knowable without a network call, and a
+            // failed upload already fails the run loudly. Nothing to check here.
+            return;
+        }
+
+        $root = (string) config("filesystems.disks.{$disk}.root");
+        $volume = app(BackupVolume::class);
+        $problems = [];
+
+        if (! $volume->isDirectory($root)) {
+            $problems[] = "{$root} does not exist.";
+        } else {
+            /*
+             * THE CHECK THAT ACTUALLY DETECTS AN ABSENT DRIVE.
+             *
+             * A mount point is an ordinary directory when nothing is mounted on
+             * it: /mnt/backups exists, is writable, and silently belongs to the
+             * server's own filesystem. Archives written there sit on the disk
+             * they are meant to survive, and backup:monitor reports them healthy
+             * because they are real files of the right age.
+             *
+             * Comparing device ids is what separates "the drive is here" from
+             * "the mount point is here". Same device as the application means no
+             * drive.
+             */
+            $applicationDevice = $volume->deviceIdFor(base_path());
+            $destinationDevice = $volume->deviceIdFor($root);
+
+            if ($destinationDevice === null) {
+                $problems[] = "The filesystem holding {$root} could not be read.";
+            } elseif ($destinationDevice === $applicationDevice) {
+                $problems[] = "{$root} is on the same filesystem as the application, which "
+                    .'means the drive is not mounted. Archives would be written to the mount '
+                    .'point on the server and would die with it.';
+            }
+
+            $marker = (string) config('backup.volume_marker');
+
+            /*
+             * The second layer, and it answers a different question: device
+             * identity proves SOME drive is mounted, not that it is the right
+             * one. A rotated drive that was never prepared has no marker, so a
+             * backup does not silently start filling somebody's photo stick.
+             */
+            if ($marker !== '' && ! $volume->hasMarker($root, $marker)) {
+                $problems[] = "{$root} is missing the volume marker '{$marker}', so this is not "
+                    .'a drive prepared for these backups. Run: touch '
+                    .rtrim($root, '/\\').'/'.$marker;
+            }
+
+            if (! $volume->isWritable($root)) {
+                $problems[] = "{$root} is not writable by the application.";
+            }
+        }
+
+        if ($problems === []) {
+            return;
+        }
+
+        throw new RuntimeException(
+            "The backup destination is not ready:\n  - ".implode("\n  - ", $problems)
+            ."\nTonight's backup did not run. See docs/RESTORE.md."
         );
     }
 
@@ -134,9 +235,11 @@ final class BackupConfiguration
     }
 
     /**
+     * Static problems with a removable-drive path — the ones a deploy can fix.
+     *
      * @return array<int, string>
      */
-    private static function removableDriveProblems(string $disk): array
+    private static function drivePathProblems(string $disk): array
     {
         $root = config("filesystems.disks.{$disk}.root");
 
@@ -144,46 +247,45 @@ final class BackupConfiguration
             return ['BACKUP_LOCAL_PATH is not set, so there is no drive to write to.'];
         }
 
-        $problems = [];
-
         /*
-         * THE RULE T13 WROTE DOWN, NOW ENFORCED DIRECTLY RATHER THAN BY
-         * FORBIDDING THE WORD 'local'.
+         * RESOLVED BEFORE COMPARING (P1-T17, review). The first version compared
+         * the strings as written, so a path containing `..` whose realpath was
+         * the project directory sailed through, and a symlink or a difference in
+         * Windows drive-letter casing would have done the same.
          *
-         * A backup on the machine it protects dies with it. A removable drive at
-         * /mnt/backups survives the server; a folder under the project is the
-         * same disk the application lives on, and the archive and the thing it
-         * protects then fail together.
-         *
-         * Compared as normalised prefixes so that a path merely BEGINNING with
-         * the same characters as the project — a sibling directory — is not
-         * mistaken for one inside it.
+         * realpath() returns false for a path that does not exist yet, which is
+         * not a configuration error — an unmounted drive is the pipeline's
+         * problem, not the boot guard's — so the unresolved value is used as a
+         * fallback and the containment question is still asked of it.
          */
-        $normalise = static fn (string $path): string => rtrim(
-            str_replace('\\', '/', $path),
-            '/',
-        ).'/';
+        $resolvedRoot = realpath($root) ?: $root;
+        $resolvedBase = realpath(base_path()) ?: base_path();
 
-        if (str_starts_with($normalise($root), $normalise(base_path()))) {
-            $problems[] = "The backup path ({$root}) is inside the application itself, so the "
-                .'archive would live on the disk it exists to recover. Point BACKUP_LOCAL_PATH '
-                .'at a removable or external drive, such as /mnt/backups.';
+        if (self::isInside($resolvedRoot, $resolvedBase)) {
+            return ["The backup path ({$root}) resolves to {$resolvedRoot}, inside the "
+                .'application itself, so the archive would live on the disk it exists to '
+                .'recover. Point BACKUP_LOCAL_PATH at a removable drive, such as /mnt/backups.'];
         }
 
-        /*
-         * AN UNMOUNTED DRIVE IS THE FAILURE THIS CATCHES. Without it the nightly
-         * run writes into an empty mount point on the root filesystem, the
-         * monitor finds those archives and reports healthy, and the drive
-         * somebody carries off-site stays empty.
-         */
-        if (! is_dir($root)) {
-            $problems[] = "The backup path ({$root}) does not exist. If this is a removable "
-                .'drive, it is not mounted — archives would be written to the mount point on the '
-                .'server instead, and the monitor would report them healthy.';
-        } elseif (! is_writable($root)) {
-            $problems[] = "The backup path ({$root}) is not writable by the application.";
-        }
+        return [];
+    }
 
-        return $problems;
+    /**
+     * Is $path the same as, or beneath, $ancestor?
+     *
+     * Separators normalised and a trailing one appended to both, so a SIBLING
+     * whose name merely begins with the same characters — /srv/app-backups
+     * beside /srv/app — is not mistaken for a descendant. Windows comparison is
+     * case-insensitive because its filesystem is.
+     */
+    private static function isInside(string $path, string $ancestor): bool
+    {
+        $normalise = static function (string $value): string {
+            $value = rtrim(str_replace('\\', '/', $value), '/').'/';
+
+            return DIRECTORY_SEPARATOR === '\\' ? mb_strtolower($value) : $value;
+        };
+
+        return str_starts_with($normalise($path), $normalise($ancestor));
     }
 }
