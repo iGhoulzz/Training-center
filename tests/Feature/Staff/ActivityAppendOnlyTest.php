@@ -7,9 +7,11 @@ use App\Domain\Enrollment\Models\Student;
 use App\Domain\Staff\Actions\SyncUserRolesAction;
 use App\Domain\Staff\Actions\SystemRoleWriter;
 use App\Domain\Staff\Exceptions\ActivityLogIsAppendOnlyException;
+use App\Domain\Staff\Exceptions\UnregisteredActivityEventException;
 use App\Domain\Staff\Filament\Resources\ActivityResource;
 use App\Domain\Staff\Filament\Resources\ActivityResource\Pages\ListActivities;
 use App\Domain\Staff\Filament\Resources\ActivityResource\Pages\ViewActivity;
+use App\Domain\Staff\Support\ActivityEvent;
 use App\Models\User;
 use BezhanSalleh\FilamentShield\Facades\FilamentShield;
 use Database\Seeders\RolePermissionSeeder;
@@ -116,6 +118,55 @@ it('refuses the cleaning action itself, not merely the command that calls it', f
         ->toThrow(ActivityLogIsAppendOnlyException::class);
 
     expect(Activity::whereKey($old->getKey())->exists())->toBeTrue();
+});
+
+/*
+|--------------------------------------------------------------------------
+| The event vocabulary is enforced at run time (P1-T15, review of M5)
+|--------------------------------------------------------------------------
+|
+| LocalizationTest refuses a literal at `->event('…')`, but that is a style check
+| and cannot be more: assigning the string to a variable first walks past it, and
+| so would a queued job or a future package. Every entry passes through
+| RecordActivityWithContext, so that is where the vocabulary actually binds.
+*/
+
+it('refuses an event that is not in the declared vocabulary', function () {
+    /*
+     * Written the way a bypass would be written — through a variable, which the
+     * static check cannot see — so this fails if the runtime guard is removed
+     * even though the source scan still passes.
+     */
+    $event = 'untranslated_event';
+
+    expect(fn () => activity()->event($event)->log($event))
+        ->toThrow(UnregisteredActivityEventException::class);
+
+    expect(Activity::query()->where('event', $event)->exists())->toBeFalse(
+        'The entry was written despite the refusal, so the guard reports without preventing.',
+    );
+});
+
+it('accepts every event the vocabulary declares', function () {
+    // The control. A guard that refused everything would satisfy the test above
+    // and break the entire audit trail.
+    // Baseline first: the seeder in beforeEach writes its own entries, so an
+    // absolute count would measure the seeder rather than this loop.
+    $before = Activity::query()->count();
+
+    foreach (ActivityEvent::all() as $event) {
+        activity()->event($event)->log($event);
+    }
+
+    expect(Activity::query()->count() - $before)->toBe(count(ActivityEvent::all()));
+});
+
+it('leaves an entry with no event alone', function () {
+    // activity()->log('…') records no event at all, which is a legitimate shape
+    // with no label to miss. Refusing it would break plain logging.
+    activity()->log('a note with no event');
+
+    expect(Activity::query()->whereNull('event')->count())->toBe(1);
 });
 
 /*

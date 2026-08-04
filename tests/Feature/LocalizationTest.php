@@ -970,8 +970,40 @@ function firstHardcodedBladeString(string $source): ?string
         $source,
     );
 
-    // Attributes a browser renders to the reader, with a literal value.
-    if (preg_match('/\b(placeholder|title|alt|aria-label)\s*=\s*"([^"{}]*[A-Za-z]{2,}[^"{}]*)"/i', $stripped, $match) === 1) {
+    /*
+     * Attributes a reader sees, with a literal value.
+     *
+     * BOTH QUOTE STYLES, UNICODE LETTERS, AND COMPONENT ATTRIBUTES (review of
+     * L3). The first version matched double quotes and ASCII only, so
+     * `placeholder='Search students'` passed — and so did `<h1>الطلاب</h1>`.
+     * Arabic prose slipping through a check that exists FOR the Arabic phase is
+     * the worst blind spot this detector could have had.
+     *
+     * `label`, `description`, `heading` and `hint` are included because Blade
+     * COMPONENTS take them as attributes, which is how a Filament-shaped label
+     * reaches a template without ever being a PHP setter call.
+     */
+    $userFacing = 'placeholder|title|alt|aria-label|label|description|heading|hint';
+
+    foreach (['"', "'"] as $quote) {
+        /*
+         * (?<![:\w-]) refuses a BOUND attribute. `:label="__('staff.name')"` is
+         * PHP that Blade evaluates, not prose — the colon is the whole
+         * difference between passing an expression and typing a sentence — and a
+         * bound value has no closing brace for the {} exclusion to catch.
+         */
+        $pattern = '/(?<![:\w-])('.$userFacing.')\s*=\s*'.$quote
+            .'([^'.$quote.'{}]*\p{L}{2,}[^'.$quote.'{}]*)'.$quote.'/iu';
+
+        if (preg_match($pattern, $stripped, $match) !== 1) {
+            continue;
+        }
+
+        // A translation call in an unbound attribute is still translated.
+        if (str_contains($match[2], '__(')) {
+            continue;
+        }
+
         return trim($match[0]);
     }
 
@@ -980,7 +1012,7 @@ function firstHardcodedBladeString(string $source): ?string
      * that contains at least two consecutive letters. One letter is too noisy —
      * separators, units and stray punctuation are not sentences.
      */
-    if (preg_match('/>\s*([^<>]*[A-Za-z]{2,}[^<>]*)</', $stripped, $match) === 1) {
+    if (preg_match('/>\s*([^<>]*\p{L}{2,}[^<>]*)</u', $stripped, $match) === 1) {
         return trim($match[1]);
     }
 
@@ -999,6 +1031,16 @@ it('detects hardcoded text in a Blade template', function (string $sample) {
     '<img src="/logo.png" alt="Training centre logo">',
     '<a href="/x" title="Open the register">x</a>',
     '<div aria-label="Close dialog"></div>',
+
+    /*
+     * The forms the first version missed (review of L3), each an independent
+     * sample so deleting any one rule fails on its own.
+     */
+    "<input placeholder='Search students'>",
+    '<h1>الطلاب</h1>',
+    '<x-field label="Student name" />',
+    "<x-field label='Student name' />",
+    '<x-callout description="This cannot be undone" />',
 ]);
 
 it('leaves translated and non-prose Blade alone', function (string $sample) {
@@ -1021,6 +1063,9 @@ it('leaves translated and non-prose Blade alone', function (string $sample) {
     '<style>.a { content: "Students"; }</style>',
     // Attributes that are not user-facing.
     '<div class="badge" wire:model="name" id="Students"></div>',
+    // Translated attributes, in both quote styles.
+    '<x-field :label="__(\'staff.name\')" />',
+    '<input placeholder="{{ __(\'staff.user\') }}">',
 ]);
 
 it('has no hardcoded user-facing strings in the application', function () {

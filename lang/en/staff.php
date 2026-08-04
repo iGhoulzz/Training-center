@@ -102,6 +102,12 @@ return [
      * ActivityLogIsAppendOnlyException raises this as its exception message, so
      * it must exist or the refusal surfaces as a raw key.
      */
+    /*
+     * An event logged without being declared in ActivityEvent (P1-T15, review of
+     * M5). Raised by UnregisteredActivityEventException.
+     */
+    'unregistered_activity_event' => 'The activity event :event is not declared in ActivityEvent, so it has no label and would be shown to an administrator as a raw value. Add a constant for it.',
+
     'activity_log_append_only' => 'The activity log is append-only. Entries are never removed, and no retention window applies to it.',
 
     /*

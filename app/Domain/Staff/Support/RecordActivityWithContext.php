@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Staff\Support;
 
+use App\Domain\Staff\Exceptions\UnregisteredActivityEventException;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
 use Spatie\Activitylog\Actions\LogActivityAction;
@@ -50,6 +51,29 @@ final class RecordActivityWithContext extends LogActivityAction
 {
     public function execute(Model $activity, string $description): Model
     {
+        /*
+         * THE VOCABULARY BOUNDARY (P1-T15, review of finding M5).
+         *
+         * Every activity entry in this application passes through here —
+         * config/activitylog.php routes log_activity to this class — so this is
+         * the one point that can refuse an event nobody has declared.
+         *
+         * The static test that rejects a literal at `->event('…')` is a style
+         * check and cannot be more: assigning the same string to a variable
+         * first walks straight past it, and so would a queued job, a console
+         * command, or a package building an event name at run time. An
+         * unregistered event renders as its raw value rather than as a visible
+         * gap, which is exactly the failure M5 is about.
+         *
+         * A null event is left alone: `activity()->log('…')` records no event,
+         * which is a legitimate shape with no label to miss.
+         */
+        $event = $activity->getAttribute('event');
+
+        if (is_string($event) && ! in_array($event, ActivityEvent::all(), true)) {
+            throw new UnregisteredActivityEventException($event);
+        }
+
         /*
          * Reached through the attribute API rather than ->properties, because the
          * parent types this parameter as Model and `properties` belongs to the
