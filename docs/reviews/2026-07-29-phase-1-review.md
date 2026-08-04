@@ -957,6 +957,80 @@ sound; the evidence for them was not.**
 
 ---
 
+## P1-T17 — the backup destination (closes G3-U1)
+
+G3-U1 asked what a blank `BACKUP_S3_ENDPOINT` does. Answering it surfaced a
+question the review could not settle on its own — whether this centre wants a
+bucket at all — and the answer was **a removable drive, with the S3 path kept
+ready**. That turned a disposition into a task: `BACKUP_DISK` now selects
+`backups_local` (default) or `backups_s3`, and the endpoint is required whenever
+S3 is the destination, which is the guard addition U1 was deciding between.
+
+**The rule that changed.** `config/backup.php` said "off-server only, `local` is
+deliberately absent". The property being protected was never the driver — it is
+that **a backup must not share a failure domain with the thing it protects**. A
+removable drive satisfies that and uses the local driver, so the old name-based
+check forbade exactly what the centre asked for. The guard now enforces the
+property: a destination path inside the project is refused.
+
+### Codex round 1 — four blockers, all fixed
+
+| # | Finding | What was actually wrong |
+|---|---|---|
+| 1 | High — an unmounted drive passed validation | Existence and writability cannot see it. `/mnt/backups` is an ordinary writable directory when nothing is mounted on it, so archives land on the server's own disk and `backup:monitor` reports them healthy because they are real files of the right age. Fixed with filesystem **device identity** plus a **volume marker** file, both reached through an injectable `BackupVolume`. |
+| 2 | High — losing the drive could take the application down | The mounted/writable checks ran in `AppServiceProvider::boot()`, which fires for every request and every artisan command. Unplugging the USB stick would have stopped `/admin` loading — a backup mechanism able to halt the centre it protects. Static facts stay at boot; transient hardware facts moved to `assertDestinationReady()`, wired via `->before()` on the three backup commands. |
+| 3 | High — containment could be bypassed | The check compared unresolved strings, so a path containing `..` resolving to the project directory was accepted. Both sides now go through `realpath()`, separators normalised, trailing separator so a sibling is not read as a descendant, case-insensitive on Windows. |
+| 4 | Medium — the runbook contradicted local backups | `docs/RESTORE.md` described S3 as the only destination. It now branches on `BACKUP_DISK` and states the invariant as a failure domain, not a technology. |
+
+### Two tests that certified the wrong thing
+
+Worth recording, because both are the same failure the T15 rounds kept
+producing — **a test that cannot distinguish the dangerous case from the safe
+one**:
+
+- The **positive control for the device check** used `sys_get_temp_dir()`.
+  Measured on this machine, that path and `base_path()` report the *same*
+  device (`470502510`). The control asserting "a different filesystem is
+  accepted" was in fact asserting that the *same* filesystem is accepted — it
+  certified precisely the case the check exists to refuse.
+
+- The **`..` containment sample** used `base_path('storage/../')`, which still
+  begins with the project path textually. The naive prefix check caught it
+  unaided, so deleting `realpath()` broke nothing and the test proved nothing
+  about resolution. Mutation testing caught this; reading the test did not. The
+  sample now leaves the project directory and comes back to it, and a second
+  test links into the project — falling back to a **junction** where Windows
+  refuses a symlink, rather than skipping and silently testing nothing.
+
+### Mutation evidence
+
+Six mutations, each failing the suite:
+
+| Mutation | Result |
+|---|---|
+| Device comparison removed (unmounted drive accepted) | FAILED 59/60 |
+| Volume marker check removed | FAILED 59/60 |
+| `assertDestinationReady()` neutered | FAILED 55/60 |
+| `->before()` removed from `backup:run` | FAILED 59/60 |
+| Containment compares unresolved strings | FAILED 59/60 |
+| Trailing separator dropped (sibling matches) | FAILED 59/60 |
+
+The last two are the ones that survived the first attempt.
+
+**Gates on `p1/t17-local-backup-destination`, real output:**
+
+| Gate | Result |
+|---|---|
+| `php artisan test` | **997 passed**, 0 failed, 2665 assertions |
+| `vendor/bin/pint --test` | passed |
+| `vendor/bin/phpstan analyse` | 0 errors |
+
+**Note for the operator, not enforceable in code:** a drive that never leaves
+the building survives a dead server and not a fire. `RESTORE.md` says to rotate
+two and keep one elsewhere.
+
+---
+
 ## Where the review stands
 
 **Every fix-now finding across all three groups is now closed.** Group 1 (6),
@@ -968,7 +1042,7 @@ document.
 
 | # | Claim | Experiment | Result |
 |---|---|---|---|
-| U1 | Whether a blank `BACKUP_S3_ENDPOINT` — which `.env.example` ships — fails loudly or silently retargets to AWS S3, sending a non-AWS deployment's archives to an unintended host | With `APP_ENV=production` and a full non-AWS `BACKUP_S3_*` set except a blank endpoint, run `backup:run` and record whether it throws at client construction, on upload, or succeeds against the wrong host | Open — decides whether this is a documentation fix or a guard addition |
+| U1 | Whether a blank `BACKUP_S3_ENDPOINT` — which `.env.example` ships — fails loudly or silently retargets to AWS S3, sending a non-AWS deployment's archives to an unintended host | With `APP_ENV=production` and a full non-AWS `BACKUP_S3_*` set except a blank endpoint, run `backup:run` and record whether it throws at client construction, on upload, or succeeds against the wrong host | **Closed by P1-T17.** It fails silently — the adapter builds with no endpoint and no exception. The guard now requires an endpoint whenever S3 is the destination, which was the "guard addition" branch of this decision. See the T17 section above. |
 | U2 | Whether Shield's role form actually renders the twelve `*_activity` checkboxes, and what saving one does | Drive `EditRole` via Livewire, assert the options contain `delete_activity`, submit it, and record whether it throws `PermissionDoesNotExist`, drops the name, or creates the permission | Open — resolve while fixing L5 |
 | U3 | Whether `properties.causer_name` is in fact written for a `causedByAnonymous()` entry | One assertion in the existing system-write test: the property must be null | Open — will be settled by M2's regression test, which must fail first |
 
@@ -982,7 +1056,10 @@ Action's transaction. Logging is on the model-event boundary, so ordinary Eloque
 Filament modal writes, commands and seeders all log identically. The backup boot
 guard is invoked as the first statement of `boot()`. `local` is absent from the
 destination disks, the three scheduled commands share one mutex, and nothing secret
-enters the archive. The literal-key catalogue is complete: 161 keys, none
+enters the archive. *(Superseded in part by P1-T17: the local driver is now a
+permitted destination, because the rule is a separate failure domain rather than
+a driver name. The property is enforced by the guard instead of by the disk list
+— see the T17 section above.)* The literal-key catalogue is complete: 161 keys, none
 unresolved, none empty, none resolving to a group. There are no physical CSS
 properties and no hardcoded label literals anywhere in the repository today — L2
 and L3 are about what the detectors would let through next, not about anything
@@ -1047,7 +1124,7 @@ abilities offered on a log whose non-negotiable rule is that no such path exists
 The seeder never creates them, so the form advertises capabilities that cannot be
 granted.
 
-### G3-U1 — what does a blank S3 endpoint do? **Partially resolved: it fails silently.**
+### G3-U1 — what does a blank S3 endpoint do? **Resolved. It fails silently; closed by P1-T17.**
 
 `config/filesystems.php:138` is `'endpoint' => env('BACKUP_S3_ENDPOINT')` and
 `.env.example:77` ships the key blank. Constructing the disk with an empty
