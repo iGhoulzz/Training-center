@@ -6,6 +6,7 @@ use App\Domain\Enrollment\Enums\BatchStatus;
 use App\Domain\Enrollment\Enums\EnrollmentStatus;
 use App\Domain\Enrollment\Enums\StudentStatus;
 use App\Domain\Staff\Enums\EmploymentType;
+use App\Domain\Staff\Support\ActivityEvent;
 use App\Http\Middleware\SetLocale;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
@@ -196,6 +197,137 @@ it('translates every enum case', function (string $enum) {
     EnrollmentStatus::class,
     EmploymentType::class,
 ]);
+
+/*
+|--------------------------------------------------------------------------
+| The activity log's interpolated keys (P1-T15, group 3 finding M5)
+|--------------------------------------------------------------------------
+|
+| These were outside every completeness check, and their fallbacks hid it.
+| ActivityResource::eventLabel() returns the RAW EVENT when the key is missing,
+| so a forgotten translation renders as `deleted_by_cascade` — which reads like a
+| deliberate technical label rather than a gap. Proven by mutation before the
+| fix: deleting activity.event.deleted_by_cascade failed nothing.
+|
+| The literal scan above cannot reach them because the keys are built by
+| interpolation, and a regex over `->event('…')` cannot learn the vocabulary
+| either: two call sites pass a variable. ActivityEvent declares it instead, and
+| these walk that declaration — forward, reverse, and at the boundary.
+*/
+
+it('translates every event the activity log can record', function () {
+    /*
+     * Collected into one list rather than run as a dataset, matching every other
+     * completeness check in this file: a single failure then names all the
+     * missing keys at once instead of stopping at the first.
+     */
+    $unlabelled = [];
+
+    foreach (ActivityEvent::all() as $event) {
+        $key = "activity.event.{$event}";
+        $label = __($key);
+
+        // Two failures to catch. A missing key surfaces as the key itself; a
+        // blank value is not the key, so a presence-only check would let an
+        // empty label through and it would read as a styling bug.
+        if ($label === $key || trim((string) $label) === '') {
+            $unlabelled[] = $event;
+        }
+    }
+
+    expect($unlabelled)->toBeEmpty(
+        'These events have no label, and eventLabel() falls back to the raw event so each '
+        .'renders as a plausible technical string rather than a visible gap: '
+        .implode(', ', $unlabelled),
+    );
+});
+
+it('translates every record type the log can show', function () {
+    /*
+     * The other interpolated lookup. recordTypeLabel() keys on the class
+     * basename and falls back to it, so a missing entry shows "StaffCertificate"
+     * — an English class name, in front of an Arabic reader in phase 4.
+     *
+     * Derived from the models that actually record activity rather than from a
+     * hand-written list, for the reason finding L4 established.
+     */
+    $models = recordsActivityModels();
+
+    // The scan must have found something, or the loop below asserts nothing.
+    expect($models)->not->toBeEmpty('No model was found using RecordsActivity.');
+
+    $unlabelled = [];
+
+    foreach ($models as $model) {
+        $basename = class_basename($model);
+        $key = "activity.record_type.{$basename}";
+        $label = __($key);
+
+        if ($label === $key || trim((string) $label) === '') {
+            $unlabelled[] = $basename;
+        }
+    }
+
+    expect($unlabelled)->toBeEmpty(
+        'These record types have no label, so the log shows a raw class name: '
+        .implode(', ', $unlabelled),
+    );
+});
+
+it('has no event label the application can never produce', function () {
+    /*
+     * The reverse direction, and it is not pedantry: a key nothing emits is
+     * either a rename that left its old label behind or an event somebody
+     * removed, and both mislead the next person deciding whether a label is
+     * still needed. Keeping the catalogue honest in both directions is what
+     * makes "every event is translated" a statement about the application
+     * rather than about the lang file.
+     */
+    $catalogue = array_keys((array) __('activity.event'));
+    $orphans = array_diff($catalogue, ActivityEvent::all());
+
+    expect($orphans)->toBeEmpty(
+        'These activity.event.* labels correspond to no event in ActivityEvent: '
+        .implode(', ', $orphans),
+    );
+});
+
+it('routes every explicit activity write through the declared vocabulary', function () {
+    /*
+     * THE BOUNDARY, without which the registry is decorative.
+     *
+     * ActivityEvent only describes the vocabulary if every writer uses it. A
+     * future `->event('new_event')` would bypass the constant list entirely, and
+     * the two checks above would keep passing while an unlabelled event reached
+     * an administrator — the exact failure M5 is about, reintroduced one call
+     * site at a time.
+     *
+     * So a literal is refused at the call. This is the one place a source scan
+     * IS the right tool: it is asking what the code says, not what it does, and
+     * the answer is a syntactic fact.
+     */
+    $offenders = [];
+
+    foreach (File::allFiles(app_path()) as $file) {
+        if ($file->getExtension() !== 'php') {
+            continue;
+        }
+
+        $path = (string) $file->getRealPath();
+        $source = appSourceWithoutComments($path);
+
+        // ->event('literal') or ->log('literal') — either bypasses the registry.
+        if (preg_match('/->(event|log)\s*\(\s*[\'"]/', $source, $match) === 1) {
+            $offenders[] = str_replace(base_path().DIRECTORY_SEPARATOR, '', $path)
+                .' → '.trim($match[0]);
+        }
+    }
+
+    expect($offenders)->toBeEmpty(
+        'Activity events must come from ActivityEvent, or the completeness checks above stop '
+        ."describing the application:\n  ".implode("\n  ", $offenders),
+    );
+});
 
 /*
 |--------------------------------------------------------------------------
@@ -409,6 +541,72 @@ it('only exempts files that are still stock vendor builds', function () {
  * no scan: the README promises a rule, the suite reports it enforced, and
  * `ml-auto` sails through. The self-tests below are what make the promise real.
  */
+/**
+ * Does this source contain a margin/padding/inset shorthand with three or four
+ * values — the forms that name left and right without ever writing the words?
+ *
+ * COUNTS TOP-LEVEL VALUES, NOT SPACES (P1-T15, review of finding L2). The first
+ * version was a regex requiring two internal runs of whitespace, which is not
+ * the same question: `margin: calc(100% - 1rem) auto` is two values containing
+ * four spaces, and was wrongly flagged. Splitting on whitespace at parenthesis
+ * depth zero asks what CSS actually means.
+ *
+ * One and two values are symmetric — `margin: 0`, `margin: 0 auto` — and flip
+ * harmlessly. Three and four are top/right/bottom/left and do not.
+ */
+function hasDirectionalShorthand(string $source): bool
+{
+    if (preg_match_all('/(?<![\w-])(margin|padding|inset)\s*:([^;{}]*)/i', $source, $matches, PREG_SET_ORDER) === 0) {
+        return false;
+    }
+
+    foreach ($matches as $match) {
+        if (countTopLevelCssValues($match[2]) >= 3) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/**
+ * How many space-separated values a CSS declaration body holds, treating
+ * anything inside parentheses as one value.
+ *
+ * `calc(100% - 1rem) auto` is two, not four. `var(--spacing, 1rem 2rem)` is one,
+ * not three — the commas and spaces belong to the function call, and whether the
+ * variable itself expands to something directional is not knowable here.
+ */
+function countTopLevelCssValues(string $body): int
+{
+    $depth = 0;
+    $values = 0;
+    $inValue = false;
+
+    foreach (str_split(trim($body)) as $character) {
+        if ($character === '(') {
+            $depth++;
+        } elseif ($character === ')') {
+            $depth = max(0, $depth - 1);
+        }
+
+        $isSeparator = $depth === 0 && ($character === ' ' || $character === "\t" || $character === "\n");
+
+        if ($isSeparator) {
+            $inValue = false;
+
+            continue;
+        }
+
+        if (! $inValue) {
+            $inValue = true;
+            $values++;
+        }
+    }
+
+    return $values;
+}
+
 function firstPhysicalCssProperty(string $source): ?string
 {
     // A Tailwind spacing/inset suffix: numeric (4, 1.5), px, auto, full, or an
@@ -462,18 +660,20 @@ function firstPhysicalCssProperty(string $source): ?string
         '/(?<![\w-])rounded-(tl|tr|bl|br|l|r)(?![\w])/i',
 
         /*
-         * DIRECTIONAL SHORTHAND. `margin: 0 4px 0 8px` names left and right
-         * without ever writing the words, so every pattern above misses it.
-         * Three or four values are directional; one or two are not (`margin: 0`
-         * and `margin: 0 auto` are symmetric and flip harmlessly).
+         * DIRECTIONAL SHORTHAND is handled below rather than here, because it
+         * needs to COUNT VALUES and a regex can only count spaces. See
+         * hasDirectionalShorthand().
          */
-        '/(margin|padding|inset)\s*:\s*[^;{}]*\S\s+\S[^;{}]*\S\s+\S[^;{}]*(;|\})/i',
     ];
 
     foreach ($patterns as $pattern) {
         if (preg_match($pattern, $source, $match)) {
             return trim($match[0]);
         }
+    }
+
+    if (hasDirectionalShorthand($source)) {
+        return 'directional margin/padding/inset shorthand';
     }
 
     return null;
@@ -580,6 +780,14 @@ it('passes the logical forms that replace them', function (string $sample) {
     'border-start-start-radius: 4px;',
     // One and two values are symmetric: nothing to flip.
     'margin: 0;',
+    /*
+     * Two values that merely CONTAIN spaces. The first version counted
+     * whitespace rather than values and flagged both of these, which would have
+     * made the rule an obstacle to writing correct CSS.
+     */
+    'margin: calc(100% - 1rem) auto;',
+    'padding: var(--spacing, 1rem 2rem);',
+    'margin: calc(1rem + 2px) calc(1rem - 2px);',
     'margin: 0 auto;',
     'padding: 1rem 2rem;',
     'inset: 0;',
@@ -727,6 +935,94 @@ it('leaves translated and non-label calls alone', function (string $sample) {
     "->label('')",
 ]);
 
+/**
+ * The first hardcoded user-facing string in a Blade template, or null.
+ *
+ * SCANNING BLADE FILES IS NOT SCANNING BLADE (P1-T15, review of finding L3).
+ * firstHardcodedLabel() recognises PHP calls like ->label('Students'), so
+ * adding resources/views/ to its file loop found nothing there: a template does
+ * not call setters, it writes markup. `<h1>Students</h1>` sailed straight
+ * through, which is the commonest way a Blade file becomes untranslatable.
+ *
+ * Two surfaces are checked — the text a reader sees between tags, and the
+ * attributes that render as text (placeholder, title, alt, aria-label).
+ *
+ * Everything that is not prose is removed first: Blade expressions and
+ * directives, HTML comments, and the contents of <script> and <style>, whose
+ * bodies are code and CSS rather than anything a translator would touch.
+ */
+function firstHardcodedBladeString(string $source): ?string
+{
+    $stripped = (string) preg_replace(
+        [
+            '/<script\b[^>]*>.*?<\/script>/is',
+            '/<style\b[^>]*>.*?<\/style>/is',
+            '/<!--.*?-->/s',
+            // {{ ... }}, {!! ... !!}, {{-- ... --}}
+            '/\{\{--.*?--\}\}/s',
+            '/\{!!.*?!!\}/s',
+            '/\{\{.*?\}\}/s',
+            // @if (...), @foreach (...), @vite([...]) and bare @csrf
+            '/@\w+\s*\([^()]*(\([^()]*\)[^()]*)*\)/s',
+            '/@\w+/',
+        ],
+        ' ',
+        $source,
+    );
+
+    // Attributes a browser renders to the reader, with a literal value.
+    if (preg_match('/\b(placeholder|title|alt|aria-label)\s*=\s*"([^"{}]*[A-Za-z]{2,}[^"{}]*)"/i', $stripped, $match) === 1) {
+        return trim($match[0]);
+    }
+
+    /*
+     * Visible text: something between a closing and an opening angle bracket
+     * that contains at least two consecutive letters. One letter is too noisy —
+     * separators, units and stray punctuation are not sentences.
+     */
+    if (preg_match('/>\s*([^<>]*[A-Za-z]{2,}[^<>]*)</', $stripped, $match) === 1) {
+        return trim($match[1]);
+    }
+
+    return null;
+}
+
+it('detects hardcoded text in a Blade template', function (string $sample) {
+    // Deleting a rule from the detector fails here.
+    expect(firstHardcodedBladeString($sample))->not->toBeNull();
+})->with([
+    '<h1>Students</h1>',
+    '<p>No records found.</p>',
+    '<button type="submit">Save changes</button>',
+    '<span class="badge">Expired</span>',
+    '<input placeholder="Search students">',
+    '<img src="/logo.png" alt="Training centre logo">',
+    '<a href="/x" title="Open the register">x</a>',
+    '<div aria-label="Close dialog"></div>',
+]);
+
+it('leaves translated and non-prose Blade alone', function (string $sample) {
+    // Over-broadening fails here: every one of these is something the two
+    // templates in this repository legitimately do.
+    expect(firstHardcodedBladeString($sample))->toBeNull();
+})->with([
+    '<h1>{{ __(\'staff.students\') }}</h1>',
+    '<x-filament::button type="submit">{{ __(\'auth.update_password\') }}</x-filament::button>',
+    '<form wire:submit="save">{{ $this->form }}</form>',
+    // Directives and expressions are not prose.
+    '<div>@csrf</div>',
+    '<div>@if ($x) {{ $y }} @endif</div>',
+    // Structure with no text at all.
+    '<div class="mt-4"><span></span></div>',
+    // A comment is not rendered.
+    '<div><!-- a note for the next developer --></div>',
+    // Script and style bodies are code.
+    '<script>const label = "Students";</script>',
+    '<style>.a { content: "Students"; }</style>',
+    // Attributes that are not user-facing.
+    '<div class="badge" wire:model="name" id="Students"></div>',
+]);
+
 it('has no hardcoded user-facing strings in the application', function () {
     /*
      * Without this test, "everything goes through __()" is a guideline, and the
@@ -752,13 +1048,25 @@ it('has no hardcoded user-facing strings in the application', function () {
 
         $path = (string) $file->getRealPath();
 
-        // Blade is read whole; comments there are HTML/Blade rather than PHP
-        // tokens, and token_get_all() would mangle the template.
-        $source = str_ends_with($path, '.blade.php')
-            ? (string) file_get_contents($path)
-            : appSourceWithoutComments($path);
+        /*
+         * Blade gets BOTH detectors and PHP gets one. A template can hold a
+         * Filament call (->label('x') inside a @php block or a component) and
+         * markup prose, and only the second is what makes scanning views
+         * worthwhile — adding the files without a Blade-aware detector found
+         * nothing at all.
+         */
+        if (str_ends_with($path, '.blade.php')) {
+            if (in_array($file->getFilename(), STOCK_TAILWIND_PAGES, true)) {
+                continue;
+            }
 
-        if (($match = firstHardcodedLabel($source)) !== null) {
+            $source = (string) file_get_contents($path);
+            $match = firstHardcodedLabel($source) ?? firstHardcodedBladeString($source);
+        } else {
+            $match = firstHardcodedLabel(appSourceWithoutComments($path));
+        }
+
+        if ($match !== null) {
             $offenders[] = str_replace(base_path().DIRECTORY_SEPARATOR, '', $path).' → '.$match;
         }
     }

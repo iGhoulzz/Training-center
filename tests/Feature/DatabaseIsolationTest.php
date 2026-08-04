@@ -6,138 +6,90 @@ use Illuminate\Support\Facades\File;
 
 /*
 |--------------------------------------------------------------------------
-| Every test that touches the database must isolate itself (P1-T15, L8)
+| Every feature test must declare how it isolates itself (P1-T15, L8)
 |--------------------------------------------------------------------------
 |
-| tests/Pest.php deliberately does NOT apply RefreshDatabase globally, and the
-| commented-out line has sat there since the scaffold. The reason is real:
-| FileLifecycleTransactionTest needs DatabaseMigrations instead, because
-| RefreshDatabase wraps every test in a transaction and that is precisely the
-| machinery those tests exist to exercise. Applying both would defeat them.
+| tests/Pest.php deliberately does NOT apply RefreshDatabase globally.
+| FileLifecycleTransactionTest uses DatabaseMigrations instead, because
+| RefreshDatabase wraps every test in a transaction and that transaction is
+| precisely the machinery those tests exist to exercise; applying both would
+| quietly defeat them.
 |
-| The cost is that isolation became a thing each author has to remember. Every
-| suite shares one MySQL database, so a file that writes rows without opting in
-| leaves them behind for whichever file runs next — and the failure surfaces
-| somewhere else entirely, as a count that is one too high or a "unique
-| constraint" on a row nobody in that file created. P1-T15 already burned time on
-| cross-run interference of exactly this shape when two worktrees shared the
-| database.
+| The cost is that isolation becomes something each author has to remember, on a
+| database every suite shares. A file that writes rows without opting in leaves
+| them for whichever file runs next, and the failure then surfaces somewhere
+| else entirely — as a count one too high, or a unique-constraint violation on a
+| row nobody in that file created.
 |
-| So the omission is enforced rather than remembered. A file that looks like it
-| touches the database and names no isolation trait fails here, with the fix
-| spelled out.
+| FAIL-CLOSED, AND THAT IS THE POINT (review of L8). The first version guessed
+| whether a file wrote to the database by looking for known write calls, which is
+| fail-open by construction: forceDelete(), restore(), attach(), sync(), upsert()
+| and any Action that writes on the caller's behalf all escaped it, and so would
+| every write API added after the list was written.
+|
+| So the question is inverted. Every feature test declares a trait, OR is named
+| below as reviewed read-only. A new file is an offender until somebody decides
+| which it is — and that decision is visible in a diff rather than inferred from
+| a regex.
 */
 
 /** The isolation traits that make a file safe to write rows from. */
 const ISOLATION_TRAITS = ['RefreshDatabase', 'DatabaseMigrations', 'DatabaseTransactions'];
 
 /**
- * Does this test source look like it writes to the database?
+ * Feature tests that touch no database at all, reviewed one by one.
  *
- * A named function with sample sets below rather than an inline regex, per the
- * rule T14 paid for: an inline pattern can only be tested against the codebase
- * as it happens to be today, which is exactly when it passes vacuously.
+ * These assert over configuration, source text, schedules and documentation.
+ * Adding a file here is a deliberate act: it means somebody has read it and
+ * confirmed it writes nothing. Adding one that later starts writing rows is the
+ * failure mode this list carries, which is why the list is short, explicit, and
+ * checked below for entries that no longer exist.
  *
- * Deliberately broad. A false positive costs one word in a test file; a false
- * negative costs somebody an afternoon chasing a failure in a file they did not
- * touch.
+ * @var array<int, string>
  */
-function looksLikeItWritesToTheDatabase(string $source): bool
-{
-    $patterns = [
-        '/::factory\s*\(/',
-        '/->create\s*\(/',
-        '/->createQuietly\s*\(/',
-        '/->save\s*\(/',
-        '/->saveQuietly\s*\(/',
-        '/->update\s*\(/',
-        '/->delete\s*\(/',
-        '/\$this->seed\s*\(/',
-        '/\bDB::(table|insert|statement|transaction)\s*\(/',
-        '/::create\s*\(/',
-    ];
+const READ_ONLY_FEATURE_TESTS = [
+    'BackupConfigurationTest.php',
+    'ExampleTest.php',
+    'PolicyAbilitySurfaceTest.php',
+    'Staff/ActionBoundaryArchTest.php',
+    'Staff/FileLifecycleConfigurationTest.php',
+];
 
-    foreach ($patterns as $pattern) {
-        if (preg_match($pattern, $source) === 1) {
-            return true;
+it('names only read-only tests that still exist', function () {
+    /*
+     * A stale entry is worse than none: it exempts a filename that a future test
+     * could be given, silently. The same freshness rule the logical-CSS
+     * exemption already carries.
+     */
+    foreach (READ_ONLY_FEATURE_TESTS as $relative) {
+        expect(file_exists(base_path("tests/Feature/{$relative}")))->toBeTrue(
+            "{$relative} is listed as read-only but no longer exists. Remove the entry.",
+        );
+    }
+});
+
+it('confirms the read-only list is not simply everything', function () {
+    /*
+     * The control. If the list grew to cover every file, the guard below would
+     * pass vacuously while enforcing nothing — so the suite must contain more
+     * isolated tests than exempted ones.
+     */
+    $total = 0;
+
+    foreach (File::allFiles(base_path('tests/Feature')) as $file) {
+        if (str_ends_with($file->getFilename(), 'Test.php')) {
+            $total++;
         }
     }
 
-    return false;
-}
+    expect(count(READ_ONLY_FEATURE_TESTS))->toBeLessThan(
+        $total / 2,
+        'More than half the feature suite is exempted from database isolation, which means '
+        .'this guard is no longer guarding much.',
+    );
+});
 
-/**
- * PHP source with comments and string literals removed, leaving only code.
- *
- * appSourceWithoutComments() in tests/Pest.php strips comments alone, which is
- * right for its callers. This needs strings gone too: a scanner that searches
- * for "->create(" holds that text as data, and a detector reading raw source
- * cannot tell the search from the act.
- */
-function phpCodeWithoutStringsOrComments(string $source): string
-{
-    $code = '';
-
-    foreach (token_get_all($source) as $token) {
-        if (! is_array($token)) {
-            $code .= $token;
-
-            continue;
-        }
-
-        $skipped = [
-            T_COMMENT,
-            T_DOC_COMMENT,
-            T_CONSTANT_ENCAPSED_STRING,
-            T_ENCAPSED_AND_WHITESPACE,
-            T_INLINE_HTML,
-        ];
-
-        if (in_array($token[0], $skipped, true)) {
-            // A placeholder rather than nothing, so `->label('x')` does not
-            // collapse into `->label()` and change what the code looks like.
-            $code .= in_array($token[0], [T_CONSTANT_ENCAPSED_STRING, T_ENCAPSED_AND_WHITESPACE], true)
-                ? "''"
-                : ' ';
-
-            continue;
-        }
-
-        $code .= $token[1];
-    }
-
-    return $code;
-}
-
-it('recognises the ways a test writes rows', function (string $sample) {
-    // Deleting a rule from the detector fails here.
-    expect(looksLikeItWritesToTheDatabase($sample))->toBeTrue();
-})->with([
-    // Isolated to ::factory( alone: the obvious sample, User::factory()->create(),
-    // also matches the ->create( rule, so deleting this one broke nothing.
-    '$builder = User::factory(3);',
-    'User::factory()->create();',
-    '$user->save();',
-    '$profile->update([]);',
-    '$record->delete();',
-    '$this->seed(RolePermissionSeeder::class);',
-    'DB::table("users")->insert([]);',
-    'Permission::create(["name" => "x"]);',
-    '$model->saveQuietly();',
-]);
-
-it('leaves tests that only read configuration alone', function (string $sample) {
-    // Over-broadening the detector fails here: these are the shapes of the
-    // config-only suites that legitimately need no isolation.
-    expect(looksLikeItWritesToTheDatabase($sample))->toBeFalse();
-})->with([
-    'expect(config("backup.backup.name"))->toBe("training-center");',
-    'expect($runbook)->toContain("BACKUP_S3_BUCKET");',
-    '$result = firstPhysicalCssProperty($source);',
-    'expect(scheduledBackupCommand("backup:run"))->not->toBeNull();',
-]);
-
-it('isolates every feature test that writes to the shared database', function () {
+it('requires every feature test to declare an isolation trait or be reviewed read-only', function () {
     $offenders = [];
 
     foreach (File::allFiles(base_path('tests/Feature')) as $file) {
@@ -146,30 +98,29 @@ it('isolates every feature test that writes to the shared database', function ()
         }
 
         $path = (string) $file->getRealPath();
-        $source = (string) file_get_contents($path);
-
         /*
-         * CODE ONLY — comments and string literals stripped.
-         *
-         * Some tests in this suite are themselves source scanners, and their
-         * regex literals spell out the very calls being looked for:
-         * ActionBoundaryArchTest carries '/::factory\s*\(/' and
-         * '/DB::\s*table\s*\(/' as data. Reading raw text flagged it as a
-         * database writer when it never opens a connection at all.
-         *
-         * An exemption list would have hidden that rather than fixed it, and
-         * would have exempted those files from the whole rule the day one of
-         * them did start writing rows.
+         * Both sides normalised to forward slashes before the prefix is removed.
+         * base_path('tests/Feature') joins with '/', while getRealPath() returns
+         * all backslashes on Windows, so a naive str_replace matches neither and
+         * every file reads as an offender.
          */
-        if (! looksLikeItWritesToTheDatabase(phpCodeWithoutStringsOrComments($source))) {
+        $normalise = fn (string $value): string => str_replace(DIRECTORY_SEPARATOR, '/', $value);
+
+        $relative = ltrim(
+            str_replace($normalise(base_path('tests/Feature')), '', $normalise($path)),
+            '/',
+        );
+
+        if (in_array($relative, READ_ONLY_FEATURE_TESTS, true)) {
             continue;
         }
 
+        $source = (string) file_get_contents($path);
         $isolated = false;
 
         foreach (ISOLATION_TRAITS as $trait) {
-            // uses(RefreshDatabase::class) at file scope. The trait name alone is
-            // not enough — an import without the uses() call isolates nothing.
+            // uses(RefreshDatabase::class) at file scope. An import alone
+            // isolates nothing.
             if (preg_match('/\buses\s*\([^)]*'.$trait.'::class/', $source) === 1) {
                 $isolated = true;
 
@@ -178,14 +129,16 @@ it('isolates every feature test that writes to the shared database', function ()
         }
 
         if (! $isolated) {
-            $offenders[] = str_replace(base_path().DIRECTORY_SEPARATOR, '', $path);
+            $offenders[] = $relative;
         }
     }
 
     expect($offenders)->toBeEmpty(
-        'These tests write to the database without isolating themselves, so their rows survive '
-        ."into whichever file runs next:\n  ".implode("\n  ", $offenders)
-        ."\n\nAdd uses(RefreshDatabase::class) at the top of the file, or "
-        .'DatabaseMigrations if the test needs to exercise real transactions.',
+        'These feature tests neither isolate themselves nor declare that they touch no '
+        ."database, so any row they write survives into whichever file runs next:\n  "
+        .implode("\n  ", $offenders)
+        ."\n\nAdd uses(RefreshDatabase::class) at the top of the file — or "
+        .'DatabaseMigrations if it must exercise real transactions — or, if it genuinely '
+        .'writes nothing, add it to READ_ONLY_FEATURE_TESTS after reading it.',
     );
 });
