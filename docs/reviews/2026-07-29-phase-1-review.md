@@ -899,16 +899,48 @@ recording above the others.**
   `margin: calc(100% - 1rem) auto` was flagged as directional. It now splits at
   parenthesis depth zero, which is the question CSS actually asks.
 
-**Mutation testing: twenty-five across the branch, all caught** — thirteen on the
-original work, twelve on the round above, including the review's own
-`deleted_by_cascade` experiment, the registry bypass, bare Blade text, a
-hardcoded placeholder, and each of the six write shapes the reviewer listed.
+**A third round found three more, and two of them are the same mistake in
+different places: a check that read what code SAYS rather than what it DOES.**
+
+- **The isolation guard exempted itself with its own error message.** The failure
+  text contains the words "Add `uses(RefreshDatabase::class)`", and the
+  raw-source search for that call found them. The decision is now a named
+  function that strips comments and string literals first. **Extracting it was
+  the necessary part**: once the file was also listed read-only, nothing
+  exercised the strip any more, and reverting it broke nothing — so the fix had
+  to come with samples of its own.
+- **The activity boundary was a style check, not a boundary.** Rejecting a
+  literal at `->event('…')` is walked past by assigning the string to a variable
+  first, and by any job or package building a name at run time.
+  `RecordActivityWithContext` is the configured `log_activity` action and
+  therefore the one point every entry passes through, so the vocabulary now binds
+  there. It refuses in every environment: an unregistered event is a programming
+  mistake, not an operational condition to degrade around.
+- **The Blade detector was double-quoted ASCII only**, so
+  `placeholder='Search students'` passed — and so did `<h1>الطلاب</h1>`. **Arabic
+  prose slipping through a check that exists FOR the Arabic phase** is the worst
+  blind spot it could have had. Both quote styles, `\p{L}` with the `u` flag, and
+  the component attributes a Blade template uses instead of PHP setters.
+
+**Mutation testing: thirty-five across the branch, all caught** — thirteen on the
+original work, twelve on the second round, ten on the third, including the
+review's own `deleted_by_cascade` experiment, the variable bypass of the event
+registry, four Blade literal forms, and each of the six write shapes the reviewer
+listed.
+
+**Three rounds, one theme, and it is the same one the whole review keeps
+returning to.** Every finding here was a check that appeared to cover something
+and did not: a test deleted by a slice-to-EOF replacement while the suite stayed
+green, a file scanned without a detector that understood its language, a guess
+about which calls write to a database, a scanner reading its own prose, and a
+static rule standing in for a runtime boundary. **The implementations were
+sound; the evidence for them was not.**
 
 **Gates on the branch tip, real output:**
 
 | Gate | Result |
 |---|---|
-| `php artisan test` | **949 passed**, 0 failed, 2594 assertions |
+| `php artisan test` | **971 passed**, 0 failed, 2619 assertions |
 | `vendor/bin/pint --test` | passed |
 | `composer analyse` | 0 errors |
 
