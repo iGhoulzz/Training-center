@@ -936,6 +936,70 @@ it('leaves translated and non-label calls alone', function (string $sample) {
 ]);
 
 /**
+ * The first hardcoded string literal inside a bound Blade expression.
+ *
+ * `:label="__('staff.name')"` is translated, while
+ * `:label="'Student name'"` and a literal arm of a ternary are not. PHP tokens
+ * let us distinguish those cases without pretending that every bound attribute
+ * is automatically safe.
+ */
+function firstHardcodedBladeExpressionString(string $expression): ?string
+{
+    $tokens = token_get_all("<?php {$expression};");
+    $translationDepth = [false];
+    $pendingTranslationCall = false;
+
+    foreach ($tokens as $token) {
+        if (is_array($token)) {
+            if (in_array($token[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT, T_OPEN_TAG], true)) {
+                continue;
+            }
+
+            if ($token[0] === T_STRING && in_array($token[1], ['__', 'trans', 'trans_choice'], true)) {
+                $pendingTranslationCall = true;
+
+                continue;
+            }
+
+            if ($token[0] === T_CONSTANT_ENCAPSED_STRING) {
+                if (! end($translationDepth) && preg_match('/\p{L}{2,}/u', $token[1]) === 1) {
+                    return $token[1];
+                }
+
+                $pendingTranslationCall = false;
+
+                continue;
+            }
+
+            $pendingTranslationCall = false;
+
+            continue;
+        }
+
+        if ($token === '(') {
+            $translationDepth[] = (bool) end($translationDepth) || $pendingTranslationCall;
+            $pendingTranslationCall = false;
+
+            continue;
+        }
+
+        if ($token === ')') {
+            if (count($translationDepth) > 1) {
+                array_pop($translationDepth);
+            }
+
+            $pendingTranslationCall = false;
+
+            continue;
+        }
+
+        $pendingTranslationCall = false;
+    }
+
+    return null;
+}
+
+/**
  * The first hardcoded user-facing string in a Blade template, or null.
  *
  * SCANNING BLADE FILES IS NOT SCANNING BLADE (P1-T15, review of finding L3).
@@ -985,6 +1049,26 @@ function firstHardcodedBladeString(string $source): ?string
      */
     $userFacing = 'placeholder|title|alt|aria-label|label|description|heading|hint';
 
+    /*
+     * Bound component attributes are PHP, but that does not make every value
+     * translated. `:label="'Student name'"` compiles to the same literal label,
+     * and a ternary can hide one literal arm beside a translated one. Tokenise
+     * the expression and permit strings only while inside a translation call.
+     */
+    foreach (['"', "'"] as $quote) {
+        $pattern = '/(?<![\w-]):('.$userFacing.')\s*=\s*'.$quote.'([^'.$quote.']*)'.$quote.'/isu';
+
+        if (preg_match_all($pattern, $stripped, $matches, PREG_SET_ORDER) === false) {
+            continue;
+        }
+
+        foreach ($matches as $match) {
+            if (($literal = firstHardcodedBladeExpressionString($match[2])) !== null) {
+                return trim($match[0]).' -> '.$literal;
+            }
+        }
+    }
+
     foreach (['"', "'"] as $quote) {
         /*
          * (?<![:\w-]) refuses a BOUND attribute. `:label="__('staff.name')"` is
@@ -996,11 +1080,6 @@ function firstHardcodedBladeString(string $source): ?string
             .'([^'.$quote.'{}]*\p{L}{2,}[^'.$quote.'{}]*)'.$quote.'/iu';
 
         if (preg_match($pattern, $stripped, $match) !== 1) {
-            continue;
-        }
-
-        // A translation call in an unbound attribute is still translated.
-        if (str_contains($match[2], '__(')) {
             continue;
         }
 
@@ -1041,6 +1120,11 @@ it('detects hardcoded text in a Blade template', function (string $sample) {
     '<x-field label="Student name" />',
     "<x-field label='Student name' />",
     '<x-callout description="This cannot be undone" />',
+    // Without `:` or `{{ }}`, this is displayed literally, not executed.
+    '<x-field label="__(\'staff.name\')" />',
+    // Bound PHP may still contain literal user-facing strings.
+    '<x-field :label="\'Student name\'" />',
+    '<x-callout :description="$danger ? \'Delete forever\' : __(\'staff.name\')" />',
 ]);
 
 it('leaves translated and non-prose Blade alone', function (string $sample) {
@@ -1065,6 +1149,9 @@ it('leaves translated and non-prose Blade alone', function (string $sample) {
     '<div class="badge" wire:model="name" id="Students"></div>',
     // Translated attributes, in both quote styles.
     '<x-field :label="__(\'staff.name\')" />',
+    '<x-field :label="$label" />',
+    '<x-field :label="$active ? __(\'staff.name\') : __(\'staff.user\')" />',
+    '<x-field :label="__(\'staff.name\', [\'name\' => $name])" />',
     '<input placeholder="{{ __(\'staff.user\') }}">',
 ]);
 

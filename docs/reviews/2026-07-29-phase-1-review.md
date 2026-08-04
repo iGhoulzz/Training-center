@@ -922,11 +922,22 @@ different places: a check that read what code SAYS rather than what it DOES.**
   blind spot it could have had. Both quote styles, `\p{L}` with the `u` flag, and
   the component attributes a Blade template uses instead of PHP setters.
 
-**Mutation testing: thirty-five across the branch, all caught** — thirteen on the
+**A final Codex pass found one remaining Blade distinction.** An unbound
+`label="__('staff.name')"` is not PHP: Blade compiles it to the literal string
+`__('staff.name')`, but the detector treated the familiar function name as proof
+that translation happened. Bound attributes had the inverse hole — they were all
+excluded as PHP even when the expression itself was a literal such as
+`:label="'Student name'"`. The detector now refuses the unbound fake and tokenises
+bound expressions, allowing string literals only while inside a real translation
+call. Direct literals and literal ternary arms have independent samples; bound
+variables and translated calls remain controls.
+
+**Mutation testing: thirty-seven across the branch, all caught** — thirteen on the
 original work, twelve on the second round, ten on the third, including the
 review's own `deleted_by_cascade` experiment, the variable bypass of the event
-registry, four Blade literal forms, and each of the six write shapes the reviewer
-listed.
+registry, the Blade literal forms, and each of the six write shapes the reviewer
+listed. The final two mutations restore the unbound fake-translation exemption
+and skip bound-expression inspection; each is killed by its own sample.
 
 **Three rounds, one theme, and it is the same one the whole review keeps
 returning to.** Every finding here was a check that appeared to cover something
@@ -940,7 +951,7 @@ sound; the evidence for them was not.**
 
 | Gate | Result |
 |---|---|
-| `php artisan test` | **971 passed**, 0 failed, 2619 assertions |
+| `php artisan test` | **977 passed**, 0 failed, 2625 assertions |
 | `vendor/bin/pint --test` | passed |
 | `composer analyse` | 0 errors |
 
