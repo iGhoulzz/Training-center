@@ -47,22 +47,29 @@ final class BackupConfiguration
     public const DEFAULT_ARCHIVE_NAME = 'training-center';
 
     /**
-     * Values that must be present before production may run.
+     * What S3 needs before production may run.
      *
-     * The bucket and credentials are what make the destination off-server; the
-     * archive password is what makes it safe to put there. A backup missing
-     * either is not a backup this application is willing to pretend it has.
+     * Demanded ONLY when S3 is the selected destination (P1-T17). A centre
+     * backing up to a removable drive has no bucket, and requiring one would
+     * refuse to boot a correctly configured install.
+     *
+     * The endpoint is on this list deliberately (P1-T15, G3-U1). Left blank it
+     * constructs without complaint and the SDK resolves to a regional AWS host,
+     * so a Backblaze or Wasabi deployment ships its archives to AWS with
+     * credentials that will not authenticate — and nothing says so until a
+     * restore. An AWS user writes one explicit line instead
+     * (https://s3.eu-west-1.amazonaws.com); the silent case disappears.
      *
      * @var array<int, string>
      */
-    private const REQUIRED = [
-        'filesystems.disks.backups.key',
-        'filesystems.disks.backups.secret',
-        'filesystems.disks.backups.bucket',
-        // The S3 client refuses to sign a request without one, so an unset region
-        // fails every upload at 01:30 rather than at boot.
-        'filesystems.disks.backups.region',
-        'backup.backup.password',
+    private const REQUIRED_FOR_S3 = [
+        'key',
+        'secret',
+        'bucket',
+        // The S3 client refuses to sign a request without one, so an unset
+        // region fails every upload at 01:30 rather than at boot.
+        'region',
+        'endpoint',
     ];
 
     /**
@@ -74,19 +81,109 @@ final class BackupConfiguration
             return;
         }
 
-        $missing = array_values(array_filter(
-            self::REQUIRED,
-            static fn (string $key): bool => blank(config($key)),
-        ));
+        $problems = [];
 
-        if ($missing === []) {
+        /*
+         * Encryption is not a property of the destination. A removable drive
+         * left in a drawer is precisely the case where an unencrypted archive
+         * matters most, so this is checked whichever disk is selected.
+         */
+        if (blank(config('backup.backup.password'))) {
+            $problems[] = 'BACKUP_ARCHIVE_PASSWORD is not set, so archives would be written unencrypted.';
+        }
+
+        $disk = (string) config('backup.destination_disk');
+        $driver = (string) config("filesystems.disks.{$disk}.driver");
+
+        $problems = match ($driver) {
+            's3' => array_merge($problems, self::s3Problems($disk)),
+            'local' => array_merge($problems, self::removableDriveProblems($disk)),
+            default => array_merge($problems, [
+                "BACKUP_DISK is set to '{$disk}', which is not a configured backup destination. "
+                .'Use backups_local or backups_s3.',
+            ]),
+        };
+
+        if ($problems === []) {
             return;
         }
 
         throw new RuntimeException(
-            'Backups are not configured for production. Missing: '.implode(', ', $missing)
-            .'. Set the BACKUP_S3_* credentials and BACKUP_ARCHIVE_PASSWORD, or this install '
-            .'runs nightly backups that store nothing off-server. See docs/RESTORE.md.'
+            "Backups are not configured for production:\n  - ".implode("\n  - ", $problems)
+            ."\nSee docs/RESTORE.md. Until this is fixed the install would run nightly backups "
+            .'that store nothing recoverable.'
         );
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private static function s3Problems(string $disk): array
+    {
+        $missing = array_values(array_filter(
+            self::REQUIRED_FOR_S3,
+            static fn (string $key): bool => blank(config("filesystems.disks.{$disk}.{$key}")),
+        ));
+
+        if ($missing === []) {
+            return [];
+        }
+
+        return ['The S3 destination is missing: '.implode(', ', $missing)
+            .'. Set the matching BACKUP_S3_* values.'];
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private static function removableDriveProblems(string $disk): array
+    {
+        $root = config("filesystems.disks.{$disk}.root");
+
+        if (blank($root) || ! is_string($root)) {
+            return ['BACKUP_LOCAL_PATH is not set, so there is no drive to write to.'];
+        }
+
+        $problems = [];
+
+        /*
+         * THE RULE T13 WROTE DOWN, NOW ENFORCED DIRECTLY RATHER THAN BY
+         * FORBIDDING THE WORD 'local'.
+         *
+         * A backup on the machine it protects dies with it. A removable drive at
+         * /mnt/backups survives the server; a folder under the project is the
+         * same disk the application lives on, and the archive and the thing it
+         * protects then fail together.
+         *
+         * Compared as normalised prefixes so that a path merely BEGINNING with
+         * the same characters as the project — a sibling directory — is not
+         * mistaken for one inside it.
+         */
+        $normalise = static fn (string $path): string => rtrim(
+            str_replace('\\', '/', $path),
+            '/',
+        ).'/';
+
+        if (str_starts_with($normalise($root), $normalise(base_path()))) {
+            $problems[] = "The backup path ({$root}) is inside the application itself, so the "
+                .'archive would live on the disk it exists to recover. Point BACKUP_LOCAL_PATH '
+                .'at a removable or external drive, such as /mnt/backups.';
+        }
+
+        /*
+         * AN UNMOUNTED DRIVE IS THE FAILURE THIS CATCHES. Without it the nightly
+         * run writes into an empty mount point on the root filesystem, the
+         * monitor finds those archives and reports healthy, and the drive
+         * somebody carries off-site stays empty.
+         */
+        if (! is_dir($root)) {
+            $problems[] = "The backup path ({$root}) does not exist. If this is a removable "
+                .'drive, it is not mounted — archives would be written to the mount point on the '
+                .'server instead, and the monitor would report them healthy.';
+        } elseif (! is_writable($root)) {
+            $problems[] = "The backup path ({$root}) is not writable by the application.";
+        }
+
+        return $problems;
     }
 }

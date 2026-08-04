@@ -40,7 +40,7 @@ so keep them somewhere else as well.
 | What | Where it should also live |
 |---|---|
 | `BACKUP_ARCHIVE_PASSWORD` | A password manager. **Without it the archives are unreadable — there is no recovery path.** |
-| `BACKUP_S3_*` credentials | A password manager, or the storage provider's own console. |
+| The backup destination | Either the removable drive named by `BACKUP_LOCAL_PATH`, or the `BACKUP_S3_*` credentials from a password manager or the provider's console. |
 | Database credentials for the target | Wherever you keep the new server's secrets. |
 
 The archive password is the one that ends recoveries. AES-256 has no back door
@@ -54,11 +54,25 @@ other than whoever set the system up.
 
 ### 1. Get the archive
 
-From the storage provider's console, or with any S3 client pointed at
-`BACKUP_S3_ENDPOINT` and `BACKUP_S3_BUCKET`. Pick the newest
-`<BACKUP_ARCHIVE_NAME>-*.zip` — `training-center-*.zip` with the default
-configuration — from before whatever went wrong. For a bad import or a mistaken
-bulk edit, that is **not** last night's.
+Where the archives are depends on `BACKUP_DISK`.
+
+**`backups_local` (a removable drive, the default).** Mount the drive and look
+under `BACKUP_LOCAL_PATH` — `/mnt/backups` unless it was changed. The archives
+sit in a directory named after `BACKUP_ARCHIVE_NAME`.
+
+**`backups_s3`.** From the storage provider's console, or with any S3 client
+pointed at `BACKUP_S3_ENDPOINT` and `BACKUP_S3_BUCKET`.
+
+Either way, pick the newest `<BACKUP_ARCHIVE_NAME>-*.zip` — `training-center-*.zip`
+with the default configuration — from before whatever went wrong. For a bad
+import or a mistaken bulk edit, that is **not** last night's.
+
+> **If the drive is empty, check that it was mounted when the backups ran.** The
+> application refuses to boot in production when `BACKUP_LOCAL_PATH` does not
+> exist, which catches a drive that was never mounted — but a drive unplugged
+> *after* boot writes to the mount point on the server instead, and the monitor
+> reports those archives as healthy. Look under the same path with the drive
+> unmounted; if files are there, that is where the last nights went.
 
 **Retention goes back further than most people assume, so look before concluding
 an archive is gone.** The tiers are additive:

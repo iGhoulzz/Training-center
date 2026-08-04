@@ -119,6 +119,17 @@ $expectedArchiveMegabytes = is_numeric($configuredArchiveMegabytes) && (int) $co
  */
 $storageAlertHeadroom = 2;
 
+/*
+ * WHICH DESTINATION IS IN USE (P1-T17).
+ *
+ * `backups_local` is a removable drive; `backups_s3` is S3-compatible storage.
+ * Both are defined in config/filesystems.php so switching is an .env change
+ * rather than a code change, and BackupConfiguration validates whichever one is
+ * named — S3 credentials are demanded only when S3 is selected, and the drive
+ * path is checked only when the drive is.
+ */
+$destinationDisk = (string) env('BACKUP_DISK', 'backups_local');
+
 return [
 
     'backup' => [
@@ -317,7 +328,7 @@ return [
              * a bucket that was never configured.
              */
             'disks' => [
-                'backups',
+                $destinationDisk,
             ],
 
             /*
@@ -498,6 +509,12 @@ return [
      * health check below and by the test that keeps the two consistent; exposed
      * as config so an operator can size it without editing the alert directly.
      */
+    /*
+     * The selected destination, read by BackupConfiguration and by the tests
+     * that keep the destination and the monitor pointed at the same place.
+     */
+    'destination_disk' => $destinationDisk,
+
     'expected_archive_megabytes' => $expectedArchiveMegabytes,
 
     /*
@@ -525,7 +542,7 @@ return [
              * up to — reporting healthy forever while the real destination sat
              * empty.
              */
-            'disks' => ['backups'],
+            'disks' => [$destinationDisk],
             'health_checks' => [
                 MaximumAgeInDays::class => 1,
 

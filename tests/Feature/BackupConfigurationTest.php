@@ -97,43 +97,229 @@ it('does not sweep the whole project into the archive', function () {
 |--------------------------------------------------------------------------
 */
 
-it('writes backups off-server and nowhere else', function () {
+it('writes backups to exactly one selected destination', function () {
     /*
-     * THE ABSENCE OF 'local' IS THE ASSERTION.
+     * REWRITTEN FOR P1-T17, AND THE RULE IS NARROWED RATHER THAN DROPPED.
      *
-     * A backup on the same VPS as the application dies with it. Listing `local`
-     * alongside the remote disk would let a misconfigured deployment keep
-     * reporting success against the one destination that guarantees nothing.
+     * T13 asserted the absence of the string 'local', because at the time the
+     * only destination was S3 and `local` meant the application's own storage
+     * directory. That test was standing in for the real property: A BACKUP ON
+     * THE MACHINE IT PROTECTS DIES WITH IT.
+     *
+     * The centre now backs up to a removable drive, which satisfies that
+     * property while being a local-driver disk — so the name check would have
+     * forbidden the very thing being built. The property itself is asserted
+     * below and in the boot guard; here we only pin that exactly one
+     * destination is configured, and that it is the one selected.
      */
     $disks = config('backup.backup.destination.disks');
 
-    expect($disks)->toContain('backups')
-        ->and($disks)->not->toContain('local')
+    expect($disks)->toBe([config('backup.destination_disk')])
         ->and($disks)->toHaveCount(1);
 });
 
-it('points the backup disk at generic S3-compatible storage', function () {
-    // Every value from BACKUP_S3_*, with an explicit endpoint, so Backblaze,
-    // Wasabi, Spaces, Hetzner or MinIO all work without a code change.
-    $disk = config('filesystems.disks.backups');
+it('offers both a removable-drive and an S3 destination', function () {
+    /*
+     * The structure the centre asked for: a local destination now, with the S3
+     * one defined and ready rather than removed. Nothing in the pipeline — the
+     * scheduler, the monitor, retention, encryption, the sweep — knows which is
+     * selected, because spatie writes to a DISK.
+     */
+    expect(config('filesystems.disks.backups_local.driver'))->toBe('local')
+        ->and(config('filesystems.disks.backups_s3.driver'))->toBe('s3');
+});
+
+it('makes both destinations throw rather than fail silently', function () {
+    // The T13 property that does not change with the driver: a write that
+    // silently fails produces a run reporting success and storing nothing.
+    expect(config('filesystems.disks.backups_local.throw'))->toBeTrue()
+        ->and(config('filesystems.disks.backups_s3.throw'))->toBeTrue();
+});
+
+it('refuses a removable-drive path inside the application itself', function () {
+    /*
+     * THE RULE T13 WAS PROTECTING, NOW STATED DIRECTLY.
+     *
+     * `/mnt/backups` is a different device that survives the server. A folder
+     * under the project — storage/backups, say — is the same disk the
+     * application lives on, so the archive and the thing it protects fail
+     * together. Nothing can verify a drive is genuinely removable, but this can
+     * refuse the case that is definitely not.
+     */
+    /*
+     * A path that EXISTS and is WRITABLE and is inside the project, so the
+     * mount check and the writable check both pass and only the containment
+     * rule can fire. Mutation testing found the first version wanting: it used a
+     * non-existent in-project path, so deleting this check changed nothing —
+     * the not-mounted rule caught it instead and the test still passed.
+     */
+    config([
+        'backup.destination_disk' => 'backups_local',
+        'filesystems.disks.backups_local.root' => storage_path('app'),
+        'backup.backup.password' => 'a-password',
+    ]);
+
+    expect(fn () => BackupConfiguration::assertReadyForProduction('production'))
+        ->toThrow(RuntimeException::class, 'inside the application itself');
+});
+
+it('accepts a removable-drive path outside the application', function () {
+    // The control. A guard that refused every local path would satisfy the test
+    // above and make the feature unusable.
+    $mount = sys_get_temp_dir().DIRECTORY_SEPARATOR.'p1t17-mount';
+
+    if (! is_dir($mount)) {
+        mkdir($mount, 0777, true);
+    }
+
+    config([
+        'backup.destination_disk' => 'backups_local',
+        'filesystems.disks.backups_local.root' => $mount,
+        'backup.backup.password' => 'a-password',
+    ]);
+
+    BackupConfiguration::assertReadyForProduction('production');
+
+    expect(true)->toBeTrue();
+});
+
+it('refuses a removable-drive path that does not exist', function () {
+    /*
+     * An unmounted drive is the failure this catches. The path is configured,
+     * the nightly run writes into an empty mount point on the root filesystem,
+     * and the monitor reports healthy against archives that are not on the drive
+     * at all.
+     */
+    config([
+        'backup.destination_disk' => 'backups_local',
+        'filesystems.disks.backups_local.root' => sys_get_temp_dir().'/p1t17-not-mounted-'.uniqid(),
+        'backup.backup.password' => 'a-password',
+    ]);
+
+    /*
+     * The MESSAGE is asserted, not merely a throw. A missing directory is also
+     * not writable, so the writability rule masks this one — deleting the mount
+     * check left the test green until it named what it expected to read.
+     */
+    expect(fn () => BackupConfiguration::assertReadyForProduction('production'))
+        ->toThrow(RuntimeException::class, 'it is not mounted');
+});
+
+it('still demands the S3 credentials when S3 is the selected destination', function () {
+    /*
+     * The other driver's requirements did not go away; they became conditional.
+     * A deployment that switches BACKUP_DISK to S3 and forgets the bucket must
+     * still refuse to boot.
+     */
+    config([
+        'backup.destination_disk' => 'backups_s3',
+        'filesystems.disks.backups_s3.key' => 'k',
+        'filesystems.disks.backups_s3.secret' => 's',
+        'filesystems.disks.backups_s3.region' => 'r',
+        'filesystems.disks.backups_s3.bucket' => null,
+        'filesystems.disks.backups_s3.endpoint' => 'https://example.test',
+        'backup.backup.password' => 'a-password',
+    ]);
+
+    expect(fn () => BackupConfiguration::assertReadyForProduction('production'))
+        ->toThrow(RuntimeException::class);
+});
+
+it('demands an explicit S3 endpoint rather than silently meaning AWS', function () {
+    /*
+     * G3-U1, settled at last. A blank endpoint constructs without complaint and
+     * the SDK then resolves to a regional AWS host — so a Backblaze or Wasabi
+     * deployment ships its archives to AWS with credentials that will not
+     * authenticate, and nothing says so until a restore.
+     *
+     * Requiring it costs an AWS user one explicit line
+     * (https://s3.eu-west-1.amazonaws.com) and removes the silent case entirely.
+     */
+    config([
+        'backup.destination_disk' => 'backups_s3',
+        'filesystems.disks.backups_s3.key' => 'k',
+        'filesystems.disks.backups_s3.secret' => 's',
+        'filesystems.disks.backups_s3.region' => 'r',
+        'filesystems.disks.backups_s3.bucket' => 'b',
+        'filesystems.disks.backups_s3.endpoint' => '',
+        'backup.backup.password' => 'a-password',
+    ]);
+
+    expect(fn () => BackupConfiguration::assertReadyForProduction('production'))
+        ->toThrow(RuntimeException::class);
+});
+
+it('does not demand S3 credentials when the drive is the destination', function () {
+    /*
+     * The asymmetry that makes the feature work: a centre backing up to a USB
+     * drive has no bucket, and requiring one would refuse to boot a correctly
+     * configured install.
+     */
+    $mount = sys_get_temp_dir().DIRECTORY_SEPARATOR.'p1t17-mount';
+
+    if (! is_dir($mount)) {
+        mkdir($mount, 0777, true);
+    }
+
+    config([
+        'backup.destination_disk' => 'backups_local',
+        'filesystems.disks.backups_local.root' => $mount,
+        'filesystems.disks.backups_s3.key' => null,
+        'filesystems.disks.backups_s3.secret' => null,
+        'filesystems.disks.backups_s3.bucket' => null,
+        'filesystems.disks.backups_s3.region' => null,
+        'backup.backup.password' => 'a-password',
+    ]);
+
+    BackupConfiguration::assertReadyForProduction('production');
+
+    expect(true)->toBeTrue();
+});
+
+it('demands the archive password whichever destination is chosen', function () {
+    // Encryption is not a property of the destination. A USB drive left in a
+    // drawer is exactly the case where an unencrypted archive matters most.
+    $mount = sys_get_temp_dir().DIRECTORY_SEPARATOR.'p1t17-mount';
+
+    if (! is_dir($mount)) {
+        mkdir($mount, 0777, true);
+    }
+
+    config([
+        'backup.destination_disk' => 'backups_local',
+        'filesystems.disks.backups_local.root' => $mount,
+        'backup.backup.password' => null,
+    ]);
+
+    expect(fn () => BackupConfiguration::assertReadyForProduction('production'))
+        ->toThrow(RuntimeException::class);
+});
+
+it('keeps the S3 destination ready even while the drive is in use', function () {
+    /*
+     * Repointed by P1-T17 from `backups` to `backups_s3`. The disk did not
+     * change shape — every value still comes from BACKUP_S3_*, with an explicit
+     * endpoint so Backblaze, Wasabi, Spaces, Hetzner or MinIO all work without a
+     * code change — it simply has a name now, because there are two.
+     *
+     * Asserted even when it is NOT selected: "ready for S3 later" is the thing
+     * the centre asked for, and an unselected disk that quietly rots would make
+     * that false at the moment somebody needs it.
+     */
+    $disk = config('filesystems.disks.backups_s3');
 
     expect($disk['driver'])->toBe('s3')
         ->and($disk)->toHaveKeys(['key', 'secret', 'region', 'bucket', 'endpoint']);
 });
 
-it('makes the backup disk throw rather than fail silently', function () {
-    /*
-     * The opposite of the application disks, deliberately. A write that silently
-     * fails here produces a run that reports success and stores nothing — worse
-     * than no backup, because it is trusted.
-     */
-    expect(config('filesystems.disks.backups.throw'))->toBeTrue();
-});
-
 it('monitors the disk backups are actually written to', function () {
-    // The package ships 'local' here, which would health-check a disk this
-    // application never writes to and report healthy forever.
-    expect(config('backup.monitor_backups.0.disks'))->toBe(['backups']);
+    /*
+     * The package ships 'local' here, which would health-check a disk this
+     * application never writes to and report healthy forever. Now derived from
+     * the selected destination rather than named, so switching BACKUP_DISK
+     * cannot leave the monitor watching the disk nobody writes to.
+     */
+    expect(config('backup.monitor_backups.0.disks'))->toBe([config('backup.destination_disk')]);
 });
 
 /*
@@ -362,15 +548,17 @@ it('requires a region before production may boot', function () {
     // The S3 client cannot sign a request without one, so an unset region fails
     // every upload at 01:30 rather than at boot.
     config([
-        'filesystems.disks.backups.key' => 'a-key',
-        'filesystems.disks.backups.secret' => 'a-secret',
-        'filesystems.disks.backups.bucket' => 'a-bucket',
-        'filesystems.disks.backups.region' => null,
+        'backup.destination_disk' => 'backups_s3',
+        'filesystems.disks.backups_s3.key' => 'a-key',
+        'filesystems.disks.backups_s3.secret' => 'a-secret',
+        'filesystems.disks.backups_s3.bucket' => 'a-bucket',
+        'filesystems.disks.backups_s3.region' => null,
+        'filesystems.disks.backups_s3.endpoint' => 'https://example.test',
         'backup.backup.password' => 'a-long-archive-password',
     ]);
 
     BackupConfiguration::assertReadyForProduction('production');
-})->throws(RuntimeException::class, 'filesystems.disks.backups.region');
+})->throws(RuntimeException::class, 'region');
 
 it('never ships the package placeholder alert address', function () {
     /*
@@ -398,9 +586,10 @@ it('refuses to boot production without backup credentials', function () {
     // The whole point: an unset bucket does not stop the scheduler, it produces a
     // nightly run that stores nothing and reports success.
     config([
-        'filesystems.disks.backups.key' => null,
-        'filesystems.disks.backups.secret' => null,
-        'filesystems.disks.backups.bucket' => null,
+        'backup.destination_disk' => 'backups_s3',
+        'filesystems.disks.backups_s3.key' => null,
+        'filesystems.disks.backups_s3.secret' => null,
+        'filesystems.disks.backups_s3.bucket' => null,
         'backup.backup.password' => null,
     ]);
 
@@ -411,24 +600,28 @@ it('refuses to boot production without an archive password', function () {
     // Credentials alone are not enough: an unencrypted archive of every national
     // ID and scanned document sitting in third-party storage is its own incident.
     config([
-        'filesystems.disks.backups.key' => 'a-key',
-        'filesystems.disks.backups.secret' => 'a-secret',
-        'filesystems.disks.backups.bucket' => 'a-bucket',
-        'filesystems.disks.backups.region' => 'a-region',
+        'backup.destination_disk' => 'backups_s3',
+        'filesystems.disks.backups_s3.key' => 'a-key',
+        'filesystems.disks.backups_s3.secret' => 'a-secret',
+        'filesystems.disks.backups_s3.bucket' => 'a-bucket',
+        'filesystems.disks.backups_s3.region' => 'a-region',
+        'filesystems.disks.backups_s3.endpoint' => 'https://example.test',
         'backup.backup.password' => null,
     ]);
 
     BackupConfiguration::assertReadyForProduction('production');
-})->throws(RuntimeException::class, 'backup.backup.password');
+})->throws(RuntimeException::class, 'BACKUP_ARCHIVE_PASSWORD');
 
 it('boots production once everything is configured', function () {
     // The positive control. Without it the refusals above would hold just as well
     // for a guard that always throws.
     config([
-        'filesystems.disks.backups.key' => 'a-key',
-        'filesystems.disks.backups.secret' => 'a-secret',
-        'filesystems.disks.backups.bucket' => 'a-bucket',
-        'filesystems.disks.backups.region' => 'a-region',
+        'backup.destination_disk' => 'backups_s3',
+        'filesystems.disks.backups_s3.key' => 'a-key',
+        'filesystems.disks.backups_s3.secret' => 'a-secret',
+        'filesystems.disks.backups_s3.bucket' => 'a-bucket',
+        'filesystems.disks.backups_s3.region' => 'a-region',
+        'filesystems.disks.backups_s3.endpoint' => 'https://example.test',
         'backup.backup.password' => 'a-long-archive-password',
     ]);
 
@@ -444,7 +637,7 @@ it('does not require backup credentials outside production', function () {
      * deployment ends up pointed at somebody's test bucket.
      */
     config([
-        'filesystems.disks.backups.key' => null,
+        'filesystems.disks.backups_s3.key' => null,
         'backup.backup.password' => null,
     ]);
 
