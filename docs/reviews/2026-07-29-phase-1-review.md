@@ -872,16 +872,43 @@ rule now has a sample that fails only itself. **This is the third branch on whic
 that specific mistake appeared**, which is why it is written down rather than
 quietly fixed.
 
-**Mutation testing: thirteen mutations, thirteen caught** after that correction —
-including the review's own `deleted_by_cascade` experiment, a new event declared
-without a label, an orphaned label, a physical property planted in `app/`, a
-hardcoded label in a Blade view, and an unisolated feature test.
+**A review round then found four gaps, and the first was a process failure worth
+recording above the others.**
+
+- **The M5 tests were not in the committed branch at all.** A later patch
+  replaced everything from the hardcoded-strings test to end of file, and the M5
+  tests had been appended after it — so they were silently deleted, the suite
+  went green because they no longer existed, and mutation evidence gathered
+  *before* the deletion was reported as though it described the commit. **A green
+  suite is not evidence that a test still exists.** They are restored at a stable
+  anchor, and the reviewer was also right that the registry needed a boundary: a
+  future `->event('new_event')` would bypass `ActivityEvent` while both
+  completeness checks kept passing, so a literal at the call is now refused.
+- **L3 scanned Blade files but not Blade.** `firstHardcodedLabel()` looks for PHP
+  setter calls, and a template does not call setters — it writes markup, so
+  `<h1>Students</h1>` passed straight through and adding `resources/views/` to
+  the loop found nothing. A Blade-aware detector now checks the two surfaces a
+  reader sees: text between tags, and the attributes that render as text.
+- **L8 was fail-open by construction.** Guessing whether a file writes missed
+  `forceDelete`, `restore`, `attach`, `sync`, `upsert` and every Action that
+  writes on the caller's behalf — and would miss whatever write API arrives next.
+  Inverted to fail-closed: every feature test declares a trait or is named in a
+  reviewed read-only list, with a control asserting that list never covers more
+  than half the suite.
+- **L2's shorthand rule counted spaces rather than values**, so
+  `margin: calc(100% - 1rem) auto` was flagged as directional. It now splits at
+  parenthesis depth zero, which is the question CSS actually asks.
+
+**Mutation testing: twenty-five across the branch, all caught** — thirteen on the
+original work, twelve on the round above, including the review's own
+`deleted_by_cascade` experiment, the registry bypass, bare Blade text, a
+hardcoded placeholder, and each of the six write shapes the reviewer listed.
 
 **Gates on the branch tip, real output:**
 
 | Gate | Result |
 |---|---|
-| `php artisan test` | **935 passed**, 0 failed, 2575 assertions |
+| `php artisan test` | **949 passed**, 0 failed, 2594 assertions |
 | `vendor/bin/pint --test` | passed |
 | `composer analyse` | 0 errors |
 
