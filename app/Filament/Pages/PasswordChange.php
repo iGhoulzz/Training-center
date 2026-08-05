@@ -63,8 +63,12 @@ class PasswordChange extends Page
              * The simple layout renders SimpleUserMenu and the database
              * notifications component inside one
              * `@if (($hasTopbar ?? true) && filament()->auth()->check())` block.
-             * Left at its default this layout would still co-render two
-             * components and the leak would survive in reduced form.
+             * Left at its default this layout would still co-render
+             * SimpleUserMenu and the leak would survive in reduced form. Only
+             * that one today: the database notifications component beside it is
+             * additionally gated on filament()->hasDatabaseNotifications(),
+             * which this panel does not enable. Enabling it would put a second
+             * component back behind this same flag.
              *
              * What cannot be removed here is Filament\Livewire\Notifications:
              * filament-panels::components.layout.base renders it unconditionally

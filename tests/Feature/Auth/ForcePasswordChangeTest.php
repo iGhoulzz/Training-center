@@ -84,6 +84,34 @@ beforeEach(function () {
     };
 
     /**
+     * The same, but driving TWO genuine components from one render.
+     *
+     * Both snapshots are real and checksum-valid, which is what separates this
+     * from the smuggled-name payload: that one fails closed on a name that does
+     * not resolve, so a weakened guard rejects it as a 419 checksum failure and
+     * the test would go red for a reason that is not the property. This is the
+     * payload an attacker would actually post, and against a guard that checked
+     * only the first entry it succeeds.
+     *
+     * @return array<string, mixed>
+     */
+    $this->replayBoth = function (string $url, string $first, string $second): array {
+        $byName = [];
+
+        foreach (($this->rootComponents)($url) as $component) {
+            $byName[$component['name']] = $component['snapshot'];
+        }
+
+        expect($byName)->toHaveKeys([$first, $second]);
+
+        return ['components' => array_map(fn (string $snapshot): array => [
+            'snapshot' => $snapshot,
+            'updates' => [],
+            'calls' => [['path' => '', 'method' => '$refresh', 'params' => []]],
+        ], [$byName[$first], $byName[$second]])];
+    };
+
+    /**
      * Post a payload to Livewire's update endpoint the way the browser does.
      *
      * TWO THINGS HERE ARE LOAD-BEARING, AND BOTH FAIL AS A 404. The URI is
@@ -92,6 +120,14 @@ beforeEach(function () {
      * what makes the endpoint recognise the request as its own. See
      * LivewirePersistentGuardTest, where both mistakes were made and only the
      * good-standing control caught them.
+     *
+     * POST ONCE PER TEST. PersistentMiddleware::$middlewareAppliedFor is cleared
+     * by `flush-state`, which Livewire fires from its testing helpers but not
+     * from a real HTTP cycle — so a SECOND post in the same test carrying the
+     * same `memo.method|memo.path` skips every persistent middleware, this guard
+     * included, and answers 200. That 200 means the guard never ran, not that it
+     * allowed anything. Every test below posts once; if you need two, drive them
+     * from separate tests.
      */
     $this->interact = fn (array $payload) => $this
         ->withHeaders(['X-Livewire' => 'true'])
@@ -196,6 +232,11 @@ it('refuses a payload that smuggles a second component in behind the password fo
      * it through. handleUpdate() aborts 404 on a structurally malformed payload
      * before any of this, so the reachable case is a well-formed snapshot string
      * naming a component that does not resolve.
+     *
+     * This covers the fail-closed half only. Because the smuggled checksum is
+     * junk, a weakened guard rejects this payload as a 419 before the property is
+     * ever in question — so the two tests below carry the same property with two
+     * genuine snapshots, where a first-entry-only guard really does return 200.
      */
     $payload['components'][] = [
         'snapshot' => (string) json_encode([
@@ -211,6 +252,30 @@ it('refuses a payload that smuggles a second component in behind the password fo
         'updates' => [],
         'calls' => [['path' => '', 'method' => '$refresh', 'params' => []]],
     ];
+
+    ($this->interact)($payload)->assertRedirect('/admin/password-change');
+});
+
+it('lets two genuine components through together while the account is in good standing', function () {
+    $user = ($this->makeAdmin)(false);
+    $this->actingAs($user);
+
+    // The control for the refusal below, on the identical payload. Without it a
+    // 302 there could be the endpoint disliking a two-component post rather than
+    // the guard reading past the first entry.
+    $payload = ($this->replayBoth)('/admin/password-change', PasswordChange::class, Notifications::class);
+
+    ($this->interact)($payload)->assertSuccessful();
+});
+
+it('refuses two genuine components even when the password form comes first', function () {
+    $user = ($this->makeAdmin)(true);
+    $this->actingAs($user);
+
+    // Ordering is the point: the form is the entry that triggers the guard, and
+    // the tray rides behind it. Both snapshots are real, so this fails on the
+    // property rather than on a checksum.
+    $payload = ($this->replayBoth)('/admin/password-change', PasswordChange::class, Notifications::class);
 
     ($this->interact)($payload)->assertRedirect('/admin/password-change');
 });

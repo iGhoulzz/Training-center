@@ -70,8 +70,17 @@ class ForcePasswordChange
          * Scoped to the exact route name rather than a pattern, and that route is
          * POST-only and CSRF-protected. Logging out is not a privileged action;
          * it strictly reduces what the session can do.
+         *
+         * GATED ON THE REAL REQUEST NOT BEING A COMPONENT UPDATE. $request is a
+         * fabrication whenever it is, so an exemption tested against it alone can
+         * be spent by a snapshot whose memo merely CLAIMS `path=admin/logout` —
+         * measured in review to drive the notification tray to a 200. Reaching it
+         * needs APP_KEY to reseal the checksum, and nothing is ever dehydrated on
+         * a logout response for a snapshot to be taken from, so it was not
+         * reachable. This costs one call and removes the argument entirely: a
+         * component update is never a logout.
          */
-        if ($request->routeIs(self::LOGOUT_ROUTE)) {
+        if (! app(HandleRequests::class)->isLivewireRoute() && $request->routeIs(self::LOGOUT_ROUTE)) {
             return $next($request);
         }
 

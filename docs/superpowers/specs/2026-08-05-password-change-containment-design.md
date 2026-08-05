@@ -1,7 +1,8 @@
 # Password-change containment — closing G1-U3
 
 **Date:** 2026-08-05
-**Status:** revised after Codex review, awaiting re-review
+**Status:** implemented and reviewed — see §5 for where implementation
+corrected this design
 **Origin:** `docs/reviews/2026-07-29-phase-1-review.md`, finding G1-U3 — the one
 phase 1 review finding left open.
 
@@ -59,8 +60,12 @@ protected function getLayoutData(): array
 `hasTopbar => false` is **required, not cosmetic.** The simple layout renders
 both `Filament\Livewire\SimpleUserMenu` and the database-notifications component
 inside a single `@if (($hasTopbar ?? true) && filament()->auth()->check())`
-block. Left at its default the layout would still co-render two components and
-the leak would survive in reduced form.
+block. Left at its default the layout would still co-render `SimpleUserMenu` —
+one component today, since the notifications one beside it is additionally gated
+on `hasDatabaseNotifications()`, which this panel does not enable — and the leak
+would survive in reduced form.
+
+**Layer 1 cannot get below two root components.** See §5.
 
 A locked user must still be able to leave, so the page carries its own logout
 control (see below). Logging out is not a privileged action and does not weaken
@@ -70,7 +75,8 @@ containment.
 
 ```
 not flagged                          → pass
-route = filament.admin.auth.logout   → pass          (POST only)
+route = filament.admin.auth.logout
+  AND real request is not an update  → pass          (POST only)
 route ≠ password-change              → redirect
 route = password-change:
     real request is livewire.update  → pass only if EVERY component in the
@@ -138,17 +144,27 @@ Tests must be real HTTP posts to the update endpoint — URI from
 | Flagged, replay the `PasswordChange` component itself | **200** |
 | **Control:** good-standing user replays that same co-rendered component | **200** |
 | Flagged, valid `PasswordChange` snapshot + additional unresolvable component | **302** |
-| **Structural:** rendered page's root Livewire snapshots | `PasswordChange` is the **only** one |
+| Flagged, two **genuine** snapshots, `PasswordChange` first | **302** |
+| **Control:** good-standing user posts that same two-component payload | **200** |
+| **Structural:** rendered page's root Livewire snapshots | exactly `PasswordChange` + `Notifications` |
 | Flagged, `POST /admin/logout` | logs out, session invalidated, redirects |
 | Flagged, `GET /admin/logout` | refused |
 | **Real HTTP save:** flagged user submits the form over the update endpoint | flag cleared, **session still authenticated** |
 
 The good-standing control is mandatory: a 404 satisfies "was refused" exactly as
-well as the guard firing, so without it the first case proves nothing.
+well as the guard firing, so without it the first case proves nothing. The
+two-component case needs its own control for the same reason — otherwise its 302
+could be the endpoint refusing the shape of the payload.
+
+Both two-component cases exist because they fail for different reasons. The
+unresolvable one proves the fail-closed branch; but its smuggled checksum is
+junk, so a weakened guard rejects it as a 419 before the property is in
+question. The pair of genuine snapshots is what an attacker would really post,
+and a first-entry-only guard returns 200 for it.
 
 The structural test is what stops a future widget reopening the hole. It asserts
-on the count of root snapshots rather than on named components, so it fails for
-*any* addition rather than only the ones known today.
+the exact set of root snapshots, so it fails for *any* addition rather than only
+the ones known today.
 
 The real-HTTP save test replaces the existing `Livewire::test()` proof, which
 cannot observe the session behaviour in layer 3. The other four existing tests in
@@ -175,3 +191,35 @@ change. No other guard is touched. No phase 2 concepts.
 
 New user-facing strings go through `__()`; the Arabic file stays empty until
 phase 4.
+
+---
+
+## 5. Where implementation corrected this design
+
+**Layer 1 was never capable of being the whole fix.** This design assumed the
+page could be reduced to `PasswordChange` as its only root Livewire component.
+It cannot. `filament-panels::components.layout.base` line 141 renders
+`@livewire(Filament\Livewire\Notifications::class)` unconditionally — no `@if`,
+no panel setting, no render hook — so every layout in the panel carries the
+notification tray. Layer 1 takes the page from five root components to two
+(`Topbar`, `Sidebar` and `GlobalSearch` go); the tray can only be removed with a
+custom layout view, which is outside this task's file scope and would break the
+flash notifications the page itself raises.
+
+The structural test therefore asserts the exact two-element set rather than a
+single component. It keeps the property the design wanted — any future addition
+changes the set and fails the test.
+
+This matters beyond bookkeeping: the surviving component is precisely what
+layer 2's refusal test drives. **Layer 2 is load-bearing, not defence in depth.**
+Had layer 1 been written alone, as the "strip the chrome only" option would have
+had it, the leak would have survived in the notification tray with nothing
+testing for it.
+
+**The logout exemption gained a clause.** Review measured that a snapshot whose
+memo is rewritten to `path=admin/logout, method=POST` and resealed skips the
+component check and drives the tray to a 200. It is not reachable — resealing
+needs `APP_KEY`, and nothing is ever dehydrated on a logout response for a
+snapshot to be taken from — but the exemption is now gated on
+`! isLivewireRoute()`, since a component update is never a logout. One call, and
+the argument goes away rather than needing to be re-made.
