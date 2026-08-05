@@ -1,7 +1,7 @@
 # Password-change containment — closing G1-U3
 
 **Date:** 2026-08-05
-**Status:** approved, not yet implemented
+**Status:** revised after Codex review, awaiting re-review
 **Origin:** `docs/reviews/2026-07-29-phase-1-review.md`, finding G1-U3 — the one
 phase 1 review finding left open.
 
@@ -14,140 +14,147 @@ phase 1 review finding left open.
 
 Livewire's `PersistentMiddleware` writes the originating route into the snapshot
 on dehydrate, then on `snapshot-verified` reads `memo.path` *back out of the
-snapshot*, fabricates a request for that path, matches it to a route, and
-applies only that route's middleware. `ForcePasswordChange` exempts by asking
-`$request->routeIs(self::PAGE_ROUTE)`. A snapshot carrying
-`memo.path=admin/password-change` is therefore evaluated against the exempt
-route and passes — **whichever component the snapshot actually belongs to.**
+snapshot*, fabricates a request for that path, and applies that route's
+middleware. `ForcePasswordChange` exempts via `$request->routeIs(PAGE_ROUTE)`, so
+a snapshot carrying `memo.path=admin/password-change` passes — **whichever
+component it actually belongs to.** The page renders with the full panel layout,
+so five components carry that path, and all five were measured drivable
+(`Topbar`, `Sidebar`, `GlobalSearch`, `Notifications`, and the page itself)
+while `GET /admin/students` correctly redirected.
 
-Because the page renders with the full panel layout, five components carry that
-path. All five were measured drivable with `must_change_password` set:
+**Medium severity, scoped honestly.** No privilege is gained — global search
+still runs each resource's `canViewAny()`. What is defeated is *containment*:
+the flag exists so an administrator who has just revoked a credential knows the
+holder of that session does nothing further until they set a new password.
 
-| Request | Result |
-|---|---|
-| `GET /admin/students` (control) | 302 → `/admin/password-change` |
-| Replay `Filament\Livewire\Topbar` | 200 |
-| Replay `Filament\Livewire\GlobalSearch` | 200 |
-| Replay `Filament\Livewire\Sidebar` | 200 |
-| Replay `App\Filament\Pages\PasswordChange` | 200 (correct) |
-| Replay `Filament\Livewire\Notifications` | 200 |
-
-Severity is **medium**, scoped honestly. No privilege is gained — global search
-still runs each resource's `canViewAny()`, so the actor reaches only what their
-permissions already allow. What is defeated is *containment*: the flag exists so
-an administrator who has just revoked a credential can be sure the holder of
-that session does nothing further until they set a new password. Today they can
-still search the student register from it.
-
-What genuinely holds, and is worth keeping: the snapshot checksum HMACs the
-whole snapshot including `memo`, so nobody can forge a snapshot claiming an
-arbitrary originating route. Exposure is limited to components actually
-co-rendered on the exempt page — which is exactly what layer 1 below removes.
+The snapshot checksum HMACs `memo`, so an arbitrary originating route cannot be
+forged. Exposure is limited to components actually co-rendered on the page.
 
 ---
 
 ## 2. Design
 
-Two layers. Layer 1 removes the surface; layer 2 enforces the property so the
-surface cannot come back unnoticed.
+Layer 1 removes the surface; layer 2 enforces the property so it cannot return
+unnoticed.
 
 ### Layer 1 — the page renders no chrome
 
-`App\Filament\Pages\PasswordChange` extends `Filament\Pages\SimplePage` rather
-than `Filament\Pages\Page`, and its view uses the simple page component.
+**`PasswordChange` keeps `extends Page`.** It must: the panel calls
+`discoverPages(in: app_path('Filament/Pages'))`, which passes `Page::class` to
+`discoverComponents()`. `SimplePage` extends `BasePage`, *not* `Page`, so
+switching to it would drop the page from discovery and delete the
+`filament.admin.pages.password-change` route that `PAGE_ROUTE` depends on.
 
-Verified against the installed Filament v5.7.1:
-`resources/views/components/layout/simple.blade.php` references none of
-sidebar, topbar, global-search or notifications, where the standard
-`layout/index.blade.php` references them fifteen times.
+Instead the page keeps its class and takes the chrome-free layout directly:
 
-With no other component rendered on that page, no snapshot other than the
-page's own can ever carry `memo.path=admin/password-change`. That closes the
-leak as it exists today.
+```php
+protected static string $layout = 'filament-panels::components.layout.simple';
 
-A locked user must still be able to leave. Stripping the chrome removes the
-topbar's logout button, so the page gains an explicit logout action. Logging
-out is not a privileged action and does not weaken containment; a page with no
-exit does produce support calls and users clearing session cookies by hand.
+protected function getLayoutData(): array
+{
+    return ['hasTopbar' => false, 'maxContentWidth' => …, 'maxWidth' => …];
+}
+```
+
+`hasTopbar => false` is **required, not cosmetic.** The simple layout renders
+both `Filament\Livewire\SimpleUserMenu` and the database-notifications component
+inside a single `@if (($hasTopbar ?? true) && filament()->auth()->check())`
+block. Left at its default the layout would still co-render two components and
+the leak would survive in reduced form.
+
+A locked user must still be able to leave, so the page carries its own logout
+control (see below). Logging out is not a privileged action and does not weaken
+containment.
 
 ### Layer 2 — the guard stops trusting the fabricated route alone
 
-`ForcePasswordChange::handle()` becomes:
-
 ```
-not flagged                        → pass
-flagged, route ≠ password-change   → redirect to /admin/password-change
-flagged, route = password-change:
-    real request is livewire.update → pass only if EVERY component in the
-                                      payload resolves to PasswordChange::class
-    otherwise                       → pass
+not flagged                          → pass
+route = filament.admin.auth.logout   → pass          (POST only)
+route ≠ password-change              → redirect
+route = password-change:
+    real request is livewire.update  → pass only if EVERY component in the
+                                       payload resolves to PasswordChange::class
+    otherwise                        → pass
 ```
 
-Two decisions inside that:
+**The logout exemption is mandatory.** `Route::post('/logout')` is registered
+inside `Route::middleware($panel->getAuthMiddleware())`, so `ForcePasswordChange`
+wraps it; without the exemption the new logout button would redirect back to the
+password form instead of logging out. It is scoped to the exact route name
+`filament.admin.auth.logout`, which is POST-only and CSRF-protected. A GET is
+refused by routing, not by this guard.
 
 **Discriminating a page load from a component update** uses
-`HandleRequests::isLivewireRoute()`. It reads `request()->route()` — the
-container's *real* request — not the fabricated one the middleware is handed.
-That is what makes it a sound discriminator here: Livewire never rebinds the
-fabricated request into the container.
+`HandleRequests::isLivewireRoute()`, which reads `request()->route()` — the
+container's *real* request, not the fabricated one the middleware is handed.
+Livewire never rebinds the fabricated request into the container.
 
-**Identifying the component** reads each snapshot's `memo.name` from the request
-payload and resolves it through `Factory::resolveComponentClass()` to a class,
-which is compared against `PasswordChange::class`. Resolved classes rather than
-name strings, so that renaming or re-registering a component cannot silently
-widen the exemption.
+**Identifying the component** reads each snapshot's `memo.name` from the payload
+and resolves it via `Factory::resolveComponentClass()` to a class, compared
+against `PasswordChange::class`. Resolved classes rather than name strings, so
+re-registering a component cannot silently widen the exemption. The whole
+payload is checked, not just the first entry: `applyPersistentMiddleware()`
+dedupes by `method|path`, so the guard runs once even when several components
+share the page's path.
 
-The check **fails closed**. An unresolvable component name (
-`resolveComponentClass()` throws `ComponentNotFoundException`), a malformed
-snapshot, or an empty component list all deny. Within `isLivewireRoute()` a
-legitimate request always carries at least one component, so denying the empty
-case costs nothing.
+**Denial is a 302.** `Utils::applyMiddleware()` calls `abort($response)` on a
+`RedirectResponse`, so this surfaces correctly through the Livewire endpoint. A
+403 would surface as an error modal.
 
-**Denial is a 302** to `/admin/password-change`, consistent with how the guard
-already answers a page request, and something Livewire follows natively. A 403
-would surface as an error modal. With layer 1 in place this path should not fire
-for legitimate traffic at all.
+**Fail-closed, stated accurately.** `handleUpdate()` aborts 404 on an empty or
+structurally malformed outer payload *before* `update()` fires
+`snapshot-verified`, so the guard never sees those cases — an "empty payload
+denies" branch would be dead code. What can reach the guard is a valid first
+snapshot accompanied by a further component whose snapshot is a well-formed
+string but whose name does not resolve. `resolveComponentClass()` throws
+`ComponentNotFoundException` there, and that denies.
 
-### Why both layers
+### Layer 3 — the save must not destroy the session
 
-Layer 1 alone is a *configuration* fix: correct today, silently wrong the day
-someone adds a widget to the page, with no test to catch it. Layer 2 alone
-leaves the chrome rendered and polling, so every denied poll becomes a visible
-redirect. Together, layer 1 fixes the leak and the UX, and layer 2 enforces the
-property regardless of what the page later renders.
+`AuthenticateSession` is persistent. `Utils::applyMiddleware()` terminates the
+pipeline in an empty `Response`, so its `tap()` after-callback fires at
+`snapshot-verified` time — **before** `save()` runs — storing the *old* hash.
+The password then changes, and the next request mismatches and calls
+`logoutCurrentDevice()`. Today a successful password change therefore logs the
+user out and the success redirect lands on the login page.
 
-This follows the principle recorded from the backup-guard work: enforce the
-property, not the technology.
+**Decided: the current session stays signed in.** After the update, `save()`
+refreshes `password_hash_{guard}` and regenerates the session ID. Other sessions
+still fail on their stale hash, which is the containment an admin-forced reset
+exists for. This matches Laravel's own self-service password-change behaviour.
 
 ---
 
 ## 3. Testing
 
-`Livewire::test()` deliberately skips persistent middleware, so it cannot reach
-this behaviour at all. These must be real HTTP posts to the update endpoint —
-URI resolved via `HandleRequests::getUpdateUri()`, `X-Livewire: true` header
-required or the handler 404s. This is the technique the review already used to
-measure the defect, so it is proven against this codebase.
+`Livewire::test()` skips persistent middleware and cannot reach any of this.
+Tests must be real HTTP posts to the update endpoint — URI from
+`HandleRequests::getUpdateUri()`, `X-Livewire: true` header or the handler 404s.
 
 | Case | Expectation |
 |---|---|
-| Flagged user, replay a co-rendered component with `memo.path=admin/password-change` | **302** → `/admin/password-change` |
-| Flagged user, replay the `PasswordChange` component itself | **200** |
+| Flagged, replay a co-rendered component with `memo.path=admin/password-change` | **302** → `/admin/password-change` |
+| Flagged, replay the `PasswordChange` component itself | **200** |
 | **Control:** good-standing user replays that same co-rendered component | **200** |
-| Rendered password-change page | carries no chrome components |
+| Flagged, valid `PasswordChange` snapshot + additional unresolvable component | **302** |
+| **Structural:** rendered page's root Livewire snapshots | `PasswordChange` is the **only** one |
+| Flagged, `POST /admin/logout` | logs out, session invalidated, redirects |
+| Flagged, `GET /admin/logout` | refused |
+| **Real HTTP save:** flagged user submits the form over the update endpoint | flag cleared, **session still authenticated** |
 
-The control is mandatory, not decorative. A 404 satisfies "was refused" just as
-well as the guard firing does, so without a passing good-standing replay the
-first case proves nothing about the guard.
+The good-standing control is mandatory: a 404 satisfies "was refused" exactly as
+well as the guard firing, so without it the first case proves nothing.
 
-Layer 1's assertion is what stops a future widget reopening the hole quietly.
+The structural test is what stops a future widget reopening the hole. It asserts
+on the count of root snapshots rather than on named components, so it fails for
+*any* addition rather than only the ones known today.
 
-The five existing tests in `tests/Feature/Auth/ForcePasswordChangeTest.php` must
-keep passing unchanged — in particular "clears the flag once a new password is
-set", which proves the flagged user can still get out.
+The real-HTTP save test replaces the existing `Livewire::test()` proof, which
+cannot observe the session behaviour in layer 3. The other four existing tests in
+`tests/Feature/Auth/ForcePasswordChangeTest.php` keep passing unchanged.
 
-Each new test must be seen to fail before the fix lands. A passing test proves
-nothing until it has been observed failing for the right reason.
+Each new test must be seen to fail before the fix lands.
 
 ---
 
@@ -157,10 +164,14 @@ nothing until it has been observed failing for the right reason.
 `app/Filament/Pages/PasswordChange.php`,
 `resources/views/filament/pages/password-change.blade.php`,
 `tests/Feature/Auth/ForcePasswordChangeTest.php`, translation keys for the
-logout action, and closing G1-U3 in the review log.
+logout control, closing G1-U3 in `docs/reviews/2026-07-29-phase-1-review.md`,
+and **`docs/superpowers/specs/2026-07-20-training-center-dashboard-design.md`
+line 91**, which still claims the guard "is registered non-persistently" and
+justifies it with the same argument the review disproved. It has been persistent
+since P1-T15; the authoritative spec must not contradict the code.
 
-**Out:** the persistent-middleware registration in `AdminPanelProvider` is
-correct and does not change. No other guard is touched. No phase 2 concepts.
+**Out:** the `AdminPanelProvider` middleware registration is correct and does not
+change. No other guard is touched. No phase 2 concepts.
 
-Any new user-facing string goes through `__()`; the Arabic file stays empty
-until phase 4.
+New user-facing strings go through `__()`; the Arabic file stays empty until
+phase 4.
