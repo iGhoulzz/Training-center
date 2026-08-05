@@ -101,7 +101,7 @@ add the standard Filament soft-delete idiom is the one who springs it.
 |---|---|---|---|
 | 1 | Filament's `Select` `in` rule blocks the case-variant from the UI | Drive `EditUser` with `roles => ['Super_Admin']` as an admin | **Settled — see G1-U1 under Experiment results.** It changes no disposition: not escalated, and no UI route was shown. The fix had already landed on the Action-layer probe. |
 | 2 | Behaviour of Shield's inline `EditAction` on the roles table | Drive `callTableAction('edit', ...)` and observe | **Moot.** The action no longer exists: `RoleResource::table()` replaces Shield's record actions and empties the toolbar. |
-| 3 | Whether the `ForcePasswordChange` bypass is reachable by a fresh attacker rather than only a stale open page | Obtain a snapshot from the exempt page, drive another component | **RUN in T16. The answer is yes.** The experiment succeeds exactly as written. See G1-U3 under Experiment results — this is an open finding, not a closed question. |
+| 3 | Whether the `ForcePasswordChange` bypass is reachable by a fresh attacker rather than only a stale open page | Obtain a snapshot from the exempt page, drive another component | **RUN in T16. The answer is yes.** The experiment succeeds exactly as written. **Fixed and closed 2026-08-05**, on `sec/g1-u3-password-change-containment`; see G1-U3 under Experiment results. |
 
 ### Resolution
 
@@ -1344,7 +1344,7 @@ where the log already says it rests: on `SyncUserRolesAction` being an injectabl
 public service that a command, job or portal controller reaches with no `Select`
 in front of it.
 
-### G1-U3 — is the `ForcePasswordChange` bypass reachable by a fresh attacker? **RUN in T16. Yes. This is an open finding.**
+### G1-U3 — is the `ForcePasswordChange` bypass reachable by a fresh attacker? **RUN in T16. Yes. FIXED 2026-08-05.**
 
 **T16 first closed this as moot, on an argument that was wrong.** That text said
 `ForcePasswordChange` is registered in `persistentMiddleware()`, therefore it
@@ -1394,12 +1394,7 @@ that session does nothing further until they set a new password. Today they can
 still search the register from it.
 
 **Not introduced by T16 and not fixed by it.** The behaviour predates the branch;
-what T16 got wrong was documenting it as impossible. Fixing it means changing
-`ForcePasswordChange` so the exemption does not rest on the fabricated route
-alone — the narrow form is to exempt the password-change *component* rather than
-anything co-rendered beside it. That is a security change to a merged guard, with
-its own tests and its own review, and it is **the owner's call whether it lands
-before phase 2 or as the first task of it.**
+what T16 got wrong was documenting it as impossible.
 
 **What genuinely does hold**, and is worth keeping: the snapshot checksum HMACs
 the whole snapshot including `memo`
@@ -1407,10 +1402,48 @@ the whole snapshot including `memo`
 nobody can forge a snapshot claiming an arbitrary originating route. The exposure
 is limited to components actually co-rendered on the exempt page.
 
+#### Closed 2026-08-05 — `sec/g1-u3-password-change-containment`
+
+Designed in `docs/superpowers/specs/2026-08-05-password-change-containment-design.md`
+and fixed in three layers, because neither layer alone is sufficient:
+
+1. **The page renders no panel chrome.** `PasswordChange` keeps `extends Page` —
+   `discoverPages()` filters on `Page::class` and `SimplePage` extends `BasePage`,
+   so switching would have deleted the very route the guard exempts by name — and
+   takes `filament-panels::components.layout.simple` with `hasTopbar => false`.
+   Topbar, Sidebar and GlobalSearch are gone; three of the five rows above can no
+   longer be obtained at all.
+2. **The exemption is component-aware.** `ForcePasswordChange` still exempts the
+   page route, but when the real request is Livewire's update endpoint it now
+   requires *every* snapshot in the payload to resolve to `PasswordChange::class`.
+   Resolved classes, not name strings; the whole payload, not the first entry,
+   because `applyPersistentMiddleware()` dedupes by `method|path` and runs the
+   guard once for all of them. A component that does not resolve denies.
+3. **The save keeps the session.** Persistent `AuthenticateSession` stored the old
+   password hash at `snapshot-verified` time, before `save()` ran, so a successful
+   change logged the user out and the success redirect landed on the login page.
+   `save()` now refreshes `password_hash_{guard}` and regenerates the session id.
+
+**One thing in that design did not survive contact.** It expected the page to
+co-render exactly one Livewire component afterwards. It co-renders two:
+`filament-panels::components.layout.base` renders
+`Filament\Livewire\Notifications` unconditionally, with no `@if` and no panel
+setting to suppress it, so every layout in the panel carries it. It is the
+flash-message tray and holds nothing but what it pulled from the session — and
+layer 2 refuses to drive it, which is the case the regression test now asserts.
+Layer 1 was never going to be the whole fix, which is the argument for layer 2.
+
+Eight new cases in `tests/Feature/Auth/ForcePasswordChangeTest.php`, all real HTTP
+posts to the update endpoint (`Livewire::test()` skips persistent middleware
+entirely and cannot reach any of this), each seen to fail before the fix landed.
+The `Livewire::test()`-based "clears the flag" case was replaced by a real HTTP
+save, because the session behaviour in layer 3 is invisible to the test harness.
+
 ### Summary of the seven
 
-*(Eight experiments now. G1-U3 was run in T16 and is the only one that produced
-an unfixed finding; the seven below are the phase 1 set.)*
+*(Eight experiments now. G1-U3 was run in T16, was the only one to leave a finding
+open past the end of the phase, and was fixed on 2026-08-05; the seven below are
+the phase 1 set.)*
 
 | Experiment | Result |
 |---|---|
