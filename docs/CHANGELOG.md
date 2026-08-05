@@ -65,7 +65,9 @@ One question the review left open, G1-U3, was run at the close of phase 1 and
 returned a finding rather than an all-clear: a Livewire component rendered
 alongside the forced-password-change form can still be driven while an account is
 locked to that form. It grants no privilege the actor lacks, but it defeats the
-containment the flag exists to provide. Recorded in the review log, unfixed.
+containment the flag exists to provide. Fixed in PR #11 — the page drops the
+panel chrome, and the exemption now resolves every component in the Livewire
+payload instead of trusting the page it was rendered on.
 
 Seven runtime experiments settled claims a static reading could not. Two of them
 cleared code that looked wrong, which is the argument for running the experiment
