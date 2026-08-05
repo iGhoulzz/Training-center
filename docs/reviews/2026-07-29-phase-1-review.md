@@ -99,9 +99,9 @@ add the standard Filament soft-delete idiom is the one who springs it.
 
 | # | Claim | Experiment | Result |
 |---|---|---|---|
-| 1 | Filament's `Select` `in` rule blocks the case-variant from the UI | Drive `EditUser` with `roles => ['Super_Admin']` as an admin | **Still open, and it bounds what may be claimed.** The Action-layer probe settled severity without it and the fix landed regardless — but until this runs, no remotely exploitable Filament route has been demonstrated. |
+| 1 | Filament's `Select` `in` rule blocks the case-variant from the UI | Drive `EditUser` with `roles => ['Super_Admin']` as an admin | **Settled — see G1-U1 under Experiment results.** It changes no disposition: not escalated, and no UI route was shown. The fix had already landed on the Action-layer probe. |
 | 2 | Behaviour of Shield's inline `EditAction` on the roles table | Drive `callTableAction('edit', ...)` and observe | **Moot.** The action no longer exists: `RoleResource::table()` replaces Shield's record actions and empties the toolbar. |
-| 3 | Whether the `ForcePasswordChange` bypass is reachable by a fresh attacker rather than only a stale open page | Obtain a snapshot from the exempt page, drive another component | Open — the stale-page scenario already justifies the fix |
+| 3 | Whether the `ForcePasswordChange` bypass is reachable by a fresh attacker rather than only a stale open page | Obtain a snapshot from the exempt page, drive another component | **Closed without running, P1-T16.** See G1-U3 under Experiment results — the answer can no longer change any decision. |
 
 ### Resolution
 
@@ -461,9 +461,9 @@ instructor-allocation test.
 
 | # | Claim | Experiment | Result |
 |---|---|---|---|
-| U1 | Whether a locking `exists()` read actually takes a lock — MySQL may drop the locking clause inside the scalar subquery. This is the load-bearing claim of `EnrollmentUpdateRule` and of "the authorization that binds is the locking one" | Two sessions: A locks the batch then runs the locking EXISTS; B inserts the matching `batch_instructor` row and must block; check `performance_schema.data_locks` for a RECORD or GAP lock | Open — **the highest-value experiment of the three.** If B does not block, the rule is served from the pre-mutex snapshot and the T11 lock test asserts SQL text rather than behaviour |
-| U2 | Whether `PurgeDeletedFileJob::isOwned()` can deadlock against an in-flight upload rather than blocking on it | Force a compensation purge for a path, then hold a second upload open across that path's index gap; read the InnoDB status and `data_lock_waits` | Open |
-| U3 | Whether `ViewStaffProfile` falls back to the form schema and so discloses the full account roster through the user Select | As an actor holding profile read but no user read, GET the view page and inspect for option values drawn from `users` | Open — harmless under the seeded roles, since both holders of `view_staff_profile` also hold `view_any_user` |
+| U1 | Whether a locking `exists()` read actually takes a lock — MySQL may drop the locking clause inside the scalar subquery. This is the load-bearing claim of `EnrollmentUpdateRule` and of "the authorization that binds is the locking one" | Two sessions: A locks the batch then runs the locking EXISTS; B inserts the matching `batch_instructor` row and must block; check `performance_schema.data_locks` for a RECORD or GAP lock | **Run. It locks — no finding.** B blocked on a gap lock. See G2-U1 under Experiment results. |
+| U2 | Whether `PurgeDeletedFileJob::isOwned()` can deadlock against an in-flight upload rather than blocking on it | Force a compensation purge for a path, then hold a second upload open across that path's index gap; read the InnoDB status and `data_lock_waits` | **Run. It blocks; no deadlock — no finding.** See G2-U2 under Experiment results. |
+| U3 | Whether `ViewStaffProfile` falls back to the form schema and so discloses the full account roster through the user Select | As an actor holding profile read but no user read, GET the view page and inspect for option values drawn from `users` | **Run. Confirmed a real leak**, raised to Medium and fixed. See G2-U3 under Experiment results. |
 
 ---
 
@@ -1157,17 +1157,22 @@ two and keep one elsewhere.
 ## Where the review stands
 
 **Every fix-now finding across all three groups is now closed.** Group 1 (6),
-group 2 (6) and group 3 (15) are merged or in review; L1 is the single deferral,
-recorded above for phase 4. T16 inherits the rejections and deferrals from this
-document.
+group 2 (6) and group 3 (15) — 27 findings, 26 fixed and L1 the single deferral,
+recorded above for phase 4.
+
+**Closed out by T16 (2026-08-05).** All three groups' findings are merged. The
+rejections and deferrals are carried into section 13 of the design spec, so a
+later phase inherits the decisions rather than re-opening them; T16 also closed
+the last unverified item, G1-U3, and reconciled the three tables below against
+the experiments that had already been run.
 
 ### Unverified items
 
 | # | Claim | Experiment | Result |
 |---|---|---|---|
 | U1 | Whether a blank `BACKUP_S3_ENDPOINT` — which `.env.example` ships — fails loudly or silently retargets to AWS S3, sending a non-AWS deployment's archives to an unintended host | With `APP_ENV=production` and a full non-AWS `BACKUP_S3_*` set except a blank endpoint, run `backup:run` and record whether it throws at client construction, on upload, or succeeds against the wrong host | **Closed by P1-T17.** It fails silently — the adapter builds with no endpoint and no exception. The guard now requires an endpoint whenever S3 is the destination, which was the "guard addition" branch of this decision. See the T17 section above. |
-| U2 | Whether Shield's role form actually renders the twelve `*_activity` checkboxes, and what saving one does | Drive `EditRole` via Livewire, assert the options contain `delete_activity`, submit it, and record whether it throws `PermissionDoesNotExist`, drops the name, or creates the permission | Open — resolve while fixing L5 |
-| U3 | Whether `properties.causer_name` is in fact written for a `causedByAnonymous()` entry | One assertion in the existing system-write test: the property must be null | Open — will be settled by M2's regression test, which must fail first |
+| U2 | Whether Shield's role form actually renders the twelve `*_activity` checkboxes, and what saving one does | Drive `EditRole` via Livewire, assert the options contain `delete_activity`, submit it, and record whether it throws `PermissionDoesNotExist`, drops the name, or creates the permission | **Run. Confirms L5** — twelve write options were offered on an append-only log. Fixed. See G3-U2 under Experiment results. |
+| U3 | Whether `properties.causer_name` is in fact written for a `causedByAnonymous()` entry | One assertion in the existing system-write test: the property must be null | **Run. Confirms M2** — a real signed-in user's name was written onto an anonymous entry. Fixed. See G3-U3 under Experiment results. |
 
 **What the reviewer cleared, worth recording.** The Filament append-only surface is
 genuinely closed — no record, header, toolbar or bulk actions, `canCreate()` false,
@@ -1335,7 +1340,35 @@ where the log already says it rests: on `SyncUserRolesAction` being an injectabl
 public service that a command, job or portal controller reaches with no `Select`
 in front of it.
 
+### G1-U3 — is the `ForcePasswordChange` bypass reachable by a fresh attacker? **Closed in T16 without running, because the fix made the question moot.**
+
+The experiment asked whether an attacker could obtain a Livewire snapshot
+themselves, rather than the bypass requiring a page a victim already had open.
+It was left open on the reasoning that the stale-page scenario justified the fix
+regardless.
+
+It is closed now on a stronger basis than "the fix landed": **the fix removed the
+distinction the question turns on.** `ForcePasswordChange` sits in
+`persistentMiddleware()` on the admin panel (`AdminPanelProvider.php:112`), so it
+runs on *every* request to Livewire's update endpoint — and that endpoint is the
+only channel through which a snapshot, stale or freshly obtained, can be
+replayed. Where the snapshot came from cannot change the outcome.
+
+Two behavioural tests in `LivewirePersistentGuardTest` pin this against the real
+HTTP endpoint rather than through `Livewire::test()`, which never routes and so
+skips persistent middleware entirely: an interaction from a component opened
+before the reset is refused, and the mutation behind it does not execute.
+
+**What that leaves genuinely unmeasured**, stated rather than buried: no
+attacker-obtained snapshot was ever demonstrated, so the original severity debate
+was not settled empirically. That rating is historical and affects no code, and
+re-running the experiment now would mean reverting a merged security fix to do
+it.
+
 ### Summary of the seven
+
+*(Eight dispositions, seven of them measured — G1-U3 was closed by argument in
+T16, above.)*
 
 | Experiment | Result |
 |---|---|

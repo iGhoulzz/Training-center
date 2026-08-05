@@ -93,6 +93,20 @@ git branch -d p1/t04-activity-log
 
 ## Task lifecycle
 
+0. **Review the plan before any of it is implemented.** Codex reviews each phase
+   plan — the architecture and the enforcement approach, not the prose — and
+   signs off before task 1 begins.
+
+   This step exists because of Task 4. It needed five rounds (T04 → T04e), and
+   every one of them inherited the same defect: **the plan specified an unsound
+   enforcement architecture** — guards implemented by overriding Spatie's write
+   methods on the models. That was visible in the written plan. One review round
+   there would have replaced five rounds of code remediation, each of which found
+   a new bypass method rather than the reason bypasses kept existing.
+
+   Phase 2 is financials, which has the identical shape: hard invariants over an
+   unbounded write surface. A plan-level error there is a phase-level error.
+
 1. **Assign.** Claude writes the task into the milestone plan with owner, file scope, and definition of done.
 2. **Isolate.** The owning agent creates its worktree and branch.
 3. **Implement.** Tests written alongside the implementation. Work stays inside the declared file scope — if the task genuinely needs a file outside it, stop and raise it rather than silently expanding scope.

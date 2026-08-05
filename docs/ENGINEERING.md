@@ -2,7 +2,20 @@
 
 Single source of truth for coding conventions. Both `CLAUDE.md` and `AGENTS.md` reference this file — do not duplicate its content into either.
 
-**Target:** Laravel 11+ (latest stable), PHP 8.3+, Filament, MySQL.
+**Target, as actually installed and verified at the close of phase 1:**
+
+| | |
+|---|---|
+| PHP | **8.4.1 minimum** — a hard floor, not a preference. Symfony 8 requires `>=8.4.1` and `spatie/laravel-activitylog` 5 requires `^8.4`, so 8.3 cannot resolve this dependency set. `composer.json` pins `config.platform.php` to `8.4.1`. |
+| Laravel | 13.20.0 |
+| Filament | v5.7.1 — v5 kept v4's resource API; the schema import is `Filament\Schemas\Schema`, not `Filament\Forms\Form` |
+| MySQL | 8 |
+| Pest | 4.7.5 · PHPStan 2.2.5 via Larastan 3.10 · Pint 1.29.3 |
+| Key packages | `spatie/laravel-permission` 7.4.2, `bezhansalleh/filament-shield` 4.2.0, `spatie/laravel-activitylog` 5.0.0, `spatie/laravel-backup` 10.3.0 |
+
+This table said "Laravel 11+, PHP 8.3+" for all of phase 1, which was wrong about
+the floor in a way that would only have surfaced as an unexplainable
+`composer install` failure on a fresh 8.3 machine.
 
 ---
 
@@ -70,9 +83,37 @@ app/Domain/Enrollment/
   3. The last active super admin cannot be deleted, deactivated, or stripped of the `super_admin` role.
   4. An authenticated role or permission write requires the `assign_role` ability.
 
+### Permission names
+
+Filament Shield's generated format, `{action}_{model}`: `view_any_student`,
+`create_course`, `delete_user`. Custom abilities are bare verbs: `assign_role`,
+`reset_user_password`, `assign_instructor`, `manage_settings`. A scoped variant
+carries the scope in the name: `update_assigned_batch_enrollment`.
+
+This is not a style preference, and getting it wrong is expensive. The spec's
+first draft used dot notation (`students.delete`), which no permission in this
+system matches — adopting it would have meant overriding Shield's generator and
+re-breaking that override on every upgrade. The wrong form survived in `CLAUDE.md`
+and `AGENTS.md` long enough that **every phase 1 reviewer had to be handed an
+erratum** telling them to ignore it, because anyone matching the documented
+example literally would have flagged every correct call in the codebase.
+
+`RolePermissionSeeder` is the authority on which names exist. Grep it before
+inventing one.
+
 ### The write boundary: security-sensitive writes go through Actions
 
 **This is the load-bearing rule.** An earlier design tried to enforce the guards by overriding every Spatie/Eloquent write method on `User` and `Role`. Two review rounds kept finding new bypass methods; the models grew fat and it violated this file's own "no business logic in models" standard. That approach is gone. Do not reintroduce it.
+
+> **Any spec or plan section touching money or permissions must name its write
+> boundary explicitly** — which Actions perform the writes, which service owns
+> the invariant, what is prohibited, and the test that proves it. Never just
+> "enforce X".
+>
+> This rule is the generalisation of the paragraph above. The model-override
+> approach was specified in the *plan*, so five task rounds inherited it before
+> anybody questioned the architecture rather than the latest bypass. Phase 2 is
+> financials — hard invariants over an unbounded write surface, the same shape.
 
 | Layer | Responsibility |
 |---|---|
@@ -184,6 +225,33 @@ Feature tests over unit tests — the risk in this system is in how pieces conne
 - Test unhappy paths as thoroughly as happy paths.
 
 A task is not complete until its tests pass. Report actual test output; never claim passing tests without running them.
+
+### Rules learned the expensive way
+
+Each of these cost a review round or more in phase 1. They are here because the
+mistakes were invisible from inside the change that made them.
+
+**Test the surface, not the instance you just fixed.** When fixing a rule,
+enumerate the *complete* surface — every policy method, every write path — as a
+dataset, so an omission fails rather than hides. Escalation guard 4 was fixed on
+`create` and `update`, tested on exactly those two, and reported green while
+`delete`, `forceDelete`, `restore`, `replicate` and `reorder` stayed open.
+
+**Every security claim in documentation needs a test named after it.** Three
+claims in this file asserted properties the code did not have. If a sentence
+asserts a property, a test asserts the same property — or the sentence does not
+go in.
+
+**Verification probes run inside a rolled-back transaction**, or after
+`php artisan migrate:fresh --seed`. Committing probe setup into the shared
+development database produced both false holes and false all-clears: a leftover
+super admin meant the "last super admin" under test was not the last one.
+
+**A passing test proves nothing until you have watched it fail.** Break the thing
+the test protects, confirm the failure, then restore. Phase 1 shipped several
+tests that could not fail — a delete probe that never reached the server, an
+assertion an index made unfailable, a scanner that matched its own error message.
+Every one of them read as coverage.
 
 ---
 

@@ -220,9 +220,21 @@ it('invalidates a session opened before the password hash changed', function (st
 |--------------------------------------------------------------------------
 */
 
-it('applies the session guard to every private file route', function () {
-    // Behavioural tests catch a route that loses the middleware today. This
-    // catches the third private-file route somebody adds next year without it.
+it('applies the session guard to both private file routes', function () {
+    /*
+     * WHAT THIS CATCHES, STATED HONESTLY (corrected in P1-T16).
+     *
+     * The comment here used to claim it caught "the third private-file route
+     * somebody adds next year without it". It cannot, and could never have:
+     * it iterates a hardcoded list of two names, so it protects the two routes
+     * that exist and has no way to discover a new one. Nothing in a route
+     * declaration marks it as serving a private file, so no runtime check can
+     * find one on its own.
+     *
+     * What actually makes a third route inherit the guard is the GROUP in
+     * routes/web.php. This pins that today's two routes carry it; the test
+     * below pins that the group is still what puts it there.
+     */
     foreach (['staff.certificates.download', 'staff.profiles.photo'] as $name) {
         $middleware = Route::getRoutes()->getByName($name)->gatherMiddleware();
 
@@ -233,6 +245,34 @@ it('applies the session guard to every private file route', function () {
             "{$name} does not carry the private-file session guard.",
         );
     }
+});
+
+it('keeps the guard on the route group, which is what a future route inherits', function () {
+    /*
+     * THE PROPERTY THAT ACTUALLY PROTECTS THE ROUTE NOBODY HAS WRITTEN YET.
+     *
+     * A refactor that deletes the group and applies the middleware to each
+     * route individually leaves every existing test green — both routes still
+     * carry it — while quietly removing the only thing that would have covered
+     * a third one. Declaring it once, on the group, is the difference between
+     * "these two are safe" and "private file routes are safe".
+     *
+     * Asserted against the source because the router flattens group middleware
+     * into each route and cannot say where it came from.
+     */
+    $source = file_get_contents(base_path('routes/web.php'));
+
+    expect(substr_count($source, 'AuthenticatePrivateFileSession'))->toBe(
+        2,
+        'Expected exactly two mentions in routes/web.php — the import and one '
+        .'group. More than that means the guard is being applied per route, so '
+        .'a route added outside the group would silently be unprotected.',
+    );
+
+    expect(str_contains(
+        $source,
+        'Route::middleware(AuthenticatePrivateFileSession::class)->group(',
+    ))->toBeTrue('The private-file route group is gone; new routes no longer inherit the guard.');
 });
 
 it('sends an invalidated session to the panel login without depending on panel state', function () {
