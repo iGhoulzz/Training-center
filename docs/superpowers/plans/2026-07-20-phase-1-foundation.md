@@ -4,7 +4,7 @@
 > reviewed and merged to `main`; task 16 is this document's own reconciliation
 > pass and merges with it. See `docs/CHANGELOG.md` for what shipped, and
 > `docs/reviews/2026-07-29-phase-1-review.md` for the end-of-phase review —
-> including one finding, G1-U3, that is recorded open rather than fixed.
+> including one finding, G1-U3, since fixed in PR #11.
 >
 > **Do not execute this plan.** Most step checkboxes below are still unticked:
 > the work was carried out and verified task by task in conversation rather than
