@@ -79,12 +79,18 @@ Either way, pick the newest `<BACKUP_ARCHIVE_NAME>-*.zip` — `training-center-*
 with the default configuration — from before whatever went wrong. For a bad
 import or a mistaken bulk edit, that is **not** last night's.
 
-> **If the drive is empty, check that it was mounted when the backups ran.** The
-> application refuses to boot in production when `BACKUP_LOCAL_PATH` does not
-> exist, which catches a drive that was never mounted — but a drive unplugged
-> *after* boot writes to the mount point on the server instead, and the monitor
-> reports those archives as healthy. Look under the same path with the drive
-> unmounted; if files are there, that is where the last nights went.
+> **If the drive is empty, check whether the archives went to the mount point
+> instead.** `backup:run`, `backup:monitor` and `backup:clean` refuse to touch a
+> destination that is on the same filesystem as the application or is missing
+> its volume marker, so an unplugged drive fails that night's run and mails
+> `BACKUP_ALERT_EMAIL` rather than writing to the server. On an install
+> predating that check, or one where `BACKUP_VOLUME_MARKER` was switched off,
+> look under the same path with the drive unmounted — if files are there, that
+> is where the last nights went.
+>
+> `php artisan backup:list` prints the destination and warns you when it cannot
+> be trusted. Read that warning: a bare "Reachable ✅" only means the directory
+> could be listed, which an empty mount point on the server satisfies.
 
 **Retention goes back further than most people assume, so look before concluding
 an archive is gone.** The tiers are additive:

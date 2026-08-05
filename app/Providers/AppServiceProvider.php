@@ -14,6 +14,7 @@ use App\Domain\Enrollment\Policies\EnrollmentPolicy;
 use App\Domain\Enrollment\Policies\StudentPolicy;
 use App\Domain\Staff\Console\GuardedBackupCommand;
 use App\Domain\Staff\Console\GuardedCleanupCommand;
+use App\Domain\Staff\Console\GuardedListCommand;
 use App\Domain\Staff\Console\GuardedMonitorCommand;
 use App\Domain\Staff\Models\StaffCertificate;
 use App\Domain\Staff\Models\StaffProfile;
@@ -66,8 +67,11 @@ class AppServiceProvider extends ServiceProvider
          * CONFIGURATION ONLY (P1-T17). Whether the removable drive is actually
          * plugged in is deliberately NOT checked here — this runs for every
          * request and every artisan command, so an absent drive would take the
-         * centre offline to protect data nobody could then reach. That check runs
-         * before each scheduled backup instead. See BackupConfiguration.
+         * centre offline to protect data nobody could then reach.
+         *
+         * That check lives on the four backup commands registered just below, so
+         * it applies however they are started — by the scheduler, by hand, or
+         * through Artisan::call(). See BackupConfiguration.
          */
         BackupConfiguration::assertReadyForProduction($this->app->environment());
 
@@ -88,6 +92,9 @@ class AppServiceProvider extends ServiceProvider
             GuardedBackupCommand::class,
             GuardedMonitorCommand::class,
             GuardedCleanupCommand::class,
+            // Warns rather than refuses — see its docblock. Listing what
+            // survived is what somebody needs during an incident.
+            GuardedListCommand::class,
         ]);
 
         /*

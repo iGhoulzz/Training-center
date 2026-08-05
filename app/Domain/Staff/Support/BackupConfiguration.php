@@ -219,10 +219,17 @@ final class BackupConfiguration
 
         throw new RuntimeException(
             "The backup destination is not ready:\n  - ".implode("\n  - ", $problems)
-            // Deliberately not "tonight's backup did not run": all three
-            // commands share this message, and two of them neither back up nor
-            // run only at night.
-            ."\nThe command stopped without touching the destination. See docs/RESTORE.md."
+            /*
+             * DESCRIBES THE DESTINATION, NEVER WHAT THE CALLER DID.
+             *
+             * This said "tonight's backup did not run", which was wrong for a
+             * hand-run monitor; then "the command stopped without touching the
+             * destination", which was wrong for backup:list — it warns and
+             * carries on listing, so the message contradicted the very output it
+             * appeared under. Four commands share this text and they respond
+             * differently, so each one says what it did.
+             */
+            ."\nSee docs/RESTORE.md."
         );
     }
 

@@ -6,6 +6,7 @@ namespace App\Domain\Staff\Console;
 
 use App\Domain\Staff\Exceptions\BackupDestinationUnavailableException;
 use App\Domain\Staff\Support\BackupConfiguration;
+use App\Domain\Staff\Support\SafeReporting;
 use RuntimeException;
 
 /**
@@ -60,19 +61,35 @@ trait RefusesAnUnavailableDestination
 
             $this->error($unavailable->getMessage());
 
-            report($unavailable);
+            // What THIS command did about it. The exception only describes the
+            // destination, because backup:list shares that text and carries on.
+            $this->error('This command stopped without touching the destination.');
 
             /*
-             * Honoured here because Spatie honours it further down in handle(),
-             * which this pre-empts. Without the check, switching notifications
-             * OFF would start producing more mail than leaving them on.
+             * NOTIFY FIRST, AND REPORT IN A WAY THAT CANNOT INTERRUPT IT.
              *
-             * Read off the raw input rather than through option(): backup:monitor
-             * does not define the flag, and option() throws on an unknown name.
+             * A bare report() sat here, ahead of the notification. Laravel's
+             * handler may throw when its logging transport is unavailable — and
+             * a full disk breaks the log channel and the backup destination
+             * together, so the correlated case is the likely one. The backup
+             * would have failed with nothing sent to BACKUP_ALERT_EMAIL: the
+             * precise alerting defect this guard exists to prevent.
+             *
+             * The order is now belt and braces. SafeReporting::report() cannot
+             * throw, so nothing depends on the sequence; the alert still goes
+             * first, so a later edit reintroducing a bare report() costs a log
+             * line rather than the notification.
+             *
+             * --disable-notifications is honoured because Spatie honours it
+             * further down in handle(), which this pre-empts. Read off the raw
+             * input rather than through option(): backup:monitor does not define
+             * the flag, and option() throws on an unknown name.
              */
             if (! $this->input->hasParameterOption('--disable-notifications')) {
                 event($this->destinationUnavailableEvent($unavailable));
             }
+
+            SafeReporting::report($unavailable);
 
             return static::FAILURE;
         }

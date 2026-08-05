@@ -6,6 +6,7 @@ namespace App\Domain\Staff\Services;
 
 use App\Domain\Staff\Jobs\PurgeDeletedFileJob;
 use App\Domain\Staff\Models\PendingFileDeletion;
+use App\Domain\Staff\Support\SafeReporting;
 use Closure;
 use Illuminate\Database\DatabaseTransactionRecord;
 use Illuminate\Support\Facades\DB;
@@ -304,16 +305,15 @@ final class FileLifecycleService
      *
      * Laravel's exception handler is allowed to throw while reporting (for
      * example, when its logging transport is unavailable). Cleanup already has
-     * a durable receipt, so there is nothing safer to do synchronously here.
+     * a durable receipt, so there is nothing safer to do synchronously here —
+     * it remains available to a later reconciliation sweep even when both
+     * cleanup and its reporting channel are down.
+     *
+     * The body moved to SafeReporting in P1-T17, on the third caller.
      */
     private function reportWithoutThrowing(Throwable $exception): void
     {
-        try {
-            report($exception);
-        } catch (Throwable) {
-            // The durable receipt remains available to a later reconciliation
-            // sweep even when both cleanup and its reporting channel are down.
-        }
+        SafeReporting::report($exception);
     }
 
     /**

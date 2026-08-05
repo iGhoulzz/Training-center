@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Domain\Staff\Console\GuardedBackupCommand;
 use App\Domain\Staff\Console\GuardedCleanupCommand;
+use App\Domain\Staff\Console\GuardedListCommand;
 use App\Domain\Staff\Console\GuardedMonitorCommand;
 use App\Domain\Staff\Support\BackupConfiguration;
 use App\Domain\Staff\Support\BackupVolume;
@@ -11,10 +12,10 @@ use Illuminate\Console\Command;
 use Illuminate\Console\Scheduling\Event;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Console\Kernel;
+use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Process;
-use Spatie\Backup\Commands\ListCommand;
 use Spatie\Backup\Notifications\Notifications\BackupHasFailedNotification;
 use Spatie\Backup\Notifications\Notifications\CleanupHasFailedNotification;
 use Spatie\Backup\Notifications\Notifications\UnhealthyBackupWasFoundNotification;
@@ -867,6 +868,52 @@ it('says why it refused, rather than failing blankly', function () {
     );
 });
 
+it('still raises the alert when the log channel is down too', function () {
+    /*
+     * THE CORRELATED FAILURE, AND THE REASON ORDER MATTERS HERE.
+     *
+     * Laravel's exception handler may throw while reporting — a full disk takes
+     * down the logging transport. That is not an independent coincidence: a full
+     * disk is also one of the things that breaks the backup destination, so the
+     * unlucky combination is the LIKELY one.
+     *
+     * A bare report() sat ahead of the notification in the first version of this
+     * boundary. With the log channel gone it threw, the event was never
+     * dispatched, and BACKUP_ALERT_EMAIL got nothing — the exact alerting defect
+     * this guard exists to close, reintroduced through the error path.
+     *
+     * This is the third time this project has been bitten by report() throwing.
+     * See SafeReporting.
+     */
+    Notification::fake();
+
+    $handler = Mockery::mock(ExceptionHandler::class);
+    $handler->shouldReceive('report')->andThrow(new RuntimeException('the log channel is gone'));
+    $handler->shouldIgnoreMissing();
+    app()->instance(ExceptionHandler::class, $handler);
+
+    expect(refusedBackupCommand('backup:run'))->toBe(Command::FAILURE);
+
+    Notification::assertSentTimes(BackupHasFailedNotification::class, 1);
+});
+
+it('still raises the right alert per command when logging is down', function () {
+    // The other two go through the same trait, so a fix applied to one of them
+    // only would pass the test above and leave these silent.
+    Notification::fake();
+
+    $handler = Mockery::mock(ExceptionHandler::class);
+    $handler->shouldReceive('report')->andThrow(new RuntimeException('the log channel is gone'));
+    $handler->shouldIgnoreMissing();
+    app()->instance(ExceptionHandler::class, $handler);
+
+    expect(refusedBackupCommand('backup:monitor'))->toBe(Command::FAILURE);
+    expect(refusedBackupCommand('backup:clean'))->toBe(Command::FAILURE);
+
+    Notification::assertSentTimes(UnhealthyBackupWasFoundNotification::class, 1);
+    Notification::assertSentTimes(CleanupHasFailedNotification::class, 1);
+});
+
 it('lets unrelated artisan commands run while the drive is out', function () {
     /*
      * THE CONTROL THAT MATTERS MOST, and the reason the guard is on three
@@ -938,9 +985,72 @@ it('guards the packages commands rather than sitting beside them', function () {
         ->and($registered['backup:monitor'])->toBeInstanceOf(GuardedMonitorCommand::class)
         ->and($registered['backup:clean'])->toBeInstanceOf(GuardedCleanupCommand::class);
 
-    // backup:list only reads. Somebody checking what survived a failure should
-    // not be blocked by the failure, so it is deliberately left alone.
-    expect($registered['backup:list'])->toBeInstanceOf(ListCommand::class);
+    /*
+     * backup:list is guarded too, but WARNED rather than refused — it only
+     * reads, and listing what survived is what somebody needs during an
+     * incident.
+     *
+     * Asserted as the guarded class, not as Spatie's: GuardedListCommand
+     * EXTENDS ListCommand, so an assertion against the parent passes whichever
+     * one is registered and would have proven nothing.
+     */
+    expect($registered['backup:list'])->toBeInstanceOf(GuardedListCommand::class);
+});
+
+it('warns that the reachable column cannot be trusted when the drive is out', function () {
+    /*
+     * THE MEASUREMENT THAT PROMPTED THIS. Spatie's Reachable column answers
+     * "could I list the configured directory", not "is the drive mounted".
+     * Against an ordinary empty directory standing in for an unmounted mount
+     * point it prints Reachable ✅ — and with one stale archive left there by an
+     * earlier unguarded run, Reachable ✅ Healthy ✅.
+     *
+     * The server's own disk certifying itself as a healthy backup, to somebody
+     * deciding whether they can afford to rebuild the machine.
+     */
+    useDrive();
+    fakeVolume(['applicationDevice' => 7, 'destinationDevice' => 7]);
+
+    $exitCode = Artisan::call('backup:list');
+    $output = Artisan::output();
+
+    expect(str_contains($output, 'Do not trust the Reachable column above.'))->toBeTrue(
+        'backup:list showed its table without contradicting it.',
+    );
+    expect(str_contains($output, 'the drive is not mounted'))->toBeTrue(
+        'The warning did not say what was actually wrong.',
+    );
+});
+
+it('still lists when the drive is out, rather than refusing', function () {
+    /*
+     * The control, and the reason this command is warned instead of guarded: a
+     * read-only inspection command that blocks when things are broken is
+     * useless at the only moment anybody needs it. The exit code stays
+     * untouched because scripts read it.
+     */
+    useDrive();
+    fakeVolume(['applicationDevice' => 7, 'destinationDevice' => 7]);
+
+    expect(Artisan::call('backup:list'))->toBe(Command::SUCCESS);
+
+    // The table itself still rendered.
+    expect(str_contains(Artisan::output(), 'backups_local'))->toBeTrue(
+        'The listing was suppressed, which is the failure this command must avoid.',
+    );
+});
+
+it('does not cry wolf on a healthy drive', function () {
+    // The over-warning control: a warning printed every time would be filtered
+    // out within a week, taking the real one with it.
+    useDrive();
+    fakeVolume(['applicationDevice' => 7, 'destinationDevice' => 9]);
+
+    Artisan::call('backup:list');
+
+    expect(str_contains(Artisan::output(), 'Do not trust'))->toBeFalse(
+        'backup:list warned about a destination that passed every check.',
+    );
 });
 
 it('runs the scheduled backups through the same guarded commands', function () {

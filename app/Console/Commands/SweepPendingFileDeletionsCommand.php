@@ -6,6 +6,7 @@ namespace App\Console\Commands;
 
 use App\Domain\Staff\Jobs\PurgeDeletedFileJob;
 use App\Domain\Staff\Models\PendingFileDeletion;
+use App\Domain\Staff\Support\SafeReporting;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Bus;
 use Throwable;
@@ -253,22 +254,14 @@ final class SweepPendingFileDeletionsCommand extends Command
      * would end the run on its first failed receipt, leaving everything behind
      * that receipt unreachable for as long as the condition lasts.
      *
-     * Deliberately a near-copy of FileLifecycleService::reportWithoutThrowing(),
-     * whose docblock records the same hazard for the same reason. They are eight
-     * lines each and duplicated rather than shared, because extracting a helper
-     * would mean editing that service — well-reviewed, unchanged on this branch,
-     * and carrying no behavioural gain from the move. A third caller is the
-     * point at which it should become one thing; noted for T16 rather than done
-     * unilaterally here.
+     * The body moved to SafeReporting in P1-T17, when a third caller appeared
+     * and hit the same hazard, exactly as the note that used to sit here said it
+     * would. Kept as a named method because the reason it is safe to swallow is
+     * specific to this command: the receipt is left unstamped and swept again
+     * next run, and the exit code still says the page did not fully hand off.
      */
     private function reportWithoutThrowing(Throwable $exception): void
     {
-        try {
-            report($exception);
-        } catch (Throwable) {
-            // Nothing safer to do: the receipt is already unstamped and will be
-            // attempted again on the next run, and the run's exit code still
-            // says the page did not fully hand off.
-        }
+        SafeReporting::report($exception);
     }
 }

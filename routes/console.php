@@ -76,9 +76,12 @@ Artisan::command('inspire', function () {
  * throws stops the command before it ever starts, so Spatie never reaches the
  * catch that dispatches BackupHasFailed: the run failed and nobody was told.
  *
- * It now runs on CommandStarting, which fires for all three of these schedules
- * — each shells out to a fresh `php artisan` — as well as for manual runs and
- * Artisan::call(). See RefuseBackupWhenDestinationIsUnavailable.
+ * It now lives on the commands themselves — GuardedBackupCommand,
+ * GuardedMonitorCommand and GuardedCleanupCommand, which carry Spatie's
+ * signatures and replace its commands by name. The scheduler shells out to a
+ * fresh `php artisan`, so these three schedules resolve exactly the same
+ * guarded classes a hand-typed run does, and each raises its own failure
+ * notification. See RefusesAnUnavailableDestination.
  */
 
 Schedule::command('backup:run')
