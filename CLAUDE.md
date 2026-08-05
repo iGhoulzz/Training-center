@@ -41,7 +41,7 @@ You do not merge your own work without Codex's review.
 
 These are the rules that, when broken, are expensive to correct later:
 
-1. **Permission-based authorization only.** `$user->can('students.delete')`, never `$user->hasRole('admin')`. No `role` column on `users`.
+1. **Permission-based authorization only.** `$user->can('delete_student')`, never `$user->hasRole('admin')`. No `role` column on `users`. Permission names are Shield's `{action}_{model}`; see Permission names in `docs/ENGINEERING.md`.
 2. **No derived financial values stored.** Balances and totals are computed from source rows, always.
 3. **Money is `decimal(12,3)`.** Currency is LYD, which has three decimal places (1000 dirham to the dinar). Never float, never two decimals.
 4. **The activity log is append-only.** No delete path exists for any role, including super admin.

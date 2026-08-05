@@ -220,9 +220,21 @@ it('invalidates a session opened before the password hash changed', function (st
 |--------------------------------------------------------------------------
 */
 
-it('applies the session guard to every private file route', function () {
-    // Behavioural tests catch a route that loses the middleware today. This
-    // catches the third private-file route somebody adds next year without it.
+it('applies the session guard to both private file routes', function () {
+    /*
+     * WHAT THIS CATCHES, STATED HONESTLY (corrected in P1-T16).
+     *
+     * The comment here used to claim it caught "the third private-file route
+     * somebody adds next year without it". It cannot, and could never have:
+     * it iterates a hardcoded list of two names, so it protects the two routes
+     * that exist and has no way to discover a new one. Nothing in a route
+     * declaration marks it as serving a private file, so no runtime check can
+     * find one on its own.
+     *
+     * What actually makes a third route inherit the guard is the GROUP in
+     * routes/web.php. This pins that today's two routes carry it; the test
+     * below pins that the group is still what puts it there.
+     */
     foreach (['staff.certificates.download', 'staff.profiles.photo'] as $name) {
         $middleware = Route::getRoutes()->getByName($name)->gatherMiddleware();
 
@@ -233,6 +245,58 @@ it('applies the session guard to every private file route', function () {
             "{$name} does not carry the private-file session guard.",
         );
     }
+});
+
+it('keeps the guard on the route group, which is what a future route inherits', function () {
+    /*
+     * THE PROPERTY THAT ACTUALLY PROTECTS THE ROUTE NOBODY HAS WRITTEN YET.
+     *
+     * A refactor that deletes the group and applies the middleware to each
+     * route individually leaves every existing test green — both routes still
+     * carry it — while quietly removing the only thing that would have covered
+     * a third one. Declaring it once, on the group, is the difference between
+     * "these two are safe" and "private file routes are safe".
+     *
+     * Asserted against the source because the router flattens group middleware
+     * into each route and cannot say where it came from.
+     *
+     * TOLERANT OF EDITS THAT CHANGE NOTHING (tightened after review). A first
+     * version counted raw occurrences of the class name and matched one exact
+     * call string. Both fired on harmless changes — naming the class in a
+     * comment, or writing the equally idiomatic array form, which is what you
+     * are forced into the moment a second middleware joins the group. A guard
+     * that cries wolf on ordinary edits gets deleted by whoever it interrupts.
+     *
+     * So: comments stripped before counting, and the group matched by regex
+     * across both call forms.
+     */
+    $source = appSourceWithoutComments(base_path('routes/web.php'));
+
+    expect(substr_count($source, 'AuthenticatePrivateFileSession'))->toBe(
+        2,
+        'Expected exactly two mentions in the code of routes/web.php — the import '
+        .'and one group. More than that means the guard is being applied per '
+        .'route, so a route added outside the group would silently be unprotected.',
+    );
+
+    /*
+     * Matches Route::middleware(X::class) and Route::middleware([X::class, …]),
+     * each followed by ->group(.
+     *
+     * `(?:::|->)` because the call is STATIC on the facade. A first version of
+     * this regex only accepted `->middleware(` and so returned false against the
+     * unmodified file — it would have failed the build for the one shape the
+     * codebase actually uses. Caught by running the negative controls, which is
+     * the entire reason for having them.
+     */
+    $declaresGroup = preg_match(
+        '/Route(?:::|->)middleware\(\s*\[?[^)]*AuthenticatePrivateFileSession::class[^)]*\]?\s*\)\s*->group\(/',
+        $source,
+    ) === 1;
+
+    expect($declaresGroup)->toBeTrue(
+        'The private-file route group is gone; new routes no longer inherit the guard.',
+    );
 });
 
 it('sends an invalidated session to the panel login without depending on panel state', function () {

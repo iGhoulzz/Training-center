@@ -97,7 +97,9 @@ Filament's native authentication. No Breeze, Fortify, or Jetstream — Filament 
 
 Four roles, implemented with `spatie/laravel-permission` and Filament Shield.
 
-Authorization is **permission-based, never role-based, in code**. Always `$user->can('students.delete')`; never `$user->hasRole('admin')`. Role membership is data; adding a fifth role must not require a code change.
+Authorization is **permission-based, never role-based, in code**. Always `$user->can('delete_student')`; never `$user->hasRole('admin')`. Role membership is data; adding a fifth role must not require a code change.
+
+**Permission names are Shield's generated `{action}_{model}` form**, not the dot notation this section originally specified. `students.delete` matches nothing in the system; forcing it would have required overriding Shield's generator, which breaks on upgrade. `RolePermissionSeeder` is the authority. See Permission names in `docs/ENGINEERING.md`.
 
 **No `role` column exists on the `users` table.** Role assignment lives entirely in Spatie's pivot tables.
 
@@ -399,3 +401,54 @@ Recorded so these do not reappear as assumptions:
 - A mobile application
 - Public student self-registration
 - Student certificate template design, PDF generation, physical printing, or printer integration
+
+---
+
+## 13. Decisions carried out of phase 1
+
+Recorded at the close of phase 1 (P1-T16) from the end-of-phase review,
+`docs/reviews/2026-07-29-phase-1-review.md`. **The purpose is to stop settled
+questions being re-opened in later phases** — a different job from the review
+log, which records what was *found*. This records what was *decided*, and why.
+
+### Known limitation inherited by phase 4
+
+**Audited field names render untranslated.** `lang/en/activity.php` interpolates
+raw database column names and property keys into otherwise-translated lines, so
+a log entry shows its field names in English whatever the locale. Deferred rather
+than fixed because translating them needs an `activity.field.*` group covering
+every audited column and every explicit property key, and those values are
+database identifiers whose Arabic wording is a translator's decision, not a
+developer's.
+
+Deferring is safe *only* because phase 1's Arabic catalogue is deliberately
+empty: nothing is lost or misreported, the line simply renders in English inside
+a system that is entirely English. **Phase 4 must close this as part of the
+Arabic work, not after it.**
+
+### Settled, and not to be re-opened
+
+**File deletion does not join the backup pipeline's mutex.** Considered in P1-T15
+and rejected: sharing that lock would let a slow or stuck nightly backup hold
+file deletion off for hours, and it buys nothing, because ordinary purge jobs
+already run at arbitrary times including mid-archive. A test pins the separation
+so the decision cannot be silently reversed.
+
+**The backup destination rule is a separate failure domain, not a driver name.**
+Phase 1 originally forbade the `local` filesystem driver outright. That was a
+proxy for the real property — a backup must not share a fate with the thing it
+protects — and the proxy was wrong in both directions: it forbade a removable
+drive, which satisfies the property, while permitting a bucket hosted by the same
+provider as the VPS, which may not. `BackupConfiguration` enforces the property
+directly. See P1-T17.
+
+**Guards are split by what can change while the process runs.** Configuration
+errors are asserted at boot; facts about hardware and networks are asserted at the
+point of use, on the command that needs them. A boot-time check on removable media
+would let an unplugged drive take the whole application down — a backup mechanism
+able to halt the centre it protects. This applies to anything phase 2 adds that
+depends on an external service being reachable.
+
+**Escalation guards are enforced in Actions, never by overriding model write
+methods.** This cost five task rounds in phase 1; the reasoning lives in
+`docs/ENGINEERING.md` under "The write boundary" rather than being repeated here.
