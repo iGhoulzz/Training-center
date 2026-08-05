@@ -17,7 +17,7 @@ Artisan::command('inspire', function () {
 |
 | Three commands, in this order, every night:
 |
-|   backup:run      make the archive and ship it off-server
+|   backup:run      make the archive and write it to the backup destination
 |   backup:monitor  check the destination actually holds a recent, sane backup
 |   backup:clean    remove archives past the retention window
 |
@@ -64,6 +64,24 @@ Artisan::command('inspire', function () {
  * after the first. BackupConfigurationTest asserts the three resolve to one
  * identical mutex, so a typo here fails the build rather than silently giving
  * cleanup its own lock.
+ */
+
+/*
+ * THE DRIVE CHECK IS NOT WIRED HERE (P1-T17, review round 2).
+ *
+ * It lived on these three schedules as ->before() callbacks, and that was wrong
+ * twice over. A scheduler callback does not run for a hand-typed
+ * `php artisan backup:run` — including the drill docs/RESTORE.md prescribes, of
+ * unmounting the drive and expecting the command to fail. And a callback that
+ * throws stops the command before it ever starts, so Spatie never reaches the
+ * catch that dispatches BackupHasFailed: the run failed and nobody was told.
+ *
+ * It now lives on the commands themselves — GuardedBackupCommand,
+ * GuardedMonitorCommand and GuardedCleanupCommand, which carry Spatie's
+ * signatures and replace its commands by name. The scheduler shells out to a
+ * fresh `php artisan`, so these three schedules resolve exactly the same
+ * guarded classes a hand-typed run does, and each raises its own failure
+ * notification. See RefusesAnUnavailableDestination.
  */
 
 Schedule::command('backup:run')

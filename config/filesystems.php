@@ -129,7 +129,38 @@ return [
          * success and stores nothing, which is worse than no backup at all
          * because it is trusted. See BackupConfigurationTest.
          */
-        'backups' => [
+        /*
+         * TWO BACKUP DESTINATIONS, ONE SELECTED (P1-T17).
+         *
+         * The centre backs up to a removable drive today and may move to
+         * S3-compatible storage later. Both are defined; `backup.destination_disk`
+         * chooses. Nothing else in the pipeline knows which is in use — the
+         * scheduler, the monitor, retention, encryption and the deletion sweep
+         * all address a DISK, which is the whole reason this is a config change
+         * rather than a rewrite.
+         *
+         * BOTH THROW. The application disks are configured the other way round
+         * on purpose; here a write that fails silently produces a nightly run
+         * that reports success and stores nothing, which is worse than no backup
+         * because it is trusted.
+         */
+        'backups_local' => [
+            'driver' => 'local',
+
+            /*
+             * The mount point of the removable drive — /mnt/backups or similar.
+             *
+             * The default is inside the project so a developer machine works out
+             * of the box, and BackupConfiguration REFUSES exactly that in
+             * production: an archive on the disk it protects dies with it. The
+             * default is therefore usable locally and impossible to ship.
+             */
+            'root' => env('BACKUP_LOCAL_PATH', storage_path('app/backups')),
+            'throw' => true,
+            'report' => true,
+        ],
+
+        'backups_s3' => [
             'driver' => 's3',
             'key' => env('BACKUP_S3_KEY'),
             'secret' => env('BACKUP_S3_SECRET'),

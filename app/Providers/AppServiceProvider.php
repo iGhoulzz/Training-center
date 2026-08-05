@@ -12,6 +12,10 @@ use App\Domain\Enrollment\Policies\BatchPolicy;
 use App\Domain\Enrollment\Policies\CoursePolicy;
 use App\Domain\Enrollment\Policies\EnrollmentPolicy;
 use App\Domain\Enrollment\Policies\StudentPolicy;
+use App\Domain\Staff\Console\GuardedBackupCommand;
+use App\Domain\Staff\Console\GuardedCleanupCommand;
+use App\Domain\Staff\Console\GuardedListCommand;
+use App\Domain\Staff\Console\GuardedMonitorCommand;
 use App\Domain\Staff\Models\StaffCertificate;
 use App\Domain\Staff\Models\StaffProfile;
 use App\Domain\Staff\Policies\ActivityPolicy;
@@ -53,14 +57,45 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         /*
-         * Refuse to run production without working off-server backups.
+         * Refuse to run production without a usable backup configuration.
          *
          * Placed first so it fires before anything else has a chance to succeed:
-         * an install missing its bucket credentials or archive password looks
-         * completely healthy until a restore is needed, and that is exactly when
-         * discovering it is worst. See BackupConfiguration.
+         * an install missing its destination or archive password looks completely
+         * healthy until a restore is needed, and that is exactly when discovering
+         * it is worst.
+         *
+         * CONFIGURATION ONLY (P1-T17). Whether the removable drive is actually
+         * plugged in is deliberately NOT checked here — this runs for every
+         * request and every artisan command, so an absent drive would take the
+         * centre offline to protect data nobody could then reach.
+         *
+         * That check lives on the four backup commands registered just below, so
+         * it applies however they are started — by the scheduler, by hand, or
+         * through Artisan::call(). See BackupConfiguration.
          */
         BackupConfiguration::assertReadyForProduction($this->app->environment());
+
+        /*
+         * The transient half of that guard, on the commands themselves.
+         *
+         * These carry Spatie's signatures — `backup:run`, `backup:monitor`,
+         * `backup:clean` — so registering them after the package's provider
+         * replaces its commands by name, and every caller gets the check:
+         * scheduled, hand-typed, queued, or Artisan::call().
+         *
+         * A scheduler ->before() callback, which is where this started, guarded
+         * only the scheduler and — by aborting before the command began —
+         * suppressed the very notification that says the backup did not happen.
+         * See RefusesAnUnavailableDestination.
+         */
+        $this->commands([
+            GuardedBackupCommand::class,
+            GuardedMonitorCommand::class,
+            GuardedCleanupCommand::class,
+            // Warns rather than refuses — see its docblock. Listing what
+            // survived is what somebody needs during an incident.
+            GuardedListCommand::class,
+        ]);
 
         /*
          * These policies live outside app/Policies, so Laravel's

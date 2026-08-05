@@ -957,6 +957,203 @@ sound; the evidence for them was not.**
 
 ---
 
+## P1-T17 — the backup destination (closes G3-U1)
+
+G3-U1 asked what a blank `BACKUP_S3_ENDPOINT` does. Answering it surfaced a
+question the review could not settle on its own — whether this centre wants a
+bucket at all — and the answer was **a removable drive, with the S3 path kept
+ready**. That turned a disposition into a task: `BACKUP_DISK` now selects
+`backups_local` (default) or `backups_s3`, and the endpoint is required whenever
+S3 is the destination, which is the guard addition U1 was deciding between.
+
+**The rule that changed.** `config/backup.php` said "off-server only, `local` is
+deliberately absent". The property being protected was never the driver — it is
+that **a backup must not share a failure domain with the thing it protects**. A
+removable drive satisfies that and uses the local driver, so the old name-based
+check forbade exactly what the centre asked for. The guard now enforces the
+property: a destination path inside the project is refused.
+
+### Codex round 1 — four blockers, all fixed
+
+| # | Finding | What was actually wrong |
+|---|---|---|
+| 1 | High — an unmounted drive passed validation | Existence and writability cannot see it. `/mnt/backups` is an ordinary writable directory when nothing is mounted on it, so archives land on the server's own disk and `backup:monitor` reports them healthy because they are real files of the right age. Fixed with filesystem **device identity** plus a **volume marker** file, both reached through an injectable `BackupVolume`. |
+| 2 | High — losing the drive could take the application down | The mounted/writable checks ran in `AppServiceProvider::boot()`, which fires for every request and every artisan command. Unplugging the USB stick would have stopped `/admin` loading — a backup mechanism able to halt the centre it protects. Static facts stay at boot; transient hardware facts moved to `assertDestinationReady()`, wired via `->before()` on the three backup commands. |
+| 3 | High — containment could be bypassed | The check compared unresolved strings, so a path containing `..` resolving to the project directory was accepted. Both sides now go through `realpath()`, separators normalised, trailing separator so a sibling is not read as a descendant, case-insensitive on Windows. |
+| 4 | Medium — the runbook contradicted local backups | `docs/RESTORE.md` described S3 as the only destination. It now branches on `BACKUP_DISK` and states the invariant as a failure domain, not a technology. |
+
+### Two tests that certified the wrong thing
+
+Worth recording, because both are the same failure the T15 rounds kept
+producing — **a test that cannot distinguish the dangerous case from the safe
+one**:
+
+- The **positive control for the device check** used `sys_get_temp_dir()`.
+  Measured on this machine, that path and `base_path()` report the *same*
+  device (`470502510`). The control asserting "a different filesystem is
+  accepted" was in fact asserting that the *same* filesystem is accepted — it
+  certified precisely the case the check exists to refuse.
+
+- The **`..` containment sample** used `base_path('storage/../')`, which still
+  begins with the project path textually. The naive prefix check caught it
+  unaided, so deleting `realpath()` broke nothing and the test proved nothing
+  about resolution. Mutation testing caught this; reading the test did not. The
+  sample now leaves the project directory and comes back to it, and a second
+  test links into the project — falling back to a **junction** where Windows
+  refuses a symlink, rather than skipping and silently testing nothing.
+
+### Mutation evidence
+
+Six mutations, each failing the suite:
+
+| Mutation | Result |
+|---|---|
+| Device comparison removed (unmounted drive accepted) | FAILED 59/60 |
+| Volume marker check removed | FAILED 59/60 |
+| `assertDestinationReady()` neutered | FAILED 55/60 |
+| `->before()` removed from `backup:run` | FAILED 59/60 |
+| Containment compares unresolved strings | FAILED 59/60 |
+| Trailing separator dropped (sibling matches) | FAILED 59/60 |
+
+The last two are the ones that survived the first attempt.
+
+**Gates on `p1/t17-local-backup-destination`, real output:**
+
+| Gate | Result |
+|---|---|
+| `php artisan test` | **997 passed**, 0 failed, 2665 assertions *(round 1; see round 2 below for the current figure)* |
+| `vendor/bin/pint --test` | passed |
+| `vendor/bin/phpstan analyse` | 0 errors |
+
+### Codex round 2 — the fix for blocker 2 was in the wrong place
+
+Moving the transient checks off boot was right. Putting them on the scheduler
+was not, and the review caught two consequences that compound:
+
+| # | Finding | What was actually wrong |
+|---|---|---|
+| 1 | High — manual commands bypassed the check | `->before()` fires for the scheduler and nothing else. `php artisan backup:run` typed by hand ran unguarded — **including the drill this very document prescribes**, of unmounting the drive and expecting failure. It would have written the archive into the empty mount point. |
+| 2 | High — the callbacks suppressed the alert | A `->before()` that throws stops the command before it starts, so Spatie never reaches the `catch` that dispatches `BackupHasFailed`. The scheduler reports through the exception handler: a log line, not the configured mail. `backup:clean` is worse — its own catch does not notify at all, so nothing would ever have been sent. |
+| 3 | Medium — docs described the superseded design | `RESTORE.md` and `.env.example` still said mount availability was checked at boot, and `BACKUP_VOLUME_MARKER` was used by config and named in the runbook but absent from `.env.example`. |
+
+**A claim that was false in two directions at once.** The docblock on
+`assertDestinationReady()` said a failure would surface because "backup:monitor
+then reports the destination unhealthy the following day". Nothing was ever
+dispatched, *and* a monitor reading an unmounted mount point can report stale
+archives as healthy. The sentence described a recovery path that did not exist
+in either half.
+
+**A dead end worth recording.** `CommandStarting` looked like the obvious
+boundary and a probe confirmed it fires for manual runs, `Artisan::call()` and
+the scheduler's subprocess. It was rejected on discovering that Laravel
+deliberately does **not** dispatch it when `runningUnitTests()` is true
+(`Foundation\Console\Kernel::__construct`) — so not one test could have observed
+the guard. That is precisely the "test that cannot fail" pattern this review
+keeps finding, and it would have shipped as green.
+
+**The boundary that works** is three subclasses carrying Spatie's signatures,
+registered after its provider so they replace its commands by name. Every caller
+goes through them, each returns a real `FAILURE`, prints why, and raises its own
+configured notification. `backup:list` is deliberately left unguarded — it only
+reads, and its Reachable column is what an operator wants during an incident.
+
+### Round 2 evidence
+
+Eleven mutations, each failing the suite:
+
+| Mutation | Result |
+|---|---|
+| `backup:run` / `:monitor` / `:clean` stop checking (3 mutations) | FAILED 67, 69, 68 / 70 |
+| Guarded commands unregistered — package originals return | FAILED 63/70 |
+| Refusal no longer notifies anybody | FAILED 66/70 |
+| Refusal returns success instead of failing | FAILED 66/70 |
+| `--disable-notifications` ignored | FAILED 69/70 |
+| Monitor raises the wrong notification | FAILED 69/70 |
+| Device check, marker, `realpath()`, trailing separator (round 1, re-run) | all FAILED |
+
+And the drill itself, run as real commands outside the test kernel:
+
+| Command (with `BACKUP_LOCAL_PATH` pointing nowhere) | Result |
+|---|---|
+| `backup:run` | exit 1, `The backup destination is not ready:` |
+| `backup:monitor` | exit 1, refused |
+| `backup:clean` | exit 1, refused |
+| `backup:list` | exit 0, Reachable ❌ — correctly still usable |
+| `BACKUP_DISK=backups_s3 backup:clean` | reaches "Starting cleanup", fails on credentials — the guard is conditional, not a blanket refusal |
+
+**Gates:** Pint clean, PHPStan 0 errors, 1006 passed / 2685 assertions *(round 2; superseded by round 3 below)*.
+
+### Codex round 3 — the error path, and a display that lied
+
+| # | Finding | What was actually wrong |
+|---|---|---|
+| 1 | High — `report()` could suppress the backup alert | A bare `report()` sat ahead of the notification dispatch. Laravel's handler may throw when its logging transport is unavailable, and **the two failures are correlated, not independent**: a full disk breaks the log channel and the backup destination together. The backup would have failed with nothing sent to `BACKUP_ALERT_EMAIL` — the defect round 2 closed, reintroduced through the error path. |
+| 2 | Medium — `backup:list` called an unmounted drive reachable | Spatie's Reachable column answers "could I list the configured directory", which an empty mount point on the server satisfies. |
+| 3 | Low — three comments described superseded implementations | `routes/console.php` named `CommandStarting` and a deleted class; `AppServiceProvider` said the check ran only before scheduled backups; `RESTORE.md` still described the boot-time check. |
+
+**Third time for the same hazard, and the comments predicted it.**
+`FileLifecycleService` and `SweepPendingFileDeletionsCommand` each carried a
+near-copy of `reportWithoutThrowing()`, and the second one's docblock said: *"A
+third caller is the point at which it should become one thing."* This was the
+third caller, and it arrived having made the mistake rather than reused the fix.
+The body is now `SafeReporting`; both existing callers delegate to it. The
+notification is also dispatched first, so a future bare `report()` costs a log
+line rather than the alert.
+
+**The display finding is worse than it was reported.** Measured against a plain
+existing directory standing in for an unmounted mount point:
+
+| Destination state | What `backup:list` showed |
+|---|---|
+| Empty directory, drive absent | Reachable ✅ Healthy ❌ 0 backups |
+| One stale archive from an earlier unguarded run | **Reachable ✅ Healthy ✅ 1 backup** |
+
+The server's own disk certifying itself as a healthy backup, to somebody
+deciding whether they can afford to rebuild the machine. The earlier round's
+probe used a *nonexistent* path, which is the easy case — a reminder that a
+probe proves only the state it actually creates.
+
+`backup:list` now runs the volume checks and contradicts its own table. It still
+lists, still exits 0, and does not notify: a read-only inspection command that
+blocks or mails when things are broken is useless at the only moment it matters.
+
+**A message that was wrong because the caller set changed.** The guard's text
+ended "the command stopped without touching the destination" — true for the
+three that refuse, false for `backup:list`, which printed it directly under a
+listing it had carried on producing. Only the real run showed this. The
+exception now describes the destination only; each command states what it did.
+
+### Round 3 evidence
+
+Twelve mutations, each failing the suite:
+
+| Mutation | Result |
+|---|---|
+| Bare `report()` ahead of the alert (the reported defect) | FAILED 73/75 |
+| Throwing `report()` after the alert | FAILED 73/75 |
+| `SafeReporting` stops swallowing | FAILED 73/75 |
+| `backup:list` no longer contradicts the column | FAILED 74/75 |
+| Guarded list unregistered | FAILED 73/75 |
+| List refuses instead of warning | FAILED 74/75 |
+| List warns unconditionally (cries wolf) | FAILED 73/75 |
+| Registration, per-command alerts, `--disable-notifications`, exit code (5, re-run) | all FAILED |
+
+And the real commands, against an **existing** directory rather than a missing
+path:
+
+| Command | Result |
+|---|---|
+| `backup:list` | table shown, exit 0, warning contradicts the ✅ |
+| `backup:run` | exit 1, refused, alert dispatched |
+
+**Gates:** Pint clean, PHPStan 0 errors, **1011 passed / 2696 assertions**.
+
+**Note for the operator, not enforceable in code:** a drive that never leaves
+the building survives a dead server and not a fire. `RESTORE.md` says to rotate
+two and keep one elsewhere.
+
+---
+
 ## Where the review stands
 
 **Every fix-now finding across all three groups is now closed.** Group 1 (6),
@@ -968,7 +1165,7 @@ document.
 
 | # | Claim | Experiment | Result |
 |---|---|---|---|
-| U1 | Whether a blank `BACKUP_S3_ENDPOINT` — which `.env.example` ships — fails loudly or silently retargets to AWS S3, sending a non-AWS deployment's archives to an unintended host | With `APP_ENV=production` and a full non-AWS `BACKUP_S3_*` set except a blank endpoint, run `backup:run` and record whether it throws at client construction, on upload, or succeeds against the wrong host | Open — decides whether this is a documentation fix or a guard addition |
+| U1 | Whether a blank `BACKUP_S3_ENDPOINT` — which `.env.example` ships — fails loudly or silently retargets to AWS S3, sending a non-AWS deployment's archives to an unintended host | With `APP_ENV=production` and a full non-AWS `BACKUP_S3_*` set except a blank endpoint, run `backup:run` and record whether it throws at client construction, on upload, or succeeds against the wrong host | **Closed by P1-T17.** It fails silently — the adapter builds with no endpoint and no exception. The guard now requires an endpoint whenever S3 is the destination, which was the "guard addition" branch of this decision. See the T17 section above. |
 | U2 | Whether Shield's role form actually renders the twelve `*_activity` checkboxes, and what saving one does | Drive `EditRole` via Livewire, assert the options contain `delete_activity`, submit it, and record whether it throws `PermissionDoesNotExist`, drops the name, or creates the permission | Open — resolve while fixing L5 |
 | U3 | Whether `properties.causer_name` is in fact written for a `causedByAnonymous()` entry | One assertion in the existing system-write test: the property must be null | Open — will be settled by M2's regression test, which must fail first |
 
@@ -982,7 +1179,10 @@ Action's transaction. Logging is on the model-event boundary, so ordinary Eloque
 Filament modal writes, commands and seeders all log identically. The backup boot
 guard is invoked as the first statement of `boot()`. `local` is absent from the
 destination disks, the three scheduled commands share one mutex, and nothing secret
-enters the archive. The literal-key catalogue is complete: 161 keys, none
+enters the archive. *(Superseded in part by P1-T17: the local driver is now a
+permitted destination, because the rule is a separate failure domain rather than
+a driver name. The property is enforced by the guard instead of by the disk list
+— see the T17 section above.)* The literal-key catalogue is complete: 161 keys, none
 unresolved, none empty, none resolving to a group. There are no physical CSS
 properties and no hardcoded label literals anywhere in the repository today — L2
 and L3 are about what the detectors would let through next, not about anything
@@ -1047,7 +1247,7 @@ abilities offered on a log whose non-negotiable rule is that no such path exists
 The seeder never creates them, so the form advertises capabilities that cannot be
 granted.
 
-### G3-U1 — what does a blank S3 endpoint do? **Partially resolved: it fails silently.**
+### G3-U1 — what does a blank S3 endpoint do? **Resolved. It fails silently; closed by P1-T17.**
 
 `config/filesystems.php:138` is `'endpoint' => env('BACKUP_S3_ENDPOINT')` and
 `.env.example:77` ships the key blank. Constructing the disk with an empty

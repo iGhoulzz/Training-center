@@ -2,12 +2,22 @@
 
 declare(strict_types=1);
 
+use App\Domain\Staff\Console\GuardedBackupCommand;
+use App\Domain\Staff\Console\GuardedCleanupCommand;
+use App\Domain\Staff\Console\GuardedListCommand;
+use App\Domain\Staff\Console\GuardedMonitorCommand;
 use App\Domain\Staff\Support\BackupConfiguration;
+use App\Domain\Staff\Support\BackupVolume;
+use Illuminate\Console\Command;
 use Illuminate\Console\Scheduling\Event;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Console\Kernel;
+use Illuminate\Contracts\Debug\ExceptionHandler;
+use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Process;
 use Spatie\Backup\Notifications\Notifications\BackupHasFailedNotification;
+use Spatie\Backup\Notifications\Notifications\CleanupHasFailedNotification;
 use Spatie\Backup\Notifications\Notifications\UnhealthyBackupWasFoundNotification;
 use Spatie\Backup\Tasks\Monitor\HealthChecks\MaximumStorageInMegabytes;
 
@@ -97,43 +107,160 @@ it('does not sweep the whole project into the archive', function () {
 |--------------------------------------------------------------------------
 */
 
-it('writes backups off-server and nowhere else', function () {
+it('writes backups to exactly one selected destination', function () {
     /*
-     * THE ABSENCE OF 'local' IS THE ASSERTION.
+     * REWRITTEN FOR P1-T17, AND THE RULE IS NARROWED RATHER THAN DROPPED.
      *
-     * A backup on the same VPS as the application dies with it. Listing `local`
-     * alongside the remote disk would let a misconfigured deployment keep
-     * reporting success against the one destination that guarantees nothing.
+     * T13 asserted the absence of the string 'local', because at the time the
+     * only destination was S3 and `local` meant the application's own storage
+     * directory. That test was standing in for the real property: A BACKUP ON
+     * THE MACHINE IT PROTECTS DIES WITH IT.
+     *
+     * The centre now backs up to a removable drive, which satisfies that
+     * property while being a local-driver disk — so the name check would have
+     * forbidden the very thing being built. The property itself is asserted
+     * below and in the boot guard; here we only pin that exactly one
+     * destination is configured, and that it is the one selected.
      */
     $disks = config('backup.backup.destination.disks');
 
-    expect($disks)->toContain('backups')
-        ->and($disks)->not->toContain('local')
+    expect($disks)->toBe([config('backup.destination_disk')])
         ->and($disks)->toHaveCount(1);
 });
 
-it('points the backup disk at generic S3-compatible storage', function () {
-    // Every value from BACKUP_S3_*, with an explicit endpoint, so Backblaze,
-    // Wasabi, Spaces, Hetzner or MinIO all work without a code change.
-    $disk = config('filesystems.disks.backups');
+it('offers both a removable-drive and an S3 destination', function () {
+    /*
+     * The structure the centre asked for: a local destination now, with the S3
+     * one defined and ready rather than removed. Nothing in the pipeline — the
+     * scheduler, the monitor, retention, encryption, the sweep — knows which is
+     * selected, because spatie writes to a DISK.
+     */
+    expect(config('filesystems.disks.backups_local.driver'))->toBe('local')
+        ->and(config('filesystems.disks.backups_s3.driver'))->toBe('s3');
+});
+
+it('makes both destinations throw rather than fail silently', function () {
+    // The T13 property that does not change with the driver: a write that
+    // silently fails produces a run reporting success and storing nothing.
+    expect(config('filesystems.disks.backups_local.throw'))->toBeTrue()
+        ->and(config('filesystems.disks.backups_s3.throw'))->toBeTrue();
+});
+
+it('still demands the S3 credentials when S3 is the selected destination', function () {
+    /*
+     * The other driver's requirements did not go away; they became conditional.
+     * A deployment that switches BACKUP_DISK to S3 and forgets the bucket must
+     * still refuse to boot.
+     */
+    config([
+        'backup.destination_disk' => 'backups_s3',
+        'filesystems.disks.backups_s3.key' => 'k',
+        'filesystems.disks.backups_s3.secret' => 's',
+        'filesystems.disks.backups_s3.region' => 'r',
+        'filesystems.disks.backups_s3.bucket' => null,
+        'filesystems.disks.backups_s3.endpoint' => 'https://example.test',
+        'backup.backup.password' => 'a-password',
+    ]);
+
+    expect(fn () => BackupConfiguration::assertReadyForProduction('production'))
+        ->toThrow(RuntimeException::class);
+});
+
+it('demands an explicit S3 endpoint rather than silently meaning AWS', function () {
+    /*
+     * G3-U1, settled at last. A blank endpoint constructs without complaint and
+     * the SDK then resolves to a regional AWS host — so a Backblaze or Wasabi
+     * deployment ships its archives to AWS with credentials that will not
+     * authenticate, and nothing says so until a restore.
+     *
+     * Requiring it costs an AWS user one explicit line
+     * (https://s3.eu-west-1.amazonaws.com) and removes the silent case entirely.
+     */
+    config([
+        'backup.destination_disk' => 'backups_s3',
+        'filesystems.disks.backups_s3.key' => 'k',
+        'filesystems.disks.backups_s3.secret' => 's',
+        'filesystems.disks.backups_s3.region' => 'r',
+        'filesystems.disks.backups_s3.bucket' => 'b',
+        'filesystems.disks.backups_s3.endpoint' => '',
+        'backup.backup.password' => 'a-password',
+    ]);
+
+    expect(fn () => BackupConfiguration::assertReadyForProduction('production'))
+        ->toThrow(RuntimeException::class);
+});
+
+it('does not demand S3 credentials when the drive is the destination', function () {
+    /*
+     * The asymmetry that makes the feature work: a centre backing up to a USB
+     * drive has no bucket, and requiring one would refuse to boot a correctly
+     * configured install.
+     */
+    $mount = sys_get_temp_dir().DIRECTORY_SEPARATOR.'p1t17-mount';
+
+    if (! is_dir($mount)) {
+        mkdir($mount, 0777, true);
+    }
+
+    config([
+        'backup.destination_disk' => 'backups_local',
+        'filesystems.disks.backups_local.root' => $mount,
+        'filesystems.disks.backups_s3.key' => null,
+        'filesystems.disks.backups_s3.secret' => null,
+        'filesystems.disks.backups_s3.bucket' => null,
+        'filesystems.disks.backups_s3.region' => null,
+        'backup.backup.password' => 'a-password',
+    ]);
+
+    BackupConfiguration::assertReadyForProduction('production');
+
+    expect(true)->toBeTrue();
+});
+
+it('demands the archive password whichever destination is chosen', function () {
+    // Encryption is not a property of the destination. A USB drive left in a
+    // drawer is exactly the case where an unencrypted archive matters most.
+    $mount = sys_get_temp_dir().DIRECTORY_SEPARATOR.'p1t17-mount';
+
+    if (! is_dir($mount)) {
+        mkdir($mount, 0777, true);
+    }
+
+    config([
+        'backup.destination_disk' => 'backups_local',
+        'filesystems.disks.backups_local.root' => $mount,
+        'backup.backup.password' => null,
+    ]);
+
+    expect(fn () => BackupConfiguration::assertReadyForProduction('production'))
+        ->toThrow(RuntimeException::class);
+});
+
+it('keeps the S3 destination ready even while the drive is in use', function () {
+    /*
+     * Repointed by P1-T17 from `backups` to `backups_s3`. The disk did not
+     * change shape — every value still comes from BACKUP_S3_*, with an explicit
+     * endpoint so Backblaze, Wasabi, Spaces, Hetzner or MinIO all work without a
+     * code change — it simply has a name now, because there are two.
+     *
+     * Asserted even when it is NOT selected: "ready for S3 later" is the thing
+     * the centre asked for, and an unselected disk that quietly rots would make
+     * that false at the moment somebody needs it.
+     */
+    $disk = config('filesystems.disks.backups_s3');
 
     expect($disk['driver'])->toBe('s3')
         ->and($disk)->toHaveKeys(['key', 'secret', 'region', 'bucket', 'endpoint']);
 });
 
-it('makes the backup disk throw rather than fail silently', function () {
-    /*
-     * The opposite of the application disks, deliberately. A write that silently
-     * fails here produces a run that reports success and stores nothing — worse
-     * than no backup, because it is trusted.
-     */
-    expect(config('filesystems.disks.backups.throw'))->toBeTrue();
-});
-
 it('monitors the disk backups are actually written to', function () {
-    // The package ships 'local' here, which would health-check a disk this
-    // application never writes to and report healthy forever.
-    expect(config('backup.monitor_backups.0.disks'))->toBe(['backups']);
+    /*
+     * The package ships 'local' here, which would health-check a disk this
+     * application never writes to and report healthy forever. Now derived from
+     * the selected destination rather than named, so switching BACKUP_DISK
+     * cannot leave the monitor watching the disk nobody writes to.
+     */
+    expect(config('backup.monitor_backups.0.disks'))->toBe([config('backup.destination_disk')]);
 });
 
 /*
@@ -362,15 +489,593 @@ it('requires a region before production may boot', function () {
     // The S3 client cannot sign a request without one, so an unset region fails
     // every upload at 01:30 rather than at boot.
     config([
-        'filesystems.disks.backups.key' => 'a-key',
-        'filesystems.disks.backups.secret' => 'a-secret',
-        'filesystems.disks.backups.bucket' => 'a-bucket',
-        'filesystems.disks.backups.region' => null,
+        'backup.destination_disk' => 'backups_s3',
+        'filesystems.disks.backups_s3.key' => 'a-key',
+        'filesystems.disks.backups_s3.secret' => 'a-secret',
+        'filesystems.disks.backups_s3.bucket' => 'a-bucket',
+        'filesystems.disks.backups_s3.region' => null,
+        'filesystems.disks.backups_s3.endpoint' => 'https://example.test',
         'backup.backup.password' => 'a-long-archive-password',
     ]);
 
     BackupConfiguration::assertReadyForProduction('production');
-})->throws(RuntimeException::class, 'filesystems.disks.backups.region');
+})->throws(RuntimeException::class, 'region');
+
+/*
+|--------------------------------------------------------------------------
+| The removable drive (P1-T17, after review)
+|--------------------------------------------------------------------------
+|
+| Split in two on purpose, and the split is the point.
+|
+| BOOT-TIME checks are things wrong in .env that no amount of waiting fixes.
+| RUNTIME checks are facts about hardware. The first version asserted both at
+| boot, so unplugging the USB stick would have stopped /admin from loading — a
+| backup mechanism able to halt the centre it protects.
+|
+| The volume itself is reached through BackupVolume, which the suite substitutes.
+| A test cannot mount a USB stick, and the first attempt's "positive control"
+| used sys_get_temp_dir() — which on the machine it ran on is THE SAME DEVICE as
+| the project, so the test certified the dangerous case as safe.
+*/
+
+/** A BackupVolume that answers whatever the test needs. */
+function fakeVolume(array $answers = []): void
+{
+    $volume = new class($answers) extends BackupVolume
+    {
+        /** @param array<string, mixed> $answers */
+        public function __construct(private array $answers) {}
+
+        public function deviceIdFor(string $path): ?int
+        {
+            $isApplication = str_starts_with(
+                str_replace('\\', '/', $path),
+                str_replace('\\', '/', base_path()),
+            );
+
+            return $isApplication
+                ? ($this->answers['applicationDevice'] ?? 1)
+                : ($this->answers['destinationDevice'] ?? 2);
+        }
+
+        public function isDirectory(string $path): bool
+        {
+            return $this->answers['isDirectory'] ?? true;
+        }
+
+        public function isWritable(string $path): bool
+        {
+            return $this->answers['isWritable'] ?? true;
+        }
+
+        public function hasMarker(string $path, string $marker): bool
+        {
+            return $this->answers['hasMarker'] ?? true;
+        }
+    };
+
+    app()->instance(BackupVolume::class, $volume);
+}
+
+/** Point the configuration at a drive, with everything else valid. */
+function useDrive(string $root = '/mnt/backups'): void
+{
+    config([
+        'backup.destination_disk' => 'backups_local',
+        'filesystems.disks.backups_local.root' => $root,
+        'backup.volume_marker' => '.training-center-backup-volume',
+        'backup.backup.password' => 'a-long-archive-password',
+    ]);
+}
+
+/*
+| Boot: only what .env can be wrong about
+*/
+
+it('refuses to boot when the drive path is inside the application', function () {
+    useDrive(storage_path('app'));
+
+    expect(fn () => BackupConfiguration::assertReadyForProduction('production'))
+        ->toThrow(RuntimeException::class, 'inside the application itself');
+});
+
+it('refuses a drive path that only reaches the application through ..', function () {
+    /*
+     * THE BYPASS THE REVIEW FOUND, BUILT SO IT ACTUALLY BYPASSES.
+     *
+     * A first version used base_path('storage/../'), which the naive prefix
+     * check already caught — the string still begins with the project path, so
+     * deleting realpath() broke nothing and the test proved nothing. Mutation
+     * testing said so.
+     *
+     * This one leaves the project directory textually and comes back:
+     *
+     *   …/worktrees/../worktrees/P1-T17/storage
+     *
+     * The string does not begin with …/worktrees/P1-T17/, so only resolving it
+     * reveals that it lands inside the application. Every segment exists, which
+     * realpath() requires.
+     */
+    $parent = dirname(base_path());
+
+    useDrive($parent.'/../'.basename($parent).'/'.basename(base_path()).'/storage');
+
+    expect(fn () => BackupConfiguration::assertReadyForProduction('production'))
+        ->toThrow(RuntimeException::class, 'inside the application itself');
+});
+
+/**
+ * Link $link to $target, however this OS is willing to.
+ *
+ * PHP's symlink() needs a privilege on Windows that a normal account does not
+ * have, but a junction does the same job for a directory and realpath() resolves
+ * it identically. Without this fallback the symlink case below skips on every
+ * Windows machine — which is how a test stops testing anything without ever
+ * going red.
+ */
+function linkDirectory(string $target, string $link): bool
+{
+    if (@symlink($target, $link)) {
+        return true;
+    }
+
+    if (DIRECTORY_SEPARATOR !== '\\') {
+        return false;
+    }
+
+    $windowsTarget = str_replace('/', '\\', $target);
+    $windowsLink = str_replace('/', '\\', $link);
+
+    @exec(sprintf('mklink /J "%s" "%s" 2>nul', $windowsLink, $windowsTarget));
+
+    return is_dir($link);
+}
+
+it('refuses a link that points into the application', function () {
+    /*
+     * The other shape of the containment bypass, and the one an operator is most
+     * likely to create by accident: /mnt/backups is a link, and what it points
+     * at is inside the project. Nothing in the string it is configured with says
+     * so — only resolving it does.
+     */
+    $link = sys_get_temp_dir().DIRECTORY_SEPARATOR.'tc-backup-link-'.uniqid();
+
+    if (! linkDirectory(base_path('storage'), $link)) {
+        test()->markTestSkipped('This OS permitted neither a symlink nor a junction.');
+    }
+
+    try {
+        useDrive($link);
+
+        expect(fn () => BackupConfiguration::assertReadyForProduction('production'))
+            ->toThrow(RuntimeException::class, 'inside the application itself');
+    } finally {
+        // Removes the link, never what it points at.
+        is_link($link) ? @unlink($link) : @rmdir($link);
+    }
+});
+
+it('refuses the plain .. form too', function () {
+    // The simpler shape, kept because it is what somebody would actually type.
+    useDrive(base_path('storage/../'));
+
+    expect(fn () => BackupConfiguration::assertReadyForProduction('production'))
+        ->toThrow(RuntimeException::class, 'inside the application itself');
+});
+
+it('refuses the project root itself', function () {
+    useDrive(base_path());
+
+    expect(fn () => BackupConfiguration::assertReadyForProduction('production'))
+        ->toThrow(RuntimeException::class, 'inside the application itself');
+});
+
+it('accepts a sibling directory whose name merely starts the same way', function () {
+    /*
+     * The over-broadening control: /…/P1-T17-backups is NOT inside /…/P1-T17,
+     * and a prefix comparison without a trailing separator would say it is.
+     */
+    useDrive(base_path().'-backups');
+
+    BackupConfiguration::assertReadyForProduction('production');
+
+    expect(true)->toBeTrue();
+});
+
+it('does not check whether the drive is mounted at boot', function () {
+    /*
+     * THE FINDING THAT MATTERS MOST. If this throws, unplugging the USB stick
+     * stops /admin from loading, blocks every artisan command, and takes the
+     * centre offline to protect data nobody can reach anyway.
+     */
+    useDrive('/mnt/definitely-not-mounted-'.uniqid());
+
+    BackupConfiguration::assertReadyForProduction('production');
+
+    expect(true)->toBeTrue();
+});
+
+/*
+| Runtime: the pipeline refuses, the application keeps serving
+*/
+
+it('refuses to back up onto the application own filesystem', function () {
+    /*
+     * The unmounted-drive case, and the one existence and writability cannot
+     * see: /mnt/backups is an ordinary writable directory when nothing is
+     * mounted on it, and archives written there die with the server while
+     * backup:monitor reports them healthy.
+     */
+    useDrive();
+    fakeVolume(['applicationDevice' => 7, 'destinationDevice' => 7]);
+
+    expect(fn () => BackupConfiguration::assertDestinationReady())
+        ->toThrow(RuntimeException::class, 'the drive is not mounted');
+});
+
+it('backs up to a drive on its own filesystem', function () {
+    // The positive control, and it is now a control: a DIFFERENT device.
+    useDrive();
+    fakeVolume(['applicationDevice' => 7, 'destinationDevice' => 9]);
+
+    BackupConfiguration::assertDestinationReady();
+
+    expect(true)->toBeTrue();
+});
+
+it('refuses a mount point that does not exist', function () {
+    useDrive();
+    fakeVolume(['isDirectory' => false]);
+
+    expect(fn () => BackupConfiguration::assertDestinationReady())
+        ->toThrow(RuntimeException::class, 'does not exist');
+});
+
+it('refuses a drive that was never prepared for these backups', function () {
+    /*
+     * Device identity proves SOME filesystem is mounted, not that it is the
+     * right one. Without the marker, rotating in an unprepared drive quietly
+     * starts filling it with the centre's records.
+     */
+    useDrive();
+    fakeVolume(['hasMarker' => false]);
+
+    expect(fn () => BackupConfiguration::assertDestinationReady())
+        ->toThrow(RuntimeException::class, 'volume marker');
+});
+
+it('skips the marker check when the centre has switched it off', function () {
+    // The control for the marker: an empty setting disables it rather than
+    // failing every night.
+    useDrive();
+    config(['backup.volume_marker' => '']);
+    fakeVolume(['hasMarker' => false]);
+
+    BackupConfiguration::assertDestinationReady();
+
+    expect(true)->toBeTrue();
+});
+
+it('refuses a drive it cannot write to', function () {
+    useDrive();
+    fakeVolume(['isWritable' => false]);
+
+    expect(fn () => BackupConfiguration::assertDestinationReady())
+        ->toThrow(RuntimeException::class, 'not writable');
+});
+
+it('checks nothing about the volume when S3 is the destination', function () {
+    // S3 reachability needs a network call, and a failed upload already fails
+    // the run loudly. Asserting anything here would be theatre.
+    config(['backup.destination_disk' => 'backups_s3']);
+
+    BackupConfiguration::assertDestinationReady();
+
+    expect(true)->toBeTrue();
+});
+
+/*
+| The command boundary (P1-T17, review round 2)
+|
+| The check used to hang off ->before() on the three schedules. That guarded the
+| scheduler and nothing else: a hand-typed `php artisan backup:run` walked past
+| it, including the drill RESTORE.md prescribes. Worse, a ->before() that throws
+| stops the command before Spatie's catch runs, so the failure notification was
+| never sent — the backup did not happen and nobody was told.
+|
+| CommandStarting was the next attempt and is worth recording as a dead end:
+| Laravel does not dispatch it when runningUnitTests() is true, so not one of
+| these tests could have observed it. A guard the suite cannot fail is the exact
+| failure mode this project keeps paying for.
+|
+| The check is now on the commands themselves, which every caller goes through.
+| These tests assert BEHAVIOUR at that boundary — the command fails AND the
+| configured notification goes out — never that a callback exists.
+*/
+
+/** Run a guarded command with the drive out, and return its exit code. */
+function refusedBackupCommand(string $command, array $parameters = []): int
+{
+    useDrive();
+    fakeVolume(['isDirectory' => false]);
+
+    return Artisan::call($command, $parameters);
+}
+
+it('refuses a manually run backup and raises the backup-failed alert', function () {
+    /*
+     * THE CASE THE SCHEDULER CALLBACK MISSED ENTIRELY. RESTORE.md tells the
+     * operator to unmount the drive, run this exact command and watch it fail;
+     * before this boundary existed it would have succeeded, writing the archive
+     * into the empty mount point on the server.
+     */
+    Notification::fake();
+
+    expect(refusedBackupCommand('backup:run'))->toBe(Command::FAILURE);
+
+    Notification::assertSentTimes(BackupHasFailedNotification::class, 1);
+});
+
+it('refuses a manually run monitor and raises the unhealthy-backup alert', function () {
+    // Unreachable backups ARE unhealthy, so this is the honest notification —
+    // and the one an operator already has filters for.
+    Notification::fake();
+
+    expect(refusedBackupCommand('backup:monitor'))->toBe(Command::FAILURE);
+
+    Notification::assertSentTimes(UnhealthyBackupWasFoundNotification::class, 1);
+});
+
+it('refuses a manually run cleanup and raises the cleanup-failed alert', function () {
+    /*
+     * Cleanup is the most dangerous of the three to let through: against an
+     * empty mount point it evaluates retention over the wrong directory. And
+     * Spatie's own catch does not notify here at all — it returns FAILURE
+     * silently — so without this the only signal is an exit code nobody reads.
+     */
+    Notification::fake();
+
+    expect(refusedBackupCommand('backup:clean'))->toBe(Command::FAILURE);
+
+    Notification::assertSentTimes(CleanupHasFailedNotification::class, 1);
+});
+
+it('does not collapse the three commands onto one alert', function () {
+    /*
+     * The control for the per-command event: sending BackupHasFailed for
+     * everything would satisfy "a notification went out" while telling the
+     * operator the wrong thing about which part of the pipeline stopped.
+     */
+    Notification::fake();
+
+    refusedBackupCommand('backup:clean');
+
+    Notification::assertSentTimes(CleanupHasFailedNotification::class, 1);
+    Notification::assertSentTimes(BackupHasFailedNotification::class, 0);
+    Notification::assertSentTimes(UnhealthyBackupWasFoundNotification::class, 0);
+});
+
+it('says why it refused, rather than failing blankly', function () {
+    // An exit code alone sends somebody to the source. The reason has to reach
+    // whoever typed the command.
+    Notification::fake();
+
+    refusedBackupCommand('backup:run');
+
+    expect(str_contains(Artisan::output(), 'does not exist'))->toBeTrue(
+        'The refusal gave the operator no reason.',
+    );
+});
+
+it('still raises the alert when the log channel is down too', function () {
+    /*
+     * THE CORRELATED FAILURE, AND THE REASON ORDER MATTERS HERE.
+     *
+     * Laravel's exception handler may throw while reporting — a full disk takes
+     * down the logging transport. That is not an independent coincidence: a full
+     * disk is also one of the things that breaks the backup destination, so the
+     * unlucky combination is the LIKELY one.
+     *
+     * A bare report() sat ahead of the notification in the first version of this
+     * boundary. With the log channel gone it threw, the event was never
+     * dispatched, and BACKUP_ALERT_EMAIL got nothing — the exact alerting defect
+     * this guard exists to close, reintroduced through the error path.
+     *
+     * This is the third time this project has been bitten by report() throwing.
+     * See SafeReporting.
+     */
+    Notification::fake();
+
+    $handler = Mockery::mock(ExceptionHandler::class);
+    $handler->shouldReceive('report')->andThrow(new RuntimeException('the log channel is gone'));
+    $handler->shouldIgnoreMissing();
+    app()->instance(ExceptionHandler::class, $handler);
+
+    expect(refusedBackupCommand('backup:run'))->toBe(Command::FAILURE);
+
+    Notification::assertSentTimes(BackupHasFailedNotification::class, 1);
+});
+
+it('still raises the right alert per command when logging is down', function () {
+    // The other two go through the same trait, so a fix applied to one of them
+    // only would pass the test above and leave these silent.
+    Notification::fake();
+
+    $handler = Mockery::mock(ExceptionHandler::class);
+    $handler->shouldReceive('report')->andThrow(new RuntimeException('the log channel is gone'));
+    $handler->shouldIgnoreMissing();
+    app()->instance(ExceptionHandler::class, $handler);
+
+    expect(refusedBackupCommand('backup:monitor'))->toBe(Command::FAILURE);
+    expect(refusedBackupCommand('backup:clean'))->toBe(Command::FAILURE);
+
+    Notification::assertSentTimes(UnhealthyBackupWasFoundNotification::class, 1);
+    Notification::assertSentTimes(CleanupHasFailedNotification::class, 1);
+});
+
+it('lets unrelated artisan commands run while the drive is out', function () {
+    /*
+     * THE CONTROL THAT MATTERS MOST, and the reason the guard is on three
+     * command classes rather than on every console command: an absent drive
+     * must not break the CLI. That is the failure the previous round moved this
+     * check out of boot() to avoid, and it would be easy to reintroduce.
+     */
+    Notification::fake();
+
+    useDrive();
+    fakeVolume(['isDirectory' => false]);
+
+    expect(Artisan::call('env'))->toBe(Command::SUCCESS);
+
+    Notification::assertNothingSent();
+});
+
+it('does not refuse a destination that is ready', function () {
+    /*
+     * The positive control. Driven against the guard rather than through
+     * Artisan::call, because a destination this test declares ready would let
+     * backup:run proceed to dump the database and write a real archive — which
+     * is not something a suite should do, and would make the assertion about
+     * mysqldump rather than about the guard.
+     *
+     * Null is the "carry on" answer; anything else is an exit code.
+     */
+    Notification::fake();
+
+    useDrive();
+    fakeVolume(['applicationDevice' => 7, 'destinationDevice' => 9]);
+
+    $decision = (fn () => $this->refuseIfDestinationIsUnavailable())
+        ->call(app(GuardedBackupCommand::class));
+
+    expect($decision)->toBeNull();
+
+    Notification::assertNothingSent();
+});
+
+it('stays quiet when notifications are switched off, but still refuses', function () {
+    /*
+     * Spatie honours --disable-notifications inside handle(), which this
+     * boundary pre-empts. Without the check, switching notifications OFF would
+     * produce more mail than leaving them on.
+     */
+    Notification::fake();
+
+    expect(refusedBackupCommand('backup:run', ['--disable-notifications' => true]))
+        ->toBe(Command::FAILURE);
+
+    Notification::assertNothingSent();
+});
+
+it('guards the packages commands rather than sitting beside them', function () {
+    /*
+     * The structural assertion the behavioural ones rest on. These subclasses
+     * only take effect because they carry Spatie's signatures and are registered
+     * after its provider. If that ever stops being true the package's originals
+     * come back unguarded, every test above still passes against OUR classes,
+     * and the real `php artisan backup:run` is unprotected again.
+     *
+     * Asserted through the resolved artisan registry — what the CLI, the
+     * scheduler and Artisan::call() all actually dispatch to.
+     */
+    $registered = Artisan::all();
+
+    expect($registered['backup:run'])->toBeInstanceOf(GuardedBackupCommand::class)
+        ->and($registered['backup:monitor'])->toBeInstanceOf(GuardedMonitorCommand::class)
+        ->and($registered['backup:clean'])->toBeInstanceOf(GuardedCleanupCommand::class);
+
+    /*
+     * backup:list is guarded too, but WARNED rather than refused — it only
+     * reads, and listing what survived is what somebody needs during an
+     * incident.
+     *
+     * Asserted as the guarded class, not as Spatie's: GuardedListCommand
+     * EXTENDS ListCommand, so an assertion against the parent passes whichever
+     * one is registered and would have proven nothing.
+     */
+    expect($registered['backup:list'])->toBeInstanceOf(GuardedListCommand::class);
+});
+
+it('warns that the reachable column cannot be trusted when the drive is out', function () {
+    /*
+     * THE MEASUREMENT THAT PROMPTED THIS. Spatie's Reachable column answers
+     * "could I list the configured directory", not "is the drive mounted".
+     * Against an ordinary empty directory standing in for an unmounted mount
+     * point it prints Reachable ✅ — and with one stale archive left there by an
+     * earlier unguarded run, Reachable ✅ Healthy ✅.
+     *
+     * The server's own disk certifying itself as a healthy backup, to somebody
+     * deciding whether they can afford to rebuild the machine.
+     */
+    useDrive();
+    fakeVolume(['applicationDevice' => 7, 'destinationDevice' => 7]);
+
+    $exitCode = Artisan::call('backup:list');
+    $output = Artisan::output();
+
+    expect(str_contains($output, 'Do not trust the Reachable column above.'))->toBeTrue(
+        'backup:list showed its table without contradicting it.',
+    );
+    expect(str_contains($output, 'the drive is not mounted'))->toBeTrue(
+        'The warning did not say what was actually wrong.',
+    );
+});
+
+it('still lists when the drive is out, rather than refusing', function () {
+    /*
+     * The control, and the reason this command is warned instead of guarded: a
+     * read-only inspection command that blocks when things are broken is
+     * useless at the only moment anybody needs it. The exit code stays
+     * untouched because scripts read it.
+     */
+    useDrive();
+    fakeVolume(['applicationDevice' => 7, 'destinationDevice' => 7]);
+
+    expect(Artisan::call('backup:list'))->toBe(Command::SUCCESS);
+
+    // The table itself still rendered.
+    expect(str_contains(Artisan::output(), 'backups_local'))->toBeTrue(
+        'The listing was suppressed, which is the failure this command must avoid.',
+    );
+});
+
+it('does not cry wolf on a healthy drive', function () {
+    // The over-warning control: a warning printed every time would be filtered
+    // out within a week, taking the real one with it.
+    useDrive();
+    fakeVolume(['applicationDevice' => 7, 'destinationDevice' => 9]);
+
+    Artisan::call('backup:list');
+
+    expect(str_contains(Artisan::output(), 'Do not trust'))->toBeFalse(
+        'backup:list warned about a destination that passed every check.',
+    );
+});
+
+it('runs the scheduled backups through the same guarded commands', function () {
+    /*
+     * How the scheduled path is covered now that the ->before() callbacks are
+     * gone: the scheduler shells out to `php artisan backup:run`, which resolves
+     * the same guarded class asserted above. This pins the two ends together —
+     * the schedule names the command, and the command carries the guard.
+     */
+    foreach (['backup:run', 'backup:monitor', 'backup:clean'] as $command) {
+        $event = scheduledBackupCommand($command);
+
+        expect($event)->not->toBeNull("{$command} is not scheduled.");
+
+        $invocation = (string) $event->command;
+
+        expect(str_contains($invocation, 'artisan'))->toBeTrue(
+            "{$command} is not run as an artisan subprocess, so it would not "
+            .'resolve the guarded command class.',
+        );
+        expect(str_contains($invocation, $command))->toBeTrue(
+            "The scheduled invocation does not name {$command}.",
+        );
+    }
+});
 
 it('never ships the package placeholder alert address', function () {
     /*
@@ -390,17 +1095,18 @@ it('notifies on failure and on an unhealthy backup', function () {
 
 /*
 |--------------------------------------------------------------------------
-| Production refuses to run without off-server backups
+| Production refuses to run without a configured backup destination
 |--------------------------------------------------------------------------
 */
 
 it('refuses to boot production without backup credentials', function () {
-    // The whole point: an unset bucket does not stop the scheduler, it produces a
-    // nightly run that stores nothing and reports success.
+    // The whole point: an unset destination does not stop the scheduler, it
+    // produces a nightly run that stores nothing and reports success.
     config([
-        'filesystems.disks.backups.key' => null,
-        'filesystems.disks.backups.secret' => null,
-        'filesystems.disks.backups.bucket' => null,
+        'backup.destination_disk' => 'backups_s3',
+        'filesystems.disks.backups_s3.key' => null,
+        'filesystems.disks.backups_s3.secret' => null,
+        'filesystems.disks.backups_s3.bucket' => null,
         'backup.backup.password' => null,
     ]);
 
@@ -411,24 +1117,28 @@ it('refuses to boot production without an archive password', function () {
     // Credentials alone are not enough: an unencrypted archive of every national
     // ID and scanned document sitting in third-party storage is its own incident.
     config([
-        'filesystems.disks.backups.key' => 'a-key',
-        'filesystems.disks.backups.secret' => 'a-secret',
-        'filesystems.disks.backups.bucket' => 'a-bucket',
-        'filesystems.disks.backups.region' => 'a-region',
+        'backup.destination_disk' => 'backups_s3',
+        'filesystems.disks.backups_s3.key' => 'a-key',
+        'filesystems.disks.backups_s3.secret' => 'a-secret',
+        'filesystems.disks.backups_s3.bucket' => 'a-bucket',
+        'filesystems.disks.backups_s3.region' => 'a-region',
+        'filesystems.disks.backups_s3.endpoint' => 'https://example.test',
         'backup.backup.password' => null,
     ]);
 
     BackupConfiguration::assertReadyForProduction('production');
-})->throws(RuntimeException::class, 'backup.backup.password');
+})->throws(RuntimeException::class, 'BACKUP_ARCHIVE_PASSWORD');
 
 it('boots production once everything is configured', function () {
     // The positive control. Without it the refusals above would hold just as well
     // for a guard that always throws.
     config([
-        'filesystems.disks.backups.key' => 'a-key',
-        'filesystems.disks.backups.secret' => 'a-secret',
-        'filesystems.disks.backups.bucket' => 'a-bucket',
-        'filesystems.disks.backups.region' => 'a-region',
+        'backup.destination_disk' => 'backups_s3',
+        'filesystems.disks.backups_s3.key' => 'a-key',
+        'filesystems.disks.backups_s3.secret' => 'a-secret',
+        'filesystems.disks.backups_s3.bucket' => 'a-bucket',
+        'filesystems.disks.backups_s3.region' => 'a-region',
+        'filesystems.disks.backups_s3.endpoint' => 'https://example.test',
         'backup.backup.password' => 'a-long-archive-password',
     ]);
 
@@ -444,7 +1154,7 @@ it('does not require backup credentials outside production', function () {
      * deployment ends up pointed at somebody's test bucket.
      */
     config([
-        'filesystems.disks.backups.key' => null,
+        'filesystems.disks.backups_s3.key' => null,
         'backup.backup.password' => null,
     ]);
 
@@ -921,10 +1631,19 @@ it('tells the operator to configure credentials before the migrate step', functi
     $before = substr($step, 0, $command);
     $beforeFlat = (string) preg_replace('/\s+/', ' ', (string) preg_replace('/^\s*>\s?/m', '', $before));
 
-    expect(str_contains($beforeFlat, 'BACKUP_S3_BUCKET'))->toBeTrue(
-        'Nothing before the migrate command names the credentials it needs, so an operator '
-        .'meets the refusal having already run it.',
-    );
+    /*
+     * UPDATED BY P1-T17. This required BACKUP_S3_BUCKET, which was the right
+     * thing to name while a bucket was the only destination and is the wrong
+     * thing now — an operator restoring onto a drive would be told to set a
+     * value they do not have. What must be named is the setting that DECIDES,
+     * and both branches it leads to.
+     */
+    foreach (['BACKUP_DISK', 'BACKUP_LOCAL_PATH', 'BACKUP_S3_'] as $needed) {
+        expect(str_contains($beforeFlat, $needed))->toBeTrue(
+            "Nothing before the migrate command mentions {$needed}, so an operator meets the "
+            .'refusal without being told what to set for their destination.',
+        );
+    }
 
     expect(str_contains($beforeFlat, 'before you run this'))->toBeTrue(
         'Nothing before the migrate command says the credentials must be set first, which is '
