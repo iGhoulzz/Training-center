@@ -1081,7 +1081,72 @@ And the drill itself, run as real commands outside the test kernel:
 | `backup:list` | exit 0, Reachable ❌ — correctly still usable |
 | `BACKUP_DISK=backups_s3 backup:clean` | reaches "Starting cleanup", fails on credentials — the guard is conditional, not a blanket refusal |
 
-**Gates:** Pint clean, PHPStan 0 errors, **1006 passed / 2685 assertions**.
+**Gates:** Pint clean, PHPStan 0 errors, 1006 passed / 2685 assertions *(round 2; superseded by round 3 below)*.
+
+### Codex round 3 — the error path, and a display that lied
+
+| # | Finding | What was actually wrong |
+|---|---|---|
+| 1 | High — `report()` could suppress the backup alert | A bare `report()` sat ahead of the notification dispatch. Laravel's handler may throw when its logging transport is unavailable, and **the two failures are correlated, not independent**: a full disk breaks the log channel and the backup destination together. The backup would have failed with nothing sent to `BACKUP_ALERT_EMAIL` — the defect round 2 closed, reintroduced through the error path. |
+| 2 | Medium — `backup:list` called an unmounted drive reachable | Spatie's Reachable column answers "could I list the configured directory", which an empty mount point on the server satisfies. |
+| 3 | Low — three comments described superseded implementations | `routes/console.php` named `CommandStarting` and a deleted class; `AppServiceProvider` said the check ran only before scheduled backups; `RESTORE.md` still described the boot-time check. |
+
+**Third time for the same hazard, and the comments predicted it.**
+`FileLifecycleService` and `SweepPendingFileDeletionsCommand` each carried a
+near-copy of `reportWithoutThrowing()`, and the second one's docblock said: *"A
+third caller is the point at which it should become one thing."* This was the
+third caller, and it arrived having made the mistake rather than reused the fix.
+The body is now `SafeReporting`; both existing callers delegate to it. The
+notification is also dispatched first, so a future bare `report()` costs a log
+line rather than the alert.
+
+**The display finding is worse than it was reported.** Measured against a plain
+existing directory standing in for an unmounted mount point:
+
+| Destination state | What `backup:list` showed |
+|---|---|
+| Empty directory, drive absent | Reachable ✅ Healthy ❌ 0 backups |
+| One stale archive from an earlier unguarded run | **Reachable ✅ Healthy ✅ 1 backup** |
+
+The server's own disk certifying itself as a healthy backup, to somebody
+deciding whether they can afford to rebuild the machine. The earlier round's
+probe used a *nonexistent* path, which is the easy case — a reminder that a
+probe proves only the state it actually creates.
+
+`backup:list` now runs the volume checks and contradicts its own table. It still
+lists, still exits 0, and does not notify: a read-only inspection command that
+blocks or mails when things are broken is useless at the only moment it matters.
+
+**A message that was wrong because the caller set changed.** The guard's text
+ended "the command stopped without touching the destination" — true for the
+three that refuse, false for `backup:list`, which printed it directly under a
+listing it had carried on producing. Only the real run showed this. The
+exception now describes the destination only; each command states what it did.
+
+### Round 3 evidence
+
+Twelve mutations, each failing the suite:
+
+| Mutation | Result |
+|---|---|
+| Bare `report()` ahead of the alert (the reported defect) | FAILED 73/75 |
+| Throwing `report()` after the alert | FAILED 73/75 |
+| `SafeReporting` stops swallowing | FAILED 73/75 |
+| `backup:list` no longer contradicts the column | FAILED 74/75 |
+| Guarded list unregistered | FAILED 73/75 |
+| List refuses instead of warning | FAILED 74/75 |
+| List warns unconditionally (cries wolf) | FAILED 73/75 |
+| Registration, per-command alerts, `--disable-notifications`, exit code (5, re-run) | all FAILED |
+
+And the real commands, against an **existing** directory rather than a missing
+path:
+
+| Command | Result |
+|---|---|
+| `backup:list` | table shown, exit 0, warning contradicts the ✅ |
+| `backup:run` | exit 1, refused, alert dispatched |
+
+**Gates:** Pint clean, PHPStan 0 errors, **1011 passed / 2696 assertions**.
 
 **Note for the operator, not enforceable in code:** a drive that never leaves
 the building survives a dead server and not a fire. `RESTORE.md` says to rotate
