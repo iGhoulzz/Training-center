@@ -11,6 +11,7 @@ use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Schemas\Schema;
+use Filament\Support\Enums\Width;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use LogicException;
@@ -27,8 +28,60 @@ class PasswordChange extends Page
 
     protected string $view = 'filament.pages.password-change';
 
+    /*
+     * THE PAGE RENDERS NO PANEL CHROME (G1-U3).
+     *
+     * Under the default panel layout this page co-rendered Topbar, Sidebar and
+     * GlobalSearch alongside the form, and every one of them was drivable while
+     * the account was supposed to be held here. Livewire stamps the ORIGINATING
+     * path into each snapshot and hands that path back to the persistent
+     * middleware, so a component rendered on this page inherits this page's
+     * exemption no matter what it is. The cheapest fix is to render nothing that
+     * could inherit it.
+     *
+     * IT STAYS `extends Page`. The obvious move — SimplePage — deletes the page:
+     * the panel calls discoverPages(), which filters on Page::class, and
+     * SimplePage extends BasePage instead. The class would stop being discovered
+     * and filament.admin.pages.password-change, the route ForcePasswordChange
+     * exempts by name, would cease to exist. So the layout is taken directly
+     * rather than inherited.
+     */
+    protected static string $layout = 'filament-panels::components.layout.simple';
+
     /** @var array<string, mixed> */
     public array $data = [];
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function getLayoutData(): array
+    {
+        return [
+            /*
+             * hasTopbar => false IS REQUIRED, NOT COSMETIC.
+             *
+             * The simple layout renders SimpleUserMenu and the database
+             * notifications component inside one
+             * `@if (($hasTopbar ?? true) && filament()->auth()->check())` block.
+             * Left at its default this layout would still co-render
+             * SimpleUserMenu and the leak would survive in reduced form. Only
+             * that one today: the database notifications component beside it is
+             * additionally gated on filament()->hasDatabaseNotifications(),
+             * which this panel does not enable. Enabling it would put a second
+             * component back behind this same flag.
+             *
+             * What cannot be removed here is Filament\Livewire\Notifications:
+             * filament-panels::components.layout.base renders it unconditionally
+             * for every layout in the panel. It is the flash-message tray, it
+             * holds nothing but what it pulled from the session, and
+             * ForcePasswordChange refuses to drive it — which is why layer 2
+             * exists rather than layer 1 being the whole fix.
+             */
+            'hasTopbar' => false,
+            'maxContentWidth' => Width::Large,
+            'maxWidth' => Width::Large,
+        ];
+    }
 
     public function mount(): void
     {
@@ -119,6 +172,37 @@ class PasswordChange extends Page
                 ->event(ActivityEvent::PASSWORD_CHANGED)
                 ->log(ActivityEvent::PASSWORD_CHANGED);
         });
+
+        /*
+         * THE SESSION THAT JUST FIXED THE ACCOUNT STAYS SIGNED IN (G1-U3).
+         *
+         * AuthenticateSession is persistent, and Livewire's
+         * Utils::applyMiddleware() terminates its pipeline in an empty Response —
+         * so the middleware's after-callback, the one that refreshes
+         * password_hash_{guard}, fires at `snapshot-verified` time, BEFORE this
+         * method runs. It therefore stored the OLD hash. The password then
+         * changes underneath it, the next request compares and mismatches, and
+         * the user is logged out of the session they just used to comply. The
+         * success redirect landed on the login page.
+         *
+         * Refreshing the hash here is what Laravel's own self-service password
+         * change does, and what Filament's EditProfile does. OTHER sessions still
+         * fail on their stale hash, which is the containment an administrator
+         * forcing a reset is actually buying. Regenerating the id on a credential
+         * change is the ordinary hygiene that goes with it.
+         *
+         * Filament::getAuthGuard() rather than the panel-agnostic default: it is
+         * the key Filament itself writes. If a panel is ever given its own guard
+         * and the two diverge, this stops matching and the user is logged out —
+         * inconvenient, never permissive.
+         */
+        if (request()->hasSession()) {
+            request()->session()->put([
+                'password_hash_'.Filament::getAuthGuard() => $user->getAuthPassword(),
+            ]);
+
+            request()->session()->regenerate();
+        }
 
         Notification::make()->title(__('auth.password_updated'))->success()->send();
 
