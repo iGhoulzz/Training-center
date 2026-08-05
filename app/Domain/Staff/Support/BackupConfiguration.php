@@ -137,12 +137,19 @@ final class BackupConfiguration
     /**
      * Refuse to run the backup pipeline against a destination that is not there.
      *
-     * TRANSIENT FACTS (P1-T17, review). Called from routes/console.php before
-     * each scheduled backup command, never at boot: the drive can be unplugged,
-     * rotated or fail at any moment, and none of that should stop the centre
-     * from enrolling a student. A failure here stops the night's backup and
-     * surfaces through the exception handler; backup:monitor then reports the
-     * destination unhealthy the following day, which is the alert.
+     * TRANSIENT FACTS (P1-T17, review). Called by the three guarded backup
+     * commands, never at boot: the drive can be unplugged, rotated or fail at
+     * any moment, and none of that should stop the centre from enrolling a
+     * student.
+     *
+     * THE CALLER OWNS THE ALERT. This only reports what it found — the command
+     * that catches it raises its own configured notification, because that is
+     * what reaches whoever needs to plug the drive back in. An earlier version
+     * of this docblock claimed backup:monitor would notice the next day, which
+     * was doubly wrong: the refusal happened in a scheduler callback that ran
+     * before the command started, so nothing was ever dispatched, and monitor
+     * reading an unmounted mount point can report stale archives as healthy.
+     * See RefusesAnUnavailableDestination.
      *
      * @throws RuntimeException when the destination is not usable right now.
      */
@@ -212,7 +219,10 @@ final class BackupConfiguration
 
         throw new RuntimeException(
             "The backup destination is not ready:\n  - ".implode("\n  - ", $problems)
-            ."\nTonight's backup did not run. See docs/RESTORE.md."
+            // Deliberately not "tonight's backup did not run": all three
+            // commands share this message, and two of them neither back up nor
+            // run only at night.
+            ."\nThe command stopped without touching the destination. See docs/RESTORE.md."
         );
     }
 

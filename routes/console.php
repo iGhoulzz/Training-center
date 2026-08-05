@@ -2,7 +2,6 @@
 
 declare(strict_types=1);
 
-use App\Domain\Staff\Support\BackupConfiguration;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
@@ -68,25 +67,21 @@ Artisan::command('inspire', function () {
  */
 
 /*
- * THE DRIVE IS CHECKED HERE, NOT AT BOOT (P1-T17, review).
+ * THE DRIVE CHECK IS NOT WIRED HERE (P1-T17, review round 2).
  *
- * Whether the removable drive is mounted is a transient fact about hardware.
- * Asserting it in AppServiceProvider::boot() — where the first version put it —
- * meant unplugging the USB stick would stop /admin from loading and block every
- * artisan command. A backup mechanism must not be able to halt the centre it
- * protects.
+ * It lived on these three schedules as ->before() callbacks, and that was wrong
+ * twice over. A scheduler callback does not run for a hand-typed
+ * `php artisan backup:run` — including the drill docs/RESTORE.md prescribes, of
+ * unmounting the drive and expecting the command to fail. And a callback that
+ * throws stops the command before it ever starts, so Spatie never reaches the
+ * catch that dispatches BackupHasFailed: the run failed and nobody was told.
  *
- * Failing here stops the night's run and reports through the exception handler;
- * backup:monitor then finds no fresh archive and raises the unhealthy-backup
- * notification, which is the alert an operator acts on.
- *
- * It guards cleanup too: cleaning against an unmounted mount point would
- * evaluate retention over the wrong directory entirely.
+ * It now runs on CommandStarting, which fires for all three of these schedules
+ * — each shells out to a fresh `php artisan` — as well as for manual runs and
+ * Artisan::call(). See RefuseBackupWhenDestinationIsUnavailable.
  */
-$assertDestinationReady = static fn () => BackupConfiguration::assertDestinationReady();
 
 Schedule::command('backup:run')
-    ->before($assertDestinationReady)
     ->daily()
     ->at('01:30')
     ->timezone('Africa/Tripoli')
@@ -94,7 +89,6 @@ Schedule::command('backup:run')
     ->withoutOverlapping(180);
 
 Schedule::command('backup:monitor')
-    ->before($assertDestinationReady)
     ->daily()
     ->at('02:30')
     ->timezone('Africa/Tripoli')
@@ -102,7 +96,6 @@ Schedule::command('backup:monitor')
     ->withoutOverlapping(180);
 
 Schedule::command('backup:clean')
-    ->before($assertDestinationReady)
     ->daily()
     ->at('03:00')
     ->timezone('Africa/Tripoli')

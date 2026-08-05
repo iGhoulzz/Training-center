@@ -171,8 +171,16 @@ migration.
 >
 > **It does not check whether the drive is plugged in.** That is deliberate: a
 > missing drive must never stop the centre from working. Whether the drive is
-> mounted is checked immediately before each nightly backup instead, so an
-> absent drive fails that night's run and leaves `/admin` serving.
+> mounted is checked by `backup:run`, `backup:monitor` and `backup:clean`
+> themselves — however they are started, by the scheduler or by hand — so an
+> absent drive fails those commands and leaves `/admin` serving. Each one also
+> sends its own failure notification to `BACKUP_ALERT_EMAIL`, so a drive left
+> unplugged after a rotation is noticed the same night rather than at the next
+> restore.
+>
+> `backup:list` is deliberately not guarded. It only reads, and it is what you
+> want during an incident: it prints each destination with a Reachable column,
+> which answers "is the drive actually there" without changing anything.
 
 ```bash
 php artisan migrate
@@ -252,9 +260,15 @@ is deliberate — see `BackupConfiguration`.
   the test suite deliberately never touches real storage, so it cannot tell you
   this.
 
-  With a drive, unmount it and run `backup:run` again. It must FAIL. If it
-  succeeds, the archives are going to the server's own disk through an empty
-  mount point, and every one of them dies with the machine.
+  With a drive, unmount it and run `backup:run` again. **It must FAIL**, print
+  a line beginning `The backup destination is not ready:`, exit non-zero, and
+  send a backup-failure mail to `BACKUP_ALERT_EMAIL`. If it succeeds instead,
+  the archives are going to the server's own disk through an empty mount point,
+  and every one of them dies with the machine.
+
+  Check the mail arrived, not just the exit code. A refusal nobody is told about
+  is how a centre finds out during a restore that the drive has been unplugged
+  since March.
 
 - **`mysqldump` must be on the PATH** of the user the scheduler runs as. If it
   is not, set `dump.dump_binary_path` on the `mysql` connection in

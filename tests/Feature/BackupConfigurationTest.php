@@ -2,13 +2,21 @@
 
 declare(strict_types=1);
 
+use App\Domain\Staff\Console\GuardedBackupCommand;
+use App\Domain\Staff\Console\GuardedCleanupCommand;
+use App\Domain\Staff\Console\GuardedMonitorCommand;
 use App\Domain\Staff\Support\BackupConfiguration;
 use App\Domain\Staff\Support\BackupVolume;
+use Illuminate\Console\Command;
 use Illuminate\Console\Scheduling\Event;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Console\Kernel;
+use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Process;
+use Spatie\Backup\Commands\ListCommand;
 use Spatie\Backup\Notifications\Notifications\BackupHasFailedNotification;
+use Spatie\Backup\Notifications\Notifications\CleanupHasFailedNotification;
 use Spatie\Backup\Notifications\Notifications\UnhealthyBackupWasFoundNotification;
 use Spatie\Backup\Tasks\Monitor\HealthChecks\MaximumStorageInMegabytes;
 
@@ -766,37 +774,195 @@ it('checks nothing about the volume when S3 is the destination', function () {
     expect(true)->toBeTrue();
 });
 
-it('guards every scheduled backup command with the readiness check', function () {
-    /*
-     * The wiring, without which every runtime check above is unreachable.
-     * Reflection because Laravel keeps the callbacks protected; the assertion is
-     * that each command has one and that it is the readiness check, proven by
-     * invoking it against a destination that must be refused.
-     */
+/*
+| The command boundary (P1-T17, review round 2)
+|
+| The check used to hang off ->before() on the three schedules. That guarded the
+| scheduler and nothing else: a hand-typed `php artisan backup:run` walked past
+| it, including the drill RESTORE.md prescribes. Worse, a ->before() that throws
+| stops the command before Spatie's catch runs, so the failure notification was
+| never sent — the backup did not happen and nobody was told.
+|
+| CommandStarting was the next attempt and is worth recording as a dead end:
+| Laravel does not dispatch it when runningUnitTests() is true, so not one of
+| these tests could have observed it. A guard the suite cannot fail is the exact
+| failure mode this project keeps paying for.
+|
+| The check is now on the commands themselves, which every caller goes through.
+| These tests assert BEHAVIOUR at that boundary — the command fails AND the
+| configured notification goes out — never that a callback exists.
+*/
+
+/** Run a guarded command with the drive out, and return its exit code. */
+function refusedBackupCommand(string $command, array $parameters = []): int
+{
     useDrive();
     fakeVolume(['isDirectory' => false]);
 
+    return Artisan::call($command, $parameters);
+}
+
+it('refuses a manually run backup and raises the backup-failed alert', function () {
+    /*
+     * THE CASE THE SCHEDULER CALLBACK MISSED ENTIRELY. RESTORE.md tells the
+     * operator to unmount the drive, run this exact command and watch it fail;
+     * before this boundary existed it would have succeeded, writing the archive
+     * into the empty mount point on the server.
+     */
+    Notification::fake();
+
+    expect(refusedBackupCommand('backup:run'))->toBe(Command::FAILURE);
+
+    Notification::assertSentTimes(BackupHasFailedNotification::class, 1);
+});
+
+it('refuses a manually run monitor and raises the unhealthy-backup alert', function () {
+    // Unreachable backups ARE unhealthy, so this is the honest notification —
+    // and the one an operator already has filters for.
+    Notification::fake();
+
+    expect(refusedBackupCommand('backup:monitor'))->toBe(Command::FAILURE);
+
+    Notification::assertSentTimes(UnhealthyBackupWasFoundNotification::class, 1);
+});
+
+it('refuses a manually run cleanup and raises the cleanup-failed alert', function () {
+    /*
+     * Cleanup is the most dangerous of the three to let through: against an
+     * empty mount point it evaluates retention over the wrong directory. And
+     * Spatie's own catch does not notify here at all — it returns FAILURE
+     * silently — so without this the only signal is an exit code nobody reads.
+     */
+    Notification::fake();
+
+    expect(refusedBackupCommand('backup:clean'))->toBe(Command::FAILURE);
+
+    Notification::assertSentTimes(CleanupHasFailedNotification::class, 1);
+});
+
+it('does not collapse the three commands onto one alert', function () {
+    /*
+     * The control for the per-command event: sending BackupHasFailed for
+     * everything would satisfy "a notification went out" while telling the
+     * operator the wrong thing about which part of the pipeline stopped.
+     */
+    Notification::fake();
+
+    refusedBackupCommand('backup:clean');
+
+    Notification::assertSentTimes(CleanupHasFailedNotification::class, 1);
+    Notification::assertSentTimes(BackupHasFailedNotification::class, 0);
+    Notification::assertSentTimes(UnhealthyBackupWasFoundNotification::class, 0);
+});
+
+it('says why it refused, rather than failing blankly', function () {
+    // An exit code alone sends somebody to the source. The reason has to reach
+    // whoever typed the command.
+    Notification::fake();
+
+    refusedBackupCommand('backup:run');
+
+    expect(str_contains(Artisan::output(), 'does not exist'))->toBeTrue(
+        'The refusal gave the operator no reason.',
+    );
+});
+
+it('lets unrelated artisan commands run while the drive is out', function () {
+    /*
+     * THE CONTROL THAT MATTERS MOST, and the reason the guard is on three
+     * command classes rather than on every console command: an absent drive
+     * must not break the CLI. That is the failure the previous round moved this
+     * check out of boot() to avoid, and it would be easy to reintroduce.
+     */
+    Notification::fake();
+
+    useDrive();
+    fakeVolume(['isDirectory' => false]);
+
+    expect(Artisan::call('env'))->toBe(Command::SUCCESS);
+
+    Notification::assertNothingSent();
+});
+
+it('does not refuse a destination that is ready', function () {
+    /*
+     * The positive control. Driven against the guard rather than through
+     * Artisan::call, because a destination this test declares ready would let
+     * backup:run proceed to dump the database and write a real archive — which
+     * is not something a suite should do, and would make the assertion about
+     * mysqldump rather than about the guard.
+     *
+     * Null is the "carry on" answer; anything else is an exit code.
+     */
+    Notification::fake();
+
+    useDrive();
+    fakeVolume(['applicationDevice' => 7, 'destinationDevice' => 9]);
+
+    $decision = (fn () => $this->refuseIfDestinationIsUnavailable())
+        ->call(app(GuardedBackupCommand::class));
+
+    expect($decision)->toBeNull();
+
+    Notification::assertNothingSent();
+});
+
+it('stays quiet when notifications are switched off, but still refuses', function () {
+    /*
+     * Spatie honours --disable-notifications inside handle(), which this
+     * boundary pre-empts. Without the check, switching notifications OFF would
+     * produce more mail than leaving them on.
+     */
+    Notification::fake();
+
+    expect(refusedBackupCommand('backup:run', ['--disable-notifications' => true]))
+        ->toBe(Command::FAILURE);
+
+    Notification::assertNothingSent();
+});
+
+it('guards the packages commands rather than sitting beside them', function () {
+    /*
+     * The structural assertion the behavioural ones rest on. These subclasses
+     * only take effect because they carry Spatie's signatures and are registered
+     * after its provider. If that ever stops being true the package's originals
+     * come back unguarded, every test above still passes against OUR classes,
+     * and the real `php artisan backup:run` is unprotected again.
+     *
+     * Asserted through the resolved artisan registry — what the CLI, the
+     * scheduler and Artisan::call() all actually dispatch to.
+     */
+    $registered = Artisan::all();
+
+    expect($registered['backup:run'])->toBeInstanceOf(GuardedBackupCommand::class)
+        ->and($registered['backup:monitor'])->toBeInstanceOf(GuardedMonitorCommand::class)
+        ->and($registered['backup:clean'])->toBeInstanceOf(GuardedCleanupCommand::class);
+
+    // backup:list only reads. Somebody checking what survived a failure should
+    // not be blocked by the failure, so it is deliberately left alone.
+    expect($registered['backup:list'])->toBeInstanceOf(ListCommand::class);
+});
+
+it('runs the scheduled backups through the same guarded commands', function () {
+    /*
+     * How the scheduled path is covered now that the ->before() callbacks are
+     * gone: the scheduler shells out to `php artisan backup:run`, which resolves
+     * the same guarded class asserted above. This pins the two ends together —
+     * the schedule names the command, and the command carries the guard.
+     */
     foreach (['backup:run', 'backup:monitor', 'backup:clean'] as $command) {
         $event = scheduledBackupCommand($command);
 
         expect($event)->not->toBeNull("{$command} is not scheduled.");
 
-        $callbacks = (new ReflectionProperty($event, 'beforeCallbacks'))->getValue($event);
+        $invocation = (string) $event->command;
 
-        expect($callbacks)->not->toBeEmpty("{$command} runs with no destination check.");
-
-        $refused = false;
-
-        foreach ($callbacks as $callback) {
-            try {
-                $callback();
-            } catch (RuntimeException) {
-                $refused = true;
-            }
-        }
-
-        expect($refused)->toBeTrue(
-            "{$command} would run against a destination that is not there.",
+        expect(str_contains($invocation, 'artisan'))->toBeTrue(
+            "{$command} is not run as an artisan subprocess, so it would not "
+            .'resolve the guarded command class.',
+        );
+        expect(str_contains($invocation, $command))->toBeTrue(
+            "The scheduled invocation does not name {$command}.",
         );
     }
 });
