@@ -184,9 +184,11 @@ migration.
 > unplugged after a rotation is noticed the same night rather than at the next
 > restore.
 >
-> `backup:list` is deliberately not guarded. It only reads, and it is what you
-> want during an incident: it prints each destination with a Reachable column,
-> which answers "is the drive actually there" without changing anything.
+> `backup:list` remains usable during an incident. It always prints the table
+> and exits successfully, but the guarded command adds a warning when the device
+> or volume-marker checks fail. Do not treat Reachable as proof that the
+> removable drive is mounted: by itself, it only means the configured directory
+> could be listed.
 
 ```bash
 php artisan migrate
