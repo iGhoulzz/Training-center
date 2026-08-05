@@ -1,8 +1,10 @@
 # Phase 1 — Foundation Implementation Plan
 
-> **Status: COMPLETE as of 2026-08-05.** All seventeen tasks are implemented,
-> reviewed and merged to `main`. See `docs/CHANGELOG.md` for what shipped, and
-> `docs/reviews/2026-07-29-phase-1-review.md` for the end-of-phase review.
+> **Status: COMPLETE as of 2026-08-05.** Tasks 1 to 15 and 17 are implemented,
+> reviewed and merged to `main`; task 16 is this document's own reconciliation
+> pass and merges with it. See `docs/CHANGELOG.md` for what shipped, and
+> `docs/reviews/2026-07-29-phase-1-review.md` for the end-of-phase review —
+> including one finding, G1-U3, that is recorded open rather than fixed.
 >
 > **Do not execute this plan.** Most step checkboxes below are still unticked:
 > the work was carried out and verified task by task in conversation rather than
@@ -8349,9 +8351,21 @@ the exact experiment needed, and triage runs it serially.
 - [x] **Step 8: Delete task branches and tags — only after T16 has consumed them**
 
   **Tags backfilled 2026-08-05 (T16).** They stopped at `task/P1-T10-end`; `T11`,
-  `T12`, `T13`, `T14`, `T15` and `T17` are now tagged, following the existing
-  convention of a lightweight tag on the task branch's tip rather than on the
-  merge commit. `task/P1-T16-end` is created when this task merges.
+  `T12`, `T13`, `T14`, `T15` and `T17` are now tagged, all lightweight.
+  `task/P1-T16-end` is created when this task merges.
+
+  Most follow the existing convention of tagging the task branch's tip rather
+  than the merge commit — T11 `9ca249c`, T12 `8022944`, T13 `20d7660`, T17
+  `69a77e9`. **Two deliberately do not**, and the difference is worth stating
+  rather than glossing:
+
+  - **T15** ran across four branches (`p1/t15-security-fixes` and three at
+    `426d792`), so there is no single tip to tag. `task/P1-T15-end` marks
+    `8e1ce14` — the last T15 commit on `main`, i.e. the state after all four
+    landed. Every one of those branches is an ancestor of `main`, so nothing is
+    lost by tagging the confluence instead of the tributaries.
+  - **T14** has no surviving branch, so `8c52f37` is likewise its last commit on
+    `main`.
 
   **For T17 this was more than bookkeeping.** It merged through GitHub as a
   *squash*, so its individual commits are not ancestors of `main`. Deleting that
@@ -8370,10 +8384,19 @@ the exact experiment needed, and triage runs it serially.
     p1/t15-staff-profile-view-surface
   ```
 
-  `p1/t17-local-backup-destination` needs `-D` rather than `-d`, because the
-  squash merge means git cannot see its work is already in `main` — check it
-  against `task/P1-T17-end` first. `p3/t00-student-certificate-spec` is phase 3
-  work and stays.
+  `p1/t17-local-backup-destination` needs two extra steps. Its worktree is still
+  checked out, and git refuses to delete a branch that a worktree holds, so
+  remove that first. It then needs `-D` rather than `-d`, because the squash
+  merge means git cannot see its work is already in `main` — check it against
+  `task/P1-T17-end` before forcing it:
+
+  ```bash
+  git worktree remove ../Training-center-worktrees/P1-T17
+  git branch -D p1/t17-local-backup-destination
+  ```
+
+  The same applies to this task's own worktree once it merges.
+  `p3/t00-student-certificate-spec` is phase 3 work and stays.
 
 ### Why this is worth doing at all
 

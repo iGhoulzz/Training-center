@@ -259,20 +259,44 @@ it('keeps the guard on the route group, which is what a future route inherits', 
      *
      * Asserted against the source because the router flattens group middleware
      * into each route and cannot say where it came from.
+     *
+     * TOLERANT OF EDITS THAT CHANGE NOTHING (tightened after review). A first
+     * version counted raw occurrences of the class name and matched one exact
+     * call string. Both fired on harmless changes — naming the class in a
+     * comment, or writing the equally idiomatic array form, which is what you
+     * are forced into the moment a second middleware joins the group. A guard
+     * that cries wolf on ordinary edits gets deleted by whoever it interrupts.
+     *
+     * So: comments stripped before counting, and the group matched by regex
+     * across both call forms.
      */
-    $source = file_get_contents(base_path('routes/web.php'));
+    $source = appSourceWithoutComments(base_path('routes/web.php'));
 
     expect(substr_count($source, 'AuthenticatePrivateFileSession'))->toBe(
         2,
-        'Expected exactly two mentions in routes/web.php — the import and one '
-        .'group. More than that means the guard is being applied per route, so '
-        .'a route added outside the group would silently be unprotected.',
+        'Expected exactly two mentions in the code of routes/web.php — the import '
+        .'and one group. More than that means the guard is being applied per '
+        .'route, so a route added outside the group would silently be unprotected.',
     );
 
-    expect(str_contains(
+    /*
+     * Matches Route::middleware(X::class) and Route::middleware([X::class, …]),
+     * each followed by ->group(.
+     *
+     * `(?:::|->)` because the call is STATIC on the facade. A first version of
+     * this regex only accepted `->middleware(` and so returned false against the
+     * unmodified file — it would have failed the build for the one shape the
+     * codebase actually uses. Caught by running the negative controls, which is
+     * the entire reason for having them.
+     */
+    $declaresGroup = preg_match(
+        '/Route(?:::|->)middleware\(\s*\[?[^)]*AuthenticatePrivateFileSession::class[^)]*\]?\s*\)\s*->group\(/',
         $source,
-        'Route::middleware(AuthenticatePrivateFileSession::class)->group(',
-    ))->toBeTrue('The private-file route group is gone; new routes no longer inherit the guard.');
+    ) === 1;
+
+    expect($declaresGroup)->toBeTrue(
+        'The private-file route group is gone; new routes no longer inherit the guard.',
+    );
 });
 
 it('sends an invalidated session to the panel login without depending on panel state', function () {

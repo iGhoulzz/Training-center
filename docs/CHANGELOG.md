@@ -57,9 +57,15 @@ Phase 4 inherits it.
 Seventeen tasks, each implemented on its own branch and reviewed before merge.
 Phase 1 closed with an end-of-phase review by fresh reviewers with no
 implementation context, split into three groups covering security, data
-integrity and cross-cutting operations: **27 findings, 26 fixed and 1 deferred**,
+integrity and cross-cutting operations: **28 findings, 27 fixed and 1 deferred**,
 recorded with their dispositions in
 `docs/reviews/2026-07-29-phase-1-review.md`.
+
+One question the review left open, G1-U3, was run at the close of phase 1 and
+returned a finding rather than an all-clear: a Livewire component rendered
+alongside the forced-password-change form can still be driven while an account is
+locked to that form. It grants no privilege the actor lacks, but it defeats the
+containment the flag exists to provide. Recorded in the review log, unfixed.
 
 Seven runtime experiments settled claims a static reading could not. Two of them
 cleared code that looked wrong, which is the argument for running the experiment

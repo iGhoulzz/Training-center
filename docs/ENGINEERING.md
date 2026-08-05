@@ -13,9 +13,18 @@ Single source of truth for coding conventions. Both `CLAUDE.md` and `AGENTS.md` 
 | Pest | 4.7.5 · PHPStan 2.2.5 via Larastan 3.10 · Pint 1.29.3 |
 | Key packages | `spatie/laravel-permission` 7.4.2, `bezhansalleh/filament-shield` 4.2.0, `spatie/laravel-activitylog` 5.0.0, `spatie/laravel-backup` 10.3.0 |
 
-This table said "Laravel 11+, PHP 8.3+" for all of phase 1, which was wrong about
-the floor in a way that would only have surfaced as an unexplainable
-`composer install` failure on a fresh 8.3 machine.
+This table said "Laravel 11+, PHP 8.3+" for all of phase 1, and `composer.json`
+agreed with it (`"php": "^8.3"`) while the locked dependency set cannot run on
+8.3. Both now state 8.4.1.
+
+What that mismatch actually did, since it is worth being exact rather than
+dramatic: `composer.json` also pins `config.platform.php` to `8.4.1`, so
+`composer install` resolves against the pretend platform and *succeeds* on an 8.3
+host. The refusal comes later and is explicit — Composer generates
+`vendor/composer/platform_check.php` from the platform pin, which fails with
+`Your Composer dependencies require a PHP version ">= 8.4.1"`. So the manifest
+was wrong rather than dangerous: it advertised support the code did not have, and
+anyone reading it to decide what to provision would have got it wrong.
 
 ---
 

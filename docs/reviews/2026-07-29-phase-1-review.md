@@ -101,7 +101,7 @@ add the standard Filament soft-delete idiom is the one who springs it.
 |---|---|---|---|
 | 1 | Filament's `Select` `in` rule blocks the case-variant from the UI | Drive `EditUser` with `roles => ['Super_Admin']` as an admin | **Settled — see G1-U1 under Experiment results.** It changes no disposition: not escalated, and no UI route was shown. The fix had already landed on the Action-layer probe. |
 | 2 | Behaviour of Shield's inline `EditAction` on the roles table | Drive `callTableAction('edit', ...)` and observe | **Moot.** The action no longer exists: `RoleResource::table()` replaces Shield's record actions and empties the toolbar. |
-| 3 | Whether the `ForcePasswordChange` bypass is reachable by a fresh attacker rather than only a stale open page | Obtain a snapshot from the exempt page, drive another component | **Closed without running, P1-T16.** See G1-U3 under Experiment results — the answer can no longer change any decision. |
+| 3 | Whether the `ForcePasswordChange` bypass is reachable by a fresh attacker rather than only a stale open page | Obtain a snapshot from the exempt page, drive another component | **RUN in T16. The answer is yes.** The experiment succeeds exactly as written. See G1-U3 under Experiment results — this is an open finding, not a closed question. |
 
 ### Resolution
 
@@ -1157,8 +1157,12 @@ two and keep one elsewhere.
 ## Where the review stands
 
 **Every fix-now finding across all three groups is now closed.** Group 1 (6),
-group 2 (6) and group 3 (15) — 27 findings, 26 fixed and L1 the single deferral,
-recorded above for phase 4.
+group 2 (6) and group 3 (16) — **28 findings, 27 fixed** and L1 the single
+deferral, recorded above for phase 4.
+
+*(T16 briefly recorded this as 27/26: group 3's "15" in the original sentence
+counted its FIXED findings, with L1 named separately, and the rewrite folded L1
+in and then subtracted it again. The table at the head of group 3 has 16 rows.)*
 
 **Closed out by T16 (2026-08-05).** All three groups' findings are merged. The
 rejections and deferrals are carried into section 13 of the design spec, so a
@@ -1340,35 +1344,73 @@ where the log already says it rests: on `SyncUserRolesAction` being an injectabl
 public service that a command, job or portal controller reaches with no `Select`
 in front of it.
 
-### G1-U3 — is the `ForcePasswordChange` bypass reachable by a fresh attacker? **Closed in T16 without running, because the fix made the question moot.**
+### G1-U3 — is the `ForcePasswordChange` bypass reachable by a fresh attacker? **RUN in T16. Yes. This is an open finding.**
 
-The experiment asked whether an attacker could obtain a Livewire snapshot
-themselves, rather than the bypass requiring a page a victim already had open.
-It was left open on the reasoning that the stale-page scenario justified the fix
-regardless.
+**T16 first closed this as moot, on an argument that was wrong.** That text said
+`ForcePasswordChange` is registered in `persistentMiddleware()`, therefore it
+runs on every request to Livewire's update endpoint, therefore where a snapshot
+came from cannot change the outcome. Codex challenged it; the vendor source and a
+behavioural probe both contradict it. **Where the snapshot came from is the only
+thing that decides.**
 
-It is closed now on a stronger basis than "the fix landed": **the fix removed the
-distinction the question turns on.** `ForcePasswordChange` sits in
-`persistentMiddleware()` on the admin panel (`AdminPanelProvider.php:112`), so it
-runs on *every* request to Livewire's update endpoint — and that endpoint is the
-only channel through which a snapshot, stale or freshly obtained, can be
-replayed. Where the snapshot came from cannot change the outcome.
+**The mechanism.** Livewire's `PersistentMiddleware` writes the originating route
+into the snapshot on dehydrate, then on `snapshot-verified` reads `memo.path`
+*back out of the snapshot*, fabricates a request for that path, matches it to a
+route, and applies only that route's middleware
+(`vendor/livewire/livewire/src/Mechanisms/PersistentMiddleware/PersistentMiddleware.php`).
+`ForcePasswordChange` exempts by asking `$request->routeIs(self::PAGE_ROUTE)`, so
+a snapshot carrying `memo.path=admin/password-change` is evaluated against the
+exempt route and passes.
 
-Two behavioural tests in `LivewirePersistentGuardTest` pin this against the real
-HTTP endpoint rather than through `Livewire::test()`, which never routes and so
-skips persistent middleware entirely: an interaction from a component opened
-before the reset is refused, and the mutation behind it does not execute.
+The original argument was also self-refuting, which is the part worth learning
+from. Had the guard truly run against the live update request, `routeIs()` would
+have been false for `livewire.update` and the guard would have redirected every
+interaction on the very page it exempts — the password-change form could never be
+submitted. A claim that would break the feature it describes should not have
+survived being written down.
 
-**What that leaves genuinely unmeasured**, stated rather than buried: no
-attacker-obtained snapshot was ever demonstrated, so the original severity debate
-was not settled empirically. That rating is historical and affects no code, and
-re-running the experiment now would mean reverting a merged security fix to do
-it.
+**Measured**, with `must_change_password` set throughout:
+
+| Request | Result |
+|---|---|
+| `GET /admin/students` (control) | **302 → /admin/password-change** — the guard works on page requests |
+| Replay `Filament\Livewire\Topbar` from the exempt page | **200** |
+| Replay `Filament\Livewire\GlobalSearch` | **200** |
+| Replay `Filament\Livewire\Sidebar` | **200** |
+| Replay `App\Filament\Pages\PasswordChange` | **200** (correct — this one must work) |
+| Replay `Filament\Livewire\Notifications` | **200** |
+
+All five components rendered by `/admin/password-change` carry
+`memo.path=admin/password-change`, so all five are drivable while the account is
+supposed to be locked to the password-change form. Codex additionally drove
+`GlobalSearch` with a prefix of a seeded student code and got the full code back,
+ruling out an echo of its own input.
+
+**Severity: Medium, and scoped honestly.** No privilege is gained — global search
+still runs each resource's `canViewAny()`, so the actor reaches only what their
+permissions already allow. What is defeated is *containment*: the flag exists so
+that an administrator who has just revoked a credential can be sure the holder of
+that session does nothing further until they set a new password. Today they can
+still search the register from it.
+
+**Not introduced by T16 and not fixed by it.** The behaviour predates the branch;
+what T16 got wrong was documenting it as impossible. Fixing it means changing
+`ForcePasswordChange` so the exemption does not rest on the fabricated route
+alone — the narrow form is to exempt the password-change *component* rather than
+anything co-rendered beside it. That is a security change to a merged guard, with
+its own tests and its own review, and it is **the owner's call whether it lands
+before phase 2 or as the first task of it.**
+
+**What genuinely does hold**, and is worth keeping: the snapshot checksum HMACs
+the whole snapshot including `memo`
+(`vendor/livewire/livewire/src/Mechanisms/HandleComponents/Checksum.php`), so
+nobody can forge a snapshot claiming an arbitrary originating route. The exposure
+is limited to components actually co-rendered on the exempt page.
 
 ### Summary of the seven
 
-*(Eight dispositions, seven of them measured — G1-U3 was closed by argument in
-T16, above.)*
+*(Eight experiments now. G1-U3 was run in T16 and is the only one that produced
+an unfixed finding; the seven below are the phase 1 set.)*
 
 | Experiment | Result |
 |---|---|
@@ -1386,10 +1428,11 @@ would have been "hardened" into a rewrite of correct code.
 
 ---
 
-## Wording corrections owed to T16
+## Wording corrections owed to T16 — DONE 2026-08-05
 
-Recorded as they are noticed, so T16 is a reconciliation pass rather than a
-rediscovery.
+Recorded as they were noticed, so T16 was a reconciliation pass rather than a
+rediscovery. **Both are now applied**; they are kept here as the record of what
+was owed, not as outstanding work.
 
 - **`PrivateFileAccessTest`, the structural test.** Its comment claims it catches
   "the third private-file route somebody adds next year without it". It does not:
@@ -1397,9 +1440,18 @@ rediscovery.
   cannot discover a new one. The route GROUP is what makes a third route inherit
   the middleware; the test only pins that the two current ones carry it. Reword to
   say so.
+
+  **Done, and taken further:** the comment now states what it does and does not
+  catch, and a second test asserts the property that genuinely protects a future
+  route — that the guard is declared once, on the group. Mutation-tested against
+  the refactor that dissolves the group, and against three edits that change
+  nothing, so it fails for the right reason only.
 - **`CLAUDE.md` permission example.** `students.delete` matches nothing; Shield
   generates `delete_student`. Every reviewer had to be told this as an erratum,
   which is a workaround rather than a fix.
+
+  **Done**, in `CLAUDE.md`, `AGENTS.md` and section 5 of the spec, with the
+  naming rule and its rationale stated once in `docs/ENGINEERING.md`.
 
 ## Known context supplied to reviewers
 
