@@ -1021,9 +1021,67 @@ The last two are the ones that survived the first attempt.
 
 | Gate | Result |
 |---|---|
-| `php artisan test` | **997 passed**, 0 failed, 2665 assertions |
+| `php artisan test` | **997 passed**, 0 failed, 2665 assertions *(round 1; see round 2 below for the current figure)* |
 | `vendor/bin/pint --test` | passed |
 | `vendor/bin/phpstan analyse` | 0 errors |
+
+### Codex round 2 — the fix for blocker 2 was in the wrong place
+
+Moving the transient checks off boot was right. Putting them on the scheduler
+was not, and the review caught two consequences that compound:
+
+| # | Finding | What was actually wrong |
+|---|---|---|
+| 1 | High — manual commands bypassed the check | `->before()` fires for the scheduler and nothing else. `php artisan backup:run` typed by hand ran unguarded — **including the drill this very document prescribes**, of unmounting the drive and expecting failure. It would have written the archive into the empty mount point. |
+| 2 | High — the callbacks suppressed the alert | A `->before()` that throws stops the command before it starts, so Spatie never reaches the `catch` that dispatches `BackupHasFailed`. The scheduler reports through the exception handler: a log line, not the configured mail. `backup:clean` is worse — its own catch does not notify at all, so nothing would ever have been sent. |
+| 3 | Medium — docs described the superseded design | `RESTORE.md` and `.env.example` still said mount availability was checked at boot, and `BACKUP_VOLUME_MARKER` was used by config and named in the runbook but absent from `.env.example`. |
+
+**A claim that was false in two directions at once.** The docblock on
+`assertDestinationReady()` said a failure would surface because "backup:monitor
+then reports the destination unhealthy the following day". Nothing was ever
+dispatched, *and* a monitor reading an unmounted mount point can report stale
+archives as healthy. The sentence described a recovery path that did not exist
+in either half.
+
+**A dead end worth recording.** `CommandStarting` looked like the obvious
+boundary and a probe confirmed it fires for manual runs, `Artisan::call()` and
+the scheduler's subprocess. It was rejected on discovering that Laravel
+deliberately does **not** dispatch it when `runningUnitTests()` is true
+(`Foundation\Console\Kernel::__construct`) — so not one test could have observed
+the guard. That is precisely the "test that cannot fail" pattern this review
+keeps finding, and it would have shipped as green.
+
+**The boundary that works** is three subclasses carrying Spatie's signatures,
+registered after its provider so they replace its commands by name. Every caller
+goes through them, each returns a real `FAILURE`, prints why, and raises its own
+configured notification. `backup:list` is deliberately left unguarded — it only
+reads, and its Reachable column is what an operator wants during an incident.
+
+### Round 2 evidence
+
+Eleven mutations, each failing the suite:
+
+| Mutation | Result |
+|---|---|
+| `backup:run` / `:monitor` / `:clean` stop checking (3 mutations) | FAILED 67, 69, 68 / 70 |
+| Guarded commands unregistered — package originals return | FAILED 63/70 |
+| Refusal no longer notifies anybody | FAILED 66/70 |
+| Refusal returns success instead of failing | FAILED 66/70 |
+| `--disable-notifications` ignored | FAILED 69/70 |
+| Monitor raises the wrong notification | FAILED 69/70 |
+| Device check, marker, `realpath()`, trailing separator (round 1, re-run) | all FAILED |
+
+And the drill itself, run as real commands outside the test kernel:
+
+| Command (with `BACKUP_LOCAL_PATH` pointing nowhere) | Result |
+|---|---|
+| `backup:run` | exit 1, `The backup destination is not ready:` |
+| `backup:monitor` | exit 1, refused |
+| `backup:clean` | exit 1, refused |
+| `backup:list` | exit 0, Reachable ❌ — correctly still usable |
+| `BACKUP_DISK=backups_s3 backup:clean` | reaches "Starting cleanup", fails on credentials — the guard is conditional, not a blanket refusal |
+
+**Gates:** Pint clean, PHPStan 0 errors, **1006 passed / 2685 assertions**.
 
 **Note for the operator, not enforceable in code:** a drive that never leaves
 the building survives a dead server and not a fire. `RESTORE.md` says to rotate
