@@ -8346,10 +8346,34 @@ the exact experiment needed, and triage runs it serially.
 
 - [ ] **Step 7: Record every disposition in the review log**
 
-- [ ] **Step 8: Delete task branches and tags — only after T16 has consumed them**
+- [x] **Step 8: Delete task branches and tags — only after T16 has consumed them**
 
-  Not here. T16 reconciles documentation against what was actually built, and the
-  history is its evidence.
+  **Tags backfilled 2026-08-05 (T16).** They stopped at `task/P1-T10-end`; `T11`,
+  `T12`, `T13`, `T14`, `T15` and `T17` are now tagged, following the existing
+  convention of a lightweight tag on the task branch's tip rather than on the
+  merge commit. `task/P1-T16-end` is created when this task merges.
+
+  **For T17 this was more than bookkeeping.** It merged through GitHub as a
+  *squash*, so its individual commits are not ancestors of `main`. Deleting that
+  branch without tagging it first would have left four rounds of review history
+  recoverable only from the reflog.
+
+  **Branch deletion is deliberately NOT done here.** Every other task branch is a
+  true ancestor of `main`, so deleting them loses nothing — but it is destructive,
+  irreversible in practice, and T16 is not merged yet. It is the owner's call
+  once it is, and it is the last thing standing between phase 1 and phase 2:
+
+  ```bash
+  git branch -d p1/t04c-actions-boundary-refactor p1/t06b-staff-file-lifecycle \
+    p1/t10-instructor-hours p1/t11-enrollments p1/t12-activity-log p1/t13-backups \
+    p1/t15-livewire-guard-tests p1/t15-private-file-access p1/t15-security-fixes \
+    p1/t15-staff-profile-view-surface
+  ```
+
+  `p1/t17-local-backup-destination` needs `-D` rather than `-d`, because the
+  squash merge means git cannot see its work is already in `main` — check it
+  against `task/P1-T17-end` first. `p3/t00-student-certificate-spec` is phase 3
+  work and stays.
 
 ### Why this is worth doing at all
 
