@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Manual re-runs. GitHub silently created no run at all for one push on this
+  # branch — the workflow was active and every other push triggered one — which
+  # left a commit with no checks and no way to ask for them. A gate you cannot
+  # re-run on demand is one you end up trusting a stale result from.
+  workflow_dispatch:
 
 concurrency:
   # One run per ref. A superseded push has nothing useful left to say.
