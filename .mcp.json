@@ -3,8 +3,8 @@
         "laravel-boost": {
             "command": "php",
             "args": [
-                "${CLAUDE_PROJECT_DIR:-.}/artisan",
-                "boost:mcp"
+                "-r",
+                "require (getenv('CLAUDE_PROJECT_DIR') ?: getcwd()) . '/scripts/bin/boost-mcp.php';"
             ],
             "env": {
                 "BOOST_RULES_ENABLED": "false"

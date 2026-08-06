@@ -65,18 +65,33 @@ it('resolves both Boost MCP servers from nested directories', function () {
     $codex = projectSource('.codex/config.toml');
 
     /*
-     * THE DEFAULT IS MANDATORY, NOT DECORATION.
+     * THE PATH MUST BE RESOLVED INSIDE THE SERVER, NOT BY THE CONFIG.
      *
-     * Claude Code sets CLAUDE_PROJECT_DIR in the SPAWNED SERVER's environment,
-     * not in its own, so at .mcp.json parse time the variable is unset. Written
-     * as a bare ${CLAUDE_PROJECT_DIR} the entry never expands and the server
-     * does not load at all: `claude mcp list` reports "Missing environment
-     * variables: CLAUDE_PROJECT_DIR". The `:-.` default is what makes it
-     * resolve, and `.` is the project root because that is where Claude Code
-     * starts the server.
+     * Two forms were tried and both fail:
+     *
+     *   ${CLAUDE_PROJECT_DIR}/artisan     — never expands. Claude Code sets
+     *     that variable in the SPAWNED SERVER's environment, not its own, so at
+     *     parse time it is unset and no server is offered at all:
+     *     `claude mcp list` reports "Missing environment variables".
+     *
+     *   ${CLAUDE_PROJECT_DIR:-.}/artisan  — parses, then resolves `.` against
+     *     the SESSION's working directory rather than the project root.
+     *     Measured on Claude Code 2.1.177: connected from the repository root,
+     *     failed from app/Domain.
+     *
+     * So the config carries no path at all. It runs a one-line `php -r` that
+     * reads CLAUDE_PROJECT_DIR from its own environment — where it is genuinely
+     * set — and requires the launcher, which derives everything else from
+     * __DIR__.
      */
-    expect($claude['mcpServers']['laravel-boost']['args'][0] ?? null)
-        ->toBe('${CLAUDE_PROJECT_DIR:-.}/artisan')
+    $args = $claude['mcpServers']['laravel-boost']['args'] ?? [];
+
+    expect($args[0] ?? null)->toBe('-r')
+        ->and($args[1] ?? '')->toContain('CLAUDE_PROJECT_DIR')
+        ->and($args[1] ?? '')->toContain('scripts/bin/boost-mcp.php')
+        // The launcher must exist, or the server dies with a require error that
+        // the client only reports as a failed connection.
+        ->and(is_file(Repo::root().'/scripts/bin/boost-mcp.php'))->toBeTrue()
         // Project-config relative paths resolve from .codex/, so .. is the root.
         ->and($codex)->toContain('cwd = ".."');
 });

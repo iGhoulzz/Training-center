@@ -45,6 +45,14 @@ function initializeBoostMcp(array $command, string $cwd): array
              * how exceptions render, which several feature tests assert on.
              */
             'APP_ENV' => 'local',
+            /*
+             * Claude Code sets this in the spawned server's environment — that
+             * is the whole reason it is unavailable at config-parse time, and
+             * the reason the launcher reads it here rather than the config
+             * resolving a path before spawning. Supplied so this test starts the
+             * server the same way the real client does.
+             */
+            'CLAUDE_PROJECT_DIR' => Repo::root(),
         ]),
     );
 
@@ -122,12 +130,22 @@ function committedClaudeMcpCommand(): array
     );
 }
 
-it('starts the Claude Boost MCP server from the committed configuration', function () {
-    $root = Repo::root();
-
-    // `.` in the expanded default resolves against the server's working
-    // directory, which Claude Code sets to the project root.
-    $result = initializeBoostMcp(committedClaudeMcpCommand(), $root);
+/*
+ * THE WORKING DIRECTORY IS NESTED ON PURPOSE.
+ *
+ * An earlier version of this test passed the repository root as the child's
+ * cwd, on the assumption that Claude Code starts MCP servers there. It does
+ * not — it uses the session's working directory. Measured against Claude Code
+ * 2.1.177 with the previous `${CLAUDE_PROJECT_DIR:-.}/artisan` configuration:
+ * connected from the repository root, FAILED from app/Domain. Passing $root
+ * here reproduced the passing case and nothing else, so the test agreed with
+ * the assumption instead of checking it.
+ *
+ * Starting nested, with CLAUDE_PROJECT_DIR supplied exactly as Claude supplies
+ * it to a spawned server, is the case that was actually broken.
+ */
+it('starts the Claude Boost MCP server from a nested working directory', function () {
+    $result = initializeBoostMcp(committedClaudeMcpCommand(), Repo::root().'/app/Domain');
 
     $response = json_decode(trim($result['stdout']), true, flags: JSON_THROW_ON_ERROR);
 
