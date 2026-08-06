@@ -14,6 +14,10 @@
 !/.codex/hooks.json
 !/.codex/config.toml
 /.cursor/
+# Boost detects and configures every agent it finds. This project uses Claude
+# Code and Codex; Junie and Cursor artefacts are regenerated on demand and would
+# otherwise be committed noise nobody here reviews.
+/.junie/
 /.idea
 /.nova
 /.phpunit.cache
