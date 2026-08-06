@@ -110,17 +110,22 @@ git branch -d p1/t04-activity-log
 1. **Assign.** Claude writes the task into the milestone plan with owner, file scope, and definition of done.
 2. **Isolate.** The owning agent creates its worktree and branch.
 3. **Implement.** Tests written alongside the implementation. Work stays inside the declared file scope — if the task genuinely needs a file outside it, stop and raise it rather than silently expanding scope.
-4. **Verify locally.** All three must pass, with real output, before opening a PR:
+4. **Verify locally.** One command, and it must pass with real output before opening a PR:
    ```bash
-   vendor/bin/pint --test
-   vendor/bin/phpstan analyse
-   php artisan test
+   composer verify
    ```
+   That is `composer validate --strict`, then formatting and static analysis, then the full suite. Use `composer verify:fast` — the same without the suite — while working.
+
+   **Do not restate this as separate tool invocations.** There is one definition, `Tooling\Gate::fastChecks()`, and both agents' Stop hooks, the Git hooks and CI all reach it. Restating it here is how the copies drift; the previous version of this step listed `vendor/bin/phpstan analyse` without `--memory-limit`, which exhausts PHP's default on this codebase and reports a crash rather than an analysis.
+
+   Enable the Git hooks once per clone: `git config core.hooksPath .githooks`.
+
+   The suite serialises across worktrees — they share one MySQL database. A run that says it is waiting is correct, not hung.
 5. **Open a PR** against `main`, describing what changed, why, and how it was verified.
 6. **Cross-review.** The *other* agent reviews. See the review contract below.
 7. **Resolve.** The author addresses findings. Disagreement is legitimate — a reviewer can be wrong, and the author should say so with reasoning rather than complying reflexively.
 8. **Merge** once the reviewer approves and CI is green. Squash merge.
-9. **Clean up** the worktree and branch.
+9. **Clean up** the worktree and branch. **Tag the branch tip first and push the tag** — a squash merge leaves the branch's commits unreachable from `main`, so an unpushed tag is the only record of the review history, and a local-only tag is one disk failure from nothing.
 
 ---
 
