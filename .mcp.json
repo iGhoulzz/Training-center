@@ -4,7 +4,7 @@
             "command": "php",
             "args": [
                 "-r",
-                "require (getenv('CLAUDE_PROJECT_DIR') ?: getcwd()) . '/scripts/bin/boost-mcp.php';"
+                "$d=getcwd();while(!is_file($d.'/scripts/bin/boost-mcp.php')&&dirname($d)!==$d)$d=dirname($d);require $d.'/scripts/bin/boost-mcp.php';"
             ],
             "env": {
                 "BOOST_RULES_ENABLED": "false"

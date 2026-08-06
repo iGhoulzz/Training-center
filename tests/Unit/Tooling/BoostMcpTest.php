@@ -28,7 +28,22 @@ function initializeBoostMcp(array $command, string $cwd): array
          * server exists, and the test reports a broken server when the real
          * fault is a missing environment.
          */
-        array_merge(getenv(), [
+        /*
+         * CLAUDE_PROJECT_DIR IS REMOVED, NOT SUPPLIED.
+         *
+         * An earlier version injected it, so the launcher always had a project
+         * root handed to it and the test passed no matter what the config did.
+         * The real client does not give the `php -r` snippet a usable root — the
+         * measured result was `Connected` from the repository root and `Failed
+         * to connect` from app/Domain — so injecting it tested a situation that
+         * does not occur.
+         *
+         * Stripped rather than merely omitted: this suite may itself be run from
+         * inside a Claude Code session, where the parent process has the
+         * variable set and array_merge(getenv(), ...) would pass it straight
+         * through, quietly restoring the false positive.
+         */
+        array_diff_key(array_merge(getenv(), [
             'BOOST_RULES_ENABLED' => 'false',
             /*
              * Boost disables itself under APP_ENV=testing, twice over:
@@ -45,15 +60,7 @@ function initializeBoostMcp(array $command, string $cwd): array
              * how exceptions render, which several feature tests assert on.
              */
             'APP_ENV' => 'local',
-            /*
-             * Claude Code sets this in the spawned server's environment — that
-             * is the whole reason it is unavailable at config-parse time, and
-             * the reason the launcher reads it here rather than the config
-             * resolving a path before spawning. Supplied so this test starts the
-             * server the same way the real client does.
-             */
-            'CLAUDE_PROJECT_DIR' => Repo::root(),
-        ]),
+        ]), ['CLAUDE_PROJECT_DIR' => true]),
     );
 
     expect(is_resource($process))->toBeTrue('Unable to start the Boost MCP process.');

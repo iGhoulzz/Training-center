@@ -7,19 +7,25 @@ declare(strict_types=1);
  *
  * WHY THIS FILE EXISTS AT ALL.
  *
- * `.mcp.json` cannot name the project root. Claude Code sets
- * CLAUDE_PROJECT_DIR in the SPAWNED SERVER's environment, not in its own, so at
- * config-parse time the variable is unset: a bare `${CLAUDE_PROJECT_DIR}` fails
- * to expand and no server is offered at all. Giving it the documented
- * `${CLAUDE_PROJECT_DIR:-.}` default makes the config parse, but `.` is the
- * SESSION's working directory, not the project root — measured against Claude
- * Code 2.1.177, that connects from the repository root and fails from
- * `app/Domain`. The project root is only knowable inside the server process.
+ * `.mcp.json` cannot name the project root, and three attempts to make it try
+ * all failed against Claude Code 2.1.177:
  *
- * So the config runs a one-line `php -r` that reads CLAUDE_PROJECT_DIR from its
- * own environment and requires this file. From here __DIR__ is known, and the
- * root follows from it with no reliance on the environment or the caller's
- * working directory.
+ *   ${CLAUDE_PROJECT_DIR}/artisan     never expands. The variable is set in the
+ *     SPAWNED SERVER's environment, not Claude Code's, so at config-parse time
+ *     it is unset and no server is offered at all.
+ *
+ *   ${CLAUDE_PROJECT_DIR:-.}/artisan  parses, then resolves `.` against the
+ *     SESSION's working directory: connected from the repository root, failed
+ *     from app/Domain.
+ *
+ *   getenv('CLAUDE_PROJECT_DIR') ?: getcwd()   same outcome. The variable is
+ *     not usable by the `php -r` snippet either, so it fell back to the nested
+ *     working directory and could not find this file.
+ *
+ * So the config assumes NOTHING about the environment. It walks upward from the
+ * working directory until it finds this launcher, which works from any
+ * directory inside the project. From here __DIR__ is known and the root follows
+ * from it.
  *
  * ARTISAN IS DELIBERATELY NOT REQUIRED. It opens with `#!/usr/bin/env php`
  * outside PHP tags, so requiring it prints that line to stdout — which is the

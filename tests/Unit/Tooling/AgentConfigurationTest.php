@@ -79,15 +79,20 @@ it('resolves both Boost MCP servers from nested directories', function () {
      *     Measured on Claude Code 2.1.177: connected from the repository root,
      *     failed from app/Domain.
      *
-     * So the config carries no path at all. It runs a one-line `php -r` that
-     * reads CLAUDE_PROJECT_DIR from its own environment — where it is genuinely
-     * set — and requires the launcher, which derives everything else from
-     * __DIR__.
+     *   getenv('CLAUDE_PROJECT_DIR') ?: getcwd()  — same outcome. The variable
+     *     is not usable by the `php -r` snippet either, so it fell back to the
+     *     nested working directory and could not find the launcher.
+     *
+     * So the config assumes NOTHING about the environment: it walks upward from
+     * the working directory until it finds the launcher. Depending on
+     * CLAUDE_PROJECT_DIR is the mistake this assertion exists to prevent, which
+     * is why its absence is asserted rather than its presence.
      */
     $args = $claude['mcpServers']['laravel-boost']['args'] ?? [];
 
     expect($args[0] ?? null)->toBe('-r')
-        ->and($args[1] ?? '')->toContain('CLAUDE_PROJECT_DIR')
+        ->and($args[1] ?? '')->not->toContain('CLAUDE_PROJECT_DIR')
+        ->and($args[1] ?? '')->toContain('dirname')
         ->and($args[1] ?? '')->toContain('scripts/bin/boost-mcp.php')
         // The launcher must exist, or the server dies with a require error that
         // the client only reports as a failed connection.
