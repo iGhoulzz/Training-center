@@ -19,4 +19,4 @@ cd "$root" || exit 1
 
 git diff --cached --check || exit $?
 
-php scripts/bin/verify-fast.php || exit $?
+composer verify:fast || exit $?

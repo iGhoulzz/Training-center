@@ -156,3 +156,18 @@ it('keeps the git hooks executable', function () {
         expect($line)->toStartWith('100755');
     }
 });
+
+it('routes Git hooks and CI through the Composer gates', function () {
+    $preCommit = projectSource('.githooks/pre-commit');
+    $prePush = projectSource('.githooks/pre-push');
+    $ci = projectSource('.github/workflows/ci.yml');
+
+    expect($preCommit)->toContain('composer verify:fast')
+        ->and($prePush)->toContain('composer verify')
+        ->and($ci)->toContain('run: composer verify');
+});
+
+it('always builds frontend assets before push and in CI', function () {
+    expect(projectSource('.githooks/pre-push'))->toContain('npm run build')
+        ->and(projectSource('.github/workflows/ci.yml'))->toContain('run: npm run build');
+});
