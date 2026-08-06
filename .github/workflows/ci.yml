@@ -37,6 +37,13 @@ jobs:
       DB_DATABASE: training_center_ci
       DB_USERNAME: root
       DB_PASSWORD: root
+      # The backup config validates its alert address at boot, and
+      # `composer install` boots Laravel through package:discover. Without a
+      # valid address here the whole install step fails with "backups@localhost
+      # is not a valid email address" — which is the config guard doing its job,
+      # not a CI bug. Found on this workflow's first real run.
+      BACKUP_ALERT_EMAIL: ci@example.com
+      MAIL_FROM_ADDRESS: ci@example.com
 
     services:
       mysql:
