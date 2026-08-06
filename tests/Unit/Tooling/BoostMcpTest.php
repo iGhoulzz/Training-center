@@ -73,12 +73,61 @@ function initializeBoostMcp(array $command, string $cwd): array
     return ['status' => proc_close($process), 'stdout' => $stdout, 'stderr' => $stderr];
 }
 
-it('starts the Claude Boost MCP server from a nested directory', function () {
-    $root = Repo::root();
-    $result = initializeBoostMcp(
-        [PHP_BINARY, $root.'/artisan', 'boost:mcp'],
-        $root.'/app/Domain',
+/**
+ * Expand a value the way Claude Code expands `.mcp.json`: `${VAR}` from the
+ * environment, `${VAR:-default}` falling back to the default.
+ *
+ * CLAUDE_PROJECT_DIR is deliberately NOT supplied. Claude sets it in the
+ * spawned server's environment, not its own, so at parse time it is unset and
+ * the default is what actually gets used — which is why the bare `${VAR}` form
+ * produced "Missing environment variables: CLAUDE_PROJECT_DIR" and the server
+ * never loaded.
+ */
+function expandMcpValue(string $value): string
+{
+    return (string) preg_replace_callback(
+        '/\$\{([A-Z_][A-Z0-9_]*)(?::-([^}]*))?\}/i',
+        function (array $match): string {
+            $actual = getenv($match[1]);
+
+            return $actual !== false && $actual !== '' ? $actual : ($match[2] ?? '');
+        },
+        $value,
     );
+}
+
+/**
+ * The command exactly as the committed .mcp.json defines it.
+ *
+ * Derived rather than hardcoded: a test that spells out its own path proves the
+ * server can start, not that the SHIPPED CONFIGURATION starts it. That is the
+ * difference that let a broken `${CLAUDE_PROJECT_DIR}` reference sit here
+ * passing.
+ *
+ * @return list<string>
+ */
+function committedClaudeMcpCommand(): array
+{
+    $config = json_decode(
+        (string) file_get_contents(Repo::root().'/.mcp.json'),
+        true,
+        flags: JSON_THROW_ON_ERROR,
+    );
+
+    $server = $config['mcpServers']['laravel-boost'];
+
+    return array_map(
+        expandMcpValue(...),
+        [$server['command'], ...$server['args']],
+    );
+}
+
+it('starts the Claude Boost MCP server from the committed configuration', function () {
+    $root = Repo::root();
+
+    // `.` in the expanded default resolves against the server's working
+    // directory, which Claude Code sets to the project root.
+    $result = initializeBoostMcp(committedClaudeMcpCommand(), $root);
 
     $response = json_decode(trim($result['stdout']), true, flags: JSON_THROW_ON_ERROR);
 
@@ -86,12 +135,28 @@ it('starts the Claude Boost MCP server from a nested directory', function () {
         ->and($response['result']['serverInfo']['name'] ?? null)->not->toBeNull();
 });
 
-it('starts the Codex Boost MCP server from its project-root cwd', function () {
-    $root = Repo::root();
+it('starts the Codex Boost MCP server from its committed configuration', function () {
+    $config = (string) file_get_contents(Repo::root().'/.codex/config.toml');
+
+    // Derived from the committed file, for the same reason as the Claude case:
+    // a hardcoded command would keep passing after the config broke.
+    preg_match('/^command\s*=\s*"([^"]+)"/m', $config, $command);
+    preg_match('/^args\s*=\s*\[([^\]]*)\]/m', $config, $args);
+    preg_match('/^cwd\s*=\s*"([^"]+)"/m', $config, $cwd);
+
+    expect($command[1] ?? null)->not->toBeNull()
+        ->and($cwd[1] ?? null)->toBe('..');
+
+    $arguments = array_map(
+        static fn (string $value): string => trim(trim($value), '"'),
+        explode(',', $args[1] ?? ''),
+    );
+
     $result = initializeBoostMcp(
-        [PHP_BINARY, 'artisan', 'boost:mcp'],
-        // .codex/config.toml resolves its cwd = ".." from the .codex folder.
-        $root,
+        [$command[1], ...$arguments],
+        // Codex resolves a project config's relative cwd from .codex/, so ".."
+        // is the repository root.
+        Repo::root().'/.codex/'.$cwd[1],
     );
 
     $response = json_decode(trim($result['stdout']), true, flags: JSON_THROW_ON_ERROR);

@@ -61,15 +61,52 @@ final class SerialLock
             throw new RuntimeException("Unable to open the suite lock at {$path}.");
         }
 
-        if (! flock($handle, LOCK_EX | LOCK_NB)) {
-            // Announced once, on stderr, so it cannot be mistaken for test output
-            // and cannot corrupt a machine-readable reporter on stdout. A gate
-            // that blocks silently for four minutes reads as a hang.
-            fwrite(STDERR, "Waiting for the shared test database (another suite is running)...\n");
-            flock($handle, LOCK_EX);
-        }
+        self::takeExclusiveLock($handle, $path);
 
         self::$handle = $handle;
+    }
+
+    /**
+     * Block until the lock is genuinely held, or throw.
+     *
+     * THE SECOND flock() RESULT IS CHECKED, AND THAT IS THE POINT OF THIS
+     * METHOD EXISTING SEPARATELY.
+     *
+     * A failed non-blocking attempt means "someone else holds it" only when
+     * locking works at all. flock() also returns false when the stream simply
+     * cannot be locked — a filesystem without lock support, a handle that is
+     * not lockable. Ignoring the blocking call's result treated that case as
+     * contention: it printed "waiting", returned, and marked the lock HELD, so
+     * two suites could rebuild the same schema while the guard reported
+     * success. **A lock that fails open is worse than no lock, because it is
+     * trusted.**
+     *
+     * Extracted so the failure path can be tested with a stream that cannot be
+     * locked; otherwise it is unreachable from outside and stays unverified.
+     *
+     * @param  resource  $handle
+     */
+    public static function takeExclusiveLock($handle, string $path): void
+    {
+        if (flock($handle, LOCK_EX | LOCK_NB)) {
+            return;
+        }
+
+        // Announced once, on stderr, so it cannot be mistaken for test output
+        // and cannot corrupt a machine-readable reporter on stdout. A gate that
+        // blocks silently for four minutes reads as a hang.
+        fwrite(STDERR, "Waiting for the shared test database (another suite is running)...\n");
+
+        if (flock($handle, LOCK_EX)) {
+            return;
+        }
+
+        fclose($handle);
+
+        throw new RuntimeException(
+            "Unable to lock the shared test database at {$path}. Refusing to run: without this "
+            .'lock two suites can rebuild the same schema at once.'
+        );
     }
 
     public static function isHeld(): bool

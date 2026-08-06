@@ -38,38 +38,61 @@ final class Process
     }
 
     /**
-     * Run a command and collect everything it printed.
+     * Run a command and collect everything it printed, stdout and stderr
+     * interleaved as the child emitted them.
      *
-     * stdout and stderr are merged deliberately. A failing tool splits its
-     * message across both — PHPStan prints its summary on one and its errors on
-     * the other — and a caller handing the result to an agent needs the whole
-     * message, in order, not half of it.
+     * THE STREAMS ARE MERGED AT proc_open, NOT CONCATENATED AFTERWARDS, AND
+     * THAT IS A DEADLOCK FIX RATHER THAN A TIDINESS ONE.
+     *
+     * Two separate pipes drained one after the other hang the moment a child
+     * writes more to the second stream than its pipe buffer holds — roughly
+     * 64 KiB. The child blocks writing stderr, the parent blocks reading
+     * stdout, and neither moves. Measured: a child writing 1 MiB to stderr
+     * never returned and had to be killed.
+     *
+     * The Stop hook runs through this method, so that deadlock meant a noisy
+     * PHPStan failure could hang an agent for the hook's full 300-second
+     * timeout — a gate failing in the slowest possible way, on exactly the
+     * input it exists to report.
+     *
+     * Merging also makes the ordering claim true. Concatenating the two
+     * captures turned a child that wrote "err" then "out" into "outerr".
      *
      * @param  list<string>  $command
      * @return array{status: int, output: string}
      */
     public static function capture(array $command, ?string $cwd = null): array
     {
-        $process = proc_open(
-            $command,
-            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
-            $pipes,
-            $cwd,
-        );
+        /*
+         * Both streams are given the SAME temporary file, rather than a pipe
+         * each. A file has no fixed-size buffer, so the child can never block
+         * waiting for a reader — there is nothing left to deadlock on, and no
+         * draining order to get wrong. It is also what makes the interleaving
+         * genuine: the kernel writes both streams into one file as they arrive.
+         */
+        $buffer = tmpfile();
+
+        if ($buffer === false) {
+            throw new RuntimeException('Unable to open a buffer for: '.($command[0] ?? '?'));
+        }
+
+        $process = proc_open($command, [1 => $buffer, 2 => $buffer], $pipes, $cwd);
 
         if (! is_resource($process)) {
+            fclose($buffer);
+
             throw new RuntimeException('Unable to start: '.($command[0] ?? '?'));
         }
 
-        $stdout = stream_get_contents($pipes[1]);
-        $stderr = stream_get_contents($pipes[2]);
+        $status = proc_close($process);
 
-        fclose($pipes[1]);
-        fclose($pipes[2]);
+        rewind($buffer);
+        $output = stream_get_contents($buffer);
+        fclose($buffer);
 
         return [
-            'status' => proc_close($process),
-            'output' => (is_string($stdout) ? $stdout : '').(is_string($stderr) ? $stderr : ''),
+            'status' => $status,
+            'output' => is_string($output) ? $output : '',
         ];
     }
 }

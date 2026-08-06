@@ -69,3 +69,36 @@ it('merges stderr into captured output', function () {
 
     expect($result['output'])->toContain('out')->toContain('err');
 });
+
+it('preserves the order the child actually wrote in', function () {
+    // Concatenating a stdout capture and a stderr capture turned this into
+    // "outerr" and called it interleaved. Merging at proc_open makes the claim
+    // true rather than plausible.
+    $result = Process::capture([PHP_BINARY, '-r', 'fwrite(STDERR, "err"); echo "out";']);
+
+    expect($result['output'])->toBe('errout');
+});
+
+/*
+ * REGRESSION: A CHILD THAT FLOODS stderr USED TO DEADLOCK THE GATE.
+ *
+ * Two pipes drained one after the other hang as soon as the child writes more
+ * to the second stream than its buffer holds — about 64 KiB. The child blocks
+ * writing stderr while the parent blocks reading stdout, and neither moves.
+ * Measured before the fix: a 1 MiB stderr write never returned.
+ *
+ * The Stop hook runs through this method, so the failure surfaced as an agent
+ * frozen for the hook's full 300-second timeout — triggered by exactly the
+ * noisy analyser failure the gate exists to report.
+ */
+it('captures a megabyte of stderr without deadlocking', function () {
+    $result = Process::capture([
+        PHP_BINARY,
+        '-r',
+        'fwrite(STDERR, str_repeat("E", 1024 * 1024)); echo "done";',
+    ]);
+
+    expect(strlen($result['output']))->toBeGreaterThan(1024 * 1024)
+        ->and($result['output'])->toEndWith('done')
+        ->and($result['status'])->toBe(0);
+});

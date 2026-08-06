@@ -64,8 +64,19 @@ it('resolves both Boost MCP servers from nested directories', function () {
     $claude = json_decode(projectSource('.mcp.json'), true, flags: JSON_THROW_ON_ERROR);
     $codex = projectSource('.codex/config.toml');
 
+    /*
+     * THE DEFAULT IS MANDATORY, NOT DECORATION.
+     *
+     * Claude Code sets CLAUDE_PROJECT_DIR in the SPAWNED SERVER's environment,
+     * not in its own, so at .mcp.json parse time the variable is unset. Written
+     * as a bare ${CLAUDE_PROJECT_DIR} the entry never expands and the server
+     * does not load at all: `claude mcp list` reports "Missing environment
+     * variables: CLAUDE_PROJECT_DIR". The `:-.` default is what makes it
+     * resolve, and `.` is the project root because that is where Claude Code
+     * starts the server.
+     */
     expect($claude['mcpServers']['laravel-boost']['args'][0] ?? null)
-        ->toBe('${CLAUDE_PROJECT_DIR}/artisan')
+        ->toBe('${CLAUDE_PROJECT_DIR:-.}/artisan')
         // Project-config relative paths resolve from .codex/, so .. is the root.
         ->and($codex)->toContain('cwd = ".."');
 });

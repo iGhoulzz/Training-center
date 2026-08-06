@@ -60,6 +60,41 @@ it('is held by the process running this test', function () {
     expect(SerialLock::isHeld())->toBeTrue();
 });
 
+/*
+ * REGRESSION: THE LOCK USED TO FAIL OPEN.
+ *
+ * The blocking flock() result was discarded. A failed non-blocking attempt was
+ * read as contention, so an unlockable stream printed "waiting", returned, and
+ * the suite proceeded as though it held the lock — letting two suites rebuild
+ * the same schema while the guard reported success.
+ *
+ * That is worse than having no lock, because the answer is trusted: everything
+ * downstream, including the two-worktree evidence, assumes a held lock means
+ * exclusive access.
+ *
+ * php://memory cannot be flock()ed, so both calls return false — the exact
+ * shape of a real lock failure.
+ */
+it('refuses to run when the lock cannot be taken at all', function () {
+    $unlockable = fopen('php://memory', 'c');
+
+    expect(fn () => SerialLock::takeExclusiveLock($unlockable, '/tmp/unlockable.lock'))
+        ->toThrow(RuntimeException::class, 'Refusing to run');
+});
+
+it('returns quietly when the lock is free', function () {
+    $path = sys_get_temp_dir().'/lock-free-'.bin2hex(random_bytes(6)).'.lock';
+    $handle = fopen($path, 'c');
+
+    // The success path must stay silent and must not throw, or every suite run
+    // would announce itself.
+    SerialLock::takeExclusiveLock($handle, $path);
+
+    flock($handle, LOCK_UN);
+    fclose($handle);
+    @unlink($path);
+})->throwsNoExceptions();
+
 it('refuses parallel execution explicitly', function () {
     $result = Process::capture([
         PHP_BINARY,
