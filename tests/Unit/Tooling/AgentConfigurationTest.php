@@ -52,6 +52,49 @@ it('never tracks the local Claude settings', function () {
     expect(Repo::git(['ls-files', '.claude/settings.local.json']))->toBe('');
 });
 
+/*
+ * THIS TEST EXISTS BECAUSE THE FAILURE HAPPENED.
+ *
+ * The precedence note added above the Boost block originally quoted Boost's
+ * opening marker tag literally, to say which block it outranked. `boost:update`
+ * finds its block by searching for that string, found the prose copy first, and
+ * replaced everything from there to the end of the file — deleting the role,
+ * non-negotiables, phase-discipline and gates sections from both agent files.
+ *
+ * Nothing else would have caught it. The files still looked plausible, both
+ * agents still loaded them, and the missing rules were rules about how to work,
+ * so their absence would have shown up as an agent quietly not following them.
+ */
+it('has exactly one boost marker pair per agent file', function () {
+    // Assembled rather than written out, so this assertion cannot become the
+    // very thing it is guarding against.
+    $open = '<'.'laravel-boost-guidelines>';
+    $close = '</'.'laravel-boost-guidelines>';
+
+    foreach (['CLAUDE.md', 'AGENTS.md'] as $file) {
+        $contents = (string) file_get_contents(Repo::root().'/'.$file);
+
+        expect(substr_count($contents, $open))->toBe(1, "{$file} must contain exactly one opening Boost marker")
+            ->and(substr_count($contents, $close))->toBe(1, "{$file} must contain exactly one closing Boost marker");
+    }
+});
+
+it('keeps the precedence statement outside the boost block', function () {
+    $open = '<'.'laravel-boost-guidelines>';
+
+    foreach (['CLAUDE.md', 'AGENTS.md'] as $file) {
+        $contents = (string) file_get_contents(Repo::root().'/'.$file);
+
+        $precedence = strpos($contents, 'outranks the Laravel Boost guidelines block');
+        $marker = strpos($contents, $open);
+
+        expect($precedence)->not->toBeFalse("{$file} has lost its precedence statement");
+        // Inside the block it would be erased by the next update, taking the
+        // statement that our rules win along with it.
+        expect($precedence)->toBeLessThan($marker, "{$file}'s precedence statement must precede the Boost block");
+    }
+});
+
 it('keeps the git hooks executable', function () {
     // Windows does not carry the executable bit, so it has to be set in the
     // index explicitly or the hooks are inert for whoever clones next.
