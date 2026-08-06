@@ -11,8 +11,12 @@ declare(strict_types=1);
  * this process while guidelines, skills and package discovery remain available.
  */
 
-use RuntimeException;
-use Throwable;
+/*
+ * RuntimeException and Throwable are NOT imported. This file has no namespace,
+ * so they already resolve, and `use` on a non-compound name in the global
+ * namespace is a no-op that PHP warns about on every run.
+ */
+
 use Tooling\BoostGuidelines;
 use Tooling\Process;
 use Tooling\Repo;
