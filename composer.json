@@ -72,6 +72,9 @@
             "@verify:fast",
             "@test:serial"
         ],
+        "boost:update": [
+            "@php scripts/bin/update-boost.php"
+        ],
         "analyse": [
             "@php vendor/bin/phpstan analyse --memory-limit=1G"
         ],

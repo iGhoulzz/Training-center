@@ -87,7 +87,7 @@ Boost is installed as a development dependency, giving both agents an MCP server
 
 **Its database and code-execution tools are diagnostic only.** Read to understand a problem; do not mutate through them unless a task explicitly authorises it. They are not a route around Actions, policies, or the application write boundary — that boundary is enforced in Actions, was settled in phase 1, and is the subject of a merged security guard. A convenient shortcut through it is still a breach of it.
 
-Boost's guidance lives in its own marked block at the end of this file and of `AGENTS.md`. It is generic and subordinate; see the note under "Read these before working". `boost:update` is run manually and deliberately — it is not wired into Composer's update hooks, so a dependency bump cannot silently rewrite these files.
+Boost's guidance lives in its own marked block at the end of this file and of `AGENTS.md`. It is generic and subordinate; see the note under "Read these before working". Run `composer boost:update` manually and deliberately — its runner keeps project rules disabled and preserves every byte outside Boost's block. It is not wired into Composer's update hooks, so a dependency bump cannot silently rewrite these files.
 
 ---
 

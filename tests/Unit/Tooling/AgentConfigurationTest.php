@@ -24,6 +24,11 @@ function configSource(string $relative): string
     return $raw;
 }
 
+function projectSource(string $relative): string
+{
+    return (string) file_get_contents(Repo::root().'/'.$relative);
+}
+
 it('points both agents at one shared stop hook', function () {
     expect(configSource('.claude/settings.json'))->toContain('scripts/bin/agent-stop.php')
         ->and(configSource('.codex/hooks.json'))->toContain('scripts/bin/agent-stop.php');
@@ -44,6 +49,50 @@ it('commits both agents configuration', function () {
 
     expect($tracked)->toContain('.claude/settings.json')
         ->and($tracked)->toContain('.codex/hooks.json');
+});
+
+it('keeps Boost rules disabled in both MCP processes', function () {
+    $claude = json_decode(projectSource('.mcp.json'), true, flags: JSON_THROW_ON_ERROR);
+    $codex = projectSource('.codex/config.toml');
+
+    expect($claude['mcpServers']['laravel-boost']['env']['BOOST_RULES_ENABLED'] ?? null)->toBe('false')
+        ->and($codex)->toContain('[mcp_servers.laravel-boost.env]')
+        ->and($codex)->toContain('BOOST_RULES_ENABLED = "false"');
+});
+
+it('resolves both Boost MCP servers from nested directories', function () {
+    $claude = json_decode(projectSource('.mcp.json'), true, flags: JSON_THROW_ON_ERROR);
+    $codex = projectSource('.codex/config.toml');
+
+    expect($claude['mcpServers']['laravel-boost']['args'][0] ?? null)
+        ->toBe('${CLAUDE_PROJECT_DIR}/artisan')
+        // Project-config relative paths resolve from .codex/, so .. is the root.
+        ->and($codex)->toContain('cwd = ".."');
+});
+
+it('tracks the lockfile and every selected Boost output path', function () {
+    $tracked = explode("\n", Repo::git([
+        'ls-files',
+        'composer.lock',
+        'boost.json',
+        '.mcp.json',
+        '.codex/config.toml',
+        '.agents/skills',
+        '.claude/skills',
+    ]));
+
+    expect($tracked)->toContain('composer.lock', 'boost.json', '.mcp.json', '.codex/config.toml')
+        ->and(collect($tracked)->contains(fn (string $path): bool => str_starts_with($path, '.agents/skills/')))->toBeTrue()
+        ->and(collect($tracked)->contains(fn (string $path): bool => str_starts_with($path, '.claude/skills/')))->toBeTrue();
+});
+
+it('does not track Boost output for unselected agents or project rules', function () {
+    $tracked = Repo::git(['ls-files']);
+
+    expect($tracked)
+        ->not->toContain("\n.ai/rules/")
+        ->not->toContain("\n.junie/")
+        ->not->toContain("\n.cursor/");
 });
 
 it('never tracks the local Claude settings', function () {

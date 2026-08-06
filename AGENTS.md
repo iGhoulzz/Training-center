@@ -93,7 +93,7 @@ codex mcp add laravel-boost -- php "artisan" "boost:mcp"
 
 **Its database and code-execution tools are diagnostic only.** Read to understand a problem; do not mutate through them unless a task explicitly authorises it. They are not a route around Actions, policies, or the application write boundary.
 
-Boost's guidance sits in its own marked block at the end of this file. It is generic and subordinate to everything above.
+Boost's guidance sits in its own marked block at the end of this file. It is generic and subordinate to everything above. Update it and the generated skills deliberately with `composer boost:update`; that runner keeps project rules disabled and preserves every byte outside Boost's block.
 
 ---
 
