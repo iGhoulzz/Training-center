@@ -1,0 +1,22 @@
+#!/bin/sh
+#
+# Fast gate before a commit is written.
+#
+# Deliberately does NOT run the test suite: a commit hook that takes five
+# minutes gets bypassed with --no-verify, and a gate people route around is
+# worse than none. The suite runs at pre-push and in CI.
+#
+# Deliberately does NOT reformat anything. Pint runs with --test here, never as
+# a fixer, because a hook that rewrites files mid-commit changes what you are
+# committing after you have already reviewed it.
+#
+# Resolve the root rather than trusting the working directory: git runs hooks
+# from the top level today, but an agent or a tool may invoke this from a
+# subdirectory, and a relative path would then silently resolve to nothing.
+
+root=$(git rev-parse --show-toplevel) || exit 1
+cd "$root" || exit 1
+
+git diff --cached --check || exit $?
+
+php scripts/bin/verify-fast.php || exit $?

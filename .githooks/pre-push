@@ -1,0 +1,30 @@
+#!/bin/sh
+#
+# Full gate before anything leaves this machine.
+#
+# stdin carries the ref tuples git supplies to pre-push. Nothing here reads them
+# yet, but the hook must not consume or close stdin in a way that would break a
+# future reader — so it is left alone rather than redirected.
+#
+# Exit codes are propagated verbatim. `exit 1` for everything would tell whoever
+# is reading the terminal that something failed without saying which stage, and
+# the stage is the useful part.
+
+root=$(git rev-parse --show-toplevel) || exit 1
+cd "$root" || exit 1
+
+# The worktree must be clean, or the gate certifies files that are not the
+# commits being pushed. See scripts/bin/guard-clean-worktree.php.
+php scripts/bin/guard-clean-worktree.php || exit $?
+
+# composer verify = validate --strict + verify:fast + the serialised suite.
+# Called as one script rather than restated stage by stage, so this hook and CI
+# cannot drift apart.
+composer verify || exit $?
+
+# The frontend build always runs. It was originally conditional on the diff, but
+# a clean worktree at pre-push has no ordinary diff even when the pushed commits
+# changed Blade or CSS, so the detector would have had to parse the ref tuples
+# above. The build is seconds against a five-minute suite; a detector that
+# enforces less than it claims is not worth those seconds.
+npm run build || exit $?

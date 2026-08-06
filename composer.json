@@ -37,7 +37,8 @@
     },
     "autoload-dev": {
         "psr-4": {
-            "Tests\\": "tests/"
+            "Tests\\": "tests/",
+            "Tooling\\": "scripts/Tooling/"
         }
     },
     "scripts": {
@@ -54,8 +55,21 @@
             "npx concurrently -c \"#93c5fd,#c4b5fd,#fb7185,#fdba74\" \"php artisan serve\" \"php artisan queue:listen --tries=1 --timeout=0\" \"php artisan pail --timeout=0\" \"npm run dev\" --names=server,queue,logs,vite --kill-others"
         ],
         "test": [
+            "Composer\\Config::disableProcessTimeout",
             "@php artisan config:clear --ansi @no_additional_args",
             "@php artisan test"
+        ],
+        "test:serial": [
+            "@test"
+        ],
+        "verify:fast": [
+            "@php scripts/bin/verify-fast.php"
+        ],
+        "verify": [
+            "Composer\\Config::disableProcessTimeout",
+            "@composer validate --strict",
+            "@verify:fast",
+            "@test:serial"
         ],
         "analyse": [
             "@php vendor/bin/phpstan analyse --memory-limit=1G"

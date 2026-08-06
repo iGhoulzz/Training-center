@@ -4,6 +4,11 @@ includes:
 parameters:
     paths:
         - app
+        # The tooling layer is analysed too. Without this the gate scripts would
+        # be the one unchecked thing in the repository — they could be broken
+        # while `verify:fast`, which they implement, reported zero errors.
+        - scripts
+        - tests/bootstrap.php
     level: 6
     # The @var ignore pattern below is intentionally kept for later tasks that add
     # models and actions; it matches nothing while app/ is still scaffold-only.

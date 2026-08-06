@@ -6,7 +6,13 @@
 .phpactor.json
 .phpunit.result.cache
 /.claude/settings.local.json
-/.codex
+# Codex keeps local session state here, but its hook and MCP configuration is
+# shared project setup and must be committed — otherwise Codex and Claude are
+# not actually held to the same gates. Ignore the directory, then re-admit the
+# two files that are ours.
+/.codex/*
+!/.codex/hooks.json
+!/.codex/config.toml
 /.cursor/
 /.idea
 /.nova

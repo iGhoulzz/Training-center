@@ -1,0 +1,17 @@
+{
+    "hooks": {
+        "Stop": [
+            {
+                "matcher": "*",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "php \"$(git rev-parse --show-toplevel)/scripts/bin/agent-stop.php\"",
+                        "commandWindows": "powershell -NoProfile -Command \"php \\\"$(git rev-parse --show-toplevel)/scripts/bin/agent-stop.php\\\"\"",
+                        "timeout": 300
+                    }
+                ]
+            }
+        ]
+    }
+}
