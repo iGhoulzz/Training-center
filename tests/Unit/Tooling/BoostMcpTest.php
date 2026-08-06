@@ -19,7 +19,33 @@ function initializeBoostMcp(array $command, string $cwd): array
         [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
         $pipes,
         $cwd,
-        ['BOOST_RULES_ENABLED' => 'false'],
+        /*
+         * MERGED, not replaced. Passing only this one variable hands the child
+         * an otherwise empty environment. That survives locally, where the
+         * worktree has a .env for Laravel to read, and fails in CI, where there
+         * is none and APP_KEY, the database credentials and PATH all arrive
+         * through the job environment. The child then aborts before any MCP
+         * server exists, and the test reports a broken server when the real
+         * fault is a missing environment.
+         */
+        array_merge(getenv(), [
+            'BOOST_RULES_ENABLED' => 'false',
+            /*
+             * Boost disables itself under APP_ENV=testing, twice over:
+             * BoostServiceProvider::shouldRun() bails when
+             * app()->runningUnitTests() is true — which is exactly
+             * environment('testing') — and again unless the environment is
+             * `local` or app.debug is set. Inherited, the child would report
+             * "There are no commands defined in the boost namespace", which
+             * reads as a broken install rather than a deliberate gate.
+             *
+             * `local` is also the honest value: an MCP server only ever runs in
+             * a developer's local environment. Set for THIS CHILD ONLY — the
+             * suite must stay in `testing`, and APP_DEBUG in particular changes
+             * how exceptions render, which several feature tests assert on.
+             */
+            'APP_ENV' => 'local',
+        ]),
     );
 
     expect(is_resource($process))->toBeTrue('Unable to start the Boost MCP process.');
