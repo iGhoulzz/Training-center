@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Manual re-runs. GitHub silently created no run at all for one push on this
+  # branch — the workflow was active and every other push triggered one — which
+  # left a commit with no checks and no way to ask for them. A gate you cannot
+  # re-run on demand is one you end up trusting a stale result from.
+  workflow_dispatch:
+
+concurrency:
+  # One run per ref. A superseded push has nothing useful left to say.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-latest
+
+    # THE TESTING ENVIRONMENT IS ESTABLISHED BEFORE COMPOSER RUNS.
+    #
+    # A clean checkout has no .env, and `composer install` triggers package
+    # discovery, which boots Laravel. Without APP_KEY and the database
+    # credentials already present that boot can fail — and `artisan key:generate`
+    # cannot be used to supply them, because artisan needs the autoloader
+    # Composer has not written yet. Job-level env is the only ordering that
+    # works.
+    env:
+      APP_ENV: testing
+      # Non-secret and deliberately obvious: 32 zero bytes. CI must never hold a
+      # real key, and a fixed one keeps runs reproducible.
+      APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      DB_CONNECTION: mysql
+      DB_HOST: 127.0.0.1
+      DB_PORT: 3306
+      # NOT training_center_test. That name belongs to the developer machine,
+      # where every worktree shares it and tests/bootstrap.php serialises access.
+      # CI gets its own database on its own server so the two can never interact.
+      DB_DATABASE: training_center_ci
+      DB_USERNAME: root
+      DB_PASSWORD: root
+      # The backup config validates its alert address at boot, and
+      # `composer install` boots Laravel through package:discover. Without a
+      # valid address here the whole install step fails with "backups@localhost
+      # is not a valid email address" — which is the config guard doing its job,
+      # not a CI bug. Found on this workflow's first real run.
+      BACKUP_ALERT_EMAIL: ci@example.com
+      MAIL_FROM_ADDRESS: ci@example.com
+
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: training_center_ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          # The current patched 8.4, not the 8.4.1 floor in composer.json's
+          # platform config. That floor exists to pin dependency resolution;
+          # pinning CI to it would test an old patch release nobody runs.
+          php-version: '8.4'
+          extensions: mbstring, pdo_mysql, zip, intl, bcmath
+          coverage: none
+          tools: composer:v2
+
+      - name: Cache Composer packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/composer/files
+          key: composer-${{ hashFiles('composer.lock') }}
+          restore-keys: composer-
+
+      - name: Install PHP dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Audit the locked dependencies
+        # --locked audits what is actually pinned, not what the constraints would
+        # allow today. The guzzle advisories that preceded this work were found
+        # exactly this way.
+        run: composer audit --locked
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Verify
+        # ONE COMMAND, and deliberately not a restatement of Pint, PHPStan and
+        # Pest as separate steps. Listing them here would create a second
+        # definition of the gate, free to drift from the one the agents and the
+        # Git hooks use — which is the failure this whole task exists to remove.
+        run: composer verify
+
+      - name: Build frontend assets
+        # Always, never conditional on the diff. A detector would have to parse
+        # the pushed refs to be correct, and this build costs seconds against a
+        # five-minute suite.
+        run: npm run build
+
+      - name: Confirm the production install resolves
+        # In a throwaway copy: --no-dev in place would delete Pint, PHPStan and
+        # Pest, and every gate above depends on them.
+        run: |
+          mkdir -p /tmp/prod-check
+          cp composer.json composer.lock /tmp/prod-check/
+          cd /tmp/prod-check
+          composer install --no-dev --no-interaction --no-scripts --no-progress
+          if [ -d vendor/laravel/boost ]; then
+            echo "laravel/boost must not be installed without dev dependencies"
+            exit 1
+          fi
+          echo "production install is clean and Boost is dev-only"

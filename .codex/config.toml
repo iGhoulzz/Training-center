@@ -1,0 +1,7 @@
+[mcp_servers.laravel-boost]
+command = "php"
+args = ["artisan", "boost:mcp"]
+cwd = ".."
+
+[mcp_servers.laravel-boost.env]
+BOOST_RULES_ENABLED = "false"

@@ -294,6 +294,42 @@ Enforced from the first commit, even though Arabic strings arrive in phase 4:
 | RBAC | `spatie/laravel-permission` + Filament Shield |
 | Activity log | `spatie/laravel-activitylog` |
 | Backups | `spatie/laravel-backup` |
+| Agent tooling | Laravel Boost (dev-only) — MCP server and ecosystem docs |
+
+### The gates
+
+One command, and there is only one definition of it:
+
+```bash
+composer verify        # validate --strict, then formatting + analysis, then the full suite
+composer verify:fast   # the same without the suite, for use while working
+```
+
+`Tooling\Gate::fastChecks()` in `scripts/Tooling/Gate.php` is that definition. Both agents' Stop hooks, `.githooks/pre-commit`, `.githooks/pre-push` and CI all reach it; **none of them restates it.** A duplicated command list is how two agents end up held to different standards and how CI ends up green on a rule the developer machine quietly dropped — this file previously told Codex to run `vendor/bin/phpstan analyse` with no `--memory-limit`, which exhausts PHP's default on this codebase and reports a crash rather than an analysis.
+
+Adding a check means adding it to `fastChecks()`. Nowhere else.
+
+### Git hooks
+
+Committed under `.githooks/`, and **inert until you opt in**:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+`pre-commit` runs the fast gate and never rewrites your files — Pint runs with `--test`, because a hook that reformats mid-commit changes what you already reviewed. `pre-push` runs `composer verify` plus the frontend build, and **refuses a dirty worktree**: the gate checks files on disk while a push publishes commits, and those differ exactly when uncommitted changes are present.
+
+No hook migrates, seeds, cleans backups, updates dependencies, commits, pushes, or touches history.
+
+### The suite serialises
+
+Every worktree shares one MySQL database, so `tests/bootstrap.php` takes a machine-wide lock before any test runs. A run reporting that it is waiting is correct, not hung. `--parallel` is refused: every worker would queue behind the same lock, making a "parallel" run slower than a serial one.
+
+The lock is taken by the **test process**, not by a wrapper. A wrapper cannot hold it safely on Windows, where lock ownership belongs to the acquiring process — killing the wrapper frees the lock while its suite is still connected. Measured, not assumed.
+
+### Formatting scope
+
+Pint covers PHP and Filament. **No Prettier, ESLint, Stylelint or Blade formatter**, deliberately: the frontend is two Blade templates, one CSS entry and one JS entry, and a formatter per file type would be more configuration than content. Revisit when phase 4 brings Arabic and RTL and the frontend surface becomes real — a Blade-aware Prettier, and possibly ESLint, are the candidates.
 
 ---
 
