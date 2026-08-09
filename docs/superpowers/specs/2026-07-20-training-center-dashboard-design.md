@@ -214,6 +214,8 @@ The nullable `user_id` is deliberate: a student exists whether or not they ever 
 
 **`price` inheritance is phase 2 work.** The column is nullable now so phase 2 never has to alter a table holding production data, and `total_hours` proves the inheritance pattern works, but no price is read, displayed, or inherited anywhere in phase 1. Phase 2 decides what a null price means once the charge model exists — in particular whether an already-issued charge keeps the price it was raised at when the course price later changes. Do not implement price inheritance before that decision.
 
+**DECIDED (2026-08-09).** A null `price` falls back to `courses.default_price` on every read, exactly as `total_hours` does, and an issued charge freezes the amount it was raised at, so a later price change affects future enrolments only. See `2026-08-09-phase-2-financials-design.md` §3.
+
 **`course_id` is immutable after creation.** Re-parenting a batch silently rewrites what it inherits and, once instructor hours and enrolments exist, strands them against a course those people never taught or enrolled on. The form disables and de-hydrates the field on edit. If the centre ever needs to re-parent a batch, that is a deliberate Action with its own authorization and its own handling of the dependent rows, not an ordinary edit.
 
 **`batch_instructor`** — many-to-many with an attribute
@@ -248,9 +250,11 @@ Defined here so they are not invented inconsistently during implementation:
 | `batches.status` | `planned`, `active`, `completed`, `cancelled` |
 | `enrollments.status` | `active`, `completed`, `withdrawn` |
 | `student_certificates.status` (P3) | `valid`, `revoked`, `replaced` |
-| `charges.status` (P2) | `unpaid`, `partial`, `paid`, `waived` |
-| `payments.method` (P2) | `cash`, `bank_transfer`, `card`, `other` |
-| `staff_compensation.type` (P2) | `salary`, `hourly`, `per_student` |
+| ~~`charges.status` (P2)~~ | **Withdrawn.** Three of its four values were derived from allocations, which this document forbids storing two sections earlier. Replaced by fact columns plus derived state. |
+| ~~`payments.method` (P2)~~ | **Withdrawn.** A single column cannot represent a split-tender payment. Moved to `payment_tenders.method`: `cash`, `bank_transfer`, `card`, `other`. |
+| `staff_compensation.type` (P2) | `salary`, `hourly` — **`per_student` removed**; the centre does not pay per head. |
+
+The three phase 2 rows above were corrected on 2026-08-09. See `2026-08-09-phase-2-financials-design.md` §4, §5 and §7 for the reasoning in each case.
 
 A batch's status gates two specific operations, and only those two: `completed` and `cancelled` batches reject **new enrollments** and **instructor changes**.
 
@@ -263,6 +267,14 @@ The enumeration is exhaustive, and that matters in the other direction too: **wi
 `courses.default_price` and `batches.price` appear in the phase 1 schema but are **not used, displayed, or editable in phase 1**. They are created by the initial migrations so that phase 2 does not require altering tables that already hold production data. Phase 1 has no financial features of any kind.
 
 ### Phase 2 tables (designed now, built in phase 2)
+
+> **Superseded on 2026-08-09 by `2026-08-09-phase-2-financials-design.md` §9.** The
+> tables below were designed at architectural detail before a charge model existed.
+> The phase 2 design is authoritative: it adds `discounts`, `payment_tenders` and
+> `payroll_line_adjustments`, removes `payments.amount`, `payments.method` and
+> `charges.status`, and adds the reference series and the `CHECK` constraints.
+> **The reasoning below still holds and is why the phase 2 design looks as it does** —
+> particularly the paragraph on why the allocation table is load-bearing.
 
 **`charges`** — what a student owes
 `id, enrollment_id (FK), amount, due_date, status`
@@ -349,8 +361,15 @@ Reports available to super admin (full) and admin (view and export):
 - Wage cost per period, per person and in total
 - Profit: revenue minus wages for a period
 - Per-student payment history
+- **Daily tender report** (added 2026-08-09) — finalized, non-reversed cash and card totals for a date
 
 Every report exports to both Excel and PDF. Export runs as a queued job so large reports do not block the browser; the user is notified in-app when the file is ready. Library selection for the Excel writer and PDF renderer is deferred to the phase 2 spec, since the right choice depends on the final report layouts.
+
+**DECIDED (2026-08-09).** Excel is Filament v5's native queued XLSX export over the
+already-installed `openspout/openspout` — **no new dependency**. PDF is `mpdf/mpdf`,
+chosen for native Arabic shaping and RTL with no system dependency, against phase 4.
+**Revenue is cash basis**: a dinar counts in the month it arrived, not the month it
+was billed. See `2026-08-09-phase-2-financials-design.md` §8.
 
 ---
 
