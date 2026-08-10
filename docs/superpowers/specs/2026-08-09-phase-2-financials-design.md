@@ -1,7 +1,7 @@
 # Phase 2 — Financials: Design
 
 **Date:** 2026-08-09
-**Status:** Revision 3 — incorporates both rounds of the Codex step-0 review. Awaiting re-review.
+**Status:** Revision 4 — incorporates three rounds of the Codex step-0 review. Awaiting re-review.
 **Supersedes:** the phase 2 sections of `2026-07-20-training-center-dashboard-design.md` wherever the two disagree. Those sections were written at architectural detail before a charge model existed; this document is at implementation detail and is authoritative for phase 2.
 
 **Revision 2 changed:** the enrolment write path (§12), salaried payroll segmentation and post-finalization correction (§7), payment idempotency and derived student identity (§5), the pricing write boundary (§3), charge due dates (§4), reporting time zones (§8), compensation locking (§7), and the schema guarantees in §9. Two review findings were **declined** — see §16.
@@ -71,6 +71,12 @@ Revision 2 said only that the reference was "written immediately after insert", 
 
 A test asserts that no row survives a transaction carrying a placeholder value.
 
+**The placeholder must never reach the activity log, and sharing a transaction does not prevent that.** `RecordsActivity` logs on model events: the insert fires `created` and would record `reference = <uuid>`, and the replacement fires `updated` and would record a change from the uuid to the real reference. Both entries commit with everything else, into a log that has no delete path for any role.
+
+`reference` is therefore **excluded from `auditedAttributes()`** on every table that carries one. Nothing is lost by that: the reference is a deterministic function of the subject id the log already records — `RCT-2026-000042` *is* payment 42 — so the audit trail can still name the document, while `dontLogEmptyChanges()` suppresses the `updated` entry entirely because no audited column moved.
+
+A test asserts that no activity entry anywhere in the log carries a value matching the placeholder format.
+
 These are deliberately **not** the phase 3 certificate pattern. A certificate reference is exposed to an unauthenticated public verifier and must be unguessable; a bill reference is read by the person holding the bill, and a sequential, human-readable, phone-dictatable number is the correct trade-off. **Do not "harden" these into random strings.**
 
 **Gaps are accepted.** The owner confirmed on 2026-08-09 that these are internal tracking references, not registered fiscal invoice sequences, so a number burned by a rolled-back transaction is not a problem. There is no counter table and no sequence lock. **If the centre ever becomes subject to a gapless fiscal numbering requirement, this is a schema and concurrency change, not a formatting change.**
@@ -79,11 +85,14 @@ These are deliberately **not** the phase 3 certificate pattern. A certificate re
 
 `enrollments` already holds rows in every development and test database.
 
-**Three separate migrations, not one.** MySQL does not roll back DDL, so a single migration mixing `ALTER TABLE` with a data backfill leaves a half-migrated table that `migrate:rollback` cannot repair and that the next `migrate` refuses to re-apply:
+**Four separate migrations, each doing exactly one thing.** MySQL does not roll back DDL, so a migration containing two schema statements can fail on the second having committed the first, and re-running it then fails on the first:
 
 1. Add `reference` as nullable.
-2. Backfill every existing row as `ENR-{year of enrolled_at}-{id}` — pure DML, re-runnable, and independently recoverable if it fails part-way.
-3. Add the unique index and tighten the column to non-nullable.
+2. Backfill every existing row as `ENR-{year of enrolled_at}-{id}` — pure DML, re-runnable, independently recoverable.
+3. Add the unique index.
+4. Tighten the column to non-nullable.
+
+Revision 3 combined steps 3 and 4, which Laravel compiles into two separate `ALTER` statements executed one after another. A failure on the nullability change leaves the index created, and the retry dies on a duplicate index — the exact unrecoverable state the split was meant to avoid. One schema statement per migration is the only version of this rule that survives contact with a partial failure.
 
 The order matters in both directions: adding a non-nullable unique column to a populated table fails outright, and indexing before the backfill means the backfill races the constraint it is trying to satisfy.
 
@@ -123,6 +132,10 @@ The boundary is therefore built the way `UserResource` already builds one, using
 - **Price fields are `dehydrated(false)` for every actor, without exception.** Generic persistence never sees a price, so there is no path by which one is written outside an Action — including the super admin's own path. A field that is merely `disabled()` for some actors leaves the write shape intact for others.
 - A `WritesPricingThroughActions` concern, shared by the create and edit pages of both resources, reads `$this->form->getRawState()` in the save hook and calls `UpdateCoursePriceAction` / `UpdateBatchPriceAction`.
 - **The Action is called only when the price actually changed.** The raw state is normalized to integer dirham and compared with the persisted value — a string comparison would read `100` and `100.000` as a change. If they match, no Action runs.
+
+  **`null` and `0.000` are different values and the comparison must keep them apart.** On a batch, `null` means *inherit the course price* and `0.000` means *this intake is free*. Collapsing them — which any naive numeric cast does — makes "stop inheriting, this one is free" and "go back to inheriting" both invisible, so the price silently fails to change and no Action is ever called. Both transitions are tested in both directions.
+
+  **Precision is validated before the comparison, never rounded into it.** A submitted `100.0004` is rejected as invalid input; it must not be rounded to `100.000`, compared against a stored `100.000`, and reported unchanged. Rounding before comparing is how a real edit becomes a silent no-op.
 
   This is load-bearing, not an optimisation. An admin has no `manage_pricing`, but the price is still present in the form's raw state when they rename a course. Calling the Action unconditionally would authorize-and-refuse on **every ordinary admin edit**, so renaming a course would fail with an authorization error about a field the admin never touched. A test proves an admin can edit a non-price field while the price is left alone.
 - Those Actions authorize `manage_pricing` and are the **only** writers of `courses.default_price` and `batches.price`, initial value included. On create, an absent or null price calls nothing.
@@ -217,12 +230,23 @@ Atomic finalization plus a double-clicked button equals two payments and two rec
 
 **The key alone is not enough, and returning whatever payment owns it is wrong.** A key reused with a different bill or a different tender breakdown would hand back an unrelated receipt for money that was never recorded — a worse failure than the duplicate it was meant to prevent.
 
-Each payment therefore stores a **canonical request fingerprint** alongside the key: a hash over the charge id, the allocation amount, and the tender lines normalized to a stable order and to integer dirham. On a key collision the Action compares fingerprints:
+Each payment therefore stores a **canonical request fingerprint** in `payments.request_fingerprint`, alongside the key.
+
+**The canonical payload covers every caller-controlled field that gets persisted**, not a convenient subset:
+
+- the charge id and the allocation amount;
+- for each tender line: **method, amount, and terminal reference** — sorted into a stable order, amounts as integer dirham, references compared after the same trim the `CHECK` applies.
+
+Terminal reference is included deliberately. Two submissions identical but for the reference are **two different card transactions** — the terminal approved twice — and treating the second as a replay of the first would discard a real payment while telling the operator it had been recorded. A conflict test covers exactly that: same key, same amounts, different reference.
+
+On a key collision the Action compares fingerprints:
 
 - **Identical** — a genuine replay. Return the existing payment. The second click gets the first receipt.
 - **Different** — raise `IdempotencyConflictException`. The same key is being used for a different request, and the only safe answer is to refuse both silently succeeding and silently returning the wrong thing.
 
-Tested sequentially (the same key and request twice yields one row), concurrently (two simultaneous identical submissions yield one row and no error), and on conflict (the same key with a different bill or tender split raises, and creates nothing).
+**Replay detection runs before the bill is revalidated.** A replay of a payment that settled the bill in full would otherwise fail the outstanding-balance check first, and the operator would be told they were overpaying when in fact they were looking at a receipt that already exists. The order is: resolve the key, compare the fingerprint, return or raise — and only then, for a genuinely new request, lock the charge and validate against outstanding.
+
+Tested sequentially (the same key and request twice yields one row), concurrently (two simultaneous identical submissions yield one row and no error), on conflict (the same key with a different bill, tender split, or terminal reference raises and creates nothing), and on the settled-bill replay path specifically.
 
 ### Finalization is atomic
 
@@ -393,7 +417,7 @@ Nine new tables, one altered.
 `CHECK (amount >= 0)` · `CHECK (list_price >= 0)` · `CHECK` that `discount_id` and `discount_percentage` are both null or both present · `CHECK` that the three write-off columns are all null or all present.
 
 ### `payments`
-`id, student_id (FK restrict, indexed), reference (unique), idempotency_key (unique), received_at (indexed), recorded_by (FK restrict), notes, reversed_at, reversed_by (nullable FK restrict), reversal_reason, receipt_disk, receipt_path, timestamps`
+`id, student_id (FK restrict, indexed), reference (unique), idempotency_key (unique), request_fingerprint, received_at (indexed), recorded_by (FK restrict), notes, reversed_at, reversed_by (nullable FK restrict), reversal_reason, receipt_disk, receipt_path, timestamps`
 
 `CHECK` that the three reversal columns are all null or all present. **No amount, no method, no status.**
 
@@ -428,7 +452,11 @@ Line shape by run type, with a `CHECK` enforcing that exactly one shape is prese
 
 `frozen_rate` is **nullable**, because an adjustment line has no rate — it is a signed correction, not a calculation. Forcing a value there would mean storing a meaningless number in a column whose whole purpose is to explain how an amount was reached.
 
-`posting_period_start` is the period the line's cost belongs to, copied at finalization. For salary lines it is the segment's month; for instructor lines the run's finalization month; **for adjustment lines it is copied from the line being corrected**, which is what makes a June correction land in March's wage cost (§7).
+`posting_period_start` is the period the line's cost belongs to. For salary lines it is the segment's month; for instructor lines the run's finalization month; **for adjustment lines it is copied from the line being corrected**, which is what makes a June correction land in March's wage cost (§7).
+
+**It is nullable, indexed, and required only once `finalized_at` is set** — a `CHECK` pairs them. A draft line cannot carry it: an instructor draft's posting month is the month it will eventually be finalized in, which is unknown while it is still a draft. Declaring the column non-nullable, as revision 3 did, makes every draft line unwritable and the whole draft-review step impossible. The index exists because every period report groups on it.
+
+**The row-level `CHECK` cannot verify that a line's shape matches its run's type**, because a MySQL `CHECK` may not reference another table. `FinalizePayrollRunAction` therefore verifies the pairing itself — salary shapes only on a `monthly_salary` run, instructor shapes only on `instructor_batch`, correction shapes only on `adjustment` — inside the finalizing transaction. The constraint guarantees a line is *internally* coherent; only the Action can guarantee it belongs where it sits.
 
 Plus the generated columns and unique indexes in §7. The cascade is correct — lines are genuine children and only a draft run is ever deletable.
 
@@ -593,6 +621,13 @@ Beyond `composer verify`:
 - **An admin can edit a course or batch's non-price fields** while the price sits untouched in form state.
 - **No row survives a transaction carrying a placeholder reference.**
 - **A finalized instructor line still explains its amount** after `batch_instructor.assigned_hours` is changed underneath it.
+- **No activity log entry anywhere carries a placeholder reference.**
+- **An enrolment created through the existing `EnrollStudentAction` path succeeds after the reference column is made non-nullable.**
+- **A replay of a payment that settled its bill in full returns the original payment**, rather than failing an overpayment check.
+- **Two submissions differing only in terminal reference are treated as a conflict**, not as a replay.
+- **A batch price moving between `null` and `0.000`, in both directions, is detected as a change.**
+- **A price submitted with four decimal places is rejected**, not rounded and reported unchanged.
+- **A draft payroll line persists with no posting period**, and finalization refuses a line whose shape does not match its run's type.
 - **A correction posts to the corrected line's period**, asserted by correcting March in June and reading March's wage cost.
 - **A reversed payment is asserted absent from every report individually.**
 - **Report boundaries are tested at local midnight and month edges** in `Africa/Tripoli`.
@@ -625,6 +660,10 @@ Beyond `composer verify`:
 | Calling the pricing Action on every save | Calling it only when the price changed (revision 3) |
 | An idempotency key returning whatever owns it | Fingerprint comparison, refusing on mismatch (revision 3) |
 | A generic `frozen_quantity` on payroll lines | Shape-specific frozen columns, with instructor hours restored (revision 3) |
+| Three migrations, one of them doing two DDL statements | Four, one schema statement each (revision 4) |
+| A fingerprint described but never given a column | `payments.request_fingerprint` (revision 4) |
+| Non-null `posting_period_start` | Nullable, indexed, paired with `finalized_at` (revision 4) |
+| `reference` audited like any other column | Excluded, so no placeholder can reach an append-only log (revision 4) |
 
 ---
 

@@ -1,6 +1,6 @@
 # Phase 2 — Financials Implementation Plan
 
-**Status:** Revision 3, incorporating both rounds of the Codex step-0 review. **Awaiting re-review. No task begins until that review signs off.**
+**Status:** Revision 4, incorporating three rounds of the Codex step-0 review. **Awaiting re-review. No task begins until that review signs off.**
 
 **Goal:** A working system where a student is enrolled, billed, and takes a receipt away from the desk; where balances and revenue are always derivable from source rows; where staff compensation is configured and payroll is **approved and posted** without history moving; and where every figure exports to Excel and PDF.
 
@@ -39,12 +39,23 @@ Six findings, all accepted. Three were defects **introduced by revision 2** rath
 - Adjustment runs gained their invariants, a posting-period rule, and deterministic lock ordering.
 - The payment Actions are explicitly actor-first and self-authorizing, and reach the student through `EnrollmentQueryService` rather than walking the relation.
 
-### Round 3 targets
+### Round 3 outcome (2026-08-09)
 
-1. **Reference generation** (design §2) — does the placeholder mechanism hold under a concurrent insert, and are the three migrations independently recoverable?
-2. **Payroll line shapes** (design §7, §9) — does the `CHECK` admit exactly the three shapes and nothing else, and does an adjustment line's posting period make wage cost and profit agree?
-3. **Idempotency fingerprinting** (design §5) — is the canonical form stable across tender ordering and decimal representation?
-4. **The pricing change detection** (design §3) — is there a value pair where normalization reports "unchanged" for a real change, or the reverse?
+Five blockers, all accepted. The pattern from round 2 held: revisions introduce defects, and this round found them in the fixes rather than in the original design.
+
+- **Task 1's scope did not include the code that had to change.** Making `reference` non-nullable while `EnrollStudentAction` sets no reference breaks the next enrolment. The migration and the writer now land together.
+- **The placeholder would have been recorded permanently.** `RecordsActivity` logs on model events, so the insert writes `reference = <uuid>` into a log with no delete path, and the replacement writes a phantom "reference changed" entry beside it. Sharing a transaction does not help — both entries commit. `reference` is now excluded from every audit allowlist.
+- **"Three recoverable migrations" contained a migration doing two DDL statements**, which is the unrecoverable state the split existed to prevent. Four now, one statement each.
+- **`request_fingerprint` was specified in prose and absent from the schema**, and task 4 owns no migration.
+- **`posting_period_start` was non-null but only written at finalization**, making every draft line unwritable — and an instructor draft's posting month is genuinely unknowable until it is finalized.
+- Price normalization now keeps `null` (inherit) and `0.000` (free) distinct, and rejects excess precision instead of rounding it into a false "unchanged".
+
+### Round 4 targets
+
+1. **Task 1's real surface** — with `EnrollStudentAction` inside it, does anything else write an enrolment, charge or payment row that the reference mechanism has not been taught about?
+2. **The audit exclusion** (design §2) — does excluding `reference` leave any financial mutation under-recorded, given §12 requires all of them logged?
+3. **Migration recovery** (design §2) — is each of the four independently re-runnable after a mid-flight failure of its predecessor?
+4. **Fingerprint canonicalization** (design §5) — is there a payload pair that collides, or one that differs only in a field the payload does not cover?
 
 ---
 
@@ -67,6 +78,8 @@ Six findings, all accepted. Three were defects **introduced by revision 2** rath
 
 **Changed in revision 2:** task 4 now depends on 3 (payments need bills to exist and derive the student from the locked charge) · tasks 8 and 10 depend on 3 for `EnrollmentQueryService` · task 11 depends on 6 as well as 10, because the report PDF renderer is the one task 6 installs.
 
+**Changed in revision 4:** task 1 takes `EnrollStudentAction` as a declared crossing, because the migration that makes `reference` non-nullable and the code that fills it cannot land in different tasks without shipping a broken `main` between them.
+
 **Tasks 2, 5 and 7 are mutually independent** and parallelize the moment task 1 lands.
 
 ### File ownership, checked for real
@@ -79,7 +92,7 @@ Every task owns its own translation file, so nine tasks never edit one array:
 
 ¹ Task 8 extends task 7's `payroll.php`. They are sequential, not parallel, so this is an ordering fact rather than a conflict.
 
-**`EnrollmentQueryService` is created once, in task 3, with the full surface tasks 8 and 10 need.** Neither of those extends it. If a genuine gap appears, it is raised rather than patched in two branches.
+**`EnrollmentQueryService` is created once, in task 3, with the full surface tasks 4, 6, 8 and 10 need** — design §12 names each consumer's requirement. None of them extends it. If a genuine gap appears, it is raised rather than patched in four branches.
 
 Revision 1 stated a single `lang/en/finance.php` in the design while the plan split the files. The design now agrees with this table.
 
@@ -107,19 +120,23 @@ At the end: open a PR, get the other agent's review, resolve, merge, then **tag 
 The whole schema in one task with one owner, because every other task builds on it.
 
 **File scope**
-- `database/migrations/` — nine new tables, plus **three** `enrollments.reference` migrations (add nullable · backfill · index and tighten)
+- `database/migrations/` — nine new tables, plus **four** single-statement `enrollments.reference` migrations (add nullable · backfill · index · tighten)
 - `app/Domain/Finance/Models/` — all nine models (configuration only)
 - `app/Domain/Finance/Enums/` — `TenderMethod`, `CompensationType`, `PayrollRunType`
 - `app/Domain/Finance/Support/` — `Money`, `Reference`, `ChargeBalance`
 - `database/factories/`, `database/seeders/RolePermissionSeeder.php`
-- `app/Domain/Enrollment/Models/Enrollment.php` — the `reference` attribute only
+- `app/Domain/Enrollment/Models/Enrollment.php` — the `reference` attribute, **excluded from `auditedAttributes()`**
+- **Declared crossing: `app/Domain/Enrollment/Actions/EnrollStudentAction.php`.** It inserts an enrolment today and sets no reference. The moment migration 4 makes the column non-nullable, **the next enrolment fails** — so the task that tightens the column is the task that must teach the existing writer to fill it. Leaving this to task 3 ships a broken `main` in between.
+- `tests/Feature/Enrollment/` — the existing enrolment tests, which now exercise the real post-migration path
 - `tests/Feature/Finance/`
 
 **Does**
-Every table from design §9 with its `CHECK` constraints, foreign keys, indexes and generated columns — including the three-shape `CHECK` on `payroll_lines` and the nullable `frozen_rate`. `Money` over integer dirham. `Reference` inserting a unique placeholder and replacing it with the real `ENR-`/`CHG-`/`RCT-` value inside the same transaction. `ChargeBalance` as the single definition of outstanding — SQL expression and PHP computation — placed here rather than in task 4 so tasks 4 and 5 can both use it without an ordering dependency.
+Every table from design §9 with its `CHECK` constraints, foreign keys, indexes and generated columns — including the three-shape `CHECK` on `payroll_lines`, the nullable `frozen_rate`, the nullable-and-indexed `posting_period_start` paired to `finalized_at`, and **`payments.request_fingerprint`**, which task 4 needs and owns no migration to create.
+
+`Money` over integer dirham. `Reference` inserting a unique placeholder and replacing it with the real `ENR-`/`CHG-`/`RCT-` value inside the same transaction, with `reference` excluded from every `auditedAttributes()` so the placeholder cannot reach the append-only log. `EnrollStudentAction` updated to produce a reference. `ChargeBalance` as the single definition of outstanding — SQL expression and PHP computation — placed here rather than in task 4 so tasks 4 and 5 can both use it without an ordering dependency.
 
 **Done when**
-Migrations run clean and roll back clean, **each of the three enrolment migrations independently** · **every `CHECK` is proven by an insert that violates it**, including the whitespace card reference, the unpaired payroll finalization columns, and each rejected payroll line shape · both generated-column unique indexes are proven by inserting a genuine duplicate and asserting MySQL refuses · the backfill is proven against pre-existing enrolment rows · **no row survives a transaction holding a placeholder reference**, and concurrent inserts produce no collision · `Money` is tested including a case that actually rounds · permissions seeded per design §10, with staff holding nothing financial · `composer verify` green with real output.
+Migrations run clean and roll back clean, **each of the four enrolment migrations independently**, and **migration 4 re-runs cleanly after a simulated failure in migration 3** · **an enrolment created through the existing `EnrollStudentAction` path succeeds after the column is tightened** — the phase 1 enrolment tests pass unchanged in intent · **no activity entry anywhere carries a placeholder**, asserted by pattern over the whole log · **every `CHECK` is proven by an insert that violates it**, including the whitespace card reference, the unpaired payroll finalization columns, the unpaired posting period, and each rejected payroll line shape · **a draft payroll line persists with a null posting period** · both generated-column unique indexes are proven by inserting a genuine duplicate and asserting MySQL refuses · the backfill is proven against pre-existing enrolment rows · **no row survives a transaction holding a placeholder reference**, and concurrent inserts produce no collision · `Money` is tested including a case that actually rounds · permissions seeded per design §10, with staff holding nothing financial · `composer verify` green with real output.
 
 ---
 
@@ -142,7 +159,7 @@ Live price inheritance in `PricingService`. **The executable write boundary from
 Discount definition create, deactivate and delete all gated on `manage_pricing`. A discount's percentage immutable once referenced.
 
 **Done when**
-A super admin sets a price on create **and** changes it on edit, through the real Livewire component, and it persists · **an admin renames a course and a batch with the price untouched, and the save succeeds** · **an admin crafting a Livewire state update on the price field does not persist a value and the Action refuses** · `100` and `100.000` are not treated as a change · no code path writes either price column outside the two Actions, mutation-tested · a referenced discount cannot have its percentage changed and cannot be deleted, the latter a typed refusal converted from MySQL 1451 · an admin cannot create or deactivate a discount definition · `BatchResourceTest` now asserts the field is present and gated · `composer verify` green.
+A super admin sets a price on create **and** changes it on edit, through the real Livewire component, and it persists · **an admin renames a course and a batch with the price untouched, and the save succeeds** · **an admin crafting a Livewire state update on the price field does not persist a value and the Action refuses** · `100` and `100.000` are not treated as a change · **a batch price moving `null` → `0.000` and `0.000` → `null` is detected as a change in both directions**, so "this intake is free" and "go back to inheriting" both reach the Action · **`100.0004` is rejected as invalid rather than rounded and reported unchanged** · no code path writes either price column outside the two Actions, mutation-tested · a referenced discount cannot have its percentage changed and cannot be deleted, the latter a typed refusal converted from MySQL 1451 · an admin cannot create or deactivate a discount definition · `BatchResourceTest` now asserts the field is present and gated · `composer verify` green.
 
 ---
 
@@ -193,7 +210,7 @@ Atomic create-and-finalize — payment, tenders and allocations in one transacti
 Both Actions are **actor-first and self-authorizing**, like every other request-path Action here. **The student is resolved through `EnrollmentQueryService`** from the locked charge; `RecordPaymentData` has no student field. **The idempotency key** is a client-generated UUID under a unique index, stored with a canonical request fingerprint: an identical replay returns the existing payment, a mismatched one raises `IdempotencyConflictException`. Reversal as a set-once lifecycle transition, super admin only. The PAN-shaped-input rule. `PaymentPolicy` refusing update and delete unconditionally.
 
 **Done when**
-A split payment of 300 card + 700 cash against a 1,000 bill produces one payment, two tenders, one allocation and a zero balance · a card tender with a blank-after-trim reference is refused by the database `CHECK`, proven by direct insert · **a tender/allocation mismatch is refused with a typed exception and leaves no partial row** · paying more than outstanding is refused, including when outstanding drops between form load and submit · two concurrent payments against one bill yield one success and one typed refusal · **the same key and request submitted twice, sequentially and concurrently, yields exactly one payment** · **the same key with a different bill or tender split raises and creates nothing** · **the fingerprint is stable across tender ordering and decimal representation** · **a crafted cross-student allocation stores the payment against the bill's real student** · **each Action invoked directly with an unauthorized actor is denied** · a reversed payment leaves every row intact and drops out of the balance · granting `update_payment` does not make the policy allow it · `composer verify` green.
+A split payment of 300 card + 700 cash against a 1,000 bill produces one payment, two tenders, one allocation and a zero balance · a card tender with a blank-after-trim reference is refused by the database `CHECK`, proven by direct insert · **a tender/allocation mismatch is refused with a typed exception and leaves no partial row** · paying more than outstanding is refused, including when outstanding drops between form load and submit · two concurrent payments against one bill yield one success and one typed refusal · **the same key and request submitted twice, sequentially and concurrently, yields exactly one payment** · **the same key with a different bill, tender split, or terminal reference raises and creates nothing** — two submissions differing only in reference are two approved card transactions, not a replay · **the fingerprint is stable across tender ordering and decimal representation** · **a replay of a payment that settled its bill in full returns the original payment** rather than failing an overpayment check, proving replay detection runs before revalidation · **a crafted cross-student allocation stores the payment against the bill's real student** · **each Action invoked directly with an unauthorized actor is denied** · a reversed payment leaves every row intact and drops out of the balance · granting `update_payment` does not make the policy allow it · `composer verify` green.
 
 Receipt assertions belong to tasks 6 and 9 — **receipts do not exist yet at this point in the phase**, so this task asserts one *payment* and cannot honestly assert one receipt.
 
@@ -270,10 +287,10 @@ All three run types. `monthly_salary` builds **segment lines** by intersecting t
 
 `AdjustPayrollLineAction` enforces design §7's four rules: the employee is derived from the locked target line, the target must be finalized, the amount must be non-zero, and a correction may not target another correction. A correction carries the **posting period of the line it corrects**.
 
-Finalization copies the frozen figures and `finalized_at` onto each line and is irreversible. Overlap between finalized salary segments is refused under a `users`-row lock, and **locks are taken in ascending user id order** so two runs over overlapping staff cannot deadlock. Reads instructor assignments through `EnrollmentQueryService`.
+Finalization copies the frozen figures, `finalized_at` and `posting_period_start` onto each line and is irreversible. **It also verifies that each line's shape matches the run's type** — a row-level `CHECK` cannot see `payroll_runs.type`, so the constraint proves a line is internally coherent and only the Action can prove it belongs where it sits. Overlap between finalized salary segments is refused under a `users`-row lock, and **locks are taken in ascending user id order** so two runs over overlapping staff cannot deadlock. Reads instructor assignments through `EnrollmentQueryService`.
 
 **Done when**
-**A run covering a partial previous month plus a full current month produces the correct segment lines with the correct per-month denominators** · a mid-period raise splits a month into two correctly-priced segments · an assignment already paid in a finalized run cannot appear in another, **proven at the database** by inserting the duplicate directly · **overlapping salary segments across two runs are refused by the lock**, with a test that fails if the lock is removed · **two concurrent finalizations over overlapping staff complete without deadlock** · **a finalized instructor line still explains its amount after `assigned_hours` is changed underneath it** · a finalized run cannot be edited, deleted, or have a draft adjustment added, and is corrected only by an adjustment run · **correcting March in June moves March's wage cost, not June's**, and wage cost and profit agree · a correction targeting a correction is refused · a zero-amount correction is refused · a rate changed after finalization does not move the finalized figure · `composer verify` green.
+**A run covering a partial previous month plus a full current month produces the correct segment lines with the correct per-month denominators** · a mid-period raise splits a month into two correctly-priced segments · an assignment already paid in a finalized run cannot appear in another, **proven at the database** by inserting the duplicate directly · **overlapping salary segments across two runs are refused by the lock**, with a test that fails if the lock is removed · **two concurrent finalizations over overlapping staff complete without deadlock** · **a finalized instructor line still explains its amount after `assigned_hours` is changed underneath it** · **a draft line persists with a null posting period, and finalization refuses a line whose shape does not match its run's type** · a finalized run cannot be edited, deleted, or have a draft adjustment added, and is corrected only by an adjustment run · **correcting March in June moves March's wage cost, not June's**, and wage cost and profit agree · a correction targeting a correction is refused · a zero-amount correction is refused · a rate changed after finalization does not move the finalized figure · `composer verify` green.
 
 ---
 
