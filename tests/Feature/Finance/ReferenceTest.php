@@ -176,8 +176,11 @@ it('answers "is this a placeholder", not "does this text contain one"', function
 
     expect(Reference::isPlaceholder("reference={$placeholder}"))->toBeFalse()
         ->and(Reference::isPlaceholder($placeholder.'-suffix'))->toBeFalse()
-        // The `D` modifier's hole, if it were missing: a trailing newline
-        // followed by anything at all.
+        // An embedded newline, not a trailing one — there is more text after
+        // it, not just a line ending at the very end of the string. The
+        // anchors refuse it regardless of the `D` modifier: PCRE's plain `$`
+        // only tolerates a newline immediately before the absolute end of the
+        // subject, and this one is not there.
         ->and(Reference::isPlaceholder($placeholder."\nENR-2026-000001"))->toBeFalse()
         // And the substring scan the docblock points at DOES see it.
         ->and(str_contains("reference={$placeholder}", Reference::PLACEHOLDER_MARKER))->toBeTrue();
@@ -219,12 +222,34 @@ it('mints a distinct placeholder every call, so concurrent inserts cannot collid
     }
 });
 
-it('keeps two enrolments inserted in one open transaction from colliding', function () {
+it('gives two enrolments inserted in one open transaction distinct references — a distinctness check, not a concurrency test', function () {
     /*
-     * The interleaving the placeholder exists for, as close as a single-process
-     * test can get to it: two rows carrying placeholders inside one uncommitted
-     * transaction, which is precisely the window a UNIQUE index would refuse a
-     * constant in. Both commit, and both leave with distinct real references.
+     * THIS IS A DISTINCTNESS CHECK, NOT A CONCURRENCY TEST, and it is worth
+     * saying plainly rather than the way this test used to put it — "as close
+     * as a single-process test can get" — which reads as satisfying the plan's
+     * "concurrent inserts produce no collision" clause without actually doing
+     * so. Both inserts here run sequentially, on the SAME connection, inside
+     * the SAME transaction: nothing overlaps in time, and no second session is
+     * ever involved. What this DOES prove, and it is real: two
+     * placeholder-carrying rows can coexist uncommitted without colliding on
+     * the UNIQUE index on `reference`, and both resolve to distinct real
+     * references once committed.
+     *
+     * A genuine two-connection version was considered for this fix rather than
+     * assumed away. It was not written, because there is no lock here for a
+     * second connection to race — unlike EnrollmentMutex's `lockForUpdate()`,
+     * which a second connection can genuinely contend for by holding a
+     * transaction open while another tries to acquire the same row lock, the
+     * property that stops two placeholders colliding is
+     * Reference::placeholder()'s 122 bits of UUID v4 randomness, generated in
+     * PHP before either connection touches the database. Two real connections
+     * inserting genuine random placeholders cannot be made to collide by
+     * running them on separate sessions; the only way to force the collision
+     * this test could then observe is to freeze the UUID, at which point the
+     * "concurrency" is fake regardless of how many connections carry it, and
+     * the assertion collapses to "the UNIQUE index refuses a literal
+     * duplicate" — already covered without needing a second connection to
+     * demonstrate.
      */
     [$first, $second] = DB::transaction(fn (): array => [
         ($this->enrolSomeone)(),

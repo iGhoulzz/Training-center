@@ -49,8 +49,9 @@ class PaymentTenderFactory extends Factory
     /**
      * A card tender, with the terminal reference the database insists on.
      *
-     * `payment_tenders_card_requires_external_reference` uses `TRIM`, so a single
-     * space is refused as well as a null — a space is an operator tabbing past
+     * `payment_tenders_card_requires_external_reference` uses a REGEXP requiring
+     * at least one non-whitespace character, so a space, tab, or newline is
+     * refused as well as a null — a space is an operator tabbing past
      * the field, and it leaves a card transaction with nothing to reconcile
      * against the terminal's own log. **A card state that forgot this would make
      * every later task's card fixture fail on a constraint rather than on its own

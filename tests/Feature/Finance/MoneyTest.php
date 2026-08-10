@@ -118,11 +118,15 @@ it('refuses a value that is not an exact LYD amount at all', function (string $i
     'two dots' => ['1.2.3'],
     'inner space' => ['1 234.500'],
     /*
-     * The `D` modifier's job: without it PCRE's `$` also matches just before a
-     * final newline, so this would parse as 1.500 and a stray line ending would
-     * become money.
+     * An embedded newline, not a trailing one — there are digits after it,
+     * not just a line ending at the very end of the string. The `^...$`
+     * anchors refuse it either way: PCRE's plain `$` only tolerates a newline
+     * immediately before the absolute end of the subject, and this one is
+     * not there. This does not exercise the `D` modifier — see Money's own
+     * docblock on DECIMAL_PATTERN for where `D` does, and measurably does
+     * not, matter.
      */
-    'trailing newline inside the digits' => ["1.500\n5"],
+    'a newline embedded in the digits, not a trailing one' => ["1.500\n5"],
 ]);
 
 it('refuses a magnitude an integer cannot hold exactly', function (string $input) {

@@ -574,6 +574,26 @@ it('accepts a full waiver at exactly one hundred percent', function () {
     financeAccepted('discounts', financeDiscountRow(['percentage' => '100.00']));
 })->group('finance-schema');
 
+it('holds one discount definition per name at a unique index', function () {
+    // An operator picks a discount by name at the desk; two "Staff family"
+    // rows would make that choice a guess. The row copied here is a genuine
+    // duplicate — discounts carry no other unique column to collide on
+    // instead — so only this index can be refusing it.
+    $discount = Discount::factory()->create();
+
+    expect(financeIndexColumns('discounts', 'discounts_name_unique'))->toBe(['name'])
+        ->and(financeIndexIsUnique('discounts', 'discounts_name_unique'))->toBeTrue(
+            'discounts_name_unique exists but is not UNIQUE, so two discount definitions '
+            .'could share one name.',
+        );
+
+    financeRefusedBy(
+        'discounts_name_unique',
+        'discounts',
+        financeRowCopy('discounts', (int) $discount->getKey()),
+    );
+})->group('finance-schema');
+
 /*
 |--------------------------------------------------------------------------
 | charges
@@ -694,6 +714,27 @@ it('holds one bill per enrolment at a unique index', function () {
         'charges_enrollment_id_unique',
         'charges',
         financeRowCopy('charges', (int) $charge->getKey(), ['reference' => Reference::placeholder()]),
+    );
+})->group('finance-schema');
+
+it('holds one reference per charge at a unique index', function () {
+    // enrollment_id is swapped on the copy, since it carries its own unique
+    // index — so nothing except charges_reference_unique can be refusing this
+    // insert.
+    $charge = Charge::factory()->create();
+
+    expect(financeIndexColumns('charges', 'charges_reference_unique'))->toBe(['reference'])
+        ->and(financeIndexIsUnique('charges', 'charges_reference_unique'))->toBeTrue(
+            'charges_reference_unique exists but is not UNIQUE, so two bills could carry the '
+            .'same reference.',
+        );
+
+    financeRefusedBy(
+        'charges_reference_unique',
+        'charges',
+        financeRowCopy('charges', (int) $charge->getKey(), [
+            'enrollment_id' => (int) Enrollment::factory()->create()->getKey(),
+        ]),
     );
 })->group('finance-schema');
 
@@ -903,6 +944,39 @@ it('refuses a negative allocation', function () {
         'payment_allocations_amount_positive',
         'payment_allocations',
         financeAllocationRow((int) $payment->getKey(), (int) $charge->getKey(), ['amount' => '-50.000']),
+    );
+})->group('finance-schema');
+
+it('holds one allocation per payment per bill at a unique index', function () {
+    /*
+     * THE IMPORTANT ONE. The migration's own words: without this index a
+     * payment could be recorded against the same charge twice, and both rows
+     * would sum into the balance — "tender total equals allocation total"
+     * would still hold on each individual write while the bill quietly
+     * over-settled underneath it.
+     */
+    $payment = Payment::factory()->create();
+    $charge = Charge::factory()->create();
+
+    $allocationId = financeAccepted(
+        'payment_allocations',
+        financeAllocationRow((int) $payment->getKey(), (int) $charge->getKey()),
+    );
+
+    expect(financeIndexColumns('payment_allocations', 'payment_allocations_payment_id_charge_id_unique'))
+        ->toBe(['payment_id', 'charge_id'])
+        ->and(financeIndexIsUnique('payment_allocations', 'payment_allocations_payment_id_charge_id_unique'))
+        ->toBeTrue(
+            'payment_allocations_payment_id_charge_id_unique exists but is not UNIQUE, so a '
+            .'payment could be allocated against the same charge twice and both rows would sum '
+            .'into the balance — over-settling a bill while every per-write invariant still '
+            .'held.',
+        );
+
+    financeRefusedBy(
+        'payment_allocations_payment_id_charge_id_unique',
+        'payment_allocations',
+        financeRowCopy('payment_allocations', $allocationId),
     );
 })->group('finance-schema');
 

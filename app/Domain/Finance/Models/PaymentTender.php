@@ -32,10 +32,11 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * THE CARD RULE IS A DATABASE CONSTRAINT, AND IS NOT RESTATED HERE
  * ---------------------------------------------------------------
  * `payment_tenders_card_requires_external_reference` refuses a card tender whose
- * terminal reference is null or whitespace, with `TRIM` so a single space does
- * not pass for a reference. Adding a PHP mirror of it to this class would be a
- * second definition of the same rule that any other writer reaches around, and
- * would put a validation decision in a model that is configuration only. The
+ * terminal reference is null or whitespace, with a REGEXP requiring at least
+ * one non-whitespace character so a space, tab, or newline does not pass for
+ * a reference. Adding a PHP mirror of it to this class would be a second
+ * definition of the same rule that any other writer reaches around, and would
+ * put a validation decision in a model that is configuration only. The
  * user-facing message for the same condition belongs to task 4's form request.
  *
  * WHAT IS NEVER STORED

@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Domain\Finance\Support\Reference;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\DB;
 
@@ -19,11 +20,13 @@ use Illuminate\Support\Facades\DB;
  * also silently drops any column attribute not restated, so it would need the
  * type spelled out here regardless.
  *
- * VARCHAR(64) restates step 1's type exactly. MySQL's MODIFY redefines the
- * column rather than amending it, so a mismatch here would quietly resize it.
- * The column carries no default, comment, or explicit collation, so there is
- * nothing further to restate; its charset follows the table default, as it did
- * when step 1 created it.
+ * VARCHAR(Reference::COLUMN_LENGTH), interpolated into the raw statement
+ * rather than a literal, restates step 1's type exactly. MySQL's MODIFY
+ * redefines the column rather than amending it, so a mismatch here would
+ * quietly resize it — which is exactly what a literal that drifted from the
+ * constant would produce, silently. The column carries no default, comment, or
+ * explicit collation, so there is nothing further to restate; its charset
+ * follows the table default, as it did when step 1 created it.
  *
  * Re-running this is safe: modifying an already-NOT NULL column to NOT NULL is
  * a no-op that MySQL accepts.
@@ -32,11 +35,11 @@ return new class extends Migration
 {
     public function up(): void
     {
-        DB::statement('ALTER TABLE enrollments MODIFY reference VARCHAR(64) NOT NULL');
+        DB::statement('ALTER TABLE enrollments MODIFY reference VARCHAR('.Reference::COLUMN_LENGTH.') NOT NULL');
     }
 
     public function down(): void
     {
-        DB::statement('ALTER TABLE enrollments MODIFY reference VARCHAR(64) NULL');
+        DB::statement('ALTER TABLE enrollments MODIFY reference VARCHAR('.Reference::COLUMN_LENGTH.') NULL');
     }
 };

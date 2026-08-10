@@ -121,6 +121,43 @@ function financeAbilities(): array
     return [...FINANCE_READS, ...FINANCE_WRITES, ...FINANCE_CUSTOM];
 }
 
+/**
+ * The eight resources that take the standard phase 1 CRUD set. Kept here as an
+ * independent list rather than read off `RolePermissionSeeder::RESOURCES` —
+ * that constant is private, and reflecting it in would let a name added to
+ * the wrong list agree with itself instead of being caught below.
+ */
+const NON_FINANCE_CRUD_RESOURCES = [
+    'user', 'staff_profile', 'staff_certificate', 'student', 'course', 'batch', 'enrollment', 'role',
+];
+
+/**
+ * Every non-finance ability the seeder creates that is not plain CRUD: the
+ * activity log's two reads, the non-finance custom abilities, and the extra
+ * Role abilities Shield's generated policy needs.
+ */
+const NON_FINANCE_CUSTOM = [
+    'view_any_activity', 'view_activity',
+    'access_admin_panel', 'assign_role', 'reset_user_password', 'assign_instructor',
+    'manage_settings', 'update_assigned_batch_enrollment',
+    'delete_any_role', 'force_delete_role', 'force_delete_any_role',
+    'restore_role', 'restore_any_role', 'replicate_role', 'reorder_role',
+];
+
+/** Every permission the seeder creates that has nothing to do with finance. */
+function nonFinanceAbilities(): array
+{
+    $crud = [];
+
+    foreach (NON_FINANCE_CRUD_RESOURCES as $resource) {
+        foreach (['view_any', 'view', 'create', 'update', 'delete'] as $action) {
+            $crud[] = "{$action}_{$resource}";
+        }
+    }
+
+    return [...$crud, ...NON_FINANCE_CUSTOM];
+}
+
 beforeEach(function () {
     $this->seed(RolePermissionSeeder::class);
 
@@ -151,12 +188,42 @@ it('seeds twenty-two finance abilities and no more', function () {
     expect(financeAbilities())->toHaveCount(22)
         ->and(array_unique(financeAbilities()))->toHaveCount(22);
 
-    $seeded = Permission::query()
-        ->whereIn('name', financeAbilities())
-        ->pluck('name')
-        ->all();
+    /*
+     * THE REAL CLOSED-SET CHECK. This used to read
+     * `Permission::query()->whereIn('name', financeAbilities())->pluck('name')`
+     * and assert THAT had twenty-two rows — filtering the seeded permissions
+     * by the very list being checked, so it could only ever agree with
+     * itself. A reviewer added 'refund_payment' to
+     * `RolePermissionSeeder::CUSTOM`, and it was granted to super admin, and
+     * this assertion (and the per-name one above it) stayed green: neither
+     * one ever looks at a permission this file did not already name.
+     *
+     * This version starts from every permission the seeder actually wrote,
+     * removes the ones independently known to be non-financial
+     * (`nonFinanceAbilities()`, spelled out by hand rather than reflected off
+     * the seeder's own private constants — same reason as above), and
+     * requires what is left to be exactly `financeAbilities()`. A name the
+     * seeder produces that this file recognises as neither finance nor
+     * non-finance is named in the failure rather than passing silently.
+     */
+    $allSeeded = Permission::query()->where('guard_name', 'web')->pluck('name')->all();
 
-    expect($seeded)->toHaveCount(22);
+    $unrecognised = array_values(array_diff($allSeeded, financeAbilities(), nonFinanceAbilities()));
+
+    expect($unrecognised)->toBe(
+        [],
+        'The seeder created permissions this test does not recognise as finance or as '
+        .'non-finance: '.implode(', ', $unrecognised).'. Add each one to financeAbilities() in '
+        .'this file if design §10 calls for it, or to nonFinanceAbilities() if it does not.',
+    );
+
+    $financeSeeded = array_values(array_intersect($allSeeded, financeAbilities()));
+    sort($financeSeeded);
+    $expected = financeAbilities();
+    sort($expected);
+
+    expect($financeSeeded)->toHaveCount(22)
+        ->toBe($expected, 'The seeded finance permissions no longer match financeAbilities() exactly.');
 });
 
 it('creates no CRUD ability on a finance resource beyond the reads and the three writes', function () {

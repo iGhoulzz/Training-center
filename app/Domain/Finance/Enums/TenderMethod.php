@@ -23,9 +23,10 @@ namespace App\Domain\Finance\Enums;
  * ------------------------------------------
  * `payment_tenders_card_requires_external_reference` is written against the
  * literal 'card' alone: a card tender must carry a non-blank terminal
- * reference, and TRIM in the constraint is what stops a single space passing
- * for one. No other case here is constrained, and none should acquire a rule in
- * PHP that the database does not also hold — an invariant that lives only in
+ * reference, and the REGEXP in the constraint is what stops a space, tab, or
+ * newline passing for one — it requires at least one non-whitespace character.
+ * No other case here is constrained, and none should acquire a rule in PHP
+ * that the database does not also hold — an invariant that lives only in
  * application code is one that any other writer reaches around.
  *
  * WHAT IS NEVER STORED

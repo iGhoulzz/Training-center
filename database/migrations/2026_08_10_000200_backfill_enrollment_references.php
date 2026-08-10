@@ -95,13 +95,21 @@ return new class extends Migration
     }
 
     /**
-     * Clears exactly the values this migration wrote, and nothing else.
+     * Clears exactly the values this migration would itself have written, and
+     * nothing else.
      *
      * Matching on the value this migration would produce for the row, rather
-     * than blanking the column, means a reference written by the application —
-     * a placeholder mid-transaction, or any value whose shape differs —
-     * survives the rollback. This runs after step 4's down() has restored
-     * nullability, so the NULLs are accepted.
+     * than blanking the column, means a value whose SHAPE differs — a
+     * placeholder still mid-transaction, or anything that is not this exact
+     * `ENR-{year}-{id}` string — survives the rollback. A reference the
+     * application wrote for real does NOT survive on that basis: it is
+     * byte-identical to what referenceFor() computes for the same row, so it
+     * matches and is nulled along with a backfilled one. That is correct
+     * rather than a gap — this undoes "every row has a reference", not "every
+     * row this migration touched", and there is no way to tell the two apart
+     * from the stored value alone once both are written in the same format.
+     * This runs after step 4's down() has restored nullability, so the NULLs
+     * are accepted.
      *
      * The comparison is made in PHP for the same reason the backfill is: the
      * expected value depends on the local calendar year, and no portable SQL

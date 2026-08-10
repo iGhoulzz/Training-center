@@ -362,6 +362,16 @@ it('reaches NOT NULL UNIQUE only once all four steps have run in order', functio
 
     expect(referenceColumnIsNullable())->toBeFalse()
         ->and(referenceUniqueIndexes())->toBe([REFERENCE_UNIQUE_INDEX])
+        /*
+         * 'varchar(64)' is a literal here, deliberately, and not
+         * Reference::COLUMN_LENGTH. Both migrations read the constant, so
+         * reading it here too would make this assertion pass for any value the
+         * constant happened to hold — including a wrong one — since the code
+         * under test and the check on it would share a single source that
+         * could drift and still agree with itself. A literal is the only form
+         * of this assertion that can actually catch the constant being changed
+         * to something the schema was not also migrated to.
+         */
         ->and(referenceColumnType())->toBe(
             'varchar(64)',
             "Step 4's MODIFY redefines the column rather than amending it, so a type that "
@@ -459,6 +469,8 @@ it('completes step 4 on a retry after step 3 has already succeeded and been reco
     );
 
     expect(referenceColumnIsNullable())->toBeFalse()
+        // A literal, not Reference::COLUMN_LENGTH — see the comment on the
+        // first assertion of this shape, above.
         ->and(referenceColumnType())->toBe('varchar(64)')
         ->and(referenceUniqueIndexes())->toBe([REFERENCE_UNIQUE_INDEX]);
 });
