@@ -1,7 +1,7 @@
 # Phase 2 — Financials: Design
 
 **Date:** 2026-08-09
-**Status:** Revision 5 — incorporates three Codex step-0 rounds and one independent pre-review. Awaiting final Codex re-review.
+**Status:** Revision 5 — **approved**. Incorporates three Codex step-0 rounds, one independent pre-review, and a final bounded cleanup. Authoritative for phase 2 implementation.
 **Supersedes:** the phase 2 sections of `2026-07-20-training-center-dashboard-design.md` wherever the two disagree. Those sections were written at architectural detail before a charge model existed; this document is at implementation detail and is authoritative for phase 2.
 
 **Revision 2 changed:** the enrolment write path (§12), salaried payroll segmentation and post-finalization correction (§7), payment idempotency and derived student identity (§5), the pricing write boundary (§3), charge due dates (§4), reporting time zones (§8), compensation locking (§7), and the schema guarantees in §9. Two review findings were **declined** — see §16.
