@@ -12,9 +12,11 @@ use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Filament\Facades\Filament;
 use Filament\Http\Middleware\Authenticate;
+use Illuminate\Filesystem\Filesystem;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\File;
 use Livewire\Livewire;
+use Symfony\Component\Finder\SplFileInfo;
 
 uses(RefreshDatabase::class);
 
@@ -387,13 +389,76 @@ it('ships an arabic file for every english one', function () {
     expect($arabic)->toBe($english);
 });
 
+/**
+ * Every catalogue name present in lang/en — 'activity', 'auth', 'enrollment', …
+ *
+ * ENUMERATED THE SAME WAY THE PARITY CHECK ABOVE DOES: Filesystem::files(), one
+ * level deep, name-sorted. The facade is skipped for a reason rather than a
+ * preference. A Pest dataset is resolved while PHPUnit is COLLECTING tests,
+ * before any test case has created an application, and at that moment
+ * `Illuminate\Support\Facades\File` throws "A facade root has not been set" and
+ * `lang_path()` throws "Call to undefined method
+ * Illuminate\Container\Container::langPath()". Constructing the very Filesystem
+ * the facade proxies to, against a path derived from this file, keeps ONE way of
+ * listing that directory instead of a second one invented to dodge the boot
+ * order.
+ *
+ * @return array<int, string>
+ */
+function englishCatalogueNames(): array
+{
+    return array_map(
+        fn (SplFileInfo $file): string => $file->getBasename('.php'),
+        (new Filesystem)->files(dirname(__DIR__, 2).DIRECTORY_SEPARATOR.'lang'.DIRECTORY_SEPARATOR.'en'),
+    );
+}
+
+it('derives the arabic-empty check from a set that cannot be empty', function () {
+    /*
+     * THE GUARD THE DERIVED DATASET NEEDS, AND IT CANNOT LIVE IN THAT TEST.
+     *
+     * The check below is a dataset built by reading lang/en. A read that matches
+     * nothing — a moved directory, a renamed path, a wrong pattern — yields zero
+     * test cases, and zero cases report green while asserting nothing about any
+     * catalogue. That is the same silent pass the hardcoded list had, reached
+     * from the other side, and a per-case assertion cannot catch it because in
+     * that state no case ever runs. So the floor is asserted here, in a test with
+     * no dataset of its own.
+     *
+     * The floor is the four catalogues phase 1 shipped, named individually so a
+     * scan that finds four of the wrong things still fails. It can only grow: a
+     * catalogue is not removed once its strings are in use, so a smaller set is
+     * a broken scan rather than a smaller application.
+     */
+    $catalogues = englishCatalogueNames();
+
+    expect($catalogues)->toContain('activity', 'auth', 'enrollment', 'staff')
+        ->and(count($catalogues))->toBeGreaterThanOrEqual(
+            4,
+            'lang/en yielded '.count($catalogues).' catalogue(s): '.implode(', ', $catalogues)
+            .'. The Arabic-empty check is built from this list, so a short or empty one means '
+            .'that check is silently covering less of the catalogue than it claims.',
+        );
+});
+
 it('keeps the arabic catalogues empty until phase 4', function (string $file) {
     // Deliberate, and asserted so that nobody "helpfully" fills these with the
     // English strings. Copied English would render identically to a real
     // translation, so no screenshot, review or test could tell how much of the
     // panel a translator had actually reached. Absent means untranslated.
+    //
+    // DERIVED FROM lang/en, NOT LISTED HERE (P2-T01). The four names were written
+    // out, and phase 2 adds eight catalogues across nine tasks — pricing,
+    // billing, payments, charges, receipt, payroll, collect, reports. Under a
+    // hand-written list every one of them could ship full of English with nothing
+    // failing, and the check would describe less of the application after each
+    // task while still passing. Deriving it means a catalogue is covered the
+    // moment it exists and no task has to remember to register itself.
+    //
+    // Still one case per catalogue, not a loop inside one case: a loop reports a
+    // single failure for the whole set and does not say which catalogue broke.
     expect(require lang_path("ar/{$file}.php"))->toBe([]);
-})->with(['activity', 'auth', 'enrollment', 'staff']);
+})->with(englishCatalogueNames());
 
 it('falls back to english for a key arabic does not have', function () {
     app()->setLocale('ar');

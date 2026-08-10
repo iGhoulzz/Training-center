@@ -1,0 +1,351 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Domain\Finance\Models;
+
+use App\Domain\Staff\Support\RecordsActivity;
+use App\Models\User;
+use Database\Factories\PayrollLineFactory;
+use Illuminate\Database\Eloquent\Attributes\Fillable;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+
+/**
+ * One line of a payroll run, in one of three shapes.
+ *
+ * Configuration only — casts, five relations, one scope, four derived
+ * predicates. No business logic and no write guards; see App\Models\User for why
+ * that architecture was removed in P1-T04c.
+ *
+ * THE THREE SHAPES (design section 9)
+ * -----------------------------------
+ *   salary      staff_compensation_id · segment_start · segment_end ·
+ *               frozen_rate · frozen_days · frozen_days_in_month
+ *   instructor  staff_compensation_id · batch_instructor_id · frozen_rate ·
+ *               frozen_hours
+ *   adjustment  corrects_payroll_line_id · signed computed_amount · reason
+ *
+ * `payroll_lines_exactly_one_shape` enforces that exactly one is present, and
+ * **nothing in this class re-enforces it.** The predicates below only *read*
+ * which shape a row is; they refuse nothing. Validating a shape in PHP would be
+ * a second definition of a rule the database already holds — and a weaker one,
+ * because it would only cover writes that happened to go through this model.
+ *
+ * The `CHECK` cannot verify that a line's shape matches its run's type, because a
+ * MySQL `CHECK` may not reference another table. `FinalizePayrollRunAction` does
+ * that inside the finalizing transaction. **The constraint guarantees a line is
+ * internally coherent; only the Action can guarantee it belongs where it sits.**
+ *
+ * THERE IS NO batchInstructor() RELATION, AND THAT IS NOT AN OMISSION
+ * ------------------------------------------------------------------
+ * `batch_instructor` is a pivot reached through `Batch::instructors()`, and no
+ * Eloquent model represents a row of it. Inventing one here to hang a `belongsTo`
+ * off would put an Enrolment-domain model inside Finance, which is the crossing
+ * design section 12 routes through `EnrollmentQueryService` — task 3's contract
+ * already lists instructor assignments and their hours as what task 8 reads from
+ * it. `batch_instructor_id` is held as the frozen evidence for the amount, and
+ * `frozen_hours` is what this row explains itself with.
+ *
+ * TWO STORED GENERATED COLUMNS, WHICH THIS CLASS ONLY EVER READS
+ * -------------------------------------------------------------
+ * `finalized_batch_instructor_id` and `finalized_salary_segment` are computed by
+ * MySQL and carry a value **only while `finalized_at` is set**. Their unique
+ * indexes are what actually prevent paying an instructor assignment twice, or
+ * finalizing the identical salary segment twice; drafts carry NULL and collide
+ * with nothing, which is what lets a draft be rebuilt as often as the operator
+ * likes (design section 7).
+ *
+ * They are deliberately absent from the fillable list and from
+ * auditedAttributes(). MySQL refuses a write to a generated column outright, and
+ * logging one would file a "change" no human made — a derived value in the one
+ * place design section 4 spends its whole length keeping derived values out of.
+ *
+ * **They are not populated on the in-memory model after a create().** MySQL
+ * computes them during the insert and Eloquent does not read them back; call
+ * refresh() if a caller genuinely needs the value rather than the index.
+ *
+ * **Overlapping salary segments are NOT caught by either index**, and design
+ * section 7 says so honestly. Two runs covering 1–15 January and 10–31 January
+ * produce segments with different start dates and no unique index refuses them.
+ * The database catches exact duplicates; only `FinalizePayrollRunAction`'s lock
+ * and range check catch overlaps.
+ *
+ * WHY EVERY LINE IS AUDITED, INCLUDING DRAFTS
+ * -------------------------------------------
+ * Design section 12 requires the log to record all financial mutations, and a
+ * correction line is where an adjustment's signed amount and mandatory reason
+ * actually live — its run row carries only a type and a note. Logging the run
+ * alone would leave the figure that moved somebody's wage unrecorded.
+ *
+ * The cost is real and is accepted rather than hidden: a draft rebuilt five times
+ * over forty staff files two hundred entries about work in progress, into a log
+ * with no delete path for any role. That is the direction this project errs in
+ * deliberately — Reference::isPlaceholder() records the same choice, that a check
+ * which over-reports gets investigated while one that misses ships silently.
+ *
+ * @property int $id
+ * @property ?int $finalized_batch_instructor_id generated by MySQL; read-only
+ * @property ?string $finalized_salary_segment generated by MySQL; read-only
+ */
+#[Fillable([
+    'payroll_run_id',
+    'user_id',
+    'staff_compensation_id',
+    'batch_instructor_id',
+    'corrects_payroll_line_id',
+    'segment_start',
+    'segment_end',
+    'frozen_rate',
+    'frozen_hours',
+    'frozen_days',
+    'frozen_days_in_month',
+    'computed_amount',
+    'posting_period_start',
+    'reason',
+    'finalized_at',
+])]
+class PayrollLine extends Model
+{
+    /** @use HasFactory<PayrollLineFactory> */
+    use HasFactory;
+
+    use RecordsActivity;
+
+    /**
+     * The run this line belongs to.
+     *
+     * No withTrashed(): payroll runs do not soft-delete. This foreign key
+     * cascades — the one financial foreign key that does — and that is correct,
+     * because `PayrollRunPolicy` refuses to delete a finalized run regardless of
+     * `delete_payroll_run`, so the cascade can only ever reach draft lines.
+     *
+     * @return BelongsTo<PayrollRun, $this>
+     */
+    public function run(): BelongsTo
+    {
+        return $this->belongsTo(PayrollRun::class, 'payroll_run_id');
+    }
+
+    /**
+     * The person this line pays.
+     *
+     * withTrashed(), because users soft-delete while this foreign key restricts:
+     * without it a departed employee's wage lines would resolve to nobody, on
+     * rows the centre has already posted to its books.
+     *
+     * @return BelongsTo<User, $this>
+     */
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class)->withTrashed();
+    }
+
+    /**
+     * The rate row this line froze its figures from.
+     *
+     * Null on a correction, which has no rate — it is a signed amount, not a
+     * calculation. The figures are read from `frozen_rate` on this row and never
+     * back through this relation: the rate row can be closed off and superseded,
+     * and a line recomputed in June must still show what March was paid at.
+     *
+     * @return BelongsTo<StaffCompensation, $this>
+     */
+    public function compensation(): BelongsTo
+    {
+        return $this->belongsTo(StaffCompensation::class, 'staff_compensation_id');
+    }
+
+    /**
+     * The finalized line this one corrects, on a correction line.
+     *
+     * Restricts, so a correction can never be orphaned from what it corrects.
+     * Corrections are **flat and never chained** — design section 7 forbids a
+     * correction targeting another correction, and `AdjustPayrollLineAction`
+     * enforces it because a `CHECK` cannot follow a reference into another row.
+     * Multiple corrections against the same original are allowed and sum.
+     *
+     * @return BelongsTo<self, $this>
+     */
+    public function corrects(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'corrects_payroll_line_id');
+    }
+
+    /**
+     * Every correction filed against this line.
+     *
+     * NOT A WRITE PATH. A correction is written by `AdjustPayrollLineAction`,
+     * which creates it on an `adjustment` run and copies `posting_period_start`
+     * from **this** line — the mechanism that makes a June correction land in
+     * March's wage cost. A bare `$line->corrections()->create()` skips that copy
+     * and posts the money to the wrong month.
+     *
+     * @return HasMany<self, $this>
+     */
+    public function corrections(): HasMany
+    {
+        return $this->hasMany(self::class, 'corrects_payroll_line_id');
+    }
+
+    /**
+     * Bonuses and deductions applied while the run was still a draft.
+     *
+     * NOT A WRITE PATH, and **not the correction mechanism** — the two are easy
+     * to confuse and differ in *when*, not in kind (design section 7). A row here
+     * is something known before the run was posted; a correction is a new
+     * `adjustment` run raised after it was. A finalized run takes no new rows
+     * here at all, which is a lock and a check inside the writing transaction
+     * rather than a constraint, because a `CHECK` cannot read
+     * `payroll_runs.finalized_at` through two tables.
+     *
+     * @return HasMany<PayrollLineAdjustment, $this>
+     */
+    public function adjustments(): HasMany
+    {
+        return $this->hasMany(PayrollLineAdjustment::class);
+    }
+
+    /**
+     * Limit a query to lines whose run has been posted.
+     *
+     * Reads this row's own denormalized `finalized_at` rather than joining
+     * `payroll_runs`. That column was frozen onto the line so the generated
+     * columns could see it, and reading it here means a wage-cost report needs no
+     * join — `posting_period_start` is non-null exactly when this is set, so the
+     * index that report groups on already selects this set.
+     *
+     * @param  Builder<self>  $query
+     */
+    public function scopeFinalized(Builder $query): void
+    {
+        $query->whereNotNull('finalized_at');
+    }
+
+    /**
+     * Is this a salary segment?
+     *
+     * Reads `segment_start`, which is exactly how `finalized_salary_segment`
+     * identifies a salary line from the row alone. The shape `CHECK` nulls the
+     * segment columns on both other shapes, so the two cannot disagree.
+     *
+     * This reports a shape; it does not enforce one. See the class docblock.
+     */
+    public function isSalaryLine(): bool
+    {
+        return $this->segment_start !== null;
+    }
+
+    /**
+     * Is this an instructor-hours line?
+     *
+     * Reads `batch_instructor_id`, the discriminator the shape `CHECK` uses to
+     * separate an instructor line from a salary one.
+     */
+    public function isInstructorLine(): bool
+    {
+        return $this->batch_instructor_id !== null;
+    }
+
+    /**
+     * Is this a correction to an already-finalized line?
+     *
+     * Reads `corrects_payroll_line_id`, the discriminator that separates a
+     * correction from both other shapes.
+     */
+    public function isCorrection(): bool
+    {
+        return $this->corrects_payroll_line_id !== null;
+    }
+
+    /**
+     * Has this line been posted to the books?
+     *
+     * Derived from the fact column, never stored. Posted, not paid — see
+     * PayrollRun for why that distinction matters.
+     */
+    public function isFinalized(): bool
+    {
+        return $this->finalized_at !== null;
+    }
+
+    /**
+     * Every column a human or an Action decided, and the two that MySQL decided.
+     *
+     * `finalized_batch_instructor_id` and `finalized_salary_segment` are absent
+     * because they are generated: they change as a consequence of `finalized_at`
+     * and `batch_instructor_id` moving, both of which are logged here, so
+     * recording them would file the same event twice and attribute a derived
+     * value to a person. See the class docblock.
+     */
+    public function auditedAttributes(): array
+    {
+        return [
+            'payroll_run_id',
+            'user_id',
+            'staff_compensation_id',
+            'batch_instructor_id',
+            'corrects_payroll_line_id',
+            'segment_start',
+            'segment_end',
+            'frozen_rate',
+            'frozen_hours',
+            'frozen_days',
+            'frozen_days_in_month',
+            'computed_amount',
+            'posting_period_start',
+            'reason',
+            'finalized_at',
+        ];
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [
+            /*
+             * Dates. A segment is a local calendar range inside one month, and
+             * `posting_period_start` is the first day of the month the cost
+             * belongs to — for a correction, copied from the line it corrects.
+             */
+            'segment_start' => 'date',
+            'segment_end' => 'date',
+            'posting_period_start' => 'date',
+
+            /*
+             * decimal:3 on both money columns. Never float, never two places.
+             * `frozen_rate` is nullable — a correction has no rate — and the
+             * decimal cast passes null through untouched.
+             *
+             * `computed_amount` is SIGNED: a correction may be a deduction, and
+             * the column is decimal(12, 3) without `unsigned()` for that reason.
+             */
+            'frozen_rate' => 'decimal:3',
+            'computed_amount' => 'decimal:3',
+
+            /*
+             * Whole counts, not money. The hours copied from
+             * `batch_instructor.assigned_hours`, and the numerator and
+             * denominator of the salary pro-rating —
+             * `round(rate × days ÷ days_in_month)`, which `Money::multipliedBy()`
+             * performs in integer dirham.
+             */
+            'frozen_hours' => 'integer',
+            'frozen_days' => 'integer',
+            'frozen_days_in_month' => 'integer',
+
+            'finalized_at' => 'datetime',
+        ];
+    }
+
+    /** See StaffProfile::newFactory() for why this is stated rather than guessed. */
+    protected static function newFactory(): PayrollLineFactory
+    {
+        return PayrollLineFactory::new();
+    }
+}

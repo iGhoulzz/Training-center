@@ -31,6 +31,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * @property int $id
  * @property int $student_id
  * @property int $batch_id
+ * @property string $reference
  */
 #[Fillable([
     'student_id',
@@ -38,6 +39,14 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
     'enrolled_at',
     'status',
     'completed_at',
+    /*
+     * Written twice by EnrollStudentAction inside one transaction — a unique
+     * placeholder at insert, then the real `ENR-` value once the row has the id
+     * the reference is built from. Fillable because both writes are mass
+     * assignments; the write boundary is the Action, not the guarded list, and
+     * ActionBoundaryArchTest is what holds it.
+     */
+    'reference',
 ])]
 class Enrollment extends Model
 {
@@ -93,7 +102,27 @@ class Enrollment extends Model
         $query->where('status', EnrollmentStatus::Active);
     }
 
-    /** Phase 2 bills from these rows, so every column is auditable. */
+    /**
+     * Phase 2 bills from these rows, so every column is auditable — except one.
+     *
+     * `reference` IS DELIBERATELY ABSENT, AND THE OMISSION IS THE FEATURE.
+     * ------------------------------------------------------------------
+     * RecordsActivity logs on model events, not on Actions. EnrollStudentAction
+     * inserts the row carrying Reference::placeholder() and replaces it with the
+     * real `ENR-` value in the same transaction, so listing `reference` here
+     * would file two entries: a `created` recording `reference = <uuid>`, and an
+     * `updated` recording a phantom "the reference changed" beside it. Sharing a
+     * transaction does not help — both commit with everything else, into a log
+     * that has no delete path for any role, including super admin.
+     *
+     * Excluding it costs nothing. The reference is a deterministic function of
+     * the subject id the log already records — `ENR-2026-000042` *is* enrolment
+     * 42 — so the trail can still name the document. And because no audited
+     * column moves during the replacement, dontLogEmptyChanges() suppresses that
+     * `updated` entry entirely rather than filing an empty one.
+     *
+     * Design section 2 requires this on every table carrying a reference.
+     */
     public function auditedAttributes(): array
     {
         return [

@@ -101,6 +101,16 @@ it('converts a real foreign key refusal that the pre-check missed', function () 
             'batch_id' => $batch->getKey(),
             'enrolled_at' => now(),
             'status' => 'active',
+            /*
+             * P2-T01: enrollments.reference is NOT NULL UNIQUE, and this row is
+             * inserted through the query builder precisely to bypass the model,
+             * so neither EnrollmentFactory nor EnrollStudentAction supplies one.
+             * A literal stands in for the row another connection committed. It
+             * is deliberately NOT a placeholder: an acceptance test asserts no
+             * row anywhere holds one, and it is deliberately out of the range a
+             * generated reference can reach, so it cannot collide with one.
+             */
+            'reference' => 'ENR-2026-999998',
             'created_at' => now(),
             'updated_at' => now(),
         ]);
