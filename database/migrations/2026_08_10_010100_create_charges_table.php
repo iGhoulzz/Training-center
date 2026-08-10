@@ -2,7 +2,6 @@
 
 declare(strict_types=1);
 
-use App\Domain\Finance\Support\Reference;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
@@ -72,13 +71,19 @@ return new class extends Migration
              * placeholder and updated to its real value inside the same
              * transaction (design section 2).
              *
-             * The width comes from Reference::COLUMN_LENGTH rather than a
-             * literal, because the longest value this column ever holds is a
-             * placeholder — the marker plus a 36-character UUID — not the
-             * 15-character reference. The two agreeing by coincidence is a
-             * latent bug; agreeing by construction is not.
+             * 64, A LITERAL RATHER THAN Reference::COLUMN_LENGTH. The longest
+             * value this column ever holds is a placeholder — the marker plus a
+             * 36-character UUID — not the 15-character reference, so 64 leaves
+             * headroom for both. The width is a literal because a migration
+             * that has run is never edited: it must not depend on application
+             * code a later rename could change underneath it, the same
+             * convention `batches` and `staff_profiles` follow for their status
+             * literals. Application code keeps reading
+             * `Reference::COLUMN_LENGTH`; only this frozen snapshot does not.
+             * `FinanceSchemaTest` asserts the live column stays wide enough for
+             * the constant, so a future change to it is caught there.
              */
-            $table->string('reference', Reference::COLUMN_LENGTH)->unique();
+            $table->string('reference', 64)->unique();
 
             /*
              * What the batch cost on the day, after inheritance from the course

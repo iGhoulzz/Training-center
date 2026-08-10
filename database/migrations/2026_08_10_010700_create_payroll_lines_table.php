@@ -183,12 +183,17 @@ return new class extends Migration
              * corrected** — which is what makes a June correction land in
              * March's wage cost (design section 7).
              *
-             * NULLABLE, and required only once `finalized_at` is set — see the
-             * CHECK below. A draft line cannot always carry it: an instructor
-             * draft's posting month is the month it will eventually be finalized
-             * in, which is unknown while it is still a draft. Design revision 3
-             * declared this non-nullable, which made every draft line unwritable
-             * and the whole draft-review step impossible.
+             * NULLABLE, and paired with `finalized_at` by the CHECK below: set on
+             * exactly the rows that are finalized, null on exactly the rows that
+             * are not. A draft line never carries it — an instructor draft's
+             * posting month is the month it will eventually be finalized in,
+             * which is unknown while it is still a draft, and design section 9
+             * requires the pairing rather than merely allowing it. Design
+             * revision 3 declared this column non-nullable outright, which made
+             * every draft line unwritable and the whole draft-review step
+             * impossible; nullable-but-paired is what keeps drafts writable
+             * without letting one carry a period report queries would then have
+             * to know to exclude.
              *
              * Indexed because every period report groups on it. It also serves
              * as the access path for "finalized lines in this period": a line
@@ -272,28 +277,32 @@ return new class extends Migration
         SQL);
 
         /*
-         * A FINALIZED LINE HAS A POSTING PERIOD. A DRAFT NEED NOT.
-         *
-         * One-directional on purpose. Design section 9 requires the column to be
-         * "required only once `finalized_at` is set", and design section 14
-         * requires that **a draft line persists with a null posting period** —
-         * both of which this expresses. It deliberately does not forbid a draft
-         * from carrying one: a salary draft's posting month is knowable the
-         * moment its segment is computed, and refusing to let the draft record
-         * it would force task 8 to hold that figure somewhere else until
-         * finalization.
+         * A FINALIZED LINE HAS A POSTING PERIOD. A DRAFT NEVER DOES.
          *
          * A biconditional — `(finalized_at IS NULL) = (posting_period_start IS
-         * NULL)`, the shape the paired reversal and finalization columns use —
-         * was considered and rejected. Section 9's prose ("a draft line cannot
-         * carry it") reads stricter than the rule it is explaining, and the rule
-         * is what is written here. If that prose turns out to be the intent, the
-         * change is this one constraint and nothing else.
+         * NULL)` — the shape the paired reversal and finalization columns use
+         * elsewhere in this schema. Design section 9 is explicit and reads as a
+         * pairing, not a one-way implication: "It is nullable, indexed, and
+         * required only once `finalized_at` is set — a `CHECK` pairs them. A
+         * draft line **cannot** carry it."
+         *
+         * An earlier revision of this migration read that prose as permissive —
+         * "required only once finalized" taken to mean a draft merely need not
+         * carry one, not that it must not — and shipped the implication
+         * `finalized_at IS NULL OR posting_period_start IS NOT NULL`. That let a
+         * draft persist with a posting period, on the theory that a salary
+         * draft's posting month is knowable the moment its segment is computed.
+         * It is knowable, but knowable is not the same as stored: the column is
+         * what every period report selects the finalized set through — see this
+         * migration's own comment on the column above — so a draft carrying one
+         * leaks unposted wage cost into a report that groups on it. The design's
+         * own words settle this the other way, and this constraint now says what
+         * they say.
          */
         DB::statement(<<<'SQL'
             ALTER TABLE payroll_lines
             ADD CONSTRAINT payroll_lines_posting_period_required_when_finalized
-            CHECK (finalized_at IS NULL OR posting_period_start IS NOT NULL)
+            CHECK ((finalized_at IS NULL) = (posting_period_start IS NULL))
         SQL);
 
         /*

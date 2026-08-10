@@ -2,7 +2,6 @@
 
 declare(strict_types=1);
 
-use App\Domain\Finance\Support\Reference;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
@@ -64,12 +63,18 @@ return new class extends Migration
              * NOT NULL UNIQUE, satisfied by the placeholder-then-update inside
              * one transaction described in design section 2.
              *
-             * Sized from Reference::COLUMN_LENGTH, not from the 15 characters a
-             * real reference needs: the widest value the column ever holds is a
-             * placeholder. Referencing the constant is what stops the migration
-             * and the generator from agreeing by coincidence.
+             * 64, A LITERAL RATHER THAN Reference::COLUMN_LENGTH. Sized for the
+             * widest value the column ever holds — a placeholder, not the 15
+             * characters a real reference needs. The width is a literal because
+             * a migration that has run is never edited: it must not depend on
+             * application code a later rename could change underneath it, the
+             * same convention `batches` and `staff_profiles` follow for their
+             * status literals. Application code keeps reading
+             * `Reference::COLUMN_LENGTH`; only this frozen snapshot does not.
+             * `FinanceSchemaTest` asserts the live column stays wide enough for
+             * the constant, so a future change to it is caught there.
              */
-            $table->string('reference', Reference::COLUMN_LENGTH)->unique();
+            $table->string('reference', 64)->unique();
 
             /*
              * RETRY PROTECTION. A client-generated UUID minted when the

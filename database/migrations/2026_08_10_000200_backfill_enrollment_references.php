@@ -2,8 +2,6 @@
 
 declare(strict_types=1);
 
-use App\Domain\Finance\Support\Reference;
-use App\Support\CentreCalendar;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Collection;
@@ -23,14 +21,25 @@ use Illuminate\Support\Facades\DB;
  * filters on — an offset-paged chunk would renumber the remaining rows under
  * itself and skip a page of them every time.
  *
- * The format matches the generator's output character for character —
- * `ENR-{year}-{id padded to 6}`, e.g. `ENR-2026-000042`. A backfilled row must
- * be indistinguishable from a generated one, because the reference is read off
- * paperwork and dictated over the phone, and because the format is asserted in
- * tests that do not know which rows came from where. Reference::format() is
- * called rather than reproduced in SQL, so "matches character for character" is
- * a shared function rather than a promise about two pieces of string handling —
- * an unpadded backfill written with LPAD was caught in review once already.
+ * THE FORMAT IS A FROZEN LITERAL, NOT Reference::format()
+ * -----------------------------------------------------------
+ * A migration that has run is never edited, and `docs/ENGINEERING.md` requires
+ * every migration to be self-contained for exactly the reason this file used to
+ * violate: it imported `Reference::format()`, `Reference::ENROLLMENT_PREFIX`
+ * and `CentreCalendar::yearOf()`, so a later rename of any of the three would
+ * silently change what a historical `migrate:fresh` builds. The `ENR-` prefix
+ * and Africa/Tripoli timezone below are the same convention the batches and
+ * staff_profiles migrations already use for their status literals — spelled out
+ * rather than read from application code that can move out from under them.
+ *
+ * The format still matches the generator's output character for character —
+ * `ENR-{year}-{id padded to 6}`, e.g. `ENR-2026-000042` — as of the day this
+ * migration was written. A backfilled row must be indistinguishable from a
+ * generated one, because the reference is read off paperwork and dictated over
+ * the phone, and `EnrollmentReferenceBackfillTest` asserts the two paths still
+ * agree; an unpadded backfill written with LPAD in SQL was caught in review
+ * once already, which is also why this is built in PHP with str_pad() rather
+ * than reproduced as a SQL expression.
  *
  * THE YEAR IS THE CENTRE'S, ON BOTH PATHS, BY CONSTRUCTION
  * -------------------------------------------------------
@@ -45,9 +54,10 @@ use Illuminate\Support\Facades\DB;
  *
  * Design section 8 settles it in favour of the local calendar: every reporting
  * boundary is a local boundary, and a reference is a human-facing document
- * number read by whoever holds the bill. Both paths now take the year from
- * CentreCalendar::yearOf(), so they agree because they share one definition,
- * not because two files were written on the same afternoon.
+ * number read by whoever holds the bill. Both paths take the year from the
+ * centre's calendar; this migration spells `Africa/Tripoli` literally instead
+ * of calling `CentreCalendar::yearOf()`, for the same frozen-snapshot reason the
+ * format above is spelled out rather than called.
  *
  * THE YEAR IS COMPUTED IN PHP, NOT BY `CONVERT_TZ`
  * ------------------------------------------------
@@ -138,15 +148,21 @@ return new class extends Migration
      *
      * Takes the raw stdClass the query builder yields rather than an Enrollment,
      * so nothing here can fire a model event.
+     *
+     * Every piece is a literal rather than a call into `Reference` or
+     * `CentreCalendar` — see this migration's docblock on why a finished
+     * migration must not depend on application code that can be renamed after
+     * it has run. `Africa/Tripoli` is the centre's timezone (design section 8)
+     * and `ENR-` is the enrolment series' prefix; both are frozen here exactly
+     * as they stood on the day this migration was written, and application code
+     * keeps reading the two shared classes for every path that is not this one.
      */
     private function referenceFor(object $row): string
     {
         $enrolledAt = new CarbonImmutable((string) $row->enrolled_at, (string) config('app.timezone'));
 
-        return Reference::format(
-            Reference::ENROLLMENT_PREFIX,
-            CentreCalendar::yearOf($enrolledAt),
-            (int) $row->id,
-        );
+        $year = $enrolledAt->setTimezone('Africa/Tripoli')->year;
+
+        return 'ENR-'.$year.'-'.str_pad((string) $row->id, 6, '0', STR_PAD_LEFT);
     }
 };

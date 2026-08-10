@@ -211,6 +211,25 @@ function financeIndexIsUnique(string $table, string $index): bool
 }
 
 /**
+ * The declared character length of a column, or null if it does not exist.
+ *
+ * Selected with an alias, matching every other information_schema query in this
+ * file: MySQL returns those column names UPPERCASED, so reading
+ * `$row->character_maximum_length` dies on a missing property.
+ */
+function financeColumnLength(string $table, string $column): ?int
+{
+    $length = DB::table('information_schema.columns')
+        ->select('character_maximum_length as declared_length')
+        ->where('table_schema', DB::getDatabaseName())
+        ->where('table_name', $table)
+        ->where('column_name', $column)
+        ->value('declared_length');
+
+    return $length === null ? null : (int) $length;
+}
+
+/**
  * A valid `discounts` row.
  *
  * @param  array<string, mixed>  $overrides
@@ -534,6 +553,37 @@ it('carries every named constraint the migrations claim to add', function () {
         .'against, so a rename is a real regression here.',
     );
 })->group('finance-schema');
+
+it('keeps every reference column wide enough for Reference::COLUMN_LENGTH', function (string $table) {
+    /*
+     * FIX for the drift `Reference::COLUMN_LENGTH` used to be imported into five
+     * migrations to prevent. Those migrations are frozen snapshots now — see
+     * their own docblocks — so the constant and the schema can no longer be kept
+     * in sync by one of them reading the other. This is the other half of that
+     * trade: a change to the constant must fail HERE, at the database, rather
+     * than truncate a real reference the first time somebody widens the format.
+     *
+     * `>=` rather than `===`. The frozen migrations wrote the literal 64 that
+     * was current when they ran; a later, larger constant is a legitimate reason
+     * to add a new migration widening the column, and this assertion is
+     * satisfied by that widening. A SMALLER constant than the column's declared
+     * width is not a failure this test exists to catch — the failure mode is
+     * truncation, not slack.
+     */
+    expect(financeColumnLength($table, 'reference'))->not->toBeNull(
+        "`{$table}.reference` does not exist, so this test cannot prove anything about it.",
+    )->and(financeColumnLength($table, 'reference'))->toBeGreaterThanOrEqual(
+        Reference::COLUMN_LENGTH,
+        "`{$table}.reference` is narrower than Reference::COLUMN_LENGTH (".Reference::COLUMN_LENGTH.'). '
+        .'The migrations that created this column are frozen and will not grow with the '
+        .'constant — a new migration is required to widen it before a placeholder or a '
+        .'longer reference can be written safely.',
+    );
+})->with([
+    'enrollments' => ['enrollments'],
+    'charges' => ['charges'],
+    'payments' => ['payments'],
+])->group('finance-schema');
 
 /*
 |--------------------------------------------------------------------------
@@ -1199,10 +1249,11 @@ it('persists a draft line with no posting period', function () {
      * right rather than merely strict. Design section 14 requires it by name.
      *
      * An instructor draft's posting month is the month it will eventually be
-     * finalized in, which is unknown while it is still a draft — a biconditional
-     * here would make every such draft unwritable and the whole draft-review
-     * step impossible. Only the refusal above is tested by the refusal above;
-     * this is what stops the fix for it being "make the column NOT NULL".
+     * finalized in, which is unknown while it is still a draft — this is the
+     * shape a biconditional constraint requires every draft to take, both
+     * because it is knowable no other way for this shape and because design
+     * section 9 says a draft line cannot carry the column at all. Only the null
+     * side is exercised here; the refusal above proves the finalized side.
      */
     $run = PayrollRun::factory()->create();
     $user = User::factory()->create();
@@ -1221,15 +1272,25 @@ it('persists a draft line with no posting period', function () {
     );
 })->group('finance-schema');
 
-it('lets a draft line carry a posting period it already knows', function () {
-    // The constraint is deliberately one-directional: a salary draft's posting
-    // month is knowable the moment its segment is computed, and refusing to let
-    // the draft record it would force task 8 to hold the figure elsewhere.
+it('refuses a draft line that carries a posting period', function () {
+    /*
+     * THE OTHER HALF OF THE BICONDITIONAL, and the one this file used to get
+     * backwards: an earlier revision of this test asserted the opposite —
+     * that a draft carrying a posting period was ACCEPTED — on the theory
+     * that a salary draft's posting month is knowable the moment its segment
+     * is computed. Design section 9 reads as a pairing rather than a
+     * one-way implication ("a draft line cannot carry it"), and the reason it
+     * matters operationally is that `posting_period_start` is the column every
+     * period report groups and filters on (see the migration's own comment on
+     * the column) — a draft carrying one would leak unposted wage cost into a
+     * report that has no other way to exclude it.
+     */
     $run = PayrollRun::factory()->create();
     $user = User::factory()->create();
     $values = financePayrollShapeValues((int) $user->getKey());
 
-    financeAccepted(
+    financeRefusedBy(
+        'payroll_lines_posting_period_required_when_finalized',
         'payroll_lines',
         financePayrollLineRow((int) $run->getKey(), (int) $user->getKey(), 'salary', $values, [
             'finalized_at' => null,

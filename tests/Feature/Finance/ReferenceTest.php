@@ -235,21 +235,24 @@ it('gives two enrolments inserted in one open transaction distinct references �
      * the UNIQUE index on `reference`, and both resolve to distinct real
      * references once committed.
      *
-     * A genuine two-connection version was considered for this fix rather than
-     * assumed away. It was not written, because there is no lock here for a
-     * second connection to race — unlike EnrollmentMutex's `lockForUpdate()`,
-     * which a second connection can genuinely contend for by holding a
-     * transaction open while another tries to acquire the same row lock, the
-     * property that stops two placeholders colliding is
-     * Reference::placeholder()'s 122 bits of UUID v4 randomness, generated in
-     * PHP before either connection touches the database. Two real connections
-     * inserting genuine random placeholders cannot be made to collide by
-     * running them on separate sessions; the only way to force the collision
-     * this test could then observe is to freeze the UUID, at which point the
-     * "concurrency" is fake regardless of how many connections carry it, and
-     * the assertion collapses to "the UNIQUE index refuses a literal
-     * duplicate" — already covered without needing a second connection to
-     * demonstrate.
+     * THE GENUINE TWO-CONNECTION VERSION NOW EXISTS, in
+     * ReferenceConcurrencyTest.php — this docblock previously argued one could
+     * not be written, on the grounds that there is no lock here for a second
+     * connection to race and that the property protecting against a collision
+     * is Reference::placeholder()'s own UUID randomness rather than anything
+     * the database serialises. That argument explains why a second connection
+     * cannot be made to collide on the placeholder; it does not follow from it
+     * that a second connection has nothing to prove. Two independent
+     * EnrollStudentAction calls, on two independent connections, with one
+     * transaction genuinely open while the other runs to completion, is a
+     * different and stronger claim than this test makes — it exercises the
+     * batch lock, the student lock and the placeholder-then-update sequence
+     * under real interleaving rather than under one session's own ordering.
+     * That file lives apart from this one because it needs DatabaseMigrations
+     * rather than RefreshDatabase — see its own docblock — not because the
+     * property belongs elsewhere conceptually. This test is kept because the
+     * uncommitted-coexistence property it proves is real and is not what the
+     * other file proves.
      */
     [$first, $second] = DB::transaction(fn (): array => [
         ($this->enrolSomeone)(),
