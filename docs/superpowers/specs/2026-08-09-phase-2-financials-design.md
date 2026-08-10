@@ -1,8 +1,10 @@
 # Phase 2 — Financials: Design
 
 **Date:** 2026-08-09
-**Status:** Draft — awaiting owner review, then Codex plan review (`docs/WORKFLOW.md` step 0)
+**Status:** Revision 2 — incorporates the Codex step-0 review. Awaiting re-review.
 **Supersedes:** the phase 2 sections of `2026-07-20-training-center-dashboard-design.md` wherever the two disagree. Those sections were written at architectural detail before a charge model existed; this document is at implementation detail and is authoritative for phase 2.
+
+**Revision 2 changed:** the enrolment write path (§12), salaried payroll segmentation and post-finalization correction (§7), payment idempotency and derived student identity (§5), the pricing write boundary (§3), charge due dates (§4), reporting time zones (§8), compensation locking (§7), and the schema guarantees in §9. Two review findings were **declined** — see §16.
 
 ---
 
@@ -20,6 +22,7 @@ Phase 2 gives the centre its money. Students are billed for the courses they enr
 - **No persisted drawer reconciliation.** A live daily tender report only — see §8.
 - **No installment schedules.** One bill per enrolment, payable in as many parts as the student likes.
 - **No standalone fees.** Every charge belongs to an enrolment.
+- **No payroll disbursement.** Finalizing a payroll run approves and posts it; paying the money out happens outside the system. See §7.
 
 ---
 
@@ -29,7 +32,7 @@ Phase 2's primary surface is one guided flow, not a set of CRUD screens the user
 
 1. Find or create the student.
 2. Select the course batch.
-3. Select an optional enrolment discount.
+3. Select an optional enrolment discount (requires `apply_discount` — admin and above).
 4. **Preview** the original price, the discount, and the final amount.
 5. Confirm — creates the enrolment (`ENR-…`) and the bill (`CHG-…`) in one transaction.
 6. Optionally collect immediately: the full amount, or an installment.
@@ -40,15 +43,13 @@ The system allocates the payment to that bill. **Staff never see the word "alloc
 
 Later installments: search the student, open the unpaid bill, record another payment, issue another receipt. **One bill, many receipts**, all pointing back to the same `CHG-…`.
 
-This flow is the reason the enrolment and finance domains are built together rather than one after the other. Building the resources first and the flow last would produce a system that is technically complete and operationally unusable — the front desk would be asked to visit three screens to take one payment.
-
 ### The receipt
 
 Every finalized payment produces a PDF the student is handed. It shows:
 
 student code and name · enrolment reference · course and batch codes · bill reference · original price · discount · final charge · **amount paid** · cash/card breakdown · **remaining balance** · payment date · recording staff member.
 
-Receipts are generated to the private disk (§6 of the system design) and served only through a policy-authorized download. Every string on the receipt goes through `__()`, because phase 4 will need it in Arabic and a receipt is the most public-facing document the system produces.
+Receipts are generated to the private disk (§6 of the system design) and served only through a policy-authorized download. Every string goes through `__()`.
 
 ### Reference series
 
@@ -58,11 +59,15 @@ Receipts are generated to the private disk (§6 of the system design) and served
 | `CHG-` | `charges` | `CHG-{year}-{id padded to 6}` |
 | `RCT-` | `payments` | `RCT-{year}-{id padded to 6}` |
 
-Each carries a unique index. The reference is written **immediately after insert inside the same transaction** — MySQL forbids a generated column from referencing an `AUTO_INCREMENT` column, so the tidier stored-generated-column approach used elsewhere in this design is not available here.
+Each carries a unique index. The reference is written **immediately after insert inside the same transaction** — MySQL forbids a generated column from referencing an `AUTO_INCREMENT` column, so the stored-generated-column approach used elsewhere in this design is unavailable here.
 
-These are deliberately **not** the phase 3 certificate pattern. A certificate reference is exposed to an unauthenticated public verifier and must therefore be unguessable; a bill reference is read by the person holding the bill, and a sequential, human-readable, phone-dictatable number is the correct trade-off. **Do not "harden" these into random strings.**
+These are deliberately **not** the phase 3 certificate pattern. A certificate reference is exposed to an unauthenticated public verifier and must be unguessable; a bill reference is read by the person holding the bill, and a sequential, human-readable, phone-dictatable number is the correct trade-off. **Do not "harden" these into random strings.**
 
-Gaps are possible where a transaction rolls back. See §13.
+**Gaps are accepted.** The owner confirmed on 2026-08-09 that these are internal tracking references, not registered fiscal invoice sequences, so a number burned by a rolled-back transaction is not a problem. There is no counter table and no sequence lock. **If the centre ever becomes subject to a gapless fiscal numbering requirement, this is a schema and concurrency change, not a formatting change.**
+
+### Backfilling `ENR-` onto existing rows
+
+`enrollments` already holds rows in every development and test database. The migration adds `reference` as nullable, backfills every existing row deterministically as `ENR-{year of enrolled_at}-{id}`, then adds the unique index and makes the column non-nullable — three steps in one migration, in that order. Adding a non-nullable unique column to a populated table in one step fails, and a backfill that runs after the index is added races itself.
 
 ---
 
@@ -70,33 +75,46 @@ Gaps are possible where a transaction rolls back. See §13.
 
 ### Price inheritance — resolved
 
-The system design left this open at line 215 and forbade implementing it before phase 2 decided. The decision:
+The system design left this open at line 215 and forbade implementing it before phase 2 decided.
 
-**A null `batches.price` falls back to `courses.default_price` on every read.** Live inheritance, never a copy — identical to the `effective_total_hours` accessor that already proves the pattern at `app/Domain/Enrollment/Models/Batch.php`. Correcting a course price corrects every inheriting batch at once, and there is no stale duplicate to hunt for.
+**A null `batches.price` falls back to `courses.default_price` on every read.** Live inheritance, never a copy — identical to the `effective_total_hours` accessor at `app/Domain/Enrollment/Models/Batch.php`. Correcting a course price corrects every inheriting batch at once.
 
-**An issued charge does not move.** The charge stores the list price, the discount percentage applied, and the resulting amount. A later price change or discount edit affects future enrolments only. This is the same freeze rule payroll uses, for the same reason: history that changes when upstream data changes is not history.
+**An issued charge does not move.** The charge stores the list price, the discount percentage, and the resulting amount. A later price change affects future enrolments only.
 
 ### Discounts
 
-A new table of reusable percentage definitions — 10%, 30%. Not in the original design.
+Reusable percentage definitions — 10%, 30%. Not in the original design.
 
 - **One optional discount per enrolment. No stacking.**
 - A discount applies to **an enrolment**, never permanently to a student.
-- **A discount's percentage is immutable once any charge references it.** Superseding a rate means deactivating the definition and creating a replacement. Retroactively editing a percentage would silently restate what the centre charged people in the past — every issued charge froze its own copy, so the stored history would survive, but the definition the reports join against would lie about it.
-- `is_active` controls whether the definition is offered on new enrolments. Definitions are never deleted while referenced; the foreign key restricts, and `DeleteDiscountAction` converts MySQL 1451 into a typed refusal exactly as `DeleteCourseAction` and `DeleteBatchAction` already do.
+- **A discount's percentage is immutable once any charge references it.** Superseding a rate means deactivating the definition and creating a replacement. Retroactively editing a percentage would restate what the centre charged people in the past.
+- `is_active` controls whether it is offered on new enrolments. Definitions are never deleted while referenced; the foreign key restricts and `DeleteDiscountAction` converts MySQL 1451 into a typed refusal, as `DeleteCourseAction` and `DeleteBatchAction` already do.
 
 ### The rounding rule, stated once
 
 `amount = round(list_price × (100 − percentage) ÷ 100)` in **integer dirham**, half-up.
 
-Defined in one place and tested with a case that actually rounds. A test using a price that divides evenly proves nothing.
+Defined in one place and tested with a case that actually rounds.
+
+### The pricing write boundary is executable, not declarative
+
+Revision 1 said price fields would be disabled and de-hydrated and "the Action refuses the change regardless of what was submitted". **There was no Action in the persistence path.** `EditCourse` and `EditBatch` are bare `EditRecord` classes with no save hooks, so Filament persists with a generic `$record->update($data)`. Declaring a write boundary that no code implements is exactly the failure the system design records for phase 1's escalation guards.
+
+The boundary is therefore built the way `UserResource` already builds one, using `WritesUserThroughActions` as the template:
+
+- **Price fields are `dehydrated(false)` for every actor, without exception.** Generic persistence never sees a price, so there is no path by which one is written outside an Action — including the super admin's own path. A field that is merely `disabled()` for some actors leaves the write shape intact for others.
+- A `WritesPricingThroughActions` concern, shared by the create and edit pages of both resources, reads `$this->form->getRawState()` in the save hook and calls `UpdateCoursePriceAction` / `UpdateBatchPriceAction`.
+- Those Actions authorize `manage_pricing` and are the **only** writers of `courses.default_price` and `batches.price`, initial value included.
+- A refusal throws `Halt::rollBackDatabaseTransaction()` so a rejected price change undoes the attribute write with it, rather than leaving the rename committed and the price refused.
+
+**Tests, both directions:** a super admin sets and changes a price through the real Livewire component and it persists; an admin crafting a Livewire state update on the price field does not persist a value and the Action refuses. Asserting a disabled field is not a test of this boundary.
 
 ### Who may set a price, and who may discount
 
-The permission matrix gives admins full control of courses and batches but pricing at view-only. Those are the same records, so the boundary is **field-level**:
+- **`manage_pricing`** — super admin only. Gates course and batch prices **and** the discount definitions themselves: creating, deactivating and deleting a discount all require it. Setting the rates the centre charges is one capability, wherever it is expressed.
+- **`apply_discount`** — **admin and above.** Ordinary staff enrol walk-ins at full price and the discount selector does not render for them.
 
-- **`manage_pricing`** — super admin only. Without it, `courses.default_price` and `batches.price` render disabled and de-hydrated, and the Action refuses a price change regardless of what the form submitted. Disabling a field in Filament is a UI affordance; the Action is the boundary.
-- **`apply_discount`** — held by staff, admin and super admin **for now**. It exists as a permission precisely so that restricting it later is a `RolePermissionSeeder` edit and not a code change.
+  *Changed in revision 2.* An earlier answer put this with any enroller; the owner settled it at admin-and-above on 2026-08-09. It stays a separate permission from `manage_pricing` because choosing a pre-approved discount and setting the centre's rates are different acts, and the grant may move again.
 
 ---
 
@@ -104,94 +122,112 @@ The permission matrix gives admins full control of courses and batches but prici
 
 **One charge per enrolment**, raised automatically as part of enrolling, payable in parts.
 
+### Due date
+
+`due_date` is **the date the charge was raised** — the enrolment date. Frozen at issue like every other figure on the row.
+
+The centre bills at enrolment and expects payment at or near enrolment; there is no invoicing term to express. Aging therefore measures from the day the student incurred the debt, which is the only date the workflow actually produces. Revision 1 left this undefined, which made the aged report unimplementable — there was no answer to "aged from what".
+
 ### No status column
 
-The system design's `charges.status` enum was `unpaid | partial | paid | waived`. Three of those four are **derived from allocations**, and section 6 of that design forbids storing derived values in the same breath. Storing them is the `paid_amount` mistake wearing a different name: one write path that forgets to recompute, or one direct SQL correction, and the register lies while looking authoritative.
+The system design's `charges.status` enum was `unpaid | partial | paid | waived`. Three of those four are **derived from allocations**, which the same document forbids storing two sections earlier. Storing them is the `paid_amount` mistake wearing a different name.
 
-**Resolved:** there is no status column. The table stores the *facts* a human decided — `written_off_at`, `written_off_by`, `written_off_reason` — and unpaid / partial / paid are computed by summing allocations. Filament sorts and filters through a SQL subquery.
+**Resolved:** no status column. The table stores the *facts* a human decided — `written_off_at`, `written_off_by`, `written_off_reason` — and unpaid / partial / paid are computed by summing allocations. Filament sorts and filters through a SQL subquery.
 
-The same rule is applied throughout Finance: **no status string column exists on any table in this domain.** Lifecycle is recorded as nullable fact columns and the label is derived. An architecture test enforces it.
+The same rule holds throughout Finance: **no status string column exists on any table in this domain.** Lifecycle is nullable fact columns; the label is derived. An architecture test enforces it.
 
 ### Correcting a charge
 
-`AdjustChargeAction` is the only path, and it exists for **data-entry errors only — never for applying a late discount**. Discounts are selected before enrolment is confirmed and are frozen when the charge is created; anyone reaching for the adjustment tool to give someone 10% off is defeating the mechanism that makes discounts auditable.
+`AdjustChargeAction` is the only path, for **data-entry errors only — never for applying a late discount**.
 
 - Super admin only, via `adjust_charge`.
-- A reason is mandatory and is written into the activity log's properties alongside the before/after diff. The charge table carries no adjustment columns, because the activity log *is* the audit record and duplicating it onto the row creates a second thing to keep true.
-- The Action **refuses to drop the amount below what has already been allocated** to the charge.
+- A mandatory reason is written into the activity log's properties alongside the before/after diff. The table carries no adjustment columns; the activity log *is* the audit record.
+- The Action **refuses to drop the amount below what has already been allocated**.
 
-After an adjustment, `amount` no longer equals `list_price × (100 − percentage) ÷ 100`. That is expected and correct: the frozen figures record what was billed and why, and the adjustment records that a human corrected it. A reviewer should not read the arithmetic divergence as drift.
+After an adjustment, `amount` no longer equals `list_price × (100 − percentage) ÷ 100`. That is expected: the frozen figures record what was billed, and the adjustment records that a human corrected it.
 
 ### Writing off a debt
 
-`WriteOffChargeAction`, super admin only via `write_off_charge`, mandatory reason. A written-off balance stops distorting the aged outstanding report while its history stays fully visible. **Nothing is erased.**
+`WriteOffChargeAction`, super admin only via `write_off_charge`, mandatory reason. A written-off balance stops distorting the aged outstanding report while its history stays fully visible. **Nothing is erased**, and the debt remains in the student's payment history.
+
+**This survived a review challenge and is deliberate.** The step-0 review proposed removing write-offs on the reading that the owner had ruled out forgiveness. That conflated two decisions: no *refunds* and no automatic forgiveness on withdrawal, which are settled, with the separate question of retiring a debt the centre has accepted it will never collect, which the owner answered directly and affirmatively. The finding was retracted. Do not re-derive it.
 
 Withdrawal is **not** a financial event. Withdrawing an enrolment leaves the bill exactly as it stands.
 
 ### Permissions deliberately not created
 
-`create_charge`, `update_charge` and `delete_charge` are **not seeded**, following the reasoning already recorded for the activity log in `RolePermissionSeeder`: seeding an ability nothing honours invites someone to wire it up later. `ChargePolicy::create()`, `update()` and `delete()` return **false unconditionally**, and a test grants the permission anyway and proves the policy still refuses — a stronger statement than "the permission does not exist".
+`create_charge`, `update_charge` and `delete_charge` are **not seeded**, following the reasoning recorded for the activity log in `RolePermissionSeeder`: seeding an ability nothing honours invites someone to wire it up later. `ChargePolicy::create()`, `update()` and `delete()` return **false unconditionally**, and a test grants the permission anyway and proves the policy still refuses.
 
-Charges come into existence only through enrolment, and change only through the two Actions above.
-
-**One exception, stated here so it is not read as a contradiction.** §12 requires that an enrolment created in error stays deletable, which means deleting its unpaid bill with it. That deletion happens inside `DeleteEnrollmentAction`, authorized by `delete_enrollment` and refused outright once the bill carries any payment, adjustment or write-off. It does not consult `ChargePolicy`, because the policy answers "may this actor delete a bill on its own", and the answer to that question is no for everyone. See §10 for the same reasoning applied to issuance.
+**One exception, stated here so it is not read as a contradiction.** §12 requires that an enrolment created in error stays deletable, which means deleting its unpaid bill with it. That happens through `DeleteUncommittedChargeAction` (§11), an internal Finance Action callable only from `DeleteEnrollmentAction`. It does not consult `ChargePolicy`, because the policy answers "may this actor delete a bill on its own", and that answer is no for everyone.
 
 ---
 
 ## 5. Payments, tenders and allocations
 
-`RecordPaymentAction` is the **receipt-confirmation boundary**. It is used only after cash has been physically counted or the card terminal has shown Approved. The application is recording an event that already happened in the real world; it is not authorising one.
+`RecordPaymentAction` is the **receipt-confirmation boundary**, used only after cash has been physically counted or the card terminal has shown Approved. The application records an event that already happened; it does not authorise one.
 
 ### One receipt, one or more tenders
 
 A single customer payment is **one parent `payments` row** — student, `received_at`, `recorded_by`, `RCT-…`, notes — carrying **one or more `payment_tenders`**, each with a method, an amount, and an optional external reference.
 
-A split payment is simply a payment with two tenders. A 1,000 bill settled with 300 on card and 700 in cash is one payment, one receipt, two tenders. This replaces the original design's single `payments.method` column, which cannot represent the split-tender checkout every retail counter in the world performs.
+A 1,000 bill settled with 300 on card and 700 in cash is one payment, one receipt, two tenders. This replaces the original design's single `payments.method` column, which cannot represent the split-tender checkout every retail counter performs.
 
-**A card tender requires the terminal transaction reference**, enforced by a MySQL `CHECK` constraint rather than validation alone, so it is a property of the database and not of the form that happened to be used.
+**A card tender requires a non-blank terminal reference**, enforced by a MySQL `CHECK` that also rejects whitespace — `method <> 'card' OR (external_reference IS NOT NULL AND TRIM(external_reference) <> '')`. A space is not a reference, and a nullability check alone accepts one.
 
-**Card numbers, PINs and CVVs are never stored.** The external reference field holds a terminal transaction reference and nothing else. A validation rule rejects PAN-shaped input — 13 to 19 digits, spaces and dashes ignored — so a card number cannot be typed there out of habit. This is not theoretical hygiene: the field is free text, sits next to a card machine, and is filled in by whoever is at the desk.
+**Card numbers, PINs and CVVs are never stored.** A validation rule rejects PAN-shaped input — 13 to 19 digits, spaces and dashes ignored. The field is free text, sits next to a card machine, and is filled in by whoever is at the desk.
 
 ### Nothing derived is stored
 
-**`payments` has no `amount` column, no `method` column and no `status` column.** The payment total is `SUM(tenders)`. Charge balances are sums of allocations. Payment state is derived from `reversed_at`. The only stored facts are the ones a human supplied or performed.
+**`payments` has no `amount`, `method` or `status` column.** The total is `SUM(tenders)`. Charge balances are sums of allocations. Payment state derives from `reversed_at`. **Because no draft state exists, every payment row is by definition finalized** — reports filter on `reversed_at` alone, and no code should look for a finalized flag that does not exist.
+
+### The student is derived, never supplied
+
+`RecordPaymentAction` takes the **bill**, not a student. It locks the charge, walks to its enrolment, and takes `student_id` from there. The DTO has no student field at all, so a crafted request cannot attach a payment to one student while settling another's bill — there is nothing to attach.
+
+A test drives exactly that: a crafted submission targeting student A's bill while claiming student B, asserting the stored payment belongs to A. Accepting an independently supplied identifier and then validating it is a weaker construction than never accepting it.
+
+### Retry protection
+
+Atomic finalization plus a double-clicked button equals two payments and two receipts for one handover of cash. Nothing else in the design catches it: both submissions are individually valid.
+
+**`payments.idempotency_key`** is a client-generated UUID, minted when the collection form is first rendered and submitted with the payment, under a unique index. A replayed submission raises the unique violation, which the Action converts — **matching on the index name, as `EnrollStudentAction` already does** — into returning the payment that already exists. The second click gets the first receipt, not a second one.
+
+Tested sequentially (the same key submitted twice yields one row) and concurrently (two simultaneous submissions with one key yield one row and no error to the user).
 
 ### Finalization is atomic
 
-There is no draft. The whole receipt — payment, tenders, allocations — is written in **one transaction**, which checks every invariant under lock and then generates the receipt. A half-finished payment row cannot exist to be found later and misread as money owed or money received.
+There is no draft. Payment, tenders and allocations are written in **one transaction** that checks every invariant under lock, then generates the receipt after commit. A half-finished payment row cannot exist to be misread later.
 
 Two invariants are checked inside that transaction, with the charge row locked:
 
-1. **Tender total equals allocation total.** A payment is self-consistent or it does not exist.
-2. **Allocation never exceeds the bill's outstanding balance**, where outstanding is derived *under the same lock* — so a bill that was settled by someone else between form load and submit produces a clean typed refusal rather than an over-payment.
+1. **Tender total equals allocation total.** A payment is self-consistent or it does not exist. Tested from the unhappy side explicitly — a submission whose tenders and allocations disagree is refused with a typed exception, and no partial row survives.
+2. **Allocation never exceeds the bill's outstanding balance**, where outstanding is derived *under the same lock*, so a bill settled by someone else between form load and submit produces a clean refusal.
 
 Never accept more than is outstanding. For cash, return change and record only the amount accepted. For card, enter the exact amount charged.
 
 ### Reversal
 
-Super admin only, via `reverse_payment`. Reversal is a **lifecycle transition on an immutable row**: `reversed_at`, `reversed_by` and `reversal_reason` are set once and never unset. The payment, its tenders and its allocations are never rewritten and never deleted.
+Super admin only, via `reverse_payment`. A **set-once lifecycle transition on an immutable row**: `reversed_at`, `reversed_by` and `reversal_reason` are written once and never unset. The payment, its tenders and its allocations are never rewritten and never deleted.
 
-This deliberately reuses the shape the system design already blessed for phase 3 certificates (`revoked_at` / `revoked_by` / `revocation_reason`) rather than inventing a second answer to the same problem.
+This reuses the shape the system design blessed for phase 3 certificates rather than inventing a second answer.
 
-**Only finalized, non-reversed payments count as collected revenue.** A reversed payment must drop out of every balance, every report and every total — asserted per report, not assumed.
+**Only non-reversed payments count as collected revenue**, asserted per report rather than assumed.
 
-`update_payment` and `delete_payment` are **not seeded**, and `PaymentPolicy::update()`, `delete()` and `deleteAny()` return false unconditionally, with tests that grant the permission and prove refusal anyway. Corrections happen by reversal and re-recording, and a payment row has no delete path at all — the same shape as the activity log, for the same reason.
+`update_payment` and `delete_payment` are **not seeded**, and `PaymentPolicy::update()`, `delete()` and `deleteAny()` return false unconditionally, with tests that grant the permission and prove refusal anyway. A payment row has no delete path at all.
 
 ### Allocations remain load-bearing
 
-The table stays, and every balance is derived by summing it. The phase 2 UI always targets exactly one bill — the one the user opened — so the allocation is decided by context and never by the operator. The many-charge capability is retained in the schema so that a future "pay both my courses at once" flow needs no migration.
-
-**Superseded during design:** auto oldest-first allocation with operator override, and leftover money held as student credit. Both were agreed earlier in the same session and then displaced — the first by bill-targeted allocation, the second by the no-overpayment rule. Recorded so neither is re-derived from the earlier conversation.
+Every balance is derived by summing them. The phase 2 UI always targets exactly one bill, so the allocation is decided by context and never by the operator. The many-charge capability stays in the schema so a future "pay both my courses at once" flow needs no migration.
 
 ---
 
 ## 6. Money arithmetic
 
-The column is `decimal(12,3)`; LYD subdivides into 1000 dirham. Laravel's `decimal:3` cast hands PHP a **string**, and adding two of those with `+` silently converts to float. A float cannot represent 0.001 exactly, so the dirham is precisely the digit that gets lost.
+The column is `decimal(12,3)`; LYD subdivides into 1000 dirham. Laravel's `decimal:3` cast hands PHP a **string**, and adding two of those with `+` converts to float. A float cannot represent 0.001 exactly, so the dirham is precisely the digit lost.
 
-- A **`Money` value object over integer dirham**. All arithmetic is integer arithmetic. Construction from a decimal string, formatting through `__()`.
+- A **`Money` value object over integer dirham**. All arithmetic integer.
 - **Aggregation happens in SQL**, where MySQL's `DECIMAL` sums are exact, and hydrates into `Money`.
-- The discount rounding rule (§3) is the only rounding in the system, defined once.
+- The discount rounding rule (§3) is the only rounding in the system.
 - An architecture test forbids float casts on money attributes anywhere in `app/Domain/Finance`.
 
 ---
@@ -200,57 +236,89 @@ The column is `decimal(12,3)`; LYD subdivides into 1000 dirham. Laravel's `decim
 
 ### Compensation
 
-Effective-dated, exactly as the original design requires: **a raise inserts a row and closes the previous one**, in one transaction, through `ChangeCompensationAction`. A rate is never overwritten, because overwriting silently corrupts every historical report.
+Effective-dated: **a raise inserts a row and closes the previous one**, in one transaction, through `ChangeCompensationAction`. A rate is never overwritten.
 
-**`per_student` is dropped** from the type enum — the centre does not pay per head. Types are `salary` (a monthly amount) and `hourly` (a per-hour rate). One person may hold both.
+**`per_student` is dropped.** Types are `salary` (a monthly amount) and `hourly` (a per-hour rate). One person may hold both.
 
-`update_staff_compensation` is not seeded and the policy refuses, for the same reason as the charge and payment write abilities: the only legitimate change to a rate is a new row.
+`update_staff_compensation` is not seeded and the policy refuses: the only legitimate change to a rate is a new row.
 
-**No overlapping periods per person per type.** MySQL cannot express this as a constraint, so it is a lock plus a check inside `CompensationPeriodInvariantService`, and the honest statement is that it protects the application path and not raw SQL.
+**No overlapping periods per person per type**, and the lock that guarantees it is taken on the **`users` row**, not on the compensation rows. Revision 1 said "lock + check" without saying what was locked, which does not work in the case that matters: when a person has no compensation rows yet there is nothing to lock, so two concurrent first-row writes both see an empty table and both pass. Locking the stable parent row serializes them.
+
+**The concurrency test starts with zero existing compensation rows**, because that is the state in which the naive implementation passes.
 
 ### Payroll runs
 
-Two run types, both **draft → finalized → immutable**:
+Three run types, all **draft → finalized → immutable**.
 
-**`monthly_salary`** — a period run over salaried staff. A compensation row covering only part of the period is **pro-rated by days**, so a raise landing mid-period produces two lines at two rates rather than one wrong one.
+**`monthly_salary`** — a period run over salaried staff.
 
 **`instructor_batch`** — an **on-demand** run. The draft lists every instructor-hour assignment not already paid in a finalized run, whatever the batch's status, and the operator ticks which to include. A batch is paid as one lump, either before it starts or after it finishes.
 
-This resolves a gap the original design did not notice: `batch_instructor.assigned_hours` is per *batch* while a payroll run is per *period*, so a 30-hour batch running January to March had no defined January figure. **There is no calendar slicing and no pay-on-start / pay-on-completion setting.** The centre decides when to pay by choosing when to run.
+This resolves a gap the original design did not notice: `batch_instructor.assigned_hours` is per *batch* while a payroll run is per *period*, so a 30-hour batch running January to March had no defined January figure. **There is no calendar slicing and no pay-on-start / pay-on-completion setting.**
 
-### Freezing, and what actually prevents double payment
+**`adjustment`** — see "Correcting a finalized run" below.
 
-Finalizing copies the rate, the quantity, the computed amount, `finalized_at` and (for salary runs) the period onto each line. Historical payroll does not move when upstream data changes.
+### Salary lines are segments, not periods
 
-**An instructor assignment is paid at most once, and that is a database guarantee.** `finalized_at` on the line makes a stored generated column possible, carrying `batch_instructor_id` only while the line is finalized and NULL otherwise, under a unique index. Unique indexes do not collide on NULL, so any number of draft lines coexist while a second finalized line for the same assignment is refused by MySQL.
+A run may legitimately cover a partial previous month plus a full current month — the centre pays when it pays, and a period is not always a calendar month.
 
-This is the same partial-unique-index technique the system design already verified against this project's MySQL 8.4 for phase 3 certificates. It is reused rather than reinvented.
+A salary line is therefore a **segment**, produced by intersecting three things: the run's period, each calendar month inside it, and each compensation row's validity range. Each segment freezes its own `segment_start`, `segment_end`, `frozen_rate`, `frozen_days` (days in the segment) and `frozen_days_in_month` (the denominator), and computes `round(rate × days ÷ days_in_month)` in integer dirham.
 
-The salary equivalent is a composite over `(user_id, period_start, staff_compensation_id)`, NULL unless the line is a finalized salary line. The compensation id is part of the key deliberately — it is what allows the two legitimate lines a mid-period raise produces while still refusing a genuine duplicate.
+Splitting by calendar month is not cosmetic: a monthly salary pro-rated across a boundary has **two different denominators**, and a single line spanning 20 March to 15 April cannot express both. Splitting by rate is what makes a mid-period raise produce two correctly-priced lines instead of one averaged wrong one.
 
-### Line adjustments
+Revision 1 keyed uniqueness on `(user_id, period_start, staff_compensation_id)`, which describes a model where a line covers a whole period. That model cannot represent the owner's actual case.
 
-Bonuses, advance repayments and penalties are **separate audited child rows** — signed amount, mandatory reason, actor — addable only while the run is draft and frozen at finalization. The computed portion stays visibly separate from the manual one, so a line always answers "what did the calculation say, and what did a human change".
+### What actually prevents paying twice
 
-A line's total is `computed_amount + SUM(adjustments)` and is derived, never stored.
+| Guarantee | Mechanism |
+|---|---|
+| An instructor assignment is paid at most once | **Stored generated column + unique index** on `batch_instructor_id`, carried only while `finalized_at` is set |
+| The identical salary segment is not finalized twice | **Stored generated column + unique index** on `(user_id, segment_start)`, carried only while finalized |
+| **Overlapping** salary segments are not finalized | **Lock + check** — the `users` row is locked and existing finalized segments intersecting the new range are queried inside the finalizing transaction |
+
+The third row is stated separately and honestly. A unique index cannot express range overlap: two runs covering 1–15 January and 10–31 January produce segments with different start dates, and no index refuses them. The database catches exact duplicates; **only the lock catches overlaps**, and it protects the application path alone.
+
+`finalized_at` is denormalized onto the line at finalization — frozen data, like every other payroll figure — because a generated column cannot reference another table.
+
+### Correcting a finalized run
+
+A finalized run is immutable: no edits, no deletions, no new adjustments. Revision 1 offered only draft-time line adjustments, which does not solve a mistake discovered next month.
+
+A mistake found after finalization is corrected by an **`adjustment` run**: its lines carry a signed amount, a mandatory reason, and `corrects_payroll_line_id` pointing at the line being corrected. Nothing about the original moves. Wage-cost reports sum finalized lines across all run types, so the period total nets to the corrected figure while both the original error and its correction stay visible.
+
+Draft-time line adjustments remain, for bonuses and deductions known before the run is posted. The two mechanisms differ in *when*, not in kind.
+
+### Finalized means posted, not paid
+
+**Finalizing approves a run and posts it to the books. It does not disburse money.** Payroll disbursement is out of scope for the whole project (system design §12), there is no paid/unpaid flag on a run, and wage-cost reports count finalized lines as cost incurred. Anyone reading "finalized" as "the staff have their money" is reading it wrong, and the word appears in enough places to be worth saying once here.
 
 ---
 
 ## 8. Reports and export
 
-**Cash basis.** A dinar is revenue in the month it arrived, not the month it was billed. This matches how the centre thinks about its month and cannot be inflated by bills nobody paid.
+**Cash basis.** A dinar is revenue in the month it arrived, not the month it was billed.
 
 | Report | Notes |
 |---|---|
-| Revenue by course, batch and month | From allocations of finalized, non-reversed payments, joined through charge → enrolment → batch → course |
-| Outstanding balances, aged | Buckets 0–30 / 31–60 / 61–90 / 90+ by due date; excludes written-off |
+| Revenue by course, batch and month | From allocations of non-reversed payments, joined through charge → enrolment → batch → course |
+| Outstanding balances, aged | Buckets 0–30 / 31–60 / 61–90 / 90+ from `due_date`; excludes written-off |
 | Payment method breakdown | By tender, not by payment — a split payment contributes to two methods |
-| **Daily tender report** | Finalized, non-reversed cash and card tender totals for a date |
-| Wage cost per period | Per person and in total, from finalized payroll lines only |
+| **Daily tender report** | Non-reversed cash and card tender totals for a date |
+| Wage cost per period | Per person and in total, from finalized payroll lines of all three run types |
 | Profit | Collected revenue minus finalized wage cost for a period |
 | Per-student payment history | Every bill and every receipt |
 
-**The daily tender report is live, not a persisted reconciliation.** There is no counted-drawer workflow, no stored expected figure and no attested difference. Staff confirmation at the moment of recording is the source of truth. A formal reconciliation may be added later if operational experience shows it is needed — it is deliberately not built now, and this paragraph exists so that its absence reads as a decision rather than an oversight.
+### Calendar boundaries are local, queries are UTC
+
+Every report period is a **local calendar period in `Africa/Tripoli`** — "March" means March as the centre experienced it, not March in UTC.
+
+Each local period is converted to a **half-open UTC range**, `received_at >= start AND received_at < end`, before it reaches the database. Half-open rather than `BETWEEN`, so a payment recorded at the final instant of a month lands in exactly one period rather than in two or neither. A range comparison rather than date extraction, so the index on `received_at` is used — wrapping the column in a conversion function makes it unusable and turns every report into a table scan.
+
+**The conversion is done through the timezone database, never by adding a fixed offset**, so the code stays correct if Libya's offset ever changes.
+
+Tested at the boundaries that break naive implementations: a payment at 00:00:00 local on the first of a month, one at 23:59:59 local on the last day, and one either side of midnight UTC.
+
+**The daily tender report is live, not a persisted reconciliation.** There is no counted-drawer workflow, no stored expected figure, no attested difference. Staff confirmation at the moment of recording is the source of truth. A formal reconciliation may be added later if operational experience calls for it; this paragraph exists so its absence reads as a decision rather than an oversight.
 
 Because no overpayment can exist, collected revenue reconciles exactly against tenders with no unallocated bucket to explain.
 
@@ -258,37 +326,37 @@ Because no overpayment can exist, collected revenue reconciles exactly against t
 
 **Excel costs no new dependency.** Filament v5 ships queued XLSX export — `Filament\Actions\Exports\Jobs\CreateXlsxFile` over `openspout/openspout`, already installed as a Filament dependency. Maatwebsite Excel is **not** added unless a later requirement genuinely needs formulas, charts or multi-sheet workbooks. The `exports` and `failed_import_rows` migrations are not published in this project yet and must be.
 
-**PDF is mPDF.** Native Arabic letter shaping and RTL, pure PHP, no system dependency, and it works inside a queue worker on any host. Chosen over Chromium via Browsershot, which renders better but adds a runtime dependency whose failure takes every receipt and every export with it; and over dompdf, whose Arabic support is effectively broken and which phase 4 would have to pay to replace. The decision is made now, for phase 4's benefit, because the documents this phase produces are the ones that must survive the bilingual pass.
+**PDF is mPDF.** Native Arabic letter shaping and RTL, pure PHP, no system dependency, works inside a queue worker. Chosen over Chromium via Browsershot, which renders better but adds a runtime dependency whose failure takes every receipt and export with it; and over dompdf, whose Arabic support is effectively broken and which phase 4 would have to replace. Decided now, for phase 4's benefit.
 
-Every export runs as a queued job and notifies the user in-app when the file is ready. **Export queries are scoped by the requesting user's permissions** — an export is a read path and gets the same authorization as the screen it came from. **Formula-like user input is neutralized on the way out**: any exported cell whose value begins with `=`, `+`, `-`, `@`, tab or carriage return is prefixed so a spreadsheet treats it as text. Student names and notes are user-supplied and end up in files other people open.
+Every export runs as a queued job and notifies in-app when ready. **Export queries are scoped by the requesting user's permissions** — an export is a read path and gets the same authorization as the screen it came from. **Formula-like user input is neutralized**: any exported cell beginning with `=`, `+`, `-`, `@`, tab or carriage return is prefixed so a spreadsheet treats it as text.
 
 ---
 
 ## 9. Data model
 
-Nine new tables, and one altered.
+Nine new tables, one altered.
 
-**Altered:** `enrollments` gains `reference` (unique, `ENR-…`).
+**Altered:** `enrollments` gains `reference` (unique, `ENR-…`), backfilled as described in §2.
 
 ### `discounts`
 `id, name (unique), percentage decimal(5,2), is_active, timestamps`
-`CHECK (percentage > 0 AND percentage <= 100)`. Never deleted while referenced.
+`CHECK (percentage > 0 AND percentage <= 100)`
 
 ### `charges`
 `id, enrollment_id (unique FK restrict), reference (unique), list_price, discount_id (nullable FK restrict), discount_percentage (nullable), amount, due_date (indexed), written_off_at, written_off_by (nullable FK restrict), written_off_reason, timestamps`
 
-`CHECK (amount >= 0)`, `CHECK (list_price >= 0)`, and a check that `discount_id` and `discount_percentage` are both null or both present. All money `decimal(12,3)`.
+`CHECK (amount >= 0)` · `CHECK (list_price >= 0)` · `CHECK` that `discount_id` and `discount_percentage` are both null or both present · `CHECK` that the three write-off columns are all null or all present.
 
 ### `payments`
-`id, student_id (FK restrict, indexed), reference (unique), received_at (indexed), recorded_by (FK restrict), notes, reversed_at, reversed_by (nullable FK restrict), reversal_reason, receipt_disk, receipt_path, timestamps`
+`id, student_id (FK restrict, indexed), reference (unique), idempotency_key (unique), received_at (indexed), recorded_by (FK restrict), notes, reversed_at, reversed_by (nullable FK restrict), reversal_reason, receipt_disk, receipt_path, timestamps`
 
 `CHECK` that the three reversal columns are all null or all present. **No amount, no method, no status.**
 
 ### `payment_tenders`
 `id, payment_id (FK restrict), method (indexed), amount, external_reference (nullable), timestamps`
-`CHECK (amount > 0)` · `CHECK (method <> 'card' OR external_reference IS NOT NULL)`
+`CHECK (amount > 0)` · `CHECK (method <> 'card' OR (external_reference IS NOT NULL AND TRIM(external_reference) <> ''))`
 
-The foreign key **restricts** rather than cascades. A tender is a genuine child record and the cascade rule would normally apply, but restricting makes the parent payment undeletable at the database level while any tender exists — which is the immutability this design claims, expressed where it cannot be argued with.
+The foreign key **restricts** rather than cascades. A tender is a genuine child record and the cascade rule would normally apply, but restricting makes the parent payment undeletable at the database level while any tender exists — the immutability this design claims, expressed where it cannot be argued with.
 
 ### `payment_allocations`
 `id, payment_id (FK restrict), charge_id (FK restrict), amount, unique(payment_id, charge_id), timestamps`
@@ -300,12 +368,14 @@ The foreign key **restricts** rather than cascades. A tender is a genuine child 
 
 ### `payroll_runs`
 `id, type (indexed), period_start (nullable), period_end (nullable), created_by (FK restrict), finalized_at, finalized_by (nullable FK restrict), notes, timestamps`
-`CHECK` that a `monthly_salary` run has both period dates and an `instructor_batch` run has neither.
+`CHECK` that a `monthly_salary` run has both period dates and that `instructor_batch` and `adjustment` runs have neither · `CHECK (finalized_at IS NULL) = (finalized_by IS NULL)` — an approval with no approver, or an approver with no time, is not a state the table should be able to hold.
 
 ### `payroll_lines`
-`id, payroll_run_id (FK cascade), user_id (FK restrict), staff_compensation_id (FK restrict), batch_instructor_id (nullable FK restrict), frozen_rate, frozen_quantity, computed_amount, finalized_at (nullable), period_start (nullable), timestamps`
+`id, payroll_run_id (FK cascade), user_id (FK restrict), staff_compensation_id (nullable FK restrict), batch_instructor_id (nullable FK restrict), corrects_payroll_line_id (nullable self-FK restrict), segment_start (nullable), segment_end (nullable), frozen_rate, frozen_days (nullable), frozen_days_in_month (nullable), computed_amount, reason (nullable), finalized_at (nullable), timestamps`
 
-Plus the generated columns and unique indexes described in §7. `batch_instructor_id` null means a salary line; present means an instructor-batch line. The cascade is correct here — lines are genuine children, and only a draft run is ever deletable.
+Line shape by run type: a **salary** line carries `staff_compensation_id` and the segment columns; an **instructor** line carries `staff_compensation_id` and `batch_instructor_id`; an **adjustment** line carries `corrects_payroll_line_id`, a signed `computed_amount` and a mandatory `reason`. A `CHECK` enforces that exactly one of these shapes is present.
+
+Plus the generated columns and unique indexes in §7. The cascade is correct — lines are genuine children and only a draft run is ever deletable.
 
 ### `payroll_line_adjustments`
 `id, payroll_line_id (FK cascade), amount (signed), reason, created_by (FK restrict), timestamps`
@@ -319,7 +389,7 @@ Permission names follow Shield's `{action}_{model}`; custom abilities are bare v
 
 **Resources seeded with read permissions:** `charge`, `payment`, `discount`, `staff_compensation`, `payroll_run`.
 
-**Write abilities deliberately not seeded**, with policies that refuse unconditionally and tests that grant the permission anyway and prove the refusal: `create_charge`, `update_charge`, `delete_charge`, `update_payment`, `delete_payment`, `update_staff_compensation`.
+**Write abilities deliberately not seeded**, with policies that refuse unconditionally and tests that grant the permission anyway: `create_charge`, `update_charge`, `delete_charge`, `update_payment`, `delete_payment`, `update_staff_compensation`.
 
 **Custom abilities:** `manage_pricing` · `apply_discount` · `adjust_charge` · `write_off_charge` · `reverse_payment` · `run_payroll` · `finalize_payroll` · `view_financial_report` · `export_financial_report`.
 
@@ -327,16 +397,16 @@ Permission names follow Shield's `{action}_{model}`; custom abilities are bare v
 |---|---|
 | super_admin | everything |
 | admin | read on all five finance resources · `create_payment` · `apply_discount` · `view_financial_report` · `export_financial_report` |
-| staff | `apply_discount` |
+| staff | nothing financial |
 | student | nothing until phase 3 |
 
-Admins therefore record money but cannot set a price, apply an adjustment, write off a debt, reverse a payment, or touch compensation or payroll. That split is what makes the audit trail meaningful, and every one of those denials is asserted as a negative test.
+Admins record money but cannot set a price, manage a discount definition, adjust a charge, write off a debt, reverse a payment, or touch compensation or payroll. Every one of those denials is a negative test.
 
 ### The one place authorization is not what it looks like
 
-Staff hold `create_enrollment` but no charge permission at all. If charge issuance demanded its own ability, **a staff member could not complete an enrolment** — the front-desk walk-in scenario the system exists for (system design §1) would break.
+Staff hold `create_enrollment` but no charge permission. If charge issuance demanded its own ability, **a staff member could not complete an enrolment** — the walk-in scenario the system exists for (system design §1).
 
-`EnrollAndBillAction` therefore authorizes `create` on `Enrollment`, plus `apply_discount` when a discount was selected, and issues the bill as a system consequence of a permitted act. `IssueChargeAction` is an **internal collaborator, not a request-path Action**: it performs no ability check of its own, and an architecture test asserts that `EnrollAndBillAction` is its only caller. The same reasoning covers deleting an unpaid bill alongside its enrolment.
+`EnrollAndBillAction` authorizes `create` on `Enrollment`, plus `apply_discount` when a discount was selected, and issues the bill as a system consequence of a permitted act. `IssueChargeAction` and `DeleteUncommittedChargeAction` are **internal collaborators, not request-path Actions**: they perform no ability check of their own, and architecture tests assert each has exactly one caller.
 
 This is stated at length because it is the one deviation from "every Action authorizes itself", and an unexplained deviation is indistinguishable from a bug.
 
@@ -349,18 +419,21 @@ Per `docs/ENGINEERING.md`, any design section touching money must name its write
 | Concern | Owner |
 |---|---|
 | Enrol and bill | `EnrollAndBillAction` (wraps `EnrollStudentAction` + `IssueChargeAction`, one transaction) |
+| Delete an uncommitted bill | `DeleteUncommittedChargeAction` — internal, callable only from `DeleteEnrollmentAction` |
 | Correct a charge | `AdjustChargeAction` |
 | Write off a debt | `WriteOffChargeAction` |
 | Record money in | `RecordPaymentAction` — tenders, allocation and finalization in one atomic call |
 | Undo a payment | `ReversePaymentAction` |
 | Change a rate | `ChangeCompensationAction` |
 | Payroll | `CreatePayrollRunAction`, `FinalizePayrollRunAction`, `AdjustPayrollLineAction` |
-| Change a price | `UpdateCoursePriceAction`, `UpdateBatchPriceAction` — gated on `manage_pricing` |
-| Discounts | `CreateDiscountAction`, `DeactivateDiscountAction`, `DeleteDiscountAction` |
-| **Payment self-consistency** | `PaymentInvariantService` — locks the charge, derives outstanding under that lock, checks tender total = allocation total, writes |
-| **Compensation overlap** | `CompensationPeriodInvariantService` |
+| Change a price | `UpdateCoursePriceAction`, `UpdateBatchPriceAction` — the only writers of either price column |
+| Discounts | `CreateDiscountAction`, `DeactivateDiscountAction`, `DeleteDiscountAction` — all gated on `manage_pricing` |
+| **Payment self-consistency** | `PaymentInvariantService` |
+| **Compensation overlap** | `CompensationPeriodInvariantService` — locks the `users` row |
 
-**Prohibited, and enforced by extending `tests/Feature/Staff/ActionBoundaryArchTest.php`:** any write to a Finance table outside these Actions · `->relationship()` on a Filament field an Action owns · a `paid_amount`-style cached column on any table · any status string column in the Finance domain · float casts on money · `IssueChargeAction` called from anywhere but `EnrollAndBillAction`.
+`ChargeQueryService` is **read-only** and performs no writes. Deleting a bill alongside its enrolment goes through `DeleteUncommittedChargeAction`, which locks the charge and checks every disqualifying condition — any allocation, any adjustment, any write-off — **inside the transaction that deletes it**. A query service that also deletes is a write path wearing a reader's name.
+
+**Prohibited, and enforced by extending `tests/Feature/Staff/ActionBoundaryArchTest.php`:** any write to a Finance table outside these Actions · `->relationship()` on a Filament field an Action owns · a `paid_amount`-style cached column · any status string column in Finance · float casts on money · `IssueChargeAction` or `DeleteUncommittedChargeAction` called from more than their one permitted caller · **`EnrollStudentAction` called from application code outside `EnrollAndBillAction`** (§12) · any write to a price column outside the two pricing Actions.
 
 **What those tests are worth is unchanged.** They scan for known-bad code shapes and are a fast early warning, not proof. Where a protection matters, the proof is behavioural: drive the real Filament component and assert the outcome.
 
@@ -370,89 +443,115 @@ Per `docs/ENGINEERING.md`, any design section touching money must name its write
 |---|---|
 | Tender total equals allocation total | Lock + check in the finalizing transaction |
 | A payment never exceeds outstanding | Charge locked, outstanding derived under that lock |
+| A payment is not duplicated by a retry | **Unique index** on `idempotency_key` |
 | Amounts are positive | **MySQL `CHECK`** |
-| A card tender carries a terminal reference | **MySQL `CHECK`** |
+| A card tender carries a non-blank reference | **MySQL `CHECK`** with `TRIM` |
+| Finalization actor and time are paired | **MySQL `CHECK`** |
 | One charge per enrolment | **Unique index** |
 | References are unique | **Unique index** |
 | An instructor assignment is paid at most once | **Stored generated column + unique index** |
-| One finalized salary line per person, period and rate | **Stored generated column + unique index** |
-| No overlapping compensation periods | Lock + check — MySQL cannot express it |
-| Adjustments only while draft | Lock + check — MySQL cannot express it |
+| An identical salary segment is not paid twice | **Stored generated column + unique index** |
+| Overlapping salary segments | Lock + check — no index can express range overlap |
+| No overlapping compensation periods | Lock on the `users` row + check |
+| Adjustments only while draft | Lock + check |
 
-The trust boundary is unchanged from phase 1 and is restated honestly: locks and Actions protect every write reachable through application code. Raw SQL and manual `tinker` are trusted administrative operations. The rows marked **CHECK** and **unique index** are the ones that hold regardless.
+The trust boundary is unchanged from phase 1: locks and Actions protect every write reachable through application code; raw SQL and manual `tinker` are trusted administrative operations. The rows marked **CHECK** and **unique index** hold regardless.
 
 ---
 
 ## 12. Impact on existing code
 
+### The unbilled-enrolment path — found by the step-0 review
+
+`EnrollmentsRelationManager` calls `EnrollStudentAction` directly (line 266). Phase 1 was right to do so; phase 2 makes it **a UI path that creates an enrolment with no bill**, silently, on the batch screen staff already use.
+
+**Resolution:** `EnrollAndBillAction` becomes the only application entry point. The relation manager calls it instead. An architecture test asserts that no code under `app/` calls `EnrollStudentAction` except `EnrollAndBillAction`, and the rule is mutation-tested by injecting a violation.
+
+`EnrollmentTest` continues to call `EnrollStudentAction` directly — it is that Action's own unit-level test and the architecture rule scans `app/`, not `tests/`. But **`EnrollmentsRelationManagerTest` and the other existing enrolment tests must be updated**, because enrolling now also raises a bill. A phase 2 test suite that passes while the phase 1 suite still asserts the old behaviour means the surface was not actually migrated.
+
 ### `DeleteEnrollmentAction` breaks the day this ships
 
-Every enrolment now has a charge, and financial foreign keys restrict on delete. The system design explicitly requires that a student recorded in error stays removable — "a student recorded in error on a finished batch must stay removable, or the mistake is permanent" (§6) — and P1-T11 shipped deletion as a separate grant from withdrawal precisely for that case.
+Every enrolment now has a charge, and financial foreign keys restrict on delete. The system design requires that a student recorded in error stays removable — "or the mistake is permanent" (§6) — and P1-T11 shipped deletion as a separate grant from withdrawal for exactly that case.
 
-**Resolution:** `DeleteEnrollmentAction` consults `ChargeQueryService`, refuses with a typed exception when the bill carries any payment, adjustment or write-off, and otherwise deletes bill and enrolment together in one transaction.
-
-This is the single highest-risk integration point in the phase and the first thing the plan review should examine.
+**Resolution:** `DeleteEnrollmentAction` calls `DeleteUncommittedChargeAction`, which locks the charge and refuses with a typed exception if it carries any allocation, adjustment or write-off, then deletes bill and enrolment together in one transaction.
 
 ### Cross-domain boundaries
 
-`EnrollmentQueryService` is named in the system design and `docs/ENGINEERING.md` as the way Finance reads enrolment data — **and it does not exist.** Phase 2 builds it. `ChargeQueryService` is the reverse-direction interface Finance publishes for Enrolment.
+`EnrollmentQueryService` is named in the system design and `docs/ENGINEERING.md` as the way Finance reads enrolment data — **and it does not exist.** Phase 2 builds it, in task 3, **with the full surface tasks 8 and 10 also need**, so that no two tasks extend it in parallel. If a genuine gap appears later, it is raised rather than patched twice.
 
-The architecture test forbids Finance code from *querying* Enrolment models outside the service. Declaring a `belongsTo` where a real foreign key exists stays allowed — an over-strict rule here would be fought and then weakened, which is worse than a precise one.
+`ChargeQueryService` is the read-only reverse-direction interface Finance publishes for Enrolment.
+
+The architecture test forbids Finance code from *querying* Enrolment models outside the service. Declaring a `belongsTo` where a real foreign key exists stays allowed — an over-strict rule here would be fought and then weakened.
 
 ### A phase 1 test inverts
 
-`BatchResourceTest` asserts the price field is **absent** from `BatchResource`, pinned deliberately so nobody surfaced it before phase 2. That assertion inverts, in the task that adds the price gate and nowhere else.
+`BatchResourceTest` asserts the price field is **absent** from `BatchResource`, pinned deliberately. That assertion inverts, in the task that adds the price gate and nowhere else.
 
 ### Activity log
 
-From this phase the log records **all financial mutations** (system design §7): charge issuance, adjustment and write-off with their reasons, payment recording with its tender breakdown, reversal with its reason, compensation changes, payroll creation and finalization, line adjustments, price changes, and discount creation and deactivation.
+From this phase the log records **all financial mutations** (system design §7): charge issuance, adjustment and write-off with their reasons, payment recording with its tender breakdown, reversal with its reason, compensation changes, payroll creation and finalization, line and run adjustments, price changes, and discount creation and deactivation.
 
-The log remains **append-only**. Nothing in this phase creates a deletion path.
+The log remains **append-only**.
 
 ### Internationalization
 
-All strings through `lang/en/finance.php`; the Arabic file ships empty until phase 4. Composite strings — anything built by joining fragments, including money formatting and the receipt's field labels — get their own keys rather than being assembled in code, because separators and ordering are themselves localisable.
+All strings go through `lang/`, and **phase 2 uses one translation file per task rather than a single `finance.php`** — `pricing`, `billing`, `payments`, `charges`, `receipt`, `payroll`, `collect`, `reports`. Nine tasks editing one array file is a guaranteed merge conflict, and the split costs nothing. Arabic counterparts ship **empty** until phase 4.
+
+Composite strings — anything built by joining fragments, including money formatting and the receipt's field labels — get their own keys rather than being assembled in code, because separators and ordering are localisable.
 
 ---
 
 ## 13. Open items
 
-Flagged rather than silently decided:
-
-- **Aging buckets** are 0–30 / 31–60 / 61–90 / 90+. Conventional, and changeable at review.
-- **Reference numbering can have gaps** where a transaction rolls back, because the number derives from the row id rather than a counter. If the centre's accountant requires gapless bill and receipt sequences, this becomes a counter table with its own lock, and that is a materially different piece of work — say so before implementation.
-- **One receipt cannot span two bills.** A student enrolling on two courses the same day gets two bills and two receipts. The allocation table supports the many-charge case so nothing needs re-migrating if this changes, but the phase 2 UI will not offer it.
-- **A front-desk staff member can apply a discount but holds no permission to see the resulting bill or take payment.** That follows the permission matrix exactly. In practice the person taking cash holds the admin role, so this may never bite — but it is an odd shape and worth a decision rather than a discovery.
+- **Aging buckets** are 0–30 / 31–60 / 61–90 / 90+ from `due_date`. Conventional, changeable at review.
+- **One receipt cannot span two bills.** A student enrolling on two courses the same day gets two bills and two receipts. The allocation table supports the many-charge case so nothing needs re-migrating if this changes; the phase 2 UI will not offer it. Confirmed acceptable at step-0 review.
 
 ---
 
 ## 14. Testing requirements
 
-Beyond `composer verify`, which is unchanged and has one definition:
+Beyond `composer verify`:
 
-- **Every permission test asserts the negative.** Specifically that an admin cannot reach `manage_pricing`, `adjust_charge`, `write_off_charge`, `reverse_payment`, `run_payroll` or `finalize_payroll`, and that staff reach none of the finance surfaces.
-- **The refusing policies are tested by granting the permission first.** `create_charge`, `update_payment` and the rest must be proven to fail even when held.
-- **Concurrency is driven from both directions.** Two simultaneous payments against one bill produce one success and one clean typed refusal, not a race both pass.
-- **Database-level guarantees are proven at the database.** Insert a second finalized payroll line for an already-paid assignment and assert MySQL refuses it; insert a card tender with no reference and assert the `CHECK` fires. Not by asserting a button is hidden.
-- **Overpayment is tested at the boundary**, including the case where outstanding drops between form load and submit.
-- **A reversed payment is asserted absent from every report individually.** A single "reversals are excluded" test over one report is the shape that lets the other six drift.
+- **Every permission test asserts the negative** — that an admin cannot reach `manage_pricing`, `adjust_charge`, `write_off_charge`, `reverse_payment`, `run_payroll` or `finalize_payroll`, and that staff reach no finance surface and cannot apply a discount.
+- **The refusing policies are tested by granting the permission first.**
+- **Concurrency is driven from both directions**: two payments against one bill; two first compensation rows **starting from an empty table**; two finalizations of overlapping salary segments; two duplicate payment submissions sharing an idempotency key.
+- **Database-level guarantees are proven at the database.** Insert a second finalized line for an already-paid assignment; insert a card tender with a whitespace reference; insert a payroll run with a finalized time and no actor. Not by asserting a button is hidden.
+- **Overpayment is tested at the boundary**, including when outstanding drops between form load and submit.
+- **The tender-total-versus-allocation-total mismatch has its own unhappy-path test**, asserting the typed refusal and that no partial row survives.
+- **A crafted cross-student allocation is tested.**
+- **A reversed payment is asserted absent from every report individually.**
+- **Report boundaries are tested at local midnight and month edges** in `Africa/Tripoli`.
 - **Rounding is tested on a case that rounds.**
-- **Every security claim in this document has a test named after it.** If a sentence here asserts a property, a test asserts the same property, or the sentence does not belong.
+- **The pricing boundary is tested from both sides** — super admin persists, admin's crafted write does not.
+- **Every security claim in this document has a test named after it.**
 - **Watch each new test fail before trusting it.** Break the thing it protects, confirm the failure names the right cause, restore from a file copy — never `git checkout`.
 
 ---
 
-## 15. Decisions superseded during this design session
-
-Recorded so they are not re-derived from the conversation that produced this document.
+## 15. Decisions superseded during design
 
 | Superseded | By |
 |---|---|
 | Auto oldest-first allocation with operator override | Allocation is decided by which bill was opened |
-| Leftover money held as student credit | No overpayment is possible, so there is no leftover |
-| A persisted drawer reconciliation with counted totals and attested differences | A live daily tender report |
+| Leftover money held as student credit | No overpayment is possible |
+| A persisted drawer reconciliation | A live daily tender report |
 | Draft payments finalized as a second step | One atomic create-and-finalize |
 | `payments.method` as a single column | `payment_tenders` |
 | `charges.status` as a stored enum | Fact columns plus derived state |
 | `per_student` compensation | Removed — the centre does not pay per head |
 | Pro-rating instructor hours across payroll periods | On-demand runs paying a batch as one lump |
+| Salary lines keyed to a whole period | Month-and-rate segments (revision 2) |
+| Draft-only payroll corrections | Adjustment runs for anything found after finalization (revision 2) |
+| `apply_discount` held by staff | Admin and above (revision 2) |
+| Price fields merely disabled | Never dehydrated; both prices written only by their Actions (revision 2) |
+| `ChargeQueryService` deleting a charge | `DeleteUncommittedChargeAction` (revision 2) |
+
+---
+
+## 16. Step-0 review findings declined
+
+Recorded with reasoning, per the review contract's position that a reviewer can be wrong and the author should say so.
+
+**"Remove write-offs throughout the design."** Declined, and retracted by the reviewer on 2026-08-09. The finding read the owner's no-refunds decision as covering debt write-off. Those are different questions and the owner answered them separately: no money is ever returned, *and* a super admin may retire a debt the centre has accepted it will never collect. §4 stands as written.
+
+**"Remove `apply_discount` from staff."** Raised as a recommendation, then retracted by the reviewer, then **adopted anyway by the owner** on its merits — the grant is now admin and above (§3). Recorded because the path matters: it changed on the owner's decision, not on the review's.
