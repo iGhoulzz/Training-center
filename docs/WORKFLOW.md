@@ -4,9 +4,11 @@ How the two agents divide work, isolate it, review each other, and keep document
 
 ---
 
-## Remote status: local until phase 1 completes
+## Remote status: historical, closed at the end of phase 1
 
-There is **no Git remote during phase 1** by decision. The GitHub repository gets created once the foundation phase is done.
+> **This section is a record, not a current instruction.** Phase 1 is complete, the repository is pushed to `iGhoulzz/Training-center`, and every review from phase 2 onward happens on a real pull request. It is kept because the local-review period is part of the project's audit trail and the reasoning below explains why those branches look the way they do.
+
+There was **no Git remote during phase 1** by decision. The GitHub repository was created once the foundation phase was done.
 
 This changes *how* review happens, not *whether* it happens. During phase 1, steps 5 and 6 of the task lifecycle become a **local branch review**:
 
@@ -183,7 +185,7 @@ On completing a milestone, Claude updates:
 |---|---|
 | `docs/superpowers/specs/` | Any design decision that changed during implementation. The spec must describe what was actually built, not what was originally imagined. |
 | `docs/ENGINEERING.md` | Any convention established or revised during the milestone. |
-| `docs/plans/` | Mark the milestone complete; record deviations from the plan and why. |
+| `docs/superpowers/plans/` | Mark the milestone complete; record deviations from the plan and why. |
 | `docs/CHANGELOG.md` | What shipped, in plain language. |
 | `CLAUDE.md` / `AGENTS.md` | Only if the workflow itself changed. |
 

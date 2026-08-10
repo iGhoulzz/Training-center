@@ -60,12 +60,13 @@ Before returning to Codex, a fresh reviewer with no implementation context read 
 - **`LocalizationTest`'s Arabic-empty check is a hardcoded four-file dataset**, so all eight new catalogues would have shipped unchecked. Task 1 makes it derive from `lang/en`.
 - Also: the reference update trips the arch test's enrolment `update` rule, which task 1 now owns extending · `receipt_disk`/`receipt_path` had no write owner and now have `AttachReceiptAction` · tasks 5 and 8 asserted things about reports that task 10 owns · aging buckets overlapped at day 90 · the backfill format was unpadded while the generator pads · task 12 had no file scope · task 6's dependency change was outside its scope.
 
-### Round 4 targets
+### Round 4 outcome — step 0 closed (2026-08-09)
 
-1. **Task 1's real surface** — with `EnrollStudentAction` inside it, does anything else write an enrolment, charge or payment row that the reference mechanism has not been taught about?
-2. **The audit exclusion** (design §2) — does excluding `reference` leave any financial mutation under-recorded, given §12 requires all of them logged?
-3. **Migration recovery** (design §2) — is each of the four independently re-runnable after a mid-flight failure of its predecessor?
-4. **Fingerprint canonicalization** (design §5) — is there a payload pair that collides, or one that differs only in a field the payload does not cover?
+A bounded cleanup of seven corrections, then confirmation. **The plan is approved and task 1 may begin.**
+
+Four questions were carried into that round and answered: nothing else under `app/` writes an enrolment row besides `EnrollStudentAction`, so the reference mechanism has one teaching point · excluding `reference` from the audit allowlist under-records nothing, because it is a deterministic function of the subject id the log already carries · each of the four enrolment migrations is independently recoverable · and the fingerprint covers every field that moves money, with `received_at` and `notes` excluded for stated reasons.
+
+**What the remaining questions are for is the implementation PRs, not this document.** Exact SQL locking, queue and file mechanics, and failure handling are reviewed where they are written.
 
 ---
 
@@ -162,7 +163,9 @@ The whole schema in one task with one owner, because every other task builds on 
 - `database/factories/`, `database/seeders/RolePermissionSeeder.php`
 - `app/Domain/Enrollment/Models/Enrollment.php` — the `reference` attribute, **excluded from `auditedAttributes()`**
 - **Declared crossing: `app/Domain/Enrollment/Actions/EnrollStudentAction.php`.** It inserts an enrolment today and sets no reference. The moment migration 4 makes the column non-nullable, **the next enrolment fails** — so the task that tightens the column is the task that must teach the existing writer to fill it. Leaving this to task 3 ships a broken `main` in between.
-- `tests/Feature/Enrollment/` — the existing enrolment tests, which now exercise the real post-migration path
+- `tests/Feature/Enrollment/EnrollmentTest.php` — the one enrolment test this task edits, covering the reference on the real `EnrollStudentAction` path
+
+  The other four files that create enrolments — `EnrollmentsRelationManagerTest`, `EnrollmentPolicyTest`, `BatchTest`, `BatchDeletionTest` — **are expected to pass unchanged**, because `EnrollmentFactory` is in this task's scope and supplies the reference for factory-built rows. If any of them does break, that is a finding to raise, not a licence to edit outside scope. `EnrollmentsRelationManagerTest` changes in task 3, when the relation manager moves to `EnrollAndBillAction`.
 - **Declared crossing: `tests/Feature/Staff/ActionBoundaryArchTest.php`.** Its enrolment `update` rule allows only `WithdrawEnrollmentAction`, and the reference replacement is an update inside `EnrollStudentAction`. The allowlist is extended deliberately, with the reason recorded in the test — **not** worked around by laundering the write through a differently-named variable, which the test's own comments already identify as the hole in its pattern matching. Task 3 edits this file again for its own rule; task 3 follows task 1, so this is ordering, not a conflict.
 - **Declared crossing: `tests/Feature/LocalizationTest.php`.** Its Arabic-empty check is a hardcoded four-file dataset, so the eight catalogues this phase adds would ship unchecked. Task 1 makes the dataset derive from the files present in `lang/en`, covering every later task automatically.
 - `tests/Feature/Finance/FinanceSchemaTest.php` — every CHECK, index and generated column proven by a violating insert
