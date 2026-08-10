@@ -116,8 +116,9 @@ Reusable percentage definitions — 10%, 30%. Not in the original design.
 
 - **One optional discount per enrolment. No stacking.**
 - A discount applies to **an enrolment**, never permanently to a student.
-- **A discount's percentage is immutable once any charge references it.** Superseding a rate means deactivating the definition and creating a replacement. Retroactively editing a percentage would restate what the centre charged people in the past.
-- `is_active` controls whether it is offered on new enrolments. Definitions are never deleted while referenced; the foreign key restricts and `DeleteDiscountAction` converts MySQL 1451 into a typed refusal, as `DeleteCourseAction` and `DeleteBatchAction` already do.
+- **A definition is immutable from creation.** Name and percentage are set once and never edited. There is no `UpdateDiscountAction` and no generic edit path — not "immutable once referenced", which would mean a definition changed shape depending on whether anyone had used it yet, and would need a check to enforce something the absence of a write path enforces for free.
+- **Getting one wrong has exactly two paths, and which applies is decided by the database, not by a rule.** Before any charge references it, delete it and create the one you meant. After a charge references it, the foreign key refuses the delete — `DeleteDiscountAction` converts MySQL 1451 into a typed refusal, as `DeleteCourseAction` and `DeleteBatchAction` already do — and the correct move is to deactivate it and create a replacement.
+- `is_active` is the one lifecycle transition, owned by `DeactivateDiscountAction`. It controls whether the definition is offered on new enrolments and changes nothing about any charge already issued.
 
 ### The rounding rule, stated once
 
@@ -251,7 +252,9 @@ Each payment therefore stores a **canonical request fingerprint** in `payments.r
 - the charge id and the allocation amount;
 - for each tender line: **method, amount, and terminal reference** — sorted into a stable order, amounts as integer dirham, references compared after the same trim the `CHECK` applies.
 
-**`received_at` and `notes` are deliberately excluded**, and the exclusion is the point rather than an oversight. Neither changes what was collected or against what, so two submissions differing only in a typed note are the same payment recorded twice, and fingerprinting them apart would defeat the mechanism in exactly the case it exists for. Anything that *does* move money is in the payload; anything that decorates it is not.
+**`received_at` is not in the payload because it is not caller-supplied.** `RecordPaymentAction` generates it at the moment it records the payment; no form field, DTO field or request parameter sets it. **A replay therefore keeps the original payment's timestamp** — it returns the payment that exists rather than restamping it, which is what makes a receipt reprint identical to the receipt first handed over.
+
+**`notes` is excluded deliberately.** It does not change what was collected or against what, so two submissions differing only in a typed note are the same payment recorded twice, and fingerprinting them apart would defeat the mechanism in exactly the case it exists for. Anything that moves money is in the payload; anything that decorates it is not.
 
 Terminal reference is included deliberately. Two submissions identical but for the reference are **two different card transactions** — the terminal approved twice — and treating the second as a replay of the first would discard a real payment while telling the operator it had been recorded. A conflict test covers exactly that: same key, same amounts, different reference.
 
@@ -260,7 +263,9 @@ On a key collision the Action compares fingerprints:
 - **Identical** — a genuine replay. Return the existing payment. The second click gets the first receipt.
 - **Different** — raise `IdempotencyConflictException`. The same key is being used for a different request, and the only safe answer is to refuse both silently succeeding and silently returning the wrong thing.
 
-**Replay detection runs before the bill is revalidated.** A replay of a payment that settled the bill in full would otherwise fail the outstanding-balance check first, and the operator would be told they were overpaying when in fact they were looking at a receipt that already exists. The order is: resolve the key, compare the fingerprint, return or raise — and only then, for a genuinely new request, lock the charge and validate against outstanding.
+**A replay of a payment that settled its bill in full must return the original payment, not an overpayment error.** The naive construction validates against outstanding first and tells the operator they are overpaying, when they are in fact looking at a receipt that already exists.
+
+This design states the **required outcome** and not the operation order. An earlier draft prescribed "resolve the key, compare, then lock the charge", which has a race of its own: two requests can both find no existing key before either inserts. **Task 4 chooses the mechanism — lock ordering, an insert-first collision, or another construction — and proves it with the concurrency tests below.** Prescribing a sequence here would fix an order without fixing the race, and would constrain the implementation that has to solve it.
 
 Tested sequentially (the same key and request twice yields one row), concurrently (two simultaneous identical submissions yield one row and no error), on conflict (the same key with a different bill, tender split, or terminal reference raises and creates nothing), and on the settled-bill replay path specifically.
 
@@ -455,7 +460,7 @@ The foreign key **restricts** rather than cascades. A tender is a genuine child 
 
 ### `payroll_runs`
 `id, type (indexed), period_start (nullable), period_end (nullable), created_by (FK restrict), finalized_at, finalized_by (nullable FK restrict), notes, timestamps`
-`CHECK` that a `monthly_salary` run has both period dates and that `instructor_batch` and `adjustment` runs have neither · `CHECK (finalized_at IS NULL) = (finalized_by IS NULL)` — an approval with no approver, or an approver with no time, is not a state the table should be able to hold.
+`CHECK` that a `monthly_salary` run has both period dates and that `instructor_batch` and `adjustment` runs have neither · `CHECK (period_end IS NULL OR period_end >= period_start)` — the same ordering constraint `staff_compensation` already carries, and a period that ends before it begins produces segments of negative length · `CHECK (finalized_at IS NULL) = (finalized_by IS NULL)` — an approval with no approver, or an approver with no time, is not a state the table should be able to hold.
 
 ### `payroll_lines`
 `id, payroll_run_id (FK cascade), user_id (FK restrict), staff_compensation_id (nullable FK restrict), batch_instructor_id (nullable FK restrict), corrects_payroll_line_id (nullable self-FK restrict), segment_start (nullable), segment_end (nullable), frozen_rate (nullable), frozen_hours (nullable), frozen_days (nullable), frozen_days_in_month (nullable), computed_amount, posting_period_start, reason (nullable), finalized_at (nullable), timestamps`
@@ -506,7 +511,7 @@ Permission names follow Shield's `{action}_{model}`; custom abilities are bare v
 
 Discount definitions are created, deactivated and deleted under **`manage_pricing`**, not under `create_discount`; `DiscountPolicy` references `manage_pricing` and no `create_discount` ability is seeded. `PayrollRunPolicy` authorizes creation on `run_payroll` and finalization on `finalize_payroll`; deleting a draft uses `delete_payroll_run`, and a finalized run is refused by the policy regardless of it.
 
-**Write abilities deliberately not seeded**, with policies that refuse unconditionally and tests that grant the permission anyway: `create_charge`, `update_charge`, `delete_charge`, `update_payment`, `delete_payment`, `update_staff_compensation`, `update_payroll_run`.
+**Write abilities deliberately not seeded**, with policies that refuse unconditionally and tests that grant the permission anyway: `create_charge`, `update_charge`, `delete_charge`, `update_payment`, `delete_payment`, `update_staff_compensation`, `update_payroll_run`, `update_discount`.
 
 | Role | Holds |
 |---|---|
@@ -521,7 +526,17 @@ Admins record money but cannot set a price, manage a discount definition, adjust
 
 Staff hold `create_enrollment` but no charge permission. If charge issuance demanded its own ability, **a staff member could not complete an enrolment** — the walk-in scenario the system exists for (system design §1).
 
-`EnrollAndBillAction` authorizes `create` on `Enrollment`, plus `apply_discount` when a discount was selected, and issues the bill as a system consequence of a permitted act. `IssueChargeAction` and `DeleteUncommittedChargeAction` are **internal collaborators, not request-path Actions**: they perform no ability check of their own, and architecture tests assert each has exactly one caller.
+`EnrollAndBillAction` authorizes `create` on `Enrollment`, plus `apply_discount` when a discount was selected, and issues the bill as a system consequence of a permitted act.
+
+**Three Actions are internal collaborators rather than request-path Actions.** Each performs no ability check of its own, each is a system consequence of an act already authorized elsewhere, and an architecture test asserts each has **exactly one caller**:
+
+| Action | Sole caller | Authorized by |
+|---|---|---|
+| `IssueChargeAction` | `EnrollAndBillAction` | `create` on `Enrollment` |
+| `DeleteUncommittedChargeAction` | `DeleteEnrollmentAction` | `delete_enrollment` |
+| `AttachReceiptAction` | `GenerateReceiptJob` | the payment it belongs to, already recorded |
+
+The list is exhaustive. Anything else that performs no ability check is a defect, not a fourth exception.
 
 This is stated at length because it is the one deviation from "every Action authorizes itself", and an unexplained deviation is indistinguishable from a bug.
 
@@ -539,7 +554,7 @@ Per `docs/ENGINEERING.md`, any design section touching money must name its write
 | Write off a debt | `WriteOffChargeAction` |
 | Record money in | `RecordPaymentAction` — tenders, allocation and finalization in one atomic call |
 | Undo a payment | `ReversePaymentAction` |
-| Attach a rendered receipt | `AttachReceiptAction` — internal, callable only from `GenerateReceiptJob`, set-once |
+| Attach a rendered receipt | `AttachReceiptAction` — internal collaborator (§10), sole caller `GenerateReceiptJob`, set-once and idempotent |
 | Change a rate | `ChangeCompensationAction` |
 | Payroll | `CreatePayrollRunAction`, `FinalizePayrollRunAction`, `AdjustPayrollLineAction` |
 | Change a price | `UpdateCoursePriceAction`, `UpdateBatchPriceAction` — the only writers of either price column |
