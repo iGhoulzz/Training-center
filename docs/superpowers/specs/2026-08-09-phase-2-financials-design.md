@@ -554,7 +554,7 @@ Per `docs/ENGINEERING.md`, any design section touching money must name its write
 | Write off a debt | `WriteOffChargeAction` |
 | Record money in | `RecordPaymentAction` — tenders, allocation and finalization in one atomic call |
 | Undo a payment | `ReversePaymentAction` |
-| Attach a rendered receipt | `AttachReceiptAction` — internal collaborator (§10), sole caller `GenerateReceiptJob`, set-once and idempotent |
+| Attach a rendered receipt | `AttachReceiptAction` — internal collaborator (§10), sole caller `GenerateReceiptJob`, set-once |
 | Change a rate | `ChangeCompensationAction` |
 | Payroll | `CreatePayrollRunAction`, `FinalizePayrollRunAction`, `AdjustPayrollLineAction` |
 | Change a price | `UpdateCoursePriceAction`, `UpdateBatchPriceAction` — the only writers of either price column |
@@ -564,7 +564,7 @@ Per `docs/ENGINEERING.md`, any design section touching money must name its write
 
 `ChargeQueryService` is **read-only** and performs no writes. Deleting a bill alongside its enrolment goes through `DeleteUncommittedChargeAction`, which locks the charge and checks every disqualifying condition — any allocation, any adjustment, any write-off — **inside the transaction that deletes it**. A query service that also deletes is a write path wearing a reader's name.
 
-**Prohibited, and enforced by extending `tests/Feature/Staff/ActionBoundaryArchTest.php`:** any write to a Finance table outside these Actions · `->relationship()` on a Filament field an Action owns · a `paid_amount`-style cached column · any status string column in Finance · float casts on money · `IssueChargeAction` or `DeleteUncommittedChargeAction` called from more than their one permitted caller · **`EnrollStudentAction` called from application code outside `EnrollAndBillAction`** (§12) · any write to a price column outside the two pricing Actions.
+**Prohibited, and enforced by extending `tests/Feature/Staff/ActionBoundaryArchTest.php`:** any write to a Finance table outside these Actions · `->relationship()` on a Filament field an Action owns · a `paid_amount`-style cached column · any status string column in Finance · float casts on money · `IssueChargeAction`, `DeleteUncommittedChargeAction` or `AttachReceiptAction` called from anything other than its one permitted caller · **`EnrollStudentAction` called from application code outside `EnrollAndBillAction`** (§12) · any write to a price column outside the two pricing Actions.
 
 **What those tests are worth is unchanged.** They scan for known-bad code shapes and are a fast early warning, not proof. Where a protection matters, the proof is behavioural: drive the real Filament component and assert the outcome.
 
