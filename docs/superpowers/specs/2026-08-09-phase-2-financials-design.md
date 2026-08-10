@@ -1,10 +1,12 @@
 # Phase 2 — Financials: Design
 
 **Date:** 2026-08-09
-**Status:** Revision 4 — incorporates three rounds of the Codex step-0 review. Awaiting re-review.
+**Status:** Revision 5 — incorporates three Codex step-0 rounds and one independent pre-review. Awaiting final Codex re-review.
 **Supersedes:** the phase 2 sections of `2026-07-20-training-center-dashboard-design.md` wherever the two disagree. Those sections were written at architectural detail before a charge model existed; this document is at implementation detail and is authoritative for phase 2.
 
 **Revision 2 changed:** the enrolment write path (§12), salaried payroll segmentation and post-finalization correction (§7), payment idempotency and derived student identity (§5), the pricing write boundary (§3), charge due dates (§4), reporting time zones (§8), compensation locking (§7), and the schema guarantees in §9. Two review findings were **declined** — see §16.
+
+**Revision 5 changed:** the pricing gate, which revision 4 built on `disabled()` and which would have failed an existing phase 1 test and blocked admins from creating courses (§3) · the exact seeded permission set, without which `ChangeCompensationAction` had no ability to authorize on and the seeder test would fail (§10) · an owner for the receipt path columns (§5, §11) · the fingerprint's excluded fields, stated rather than implied (§5) · the adjustment line's undecided column (§9) · `LocalizationTest`'s hardcoded dataset (§12) · aging buckets overlapping at day 90 (§8) · the unpadded backfill format (§2) · and the retraction of revision 4's claim that the phase 1 price tests invert (§12).
 
 **Revision 3 changed:** reference generation, which revision 2 left impossible — a non-nullable column written after insert (§2) · the enrolment backfill, split into three recoverable migrations (§2) · frozen instructor hours, dropped by revision 2 in violation of the system design (§7) · adjustment-run invariants, posting period and lock ordering (§7) · idempotency fingerprinting (§5) · the pricing hook, which as revision 2 wrote it would have refused **every ordinary admin edit** (§3) · explicit actor-first authorization on the payment Actions and the cross-domain route to the student (§5) · the `EnrollmentQueryService` contract, widened to four consumers (§12).
 
@@ -88,7 +90,7 @@ These are deliberately **not** the phase 3 certificate pattern. A certificate re
 **Four separate migrations, each doing exactly one thing.** MySQL does not roll back DDL, so a migration containing two schema statements can fail on the second having committed the first, and re-running it then fails on the first:
 
 1. Add `reference` as nullable.
-2. Backfill every existing row as `ENR-{year of enrolled_at}-{id}` — pure DML, re-runnable, independently recoverable.
+2. Backfill every existing row as `ENR-{year of enrolled_at}-{id padded to 6}`, identical in format to what the generator produces — pure DML, re-runnable, independently recoverable.
 3. Add the unique index.
 4. Tighten the column to non-nullable.
 
@@ -129,19 +131,31 @@ Revision 1 said price fields would be disabled and de-hydrated and "the Action r
 
 The boundary is therefore built the way `UserResource` already builds one, using `WritesUserThroughActions` as the template:
 
-- **Price fields are `dehydrated(false)` for every actor, without exception.** Generic persistence never sees a price, so there is no path by which one is written outside an Action — including the super admin's own path. A field that is merely `disabled()` for some actors leaves the write shape intact for others.
-- A `WritesPricingThroughActions` concern, shared by the create and edit pages of both resources, reads `$this->form->getRawState()` in the save hook and calls `UpdateCoursePriceAction` / `UpdateBatchPriceAction`.
-- **The Action is called only when the price actually changed.** The raw state is normalized to integer dirham and compared with the persisted value — a string comparison would read `100` and `100.000` as a change. If they match, no Action runs.
+Four rules, in this order. The order is the design — reversing the first two reintroduces the bug this replaced.
 
-  **`null` and `0.000` are different values and the comparison must keep them apart.** On a batch, `null` means *inherit the course price* and `0.000` means *this intake is free*. Collapsing them — which any naive numeric cast does — makes "stop inheriting, this one is free" and "go back to inheriting" both invisible, so the price silently fails to change and no Action is ever called. Both transitions are tested in both directions.
+1. **The price field is `visible()` only to an actor holding `manage_pricing`, and `dehydrated(false)` always.** For everyone else the field is not in the form at all, and for nobody does it reach generic persistence.
 
-  **Precision is validated before the comparison, never rounded into it.** A submitted `100.0004` is rejected as invalid input; it must not be rounded to `100.000`, compared against a stored `100.000`, and reported unchanged. Rounding before comparing is how a real edit becomes a silent no-op.
+   Visibility rather than `disabled()` is load-bearing. A disabled field is still *in* the form, so an admin's raw state still carries a price, and any save hook reading it then has to decide what to do about a value the admin never chose.
 
-  This is load-bearing, not an optimisation. An admin has no `manage_pricing`, but the price is still present in the form's raw state when they rename a course. Calling the Action unconditionally would authorize-and-refuse on **every ordinary admin edit**, so renaming a course would fail with an authorization error about a field the admin never touched. A test proves an admin can edit a non-price field while the price is left alone.
-- Those Actions authorize `manage_pricing` and are the **only** writers of `courses.default_price` and `batches.price`, initial value included. On create, an absent or null price calls nothing.
-- A refusal throws `Halt::rollBackDatabaseTransaction()` so a rejected price change undoes the attribute write with it, rather than leaving the rename committed and the price refused.
+2. **The save hook checks the ability before it reads raw state.** Without `manage_pricing` the pricing path is skipped entirely and any injected state is discarded unread. It is never "authorize and refuse"; it is "not this actor's field, ignore it".
 
-**Tests, both directions:** a super admin sets and changes a price through the real Livewire component and it persists; an admin crafting a Livewire state update on the price field does not persist a value and the Action refuses. Asserting a disabled field is not a test of this boundary.
+   Revision 3 had this backwards and called the Action unconditionally. An admin holds no `manage_pricing`, so **renaming a course would have authorized, refused, and rolled the rename back** with an error naming a field the admin never touched. Reading the ability first also means a crafted injection is inert, rather than a way to deny an admin their own edits.
+
+3. **With the ability, the Action is called only when the price actually changed.** Raw state is normalized to integer dirham and compared with the current value — a string comparison would read `100` and `100.000` as a change.
+
+   **`null` and `0.000` are different values and the comparison must keep them apart.** On a batch, `null` means *inherit the course price* and `0.000` means *this intake is free*. Collapsing them, which any naive numeric cast does, makes "stop inheriting, this one is free" and "go back to inheriting" both invisible.
+
+   **The two columns have different baselines, and each comparison uses its own.** `courses.default_price` is `decimal(12,3) NOT NULL DEFAULT 0`, so `null` is unreachable and the create-time baseline is `0.000`. `batches.price` is nullable, so its baseline is `null`. A single "absent or null means unchanged" rule is wrong for courses — it would call the Action on every course create.
+
+   **Precision is validated before the comparison, never rounded into it.** A submitted `100.0004` is rejected as invalid input; rounding it to `100.000` and then reporting "unchanged" is how a real edit becomes a silent no-op.
+
+4. **The Actions authorize `manage_pricing` themselves** and are the only writers of either column, initial value included. Rule 2 keeps the UI honest; rule 4 is the boundary for every other caller.
+
+A refusal throws `Halt::rollBackDatabaseTransaction()`, so a rejected price change undoes the attribute write with it rather than leaving the rename committed and the price refused.
+
+**Tests, all four directions:** a super admin sets a price on create and changes it on edit through the real Livewire component, and both persist · an admin creates and edits a course and a batch successfully, with the price untouched at its baseline · an admin's crafted Livewire state update on the price field changes nothing **and does not fail their save** · no path writes either column outside the two Actions.
+
+**The phase 1 price-absence tests keep passing as written.** `CourseResourceTest` and `BatchResourceTest` assert `assertFormFieldDoesNotExist` **as an admin**, and under rule 1 that stays true — the field is invisible to them. Their smuggled-payload tests, which submit a price as an admin and assert the column did not move, become exactly the crafted-negative tests this boundary needs, unchanged. Only the super-admin cases are new. Revision 4 claimed those assertions would invert; they do not, and `CourseResourceTest` was not in any task's scope to invert them in.
 
 ### Who may set a price, and who may discount
 
@@ -232,10 +246,12 @@ Atomic finalization plus a double-clicked button equals two payments and two rec
 
 Each payment therefore stores a **canonical request fingerprint** in `payments.request_fingerprint`, alongside the key.
 
-**The canonical payload covers every caller-controlled field that gets persisted**, not a convenient subset:
+**The canonical payload covers every caller-controlled field that determines what money moved**:
 
 - the charge id and the allocation amount;
 - for each tender line: **method, amount, and terminal reference** — sorted into a stable order, amounts as integer dirham, references compared after the same trim the `CHECK` applies.
+
+**`received_at` and `notes` are deliberately excluded**, and the exclusion is the point rather than an oversight. Neither changes what was collected or against what, so two submissions differing only in a typed note are the same payment recorded twice, and fingerprinting them apart would defeat the mechanism in exactly the case it exists for. Anything that *does* move money is in the payload; anything that decorates it is not.
 
 Terminal reference is included deliberately. Two submissions identical but for the reference are **two different card transactions** — the terminal approved twice — and treating the second as a replay of the first would discard a real payment while telling the operator it had been recorded. A conflict test covers exactly that: same key, same amounts, different reference.
 
@@ -261,7 +277,9 @@ Never accept more than is outstanding. For cash, return change and record only t
 
 ### Reversal
 
-Super admin only, via `reverse_payment`. A **set-once lifecycle transition on an immutable row**: `reversed_at`, `reversed_by` and `reversal_reason` are written once and never unset. The payment, its tenders and its allocations are never rewritten and never deleted.
+Super admin only, via `reverse_payment`. A **set-once lifecycle transition on an immutable row**: `reversed_at`, `reversed_by` and `reversal_reason` are written once and never unset. The payment's financial facts — student, reference, tenders, allocations — are never rewritten and never deleted.
+
+**Two columns on `payments` are written after creation and are not financial facts:** `receipt_disk` and `receipt_path`. The receipt is generated asynchronously after commit, so its location cannot be known when the payment is written. They are set once, by `AttachReceiptAction` (§11), which is an internal collaborator callable only from `GenerateReceiptJob` and refuses a payment that already has a receipt. The immutability claimed above is about what the payment *says happened*; a pointer to a rendered document is not part of that, and saying so explicitly is better than an architecture test flagging a write nobody scoped.
 
 This reuses the shape the system design blessed for phase 3 certificates rather than inventing a second answer.
 
@@ -370,7 +388,7 @@ Finalizing a run locks one `users` row per person on it. **Those locks are acqui
 | Report | Notes |
 |---|---|
 | Revenue by course, batch and month | From allocations of non-reversed payments, joined through charge → enrolment → batch → course |
-| Outstanding balances, aged | Buckets 0–30 / 31–60 / 61–90 / 90+ from `due_date`; excludes written-off |
+| Outstanding balances, aged | Buckets 0–30 / 31–60 / 61–90 / 91+ from `due_date`; excludes written-off |
 | Payment method breakdown | By tender, not by payment — a split payment contributes to two methods |
 | **Daily tender report** | Non-reversed cash and card tender totals for a date |
 | Wage cost per period | Per person and in total, from finalized payroll lines of all three run types |
@@ -448,7 +466,7 @@ Line shape by run type, with a `CHECK` enforcing that exactly one shape is prese
 |---|---|---|
 | **salary** | `staff_compensation_id`, `segment_start`, `segment_end`, `frozen_rate`, `frozen_days`, `frozen_days_in_month` | `batch_instructor_id`, `corrects_payroll_line_id`, `frozen_hours` |
 | **instructor** | `staff_compensation_id`, `batch_instructor_id`, `frozen_rate`, `frozen_hours` | segment columns, `corrects_payroll_line_id`, `frozen_days*` |
-| **adjustment** | `corrects_payroll_line_id`, signed `computed_amount`, `reason` | every frozen column including `frozen_rate` |
+| **adjustment** | `corrects_payroll_line_id`, signed `computed_amount`, `reason` | every frozen column including `frozen_rate`, **and `staff_compensation_id`** |
 
 `frozen_rate` is **nullable**, because an adjustment line has no rate — it is a signed correction, not a calculation. Forcing a value there would mean storing a meaningless number in a column whose whole purpose is to explain how an amount was reached.
 
@@ -470,11 +488,25 @@ Plus the generated columns and unique indexes in §7. The cascade is correct —
 
 Permission names follow Shield's `{action}_{model}`; custom abilities are bare verbs. `RolePermissionSeeder` remains the authority.
 
-**Resources seeded with read permissions:** `charge`, `payment`, `discount`, `staff_compensation`, `payroll_run`.
+**This list is exhaustive and is enforced.** `RolePermissionSeederTest` scans every `*Policy.php` under `app/` for referenced ability names and fails the build if the seeder does not create one. A policy naming an ability absent from this list does not fail closed quietly — it fails the suite, which is the intended behaviour and the reason the set must be stated exactly rather than sketched.
 
-**Write abilities deliberately not seeded**, with policies that refuse unconditionally and tests that grant the permission anyway: `create_charge`, `update_charge`, `delete_charge`, `update_payment`, `delete_payment`, `update_staff_compensation`.
+**Seeded per resource:**
+
+| Resource | Abilities |
+|---|---|
+| `charge` | `view_any_charge`, `view_charge` |
+| `payment` | `view_any_payment`, `view_payment`, **`create_payment`** |
+| `discount` | `view_any_discount`, `view_discount` |
+| `staff_compensation` | `view_any_staff_compensation`, `view_staff_compensation`, **`create_staff_compensation`** |
+| `payroll_run` | `view_any_payroll_run`, `view_payroll_run`, `delete_payroll_run` |
 
 **Custom abilities:** `manage_pricing` · `apply_discount` · `adjust_charge` · `write_off_charge` · `reverse_payment` · `run_payroll` · `finalize_payroll` · `view_financial_report` · `export_financial_report`.
+
+`create_payment` and `create_staff_compensation` are easy to omit and both are load-bearing. Admin is granted `create_payment`, and Spatie throws `PermissionDoesNotExist` for an unknown name rather than returning false, so an unseeded grant breaks the seeder itself. `ChangeCompensationAction` and `StaffCompensationPolicy::create()` authorize on `create_staff_compensation` — the only legitimate change to a rate is a new row, so *create* is the write ability for that table and there is no update counterpart.
+
+Discount definitions are created, deactivated and deleted under **`manage_pricing`**, not under `create_discount`; `DiscountPolicy` references `manage_pricing` and no `create_discount` ability is seeded. `PayrollRunPolicy` authorizes creation on `run_payroll` and finalization on `finalize_payroll`; deleting a draft uses `delete_payroll_run`, and a finalized run is refused by the policy regardless of it.
+
+**Write abilities deliberately not seeded**, with policies that refuse unconditionally and tests that grant the permission anyway: `create_charge`, `update_charge`, `delete_charge`, `update_payment`, `delete_payment`, `update_staff_compensation`, `update_payroll_run`.
 
 | Role | Holds |
 |---|---|
@@ -507,6 +539,7 @@ Per `docs/ENGINEERING.md`, any design section touching money must name its write
 | Write off a debt | `WriteOffChargeAction` |
 | Record money in | `RecordPaymentAction` — tenders, allocation and finalization in one atomic call |
 | Undo a payment | `ReversePaymentAction` |
+| Attach a rendered receipt | `AttachReceiptAction` — internal, callable only from `GenerateReceiptJob`, set-once |
 | Change a rate | `ChangeCompensationAction` |
 | Payroll | `CreatePayrollRunAction`, `FinalizePayrollRunAction`, `AdjustPayrollLineAction` |
 | Change a price | `UpdateCoursePriceAction`, `UpdateBatchPriceAction` — the only writers of either price column |
@@ -580,9 +613,13 @@ Revision 2 listed only tasks 8 and 10, which would have left task 4 walking `$ch
 
 The architecture test forbids Finance code from *querying* Enrolment models outside the service. Declaring a `belongsTo` where a real foreign key exists stays allowed — an over-strict rule here would be fought and then weakened.
 
-### A phase 1 test inverts
+### The phase 1 price-absence tests do **not** invert
 
-`BatchResourceTest` asserts the price field is **absent** from `BatchResource`, pinned deliberately. That assertion inverts, in the task that adds the price gate and nowhere else.
+Revision 4 said `BatchResourceTest`'s price-absence assertion would invert in the task that adds the gate. That was wrong twice over: `CourseResourceTest` carries the same assertions and was in no task's scope, and under §3's visibility rule neither needs to change at all.
+
+Both files assert `assertFormFieldDoesNotExist` **as an admin**, and the field is invisible to an admin. Their smuggled-payload tests submit a price as an admin and assert the column did not move — which is precisely the crafted-negative test the pricing boundary needs, and it keeps passing for a better reason than before.
+
+Task 2 therefore **adds** super-admin cases to both files rather than rewriting either. Both are named in its file scope, because a task that must not break a test still has to be able to open it.
 
 ### Activity log
 
@@ -592,6 +629,8 @@ The log remains **append-only**.
 
 ### Internationalization
 
+**`LocalizationTest`'s Arabic-empty check is a hardcoded dataset** — `->with(['activity', 'auth', 'enrollment', 'staff'])` — so eight new catalogues would ship unchecked and could each be filled with English with nothing failing. Task 1 makes that dataset **derive from the files present in `lang/en`**, so every catalogue this phase adds is covered automatically and no later task has to remember to register itself. The file-parity check beside it is already dynamic and needs no change.
+
 All strings go through `lang/`, and **phase 2 uses one translation file per task rather than a single `finance.php`** — `pricing`, `billing`, `payments`, `charges`, `receipt`, `payroll`, `collect`, `reports`. Nine tasks editing one array file is a guaranteed merge conflict, and the split costs nothing. Arabic counterparts ship **empty** until phase 4.
 
 Composite strings — anything built by joining fragments, including money formatting and the receipt's field labels — get their own keys rather than being assembled in code, because separators and ordering are localisable.
@@ -600,7 +639,7 @@ Composite strings — anything built by joining fragments, including money forma
 
 ## 13. Open items
 
-- **Aging buckets** are 0–30 / 31–60 / 61–90 / 90+ from `due_date`. Conventional, changeable at review.
+- **Aging buckets** are 0–30 / 31–60 / 61–90 / 91+ from `due_date`. Conventional, changeable at review.
 - **One receipt cannot span two bills.** A student enrolling on two courses the same day gets two bills and two receipts. The allocation table supports the many-charge case so nothing needs re-migrating if this changes; the phase 2 UI will not offer it. Confirmed acceptable at step-0 review.
 
 ---
@@ -664,6 +703,10 @@ Beyond `composer verify`:
 | A fingerprint described but never given a column | `payments.request_fingerprint` (revision 4) |
 | Non-null `posting_period_start` | Nullable, indexed, paired with `finalized_at` (revision 4) |
 | `reference` audited like any other column | Excluded, so no placeholder can reach an append-only log (revision 4) |
+| Price fields disabled but present for every actor | Visible only with `manage_pricing`, ability checked before raw state (revision 5) |
+| "The phase 1 price tests invert" | They do not; task 2 adds cases to both files (revision 5) |
+| An unstated finance permission set | The exact seeded set, enforced by `RolePermissionSeederTest` (revision 5) |
+| Receipt path columns with no write owner | `AttachReceiptAction`, set-once (revision 5) |
 
 ---
 

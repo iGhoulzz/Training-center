@@ -1,6 +1,6 @@
 # Phase 2 — Financials Implementation Plan
 
-**Status:** Revision 4, incorporating three rounds of the Codex step-0 review. **Awaiting re-review. No task begins until that review signs off.**
+**Status:** Revision 5, incorporating three Codex step-0 rounds and one independent pre-review. **Awaiting re-review. No task begins until that review signs off.**
 
 **Goal:** A working system where a student is enrolled, billed, and takes a receipt away from the desk; where balances and revenue are always derivable from source rows; where staff compensation is configured and payroll is **approved and posted** without history moving; and where every figure exports to Excel and PDF.
 
@@ -49,6 +49,16 @@ Five blockers, all accepted. The pattern from round 2 held: revisions introduce 
 - **`request_fingerprint` was specified in prose and absent from the schema**, and task 4 owns no migration.
 - **`posting_period_start` was non-null but only written at finalization**, making every draft line unwritable — and an instructor draft's posting month is genuinely unknowable until it is finalized.
 - Price normalization now keeps `null` (inherit) and `0.000` (free) distinct, and rejects excess precision instead of rounding it into a false "unchanged".
+
+### Independent pre-review outcome (2026-08-09)
+
+Before returning to Codex, a fresh reviewer with no implementation context read both documents against the real codebase. It found five blockers and ten correctness issues; all were accepted, and the four load-bearing ones were re-verified against the files before being applied.
+
+- **The pricing gate was wrong at the root.** `CourseResourceTest:241-248` has an admin submit `default_price => 999.999` and asserts the course still exists at `0.000`. Under revision 4 that call would refuse, roll the create back, and fail the test. And `courses.default_price` is `NOT NULL DEFAULT 0` — verified in the migration — so revision 4's "absent or null price calls nothing" exemption was unreachable for courses. Gating by **visibility** instead of by `disabled()`, and checking the ability before reading raw state, fixes both: the phase 1 tests keep passing verbatim and their smuggled-payload cases become the crafted-negative tests the boundary needs.
+- **`CourseResourceTest` was in no task's scope** while carrying the same assertions revision 4 said would invert in `BatchResourceTest`.
+- **`ChangeCompensationAction` had no ability to authorize on.** `RolePermissionSeederTest` scans every policy under `app/` and fails when a referenced name is unseeded, so this was a build failure, not a design smell. The seeded set is now stated exactly.
+- **`LocalizationTest`'s Arabic-empty check is a hardcoded four-file dataset**, so all eight new catalogues would have shipped unchecked. Task 1 makes it derive from `lang/en`.
+- Also: the reference update trips the arch test's enrolment `update` rule, which task 1 now owns extending · `receipt_disk`/`receipt_path` had no write owner and now have `AttachReceiptAction` · tasks 5 and 8 asserted things about reports that task 10 owns · aging buckets overlapped at day 90 · the backfill format was unpadded while the generator pads · task 12 had no file scope · task 6's dependency change was outside its scope.
 
 ### Round 4 targets
 
@@ -128,6 +138,8 @@ The whole schema in one task with one owner, because every other task builds on 
 - `app/Domain/Enrollment/Models/Enrollment.php` — the `reference` attribute, **excluded from `auditedAttributes()`**
 - **Declared crossing: `app/Domain/Enrollment/Actions/EnrollStudentAction.php`.** It inserts an enrolment today and sets no reference. The moment migration 4 makes the column non-nullable, **the next enrolment fails** — so the task that tightens the column is the task that must teach the existing writer to fill it. Leaving this to task 3 ships a broken `main` in between.
 - `tests/Feature/Enrollment/` — the existing enrolment tests, which now exercise the real post-migration path
+- **Declared crossing: `tests/Feature/Staff/ActionBoundaryArchTest.php`.** Its enrolment `update` rule allows only `WithdrawEnrollmentAction`, and the reference replacement is an update inside `EnrollStudentAction`. The allowlist is extended deliberately, with the reason recorded in the test — **not** worked around by laundering the write through a differently-named variable, which the test's own comments already identify as the hole in its pattern matching. Task 3 edits this file again for its own rule; task 3 follows task 1, so this is ordering, not a conflict.
+- **Declared crossing: `tests/Feature/LocalizationTest.php`.** Its Arabic-empty check is a hardcoded four-file dataset, so the eight catalogues this phase adds would ship unchecked. Task 1 makes the dataset derive from the files present in `lang/en`, covering every later task automatically.
 - `tests/Feature/Finance/`
 
 **Does**
@@ -149,7 +161,8 @@ Migrations run clean and roll back clean, **each of the four enrolment migration
 - `app/Domain/Finance/Services/PricingService.php`
 - **Declared crossing:** `CourseResource`, `BatchResource`, and their Create/Edit pages, plus a new `WritesPricingThroughActions` concern
 - `lang/en/pricing.php`, `lang/ar/pricing.php` (empty)
-- `tests/Feature/Finance/`, and the `BatchResourceTest` inversion
+- **`tests/Feature/Enrollment/CourseResourceTest.php` and `BatchResourceTest.php`** - task 2 *adds* super-admin cases; the existing admin price-absence and smuggled-payload assertions keep passing unchanged under design 3's visibility rule
+- `tests/Feature/Finance/`
 
 **Does**
 Live price inheritance in `PricingService`. **The executable write boundary from design §3**: price fields `dehydrated(false)` for every actor without exception, so generic persistence never sees a price; the save hooks read `getRawState()` and call the pricing Actions; a refusal throws `Halt::rollBackDatabaseTransaction()`. Copy `WritesUserThroughActions`, which already solves this exact problem for roles and `is_active`.
@@ -159,7 +172,7 @@ Live price inheritance in `PricingService`. **The executable write boundary from
 Discount definition create, deactivate and delete all gated on `manage_pricing`. A discount's percentage immutable once referenced.
 
 **Done when**
-A super admin sets a price on create **and** changes it on edit, through the real Livewire component, and it persists · **an admin renames a course and a batch with the price untouched, and the save succeeds** · **an admin crafting a Livewire state update on the price field does not persist a value and the Action refuses** · `100` and `100.000` are not treated as a change · **a batch price moving `null` → `0.000` and `0.000` → `null` is detected as a change in both directions**, so "this intake is free" and "go back to inheriting" both reach the Action · **`100.0004` is rejected as invalid rather than rounded and reported unchanged** · no code path writes either price column outside the two Actions, mutation-tested · a referenced discount cannot have its percentage changed and cannot be deleted, the latter a typed refusal converted from MySQL 1451 · an admin cannot create or deactivate a discount definition · `BatchResourceTest` now asserts the field is present and gated · `composer verify` green.
+A super admin sets a price on create **and** changes it on edit, through the real Livewire component, and it persists · **an admin creates a course and a batch, and renames both, and every save succeeds** — the create path matters as much as the edit path, and `courses.default_price` is NOT NULL DEFAULT 0 so there is no null to treat as absent · **the price field is not present in the form for an admin at all**, which is why the phase 1 absence assertions keep passing · **an admin crafting a Livewire state update on the price field does not persist a value and the Action refuses** · `100` and `100.000` are not treated as a change · **a batch price moving `null` → `0.000` and `0.000` → `null` is detected as a change in both directions**, so "this intake is free" and "go back to inheriting" both reach the Action · **`100.0004` is rejected as invalid rather than rounded and reported unchanged** · no code path writes either price column outside the two Actions, mutation-tested · a referenced discount cannot have its percentage changed and cannot be deleted, the latter a typed refusal converted from MySQL 1451 · an admin cannot create or deactivate a discount definition · `BatchResourceTest` now asserts the field is present and gated · `composer verify` green.
 
 ---
 
@@ -229,7 +242,7 @@ Receipt assertions belong to tasks 6 and 9 — **receipts do not exist yet at th
 Both Actions super-admin-only with a mandatory reason written into the activity log alongside the before/after diff. `AdjustChargeAction` refuses to drop the amount below what is already allocated. `ChargeResource` is read-plus-two-actions, sorting and filtering outstanding through `ChargeBalance`'s SQL expression.
 
 **Done when**
-An admin holding every charge read permission cannot adjust or write off, asserted through the real component · adjusting below the allocated total is refused · the reason reaches the activity log and is visible in `ActivityResource` · a written-off charge leaves the debt in the student's history and out of the aged report · `ChargePolicy::create/update/delete` refuse even when the permission is granted · `composer verify` green.
+An admin holding every charge read permission cannot adjust or write off, asserted through the real component · adjusting below the allocated total is refused · the reason reaches the activity log and is visible in `ActivityResource` · a written-off charge leaves the debt in the student's history and is flagged as written off (the aged-report exclusion is asserted in task 10, which owns the reports) · `ChargePolicy::create/update/delete` refuse even when the permission is granted · `composer verify` green.
 
 ---
 
@@ -239,7 +252,8 @@ An admin holding every charge read permission cannot adjust or write off, assert
 **Dependency change, pre-approved by the owner:** `composer require mpdf/mpdf`. See design §8 for why not Browsershot and why not dompdf.
 
 **File scope**
-- `app/Domain/Finance/Jobs/GenerateReceiptJob.php`
+- `composer.json`, `composer.lock` - the mPDF dependency change above
+- `app/Domain/Finance/Jobs/GenerateReceiptJob.php`, `app/Domain/Finance/Actions/AttachReceiptAction.php`
 - `resources/views/finance/receipt.blade.php`
 - `app/Http/Controllers/Finance/ReceiptDownloadController.php`, `routes/web.php`
 - **Declared crossing:** one dispatch line in `RecordPaymentAction` — sequential after task 4 merges, so not a parallel edit
@@ -264,7 +278,7 @@ Every required field appears, verified against a rendered PDF · the file lands 
 - `tests/Feature/Finance/`
 
 **Does**
-A raise closes the previous row and inserts a new one in one transaction. Rates are never overwritten. **The overlap invariant locks the `users` row**, not the compensation rows — when a person has none, there is nothing else to lock.
+A raise closes the previous row and inserts a new one in one transaction, authorized on **`create_staff_compensation`** — create is the write ability for this table, because the only legitimate change to a rate is a new row. Rates are never overwritten. **The overlap invariant locks the `users` row**, not the compensation rows — when a person has none, there is nothing else to lock.
 
 **Done when**
 A raise produces two rows with contiguous, non-overlapping periods · an overlapping period is refused · **two concurrent first compensation rows, starting from an empty table, produce one row and one refusal** · granting the update permission does not make the policy allow it · `composer verify` green.
@@ -290,7 +304,7 @@ All three run types. `monthly_salary` builds **segment lines** by intersecting t
 Finalization copies the frozen figures, `finalized_at` and `posting_period_start` onto each line and is irreversible. **It also verifies that each line's shape matches the run's type** — a row-level `CHECK` cannot see `payroll_runs.type`, so the constraint proves a line is internally coherent and only the Action can prove it belongs where it sits. Overlap between finalized salary segments is refused under a `users`-row lock, and **locks are taken in ascending user id order** so two runs over overlapping staff cannot deadlock. Reads instructor assignments through `EnrollmentQueryService`.
 
 **Done when**
-**A run covering a partial previous month plus a full current month produces the correct segment lines with the correct per-month denominators** · a mid-period raise splits a month into two correctly-priced segments · an assignment already paid in a finalized run cannot appear in another, **proven at the database** by inserting the duplicate directly · **overlapping salary segments across two runs are refused by the lock**, with a test that fails if the lock is removed · **two concurrent finalizations over overlapping staff complete without deadlock** · **a finalized instructor line still explains its amount after `assigned_hours` is changed underneath it** · **a draft line persists with a null posting period, and finalization refuses a line whose shape does not match its run's type** · a finalized run cannot be edited, deleted, or have a draft adjustment added, and is corrected only by an adjustment run · **correcting March in June moves March's wage cost, not June's**, and wage cost and profit agree · a correction targeting a correction is refused · a zero-amount correction is refused · a rate changed after finalization does not move the finalized figure · `composer verify` green.
+**A run covering a partial previous month plus a full current month produces the correct segment lines with the correct per-month denominators** · a mid-period raise splits a month into two correctly-priced segments · an assignment already paid in a finalized run cannot appear in another, **proven at the database** by inserting the duplicate directly · **overlapping salary segments across two runs are refused by the lock**, with a test that fails if the lock is removed · **two concurrent finalizations over overlapping staff complete without deadlock** · **a finalized instructor line still explains its amount after `assigned_hours` is changed underneath it** · **a draft line persists with a null posting period, and finalization refuses a line whose shape does not match its run's type** · a finalized run cannot be edited, deleted, or have a draft adjustment added, and is corrected only by an adjustment run · **correcting March in June produces a correction line carrying March's posting period**, asserted on the line, since the wage-cost report belongs to task 10 · a correction targeting a correction is refused · a zero-amount correction is refused · a rate changed after finalization does not move the finalized figure · `composer verify` green.
 
 ---
 
@@ -327,7 +341,7 @@ Query services with **no UI at all**, so every figure is tested before anything 
 Every report from design §8. **Periods are local `Africa/Tripoli` calendar ranges converted to half-open UTC ranges** before they reach the database, through the timezone database rather than a fixed offset, so the `received_at` index is used. Reads enrolment data through `EnrollmentQueryService`.
 
 **Done when**
-Every report is asserted against a fixture with known figures · **a reversed payment is asserted absent from each report individually** · written-off charges are excluded from the aged report and present in history · the method breakdown splits a single split-tender payment across two methods · the daily tender report matches that day's non-reversed tenders · **boundary tests pass at 00:00:00 local on the first of a month, 23:59:59 local on the last, and either side of midnight UTC** · aging is measured from `due_date` · `composer verify` green.
+Every report is asserted against a fixture with known figures · **a reversed payment is asserted absent from each report individually** · written-off charges are excluded from the aged report and present in history · **correcting March in June moves March's wage cost and not June's, and wage cost and profit agree** — the assertion task 8 could not make, because the reports live here · the method breakdown splits a single split-tender payment across two methods · the daily tender report matches that day's non-reversed tenders · **boundary tests pass at 00:00:00 local on the first of a month, 23:59:59 local on the last, and either side of midnight UTC** · aging is measured from `due_date` · `composer verify` green.
 
 ---
 
@@ -338,7 +352,7 @@ Every report is asserted against a fixture with known figures · **a reversed pa
 - `app/Domain/Finance/Filament/Pages/Reports/`
 - `app/Domain/Finance/Exports/` — Filament exporters
 - `app/Domain/Finance/Jobs/GenerateReportPdfJob.php`, `resources/views/finance/reports/`
-- `database/migrations/` — publish Filament's `exports` and `failed_import_rows` tables
+- `database/migrations/` — publish Filament's `exports` and `failed_import_rows` tables. **A deliberate exception to task 1 owning the schema:** these are vendor-published tables serving only this task, and nothing else in the phase depends on them
 - `lang/en/reports.php`, `lang/ar/reports.php` (empty)
 
 **Does**
@@ -351,6 +365,12 @@ An admin can view and export; a staff member can reach neither · **the export q
 
 ## Task 12 — Phase reconciliation
 **Owner: Claude · `p2/t12-reconciliation` · depends on all**
+
+**File scope**
+- `docs/superpowers/specs/2026-07-20-training-center-dashboard-design.md`, `docs/ENGINEERING.md`, `docs/CHANGELOG.md`, this plan
+- `lang/en/`, `lang/ar/` — gaps found by the i18n sweep
+- `tests/Feature/LocalizationTest.php`, `tests/Feature/ActivityLogTest.php` — coverage extensions only
+- No `app/` changes. If the sweep finds a hardcoded string in application code, that is a fix in the owning task's file, raised rather than absorbed here.
 
 **Does**
 The i18n sweep and its enforcement test extended over every new surface. Activity-log coverage confirmed for every financial mutation in design §12. Then the documentation, in the same pass: the system design corrected wherever phase 2 changed it, `docs/ENGINEERING.md` updated with any convention this phase established — the local-period-to-UTC rule and the never-dehydrate-a-guarded-field rule are both candidates — this plan marked complete with its deviations recorded, and `docs/CHANGELOG.md` written in plain language.
