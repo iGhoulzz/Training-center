@@ -58,22 +58,48 @@ Neither agent merges its own work without the other's review.
 
 ## The unit of work: a task
 
-A milestone is split into tasks that are **independent** — no shared files, no sequential dependency. Dependent work stays in one task and goes to one agent. Two agents editing the same file in parallel produces merge conflicts that cost more than the parallelism saved.
+A milestone is split into tasks, and the tasks are grouped into **waves**.
+
+**Independence is required within a wave, not across the milestone.** Two tasks running at the same time must share no files — two agents editing one file in parallel produces merge conflicts that cost more than the parallelism saved. **Sequential dependencies between waves are expected and allowed.**
+
+This rule previously read "no shared files, no sequential dependency" and forbade dependencies outright. That was written for phase 1, where Claude worked alone and the ordering lived in one head. It does not survive a milestone whose schema must exist before anything else can be built: phase 2 has an unavoidable dependency chain, and a rule forbidding it would be either ignored or worked around by inventing artificially large tasks. The property worth protecting was always *concurrent* file isolation.
 
 Each task has:
 
 - An ID: `P1-T04`
 - A single owner: Claude or Codex
-- An explicit file scope — which paths it may touch
+- An explicit file scope — which paths it may touch, **including named test files**, never a bare directory
 - A definition of done, including which tests must pass
+- The wave it belongs to, and what it depends on
 
-Task assignment lives in the milestone's plan document under `docs/plans/`.
+Task assignment lives in the milestone's plan document under `docs/superpowers/plans/`.
+
+### Concurrency: one task each, at most
+
+**At any moment Claude may own one ready task and Codex may own one ready task.** That is the ceiling. "Parallel" means one Claude task and one Codex task whose exact file scopes do not overlap — never three simultaneous Codex tasks.
+
+The limit is not about capacity. Every extra concurrent task is another branch to keep current, another diff a reviewer must hold in mind, and another chance that two scopes overlap in a way nobody notices until merge. Two is reviewable; more is bookkeeping.
+
+A wave may legitimately carry only one task, when the dependency graph leaves the other agent nothing ready. The idle agent reviews.
+
+### Starting a downstream task
+
+**A downstream worktree is created from updated `main`, and only after the PR it depends on has merged with green CI.**
+
+```bash
+git checkout main && git pull --ff-only
+git worktree add ../Training-center-worktrees/P2-T04 -b p2/t04-payments
+```
+
+Branching from a dependency's *branch* instead of merged `main` couples two reviews together: the downstream diff then contains the upstream work, so the reviewer cannot see what the task itself changed, and every upstream correction has to be replayed downstream by hand.
 
 ---
 
 ## Isolation: one worktree, one branch per task
 
 Every task gets its own Git worktree and branch. Agents never share a working directory.
+
+**No agent edits the other agent's active worktree.** Not to fix a typo, not to apply its own review finding, not to unblock itself. A worktree belongs to the agent that owns the task until that task's branch is merged. An edit arriving from outside is invisible to the owner's next `composer verify`, absent from their mental model of their own diff, and indistinguishable — in the log — from work they did themselves.
 
 ```bash
 git worktree add ../Training-center-worktrees/P1-T04 -b p1/t04-activity-log
@@ -140,6 +166,8 @@ The reviewer is checking for:
 - **Scope** — did the change stay inside its declared file scope?
 
 The reviewer verifies claims rather than trusting the PR description. If the description says tests pass, the reviewer confirms it.
+
+**Review is read-only. Findings are implemented by the task's author, never by the reviewer.** The reviewer may read the branch, run the suite against it, and inspect anything in the repository — and writes nothing. A reviewer who fixes what they find has reviewed their own work by the time anyone reads it, which is the one thing this whole cycle exists to prevent. It also destroys the signal in how many rounds a task took.
 
 A review that finds nothing is a valid outcome and should be stated plainly. Manufacturing findings to appear thorough wastes both agents' time.
 

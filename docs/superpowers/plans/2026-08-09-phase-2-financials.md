@@ -1,6 +1,6 @@
 # Phase 2 — Financials Implementation Plan
 
-**Status:** Revision 5, incorporating three Codex step-0 rounds and one independent pre-review. **Awaiting re-review. No task begins until that review signs off.**
+**Status:** Revision 6 — the step-0 review is closed and the plan is approved. Scheduling reorganised into waves under the revised `docs/WORKFLOW.md`. **Task 1 may begin.**
 
 **Goal:** A working system where a student is enrolled, billed, and takes a receipt away from the desk; where balances and revenue are always derivable from source rows; where staff compensation is configured and payroll is **approved and posted** without history moving; and where every figure exports to Excel and PDF.
 
@@ -69,28 +69,50 @@ Before returning to Codex, a fresh reviewer with no implementation context read 
 
 ---
 
-## Task order and dependencies
+## Waves, ownership and dependencies
 
-| Task | Owner | Depends on | Notes |
+Per `docs/WORKFLOW.md`: **at most one Claude task and one Codex task run at a time**, they must share no files, and a downstream worktree is cut from updated `main` only after its dependency has merged with green CI.
+
+| Wave | Claude | Codex | Unblocked by finishing |
 |---|---|---|---|
-| 1 Finance foundation | Claude | — | Everything depends on it |
-| 2 Pricing & discounts | Codex | 1 | |
-| 3 Enrol & bill | Claude | 1, 2 | Closes the unbilled-enrolment path |
-| 4 Payments & tenders | Claude | 1, 3 | Security-critical |
-| 5 Charge corrections | Codex | 1 | |
-| 6 Receipts | Codex | 4 | |
-| 7 Compensation | Codex | 1 | |
-| 8 Payroll runs | Claude | 3, 7 | Invariant-heavy |
-| 9 Enrol-and-collect flow | Claude | 3, 4, 6 | The phase's primary UI |
-| 10 Report queries | Claude | 3, 4 | |
-| 11 Report pages & export | Codex | 6, 10 | Needs task 6's mPDF renderer |
-| 12 Phase reconciliation | Claude | all | |
+| 1 | **T1** Finance foundation | *(reviews T1)* | everything |
+| 2 | **T5** Charge corrections | **T2** Pricing & discounts | T2 unblocks T3 |
+| 3 | **T3** Enrol & bill | **T7** Compensation | T3 unblocks T4/T8/T10; T7 unblocks T8 |
+| 4 | **T4** Payments & tenders | **T8** Payroll runs | T4 unblocks T6/T9/T10 |
+| 5 | **T10** Report queries | **T6** Receipts | both unblock T11; T6 unblocks T9 |
+| 6 | **T9** Enrol-and-collect | **T11** Report pages & export | |
+| 7 | **T12** Phase reconciliation | *(reviews T12)* | milestone closes |
 
-**Changed in revision 2:** task 4 now depends on 3 (payments need bills to exist and derive the student from the locked charge) · tasks 8 and 10 depend on 3 for `EnrollmentQueryService` · task 11 depends on 6 as well as 10, because the report PDF renderer is the one task 6 installs.
+Seven waves, and **both agents have work in waves 2 through 6** — no idle slot in the middle of the phase.
 
-**Changed in revision 4:** task 1 takes `EnrollStudentAction` as a declared crossing, because the migration that makes `reference` non-nullable and the code that fills it cannot land in different tasks without shipping a broken `main` between them.
+### Two ownership changes, and why
 
-**Tasks 2, 5 and 7 are mutually independent** and parallelize the moment task 1 lands.
+The dependency graph, not preference, decides these. With one task per agent per wave, the schedule stalls unless ownership follows what is *ready*.
+
+- **T5 charge corrections: Codex → Claude.** After T1 lands, the only tasks ready are T2, T5 and T7 — all originally Codex's — while Claude's next task T3 waits on T2. Claude would sit idle through the wave that unblocks its own work. T5 depends on T1 alone and shares no file with T2.
+- **T8 payroll runs: Claude → Codex.** In wave 4 the only work ready alongside T4 is T8, and T4 cannot be handed away — it is the phase's security-critical task. Codex also owns T7, whose `payroll.php` T8 extends and whose compensation model T8 consumes, so the pairing keeps one agent across both halves of payroll instead of handing the file over mid-phase.
+
+**T8 was assigned to Claude on the reasoning that invariant-heavy work stays with the lead**, and that reasoning is not wrong — it is outranked. T4 carries the money-in integrity, the idempotency and the allocation invariants; T8 carries payroll correctness, which is recoverable by an adjustment run in a way a mis-recorded payment is not. If you would rather Claude keep T8, the cost is one extra wave with Codex idle, and that is a legitimate trade to prefer.
+
+### Dependency notes carried forward
+
+**Revision 2:** T4 depends on T3 (payments need bills, and derive the student from the locked charge) · T8 and T10 depend on T3 for `EnrollmentQueryService` · T11 depends on T6 as well as T10, because T6 installs the PDF renderer.
+
+**Revision 4:** T1 takes `EnrollStudentAction` as a declared crossing, because the migration that makes `reference` non-nullable and the code that fills it cannot land in different tasks without shipping a broken `main` between them.
+
+### Same-wave file isolation, checked pair by pair
+
+The rule that matters is that **concurrent** scopes do not overlap. Each pair below was checked against the file scopes as written, not assumed:
+
+| Wave | Pair | Overlap |
+|---|---|---|
+| 2 | T5 charges · T2 pricing | none — `ChargeResource`/`charges.php` against `DiscountResource`/pricing Actions/`pricing.php` and the two Enrollment resource tests |
+| 3 | T3 billing · T7 compensation | none — Finance Actions, the two query services and `billing.php` against the compensation resource and `payroll.php` |
+| 4 | T4 payments · T8 payroll | none — payment Actions and `payments.php` against payroll Actions and `payroll.php` |
+| 5 | T10 reports · T6 receipts | none — `Reports/` and `ReportPeriod` against the receipt job, view, controller and `receipt.php` |
+| 6 | T9 flow · T11 report pages | none — the collect page and `collect.php` against report pages, exporters and `reports.php` |
+
+Three files are touched by more than one task, and every case is **sequential across waves**, never concurrent: `tests/Feature/Staff/ActionBoundaryArchTest.php` (T1 → T3 → T6), `lang/en/payroll.php` (T7 → T8), and `RecordPaymentAction` (T4, then T6 adds its dispatch line).
 
 ### File ownership, checked for real
 
@@ -113,8 +135,11 @@ Revision 1 stated a single `lang/en/finance.php` in the design while the plan sp
 Per `docs/WORKFLOW.md`:
 
 ```bash
+git checkout main && git pull --ff-only
 git worktree add ../Training-center-worktrees/P2-T{NN} -b p2/t{nn}-{slug}
 ```
+
+**From updated `main`, after the dependency PR has merged with green CI** — never from a dependency's branch, which would put the upstream work inside this task's diff.
 
 Then in the new worktree: `composer install`, copy `.env` from the main checkout **without reading it** (it holds the database password), `npm ci`, and `git config core.hooksPath .githooks`. Run `composer dump-autoload` after pulling — the `Tooling\` mapping is needed before any test runs, and a stale autoloader kills the whole suite with an error that reads like a broken merge.
 
@@ -125,7 +150,7 @@ At the end: open a PR, get the other agent's review, resolve, merge, then **tag 
 ---
 
 ## Task 1 — Finance foundation
-**Owner: Claude · `p2/t01-finance-foundation` · depends on nothing**
+**Wave 1 · Owner: Claude · `p2/t01-finance-foundation` · depends on nothing**
 
 The whole schema in one task with one owner, because every other task builds on it.
 
@@ -140,7 +165,10 @@ The whole schema in one task with one owner, because every other task builds on 
 - `tests/Feature/Enrollment/` — the existing enrolment tests, which now exercise the real post-migration path
 - **Declared crossing: `tests/Feature/Staff/ActionBoundaryArchTest.php`.** Its enrolment `update` rule allows only `WithdrawEnrollmentAction`, and the reference replacement is an update inside `EnrollStudentAction`. The allowlist is extended deliberately, with the reason recorded in the test — **not** worked around by laundering the write through a differently-named variable, which the test's own comments already identify as the hole in its pattern matching. Task 3 edits this file again for its own rule; task 3 follows task 1, so this is ordering, not a conflict.
 - **Declared crossing: `tests/Feature/LocalizationTest.php`.** Its Arabic-empty check is a hardcoded four-file dataset, so the eight catalogues this phase adds would ship unchecked. Task 1 makes the dataset derive from the files present in `lang/en`, covering every later task automatically.
-- `tests/Feature/Finance/`
+- `tests/Feature/Finance/FinanceSchemaTest.php` — every CHECK, index and generated column proven by a violating insert
+- `tests/Feature/Finance/MoneyTest.php`, `ReferenceTest.php`, `ChargeBalanceTest.php`
+- `tests/Feature/Finance/FinancePermissionSeedingTest.php` — the exact seeded set from design §10
+- `tests/Feature/Finance/EnrollmentReferenceBackfillTest.php` — the four migrations, each retried independently
 
 **Does**
 Every table from design §9 with its `CHECK` constraints, foreign keys, indexes and generated columns — including the three-shape `CHECK` on `payroll_lines`, the nullable `frozen_rate`, the nullable-and-indexed `posting_period_start` paired to `finalized_at`, and **`payments.request_fingerprint`**, which task 4 needs and owns no migration to create.
@@ -153,7 +181,7 @@ Migrations run clean and roll back clean, **each of the four enrolment migration
 ---
 
 ## Task 2 — Pricing and discounts
-**Owner: Codex · `p2/t02-pricing-discounts` · depends on 1**
+**Wave 2 · Owner: Codex · `p2/t02-pricing-discounts` · depends on 1**
 
 **File scope**
 - `app/Domain/Finance/Filament/Resources/DiscountResource*`, `Policies/DiscountPolicy.php`
@@ -162,7 +190,8 @@ Migrations run clean and roll back clean, **each of the four enrolment migration
 - **Declared crossing:** `CourseResource`, `BatchResource`, and their Create/Edit pages, plus a new `WritesPricingThroughActions` concern
 - `lang/en/pricing.php`, `lang/ar/pricing.php` (empty)
 - **`tests/Feature/Enrollment/CourseResourceTest.php` and `BatchResourceTest.php`** - task 2 *adds* super-admin cases; the existing admin price-absence and smuggled-payload assertions keep passing unchanged under design 3's visibility rule
-- `tests/Feature/Finance/`
+- `tests/Feature/Finance/PricingBoundaryTest.php` — super-admin persists, admin's crafted state ignored, null↔0.000, precision rejection
+- `tests/Feature/Finance/DiscountDefinitionTest.php` — immutability, delete-before-use, FK refusal after use
 
 **Does**
 Live price inheritance in `PricingService`. **The executable write boundary from design §3**: price fields are `dehydrated(false)` for every actor without exception, so generic persistence never sees a price. A save hook checks `manage_pricing` before reading raw state; without the ability it skips pricing entirely, and with the ability it calls the pricing Action only for a real change. The Actions self-authorize, and a refusal throws `Halt::rollBackDatabaseTransaction()`. Copy `WritesUserThroughActions`, which already solves this exact problem for roles and `is_active`.
@@ -177,7 +206,7 @@ A super admin sets a price on create **and** changes it on edit, through the rea
 ---
 
 ## Task 3 — Enrol and bill
-**Owner: Claude · `p2/t03-enroll-and-bill` · depends on 1, 2**
+**Wave 3 · Owner: Claude · `p2/t03-enroll-and-bill` · depends on 1, 2**
 
 The highest integration risk in the phase, and the task that closes the unbilled-enrolment path.
 
@@ -189,7 +218,9 @@ The highest integration risk in the phase, and the task that closes the unbilled
 - `tests/Feature/Staff/ActionBoundaryArchTest.php` — the new enrolment rule
 - **Existing phase 1 tests:** `EnrollmentsRelationManagerTest` and any other enrolment test whose expectations change now that enrolling raises a bill
 - `app/Domain/Finance/Exceptions/`, `lang/en/billing.php`
-- `tests/Feature/Finance/`
+- `tests/Feature/Finance/EnrollAndBillTest.php` — the wrapped transaction, discount authorization, frozen charge figures
+- `tests/Feature/Finance/EnrollmentDeletionWithChargeTest.php` — deletable untouched, refused once money moved
+- `tests/Feature/Finance/EnrollmentQueryServiceTest.php` — the four-consumer contract
 
 **Does**
 `EnrollAndBillAction` wraps `EnrollStudentAction` and `IssueChargeAction` in one transaction, authorizing `create` on `Enrollment` plus `apply_discount` when a discount was chosen. **`EnrollmentsRelationManager` is migrated to call it**, and an architecture test asserts nothing under `app/` calls `EnrollStudentAction` except `EnrollAndBillAction`.
@@ -204,7 +235,7 @@ A staff member with no finance permission enrols a walk-in and the bill is raise
 ---
 
 ## Task 4 — Payments and tenders
-**Owner: Claude · `p2/t04-payments` · depends on 1, 3**
+**Wave 4 · Owner: Claude · `p2/t04-payments` · depends on 1, 3**
 
 The security-critical task of the phase.
 
@@ -215,7 +246,9 @@ The security-critical task of the phase.
 - `app/Domain/Finance/Filament/Resources/PaymentResource*`, `Policies/PaymentPolicy.php`
 - `app/Domain/Finance/Rules/NotACardNumber.php`
 - `lang/en/payments.php`, `lang/ar/payments.php` (empty)
-- `tests/Feature/Finance/`
+- `tests/Feature/Finance/RecordPaymentTest.php` — split tenders, allocation equality, overpayment refusal, derived student
+- `tests/Feature/Finance/PaymentIdempotencyTest.php` — replay, conflict, concurrency, settled-bill replay
+- `tests/Feature/Finance/PaymentReversalTest.php`, `PaymentAuthorizationTest.php`
 
 **Does**
 Atomic create-and-finalize — payment, tenders and allocations in one transaction, no draft state. `PaymentInvariantService` locks the charge, derives outstanding under that lock, and checks tender total equals allocation total and allocation does not exceed outstanding.
@@ -230,13 +263,14 @@ Receipt assertions belong to tasks 6 and 9 — **receipts do not exist yet at th
 ---
 
 ## Task 5 — Charge corrections
-**Owner: Codex · `p2/t05-charge-corrections` · depends on 1**
+**Wave 2 · Owner: Claude · `p2/t05-charge-corrections` · depends on 1** — reassigned from Codex; see "Two ownership changes" above
 
 **File scope**
 - `app/Domain/Finance/Actions/` — `AdjustChargeAction`, `WriteOffChargeAction`
 - `app/Domain/Finance/Filament/Resources/ChargeResource*`, `Policies/ChargePolicy.php`
 - `lang/en/charges.php`, `lang/ar/charges.php` (empty)
-- `tests/Feature/Finance/`
+- `tests/Feature/Finance/AdjustChargeTest.php` — reason required, refusal below allocated, activity-log properties
+- `tests/Feature/Finance/WriteOffChargeTest.php`, `ChargeResourceTest.php`
 
 **Does**
 Both Actions super-admin-only with a mandatory reason written into the activity log alongside the before/after diff. `AdjustChargeAction` refuses to drop the amount below what is already allocated. `ChargeResource` is read-plus-two-actions, sorting and filtering outstanding through `ChargeBalance`'s SQL expression.
@@ -247,7 +281,7 @@ An admin holding every charge read permission cannot adjust or write off, assert
 ---
 
 ## Task 6 — Receipts
-**Owner: Codex · `p2/t06-receipts` · depends on 4**
+**Wave 5 · Owner: Codex · `p2/t06-receipts` · depends on 4**
 
 **Dependency change, pre-approved by the owner:** `composer require mpdf/mpdf`. See design §8 for why not Browsershot and why not dompdf.
 
@@ -259,6 +293,8 @@ An admin holding every charge read permission cannot adjust or write off, assert
 - `app/Http/Controllers/Finance/ReceiptDownloadController.php`, `routes/web.php`
 - **Declared crossing:** one dispatch line in `RecordPaymentAction` — sequential after task 4 merges, so not a parallel edit
 - `lang/en/receipt.php`, `lang/ar/receipt.php` (empty)
+- `tests/Feature/Finance/ReceiptGenerationTest.php` - every required field in a rendered PDF, retry-safety, one receipt after a replayed payment
+- `tests/Feature/Finance/ReceiptDownloadTest.php` - policy-authorized download, unreachable without it, reversed payment's receipt retained
 
 **Does**
 Queued generation to the private disk, dispatched `afterCommit()`. Every field listed in design §2. Download through a policy-authorized controller reusing the `StaffCertificateDownloadController` and `AuthenticatePrivateFileSession` pattern.
@@ -269,14 +305,15 @@ Every required field appears, verified against a rendered PDF · the file lands 
 ---
 
 ## Task 7 — Compensation
-**Owner: Codex · `p2/t07-compensation` · depends on 1**
+**Wave 3 · Owner: Codex · `p2/t07-compensation` · depends on 1**
 
 **File scope**
 - `app/Domain/Finance/Actions/ChangeCompensationAction.php`
 - `app/Domain/Finance/Services/CompensationPeriodInvariantService.php`
 - `app/Domain/Finance/Filament/Resources/StaffCompensationResource*`, `Policies/StaffCompensationPolicy.php`
 - `lang/en/payroll.php`, `lang/ar/payroll.php` (empty)
-- `tests/Feature/Finance/`
+- `tests/Feature/Finance/CompensationTest.php` — raise closes and inserts, overlap refused, update permission refused
+- `tests/Feature/Finance/CompensationConcurrencyTest.php` — two first rows from an empty table
 
 **Does**
 A raise closes the previous row and inserts a new one in one transaction, authorized on **`create_staff_compensation`** — create is the write ability for this table, because the only legitimate change to a rate is a new row. Rates are never overwritten. **The overlap invariant locks the `users` row**, not the compensation rows — when a person has none, there is nothing else to lock.
@@ -287,7 +324,7 @@ A raise produces two rows with contiguous, non-overlapping periods · an overlap
 ---
 
 ## Task 8 — Payroll runs
-**Owner: Claude · `p2/t08-payroll` · depends on 3, 7**
+**Wave 4 · Owner: Codex · `p2/t08-payroll` · depends on 3, 7** — reassigned from Claude; see "Two ownership changes" above
 
 **File scope**
 - `app/Domain/Finance/Actions/` — `CreatePayrollRunAction`, `FinalizePayrollRunAction`, `AdjustPayrollLineAction`
@@ -295,7 +332,9 @@ A raise produces two rows with contiguous, non-overlapping periods · an overlap
 - `app/Domain/Finance/Filament/Resources/PayrollRunResource*` and its draft-review page
 - `app/Domain/Finance/Policies/PayrollRunPolicy.php`
 - `lang/en/payroll.php` — **additions only**; the file is created in task 7
-- `tests/Feature/Finance/`
+- `tests/Feature/Finance/PayrollSegmentTest.php` — partial previous month plus full current month, mid-period raise, denominators
+- `tests/Feature/Finance/PayrollFinalizationTest.php` — double-pay refused at the database, overlap refused by the lock, shape-versus-type
+- `tests/Feature/Finance/PayrollAdjustmentRunTest.php` — the four invariants and the posting period
 
 **Does**
 All three run types. `monthly_salary` builds **segment lines** by intersecting the run period, each calendar month, and each compensation row's validity, freezing segment bounds, rate, days and denominator. `instructor_batch` is on-demand: the draft lists assignments not already paid in a finalized run, derived by looking at finalized lines with no stored paid flag, and **freezes the assigned hours as well as the rate**. `adjustment` runs correct finalized lines with signed amounts and a mandatory reason.
@@ -310,7 +349,7 @@ Finalization copies the frozen figures, `finalized_at` and `posting_period_start
 ---
 
 ## Task 9 — Enrol-and-collect flow
-**Owner: Claude · `p2/t09-enroll-and-collect` · depends on 3, 4, 6**
+**Wave 6 · Owner: Claude · `p2/t09-enroll-and-collect` · depends on 3, 4, 6**
 
 The phase's primary user-facing surface.
 
@@ -318,7 +357,7 @@ The phase's primary user-facing surface.
 - `app/Domain/Finance/Filament/Pages/EnrollAndCollect.php` and its schema/steps
 - `resources/views/filament/finance/`
 - `lang/en/collect.php`, `lang/ar/collect.php` (empty)
-- `tests/Feature/Finance/`
+- `tests/Feature/Finance/EnrollAndCollectFlowTest.php` — the full flow through Livewire, staff sees no discount, double-submit
 
 **Does**
 The eight-step flow from design §2. Allocation is decided by context and never shown to the operator. The idempotency key is minted when the collection step is first rendered.
@@ -329,14 +368,15 @@ The full flow is driven through Livewire end to end and produces enrolment, bill
 ---
 
 ## Task 10 — Report queries
-**Owner: Claude · `p2/t10-report-queries` · depends on 3, 4**
+**Wave 5 · Owner: Claude · `p2/t10-report-queries` · depends on 3, 4**
 
 Query services with **no UI at all**, so every figure is tested before anything renders it.
 
 **File scope**
 - `app/Domain/Finance/Reports/` — one class per report from design §8
 - `app/Domain/Finance/Support/ReportPeriod.php` — the local-to-UTC boundary conversion, defined once
-- `tests/Feature/Finance/Reports/`
+- `tests/Feature/Finance/Reports/RevenueReportTest.php`, `OutstandingAgedReportTest.php`, `TenderBreakdownReportTest.php`, `DailyTenderReportTest.php`, `WageCostReportTest.php`, `ProfitReportTest.php`, `StudentPaymentHistoryTest.php`
+- `tests/Feature/Finance/Reports/ReportPeriodTest.php` — local Africa/Tripoli boundaries converted to half-open UTC
 
 **Does**
 Every report from design §8. **Periods are local `Africa/Tripoli` calendar ranges converted to half-open UTC ranges** before they reach the database, through the timezone database rather than a fixed offset, so the `received_at` index is used. Reads enrolment data through `EnrollmentQueryService`.
@@ -347,7 +387,7 @@ Every report is asserted against a fixture with known figures · **a reversed pa
 ---
 
 ## Task 11 — Report pages and export
-**Owner: Codex · `p2/t11-reports-export` · depends on 6, 10**
+**Wave 6 · Owner: Codex · `p2/t11-reports-export` · depends on 6, 10**
 
 **File scope**
 - `app/Domain/Finance/Filament/Pages/Reports/`
@@ -355,6 +395,8 @@ Every report is asserted against a fixture with known figures · **a reversed pa
 - `app/Domain/Finance/Jobs/GenerateReportPdfJob.php`, `resources/views/finance/reports/`
 - `database/migrations/` — publish Filament's `exports` and `failed_import_rows` tables. **A deliberate exception to task 1 owning the schema:** these are vendor-published tables serving only this task, and nothing else in the phase depends on them
 - `lang/en/reports.php`, `lang/ar/reports.php` (empty)
+- `tests/Feature/Finance/Reports/ReportPageAccessTest.php` - admin views and exports, staff reaches neither
+- `tests/Feature/Finance/Reports/ReportExportTest.php` - permission-scoped export rows, formula neutralization read back from the generated file
 
 **Does**
 A Filament page per report, gated on `view_financial_report`. XLSX through Filament's native queued export over the already-installed openspout — **no new Excel dependency**. PDF through the mPDF renderer task 6 installs. Both queued, both notifying in-app.
@@ -365,7 +407,7 @@ An admin can view and export; a staff member can reach neither · **the export q
 ---
 
 ## Task 12 — Phase reconciliation
-**Owner: Claude · `p2/t12-reconciliation` · depends on all**
+**Wave 7 · Owner: Claude · `p2/t12-reconciliation` · depends on all**
 
 **File scope**
 - `docs/superpowers/specs/2026-07-20-training-center-dashboard-design.md`, `docs/ENGINEERING.md`, `docs/CHANGELOG.md`, this plan
