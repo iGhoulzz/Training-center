@@ -1,16 +1,20 @@
 # Phase 2 — Financials: Design
 
 **Date:** 2026-08-09
-**Status:** Revision 2 — incorporates the Codex step-0 review. Awaiting re-review.
+**Status:** Revision 3 — incorporates both rounds of the Codex step-0 review. Awaiting re-review.
 **Supersedes:** the phase 2 sections of `2026-07-20-training-center-dashboard-design.md` wherever the two disagree. Those sections were written at architectural detail before a charge model existed; this document is at implementation detail and is authoritative for phase 2.
 
 **Revision 2 changed:** the enrolment write path (§12), salaried payroll segmentation and post-finalization correction (§7), payment idempotency and derived student identity (§5), the pricing write boundary (§3), charge due dates (§4), reporting time zones (§8), compensation locking (§7), and the schema guarantees in §9. Two review findings were **declined** — see §16.
+
+**Revision 3 changed:** reference generation, which revision 2 left impossible — a non-nullable column written after insert (§2) · the enrolment backfill, split into three recoverable migrations (§2) · frozen instructor hours, dropped by revision 2 in violation of the system design (§7) · adjustment-run invariants, posting period and lock ordering (§7) · idempotency fingerprinting (§5) · the pricing hook, which as revision 2 wrote it would have refused **every ordinary admin edit** (§3) · explicit actor-first authorization on the payment Actions and the cross-domain route to the student (§5) · the `EnrollmentQueryService` contract, widened to four consumers (§12).
 
 ---
 
 ## 1. Purpose and scope
 
-Phase 2 gives the centre its money. Students are billed for the courses they enrol on, payments are recorded against those bills, staff compensation is configured and paid, and the whole thing reports and exports.
+Phase 2 gives the centre its money. Students are billed for the courses they enrol on, payments are recorded against those bills, staff compensation is configured and payroll is **approved and posted**, and the whole thing reports and exports.
+
+Payroll is never *paid* by this system — see §7. The word is avoided deliberately throughout.
 
 **In scope:** pricing, discounts, charges, payments, allocations, balances, compensation configuration, payroll, financial reports, Excel and PDF export, printed receipts.
 
@@ -59,7 +63,13 @@ Receipts are generated to the private disk (§6 of the system design) and served
 | `CHG-` | `charges` | `CHG-{year}-{id padded to 6}` |
 | `RCT-` | `payments` | `RCT-{year}-{id padded to 6}` |
 
-Each carries a unique index. The reference is written **immediately after insert inside the same transaction** — MySQL forbids a generated column from referencing an `AUTO_INCREMENT` column, so the stored-generated-column approach used elsewhere in this design is unavailable here.
+Each carries a unique index and is **non-nullable**. MySQL forbids a generated column from referencing an `AUTO_INCREMENT` column, so the stored-generated-column approach used elsewhere in this design is unavailable, and the final value cannot be known until the row has an id.
+
+**The row is therefore inserted carrying a unique placeholder — a UUID — and updated to its real reference inside the same transaction.** Both writes are in one transaction, so no other connection ever observes the placeholder, and the column keeps `NOT NULL UNIQUE` throughout.
+
+Revision 2 said only that the reference was "written immediately after insert", while the column was non-nullable — which cannot work, because there is nothing to write at insert time and the insert fails first. The alternative considered and rejected was making the column nullable and letting the Actions guarantee presence: that is a convention rather than a guarantee, and this project's whole position is that validation which matters is mirrored in the database. A placeholder costs one extra `UPDATE` and keeps the constraint real.
+
+A test asserts that no row survives a transaction carrying a placeholder value.
 
 These are deliberately **not** the phase 3 certificate pattern. A certificate reference is exposed to an unauthenticated public verifier and must be unguessable; a bill reference is read by the person holding the bill, and a sequential, human-readable, phone-dictatable number is the correct trade-off. **Do not "harden" these into random strings.**
 
@@ -67,7 +77,15 @@ These are deliberately **not** the phase 3 certificate pattern. A certificate re
 
 ### Backfilling `ENR-` onto existing rows
 
-`enrollments` already holds rows in every development and test database. The migration adds `reference` as nullable, backfills every existing row deterministically as `ENR-{year of enrolled_at}-{id}`, then adds the unique index and makes the column non-nullable — three steps in one migration, in that order. Adding a non-nullable unique column to a populated table in one step fails, and a backfill that runs after the index is added races itself.
+`enrollments` already holds rows in every development and test database.
+
+**Three separate migrations, not one.** MySQL does not roll back DDL, so a single migration mixing `ALTER TABLE` with a data backfill leaves a half-migrated table that `migrate:rollback` cannot repair and that the next `migrate` refuses to re-apply:
+
+1. Add `reference` as nullable.
+2. Backfill every existing row as `ENR-{year of enrolled_at}-{id}` — pure DML, re-runnable, and independently recoverable if it fails part-way.
+3. Add the unique index and tighten the column to non-nullable.
+
+The order matters in both directions: adding a non-nullable unique column to a populated table fails outright, and indexing before the backfill means the backfill races the constraint it is trying to satisfy.
 
 ---
 
@@ -104,7 +122,10 @@ The boundary is therefore built the way `UserResource` already builds one, using
 
 - **Price fields are `dehydrated(false)` for every actor, without exception.** Generic persistence never sees a price, so there is no path by which one is written outside an Action — including the super admin's own path. A field that is merely `disabled()` for some actors leaves the write shape intact for others.
 - A `WritesPricingThroughActions` concern, shared by the create and edit pages of both resources, reads `$this->form->getRawState()` in the save hook and calls `UpdateCoursePriceAction` / `UpdateBatchPriceAction`.
-- Those Actions authorize `manage_pricing` and are the **only** writers of `courses.default_price` and `batches.price`, initial value included.
+- **The Action is called only when the price actually changed.** The raw state is normalized to integer dirham and compared with the persisted value — a string comparison would read `100` and `100.000` as a change. If they match, no Action runs.
+
+  This is load-bearing, not an optimisation. An admin has no `manage_pricing`, but the price is still present in the form's raw state when they rename a course. Calling the Action unconditionally would authorize-and-refuse on **every ordinary admin edit**, so renaming a course would fail with an authorization error about a field the admin never touched. A test proves an admin can edit a non-price field while the price is left alone.
+- Those Actions authorize `manage_pricing` and are the **only** writers of `courses.default_price` and `batches.price`, initial value included. On create, an absent or null price calls nothing.
 - A refusal throws `Halt::rollBackDatabaseTransaction()` so a rejected price change undoes the attribute write with it, rather than leaving the rename committed and the price refused.
 
 **Tests, both directions:** a super admin sets and changes a price through the real Livewire component and it persists; an admin crafting a Livewire state update on the price field does not persist a value and the Action refuses. Asserting a disabled field is not a test of this boundary.
@@ -166,6 +187,8 @@ Withdrawal is **not** a financial event. Withdrawing an enrolment leaves the bil
 
 `RecordPaymentAction` is the **receipt-confirmation boundary**, used only after cash has been physically counted or the card terminal has shown Approved. The application records an event that already happened; it does not authorise one.
 
+`RecordPaymentAction` and `ReversePaymentAction` are ordinary request-path Actions: **actor first, self-authorizing via `Gate::forUser($actor)`**, exactly as `docs/ENGINEERING.md` requires and as every phase 1 Action already does. They are not internal collaborators — that exemption belongs only to `IssueChargeAction` and `DeleteUncommittedChargeAction` (§10). Each is tested by invoking the Action directly with an unauthorized actor and asserting the denial, not merely by checking that a Filament button is hidden.
+
 ### One receipt, one or more tenders
 
 A single customer payment is **one parent `payments` row** — student, `received_at`, `recorded_by`, `RCT-…`, notes — carrying **one or more `payment_tenders`**, each with a method, an amount, and an optional external reference.
@@ -182,7 +205,7 @@ A 1,000 bill settled with 300 on card and 700 in cash is one payment, one receip
 
 ### The student is derived, never supplied
 
-`RecordPaymentAction` takes the **bill**, not a student. It locks the charge, walks to its enrolment, and takes `student_id` from there. The DTO has no student field at all, so a crafted request cannot attach a payment to one student while settling another's bill — there is nothing to attach.
+`RecordPaymentAction` takes the **bill**, not a student. It locks the charge and resolves the owning student **through `EnrollmentQueryService`** — not by walking `$charge->enrollment`, which would be Finance querying an Enrolment model directly and is what the domain-boundary architecture test forbids. The DTO has no student field at all, so a crafted request cannot attach a payment to one student while settling another's bill; there is nothing to attach.
 
 A test drives exactly that: a crafted submission targeting student A's bill while claiming student B, asserting the stored payment belongs to A. Accepting an independently supplied identifier and then validating it is a weaker construction than never accepting it.
 
@@ -190,9 +213,16 @@ A test drives exactly that: a crafted submission targeting student A's bill whil
 
 Atomic finalization plus a double-clicked button equals two payments and two receipts for one handover of cash. Nothing else in the design catches it: both submissions are individually valid.
 
-**`payments.idempotency_key`** is a client-generated UUID, minted when the collection form is first rendered and submitted with the payment, under a unique index. A replayed submission raises the unique violation, which the Action converts — **matching on the index name, as `EnrollStudentAction` already does** — into returning the payment that already exists. The second click gets the first receipt, not a second one.
+**`payments.idempotency_key`** is a client-generated UUID, minted when the collection form is first rendered and submitted with the payment, under a unique index. A replayed submission raises the unique violation, which the Action converts — **matching on the index name, as `EnrollStudentAction` already does** — rather than surfacing a raw driver error.
 
-Tested sequentially (the same key submitted twice yields one row) and concurrently (two simultaneous submissions with one key yield one row and no error to the user).
+**The key alone is not enough, and returning whatever payment owns it is wrong.** A key reused with a different bill or a different tender breakdown would hand back an unrelated receipt for money that was never recorded — a worse failure than the duplicate it was meant to prevent.
+
+Each payment therefore stores a **canonical request fingerprint** alongside the key: a hash over the charge id, the allocation amount, and the tender lines normalized to a stable order and to integer dirham. On a key collision the Action compares fingerprints:
+
+- **Identical** — a genuine replay. Return the existing payment. The second click gets the first receipt.
+- **Different** — raise `IdempotencyConflictException`. The same key is being used for a different request, and the only safe answer is to refuse both silently succeeding and silently returning the wrong thing.
+
+Tested sequentially (the same key and request twice yields one row), concurrently (two simultaneous identical submissions yield one row and no error), and on conflict (the same key with a different bill or tender split raises, and creates nothing).
 
 ### Finalization is atomic
 
@@ -254,6 +284,8 @@ Three run types, all **draft → finalized → immutable**.
 
 **`instructor_batch`** — an **on-demand** run. The draft lists every instructor-hour assignment not already paid in a finalized run, whatever the batch's status, and the operator ticks which to include. A batch is paid as one lump, either before it starts or after it finishes.
 
+**An instructor line freezes the hours as well as the rate.** `frozen_hours` copies `batch_instructor.assigned_hours` at finalization, and `computed_amount = frozen_rate × frozen_hours`. The system design requires a run to freeze "the rate and hours used at the moment of calculation", and revision 2 lost the hours when it replaced the generic quantity column with salary-specific day columns. Without them, an allocation edited after payment leaves a finalized amount that nothing in the database can explain — the figure would be right and unjustifiable, which for a wage record is the same as being wrong.
+
 This resolves a gap the original design did not notice: `batch_instructor.assigned_hours` is per *batch* while a payroll run is per *period*, so a 30-hour batch running January to March had no defined January figure. **There is no calendar slicing and no pay-on-start / pay-on-completion setting.**
 
 **`adjustment`** — see "Correcting a finalized run" below.
@@ -284,9 +316,22 @@ The third row is stated separately and honestly. A unique index cannot express r
 
 A finalized run is immutable: no edits, no deletions, no new adjustments. Revision 1 offered only draft-time line adjustments, which does not solve a mistake discovered next month.
 
-A mistake found after finalization is corrected by an **`adjustment` run**: its lines carry a signed amount, a mandatory reason, and `corrects_payroll_line_id` pointing at the line being corrected. Nothing about the original moves. Wage-cost reports sum finalized lines across all run types, so the period total nets to the corrected figure while both the original error and its correction stay visible.
+A mistake found after finalization is corrected by an **`adjustment` run**: its lines carry a signed amount, a mandatory reason, and `corrects_payroll_line_id` pointing at the line being corrected. Nothing about the original moves.
+
+`AdjustPayrollLineAction` enforces four rules, none of which are inferable from the schema:
+
+1. **The employee is derived from the locked target line**, never supplied. Same construction as the payment's student in §5, for the same reason: an identifier the caller provides is an identifier the caller can get wrong or forge.
+2. **The target must be finalized.** A draft line is corrected by editing the draft.
+3. **The signed amount must be non-zero.** A correction of nothing is a reason with no effect, and it would still appear in the audit trail as though something had happened.
+4. **A correction may not target another correction.** Corrections point only at original salary or instructor lines. Multiple corrections against the same original are allowed and sum, so a wrong correction is fixed by issuing another against the same original — flat, not chained. Chains would make "what was this person actually paid for March" depend on walking a linked list of unknown depth.
+
+**A correction posts to the period of the line it corrects, not to the period the adjustment run was finalized in.** Correcting March in June makes March's wage cost right. This is the same rule the system design already states for effective-dated compensation — that March's payroll must recompute correctly after a June rate change — and without it the wage-cost and profit reports would disagree with each other while reading the same rows. Instructor corrections post to the period of the original run's finalization date, since an instructor line has no segment of its own.
 
 Draft-time line adjustments remain, for bonuses and deductions known before the run is posted. The two mechanisms differ in *when*, not in kind.
+
+### Lock ordering
+
+Finalizing a run locks one `users` row per person on it. **Those locks are acquired in ascending user id order**, always. Two runs finalizing overlapping staff in opposite orders deadlock, and MySQL resolves a deadlock by killing one transaction — turning a correct refusal into an intermittent, unreproducible failure. The project already relies on this reasoning in `EnrollmentMutex`, where a consistent global lock order is what makes concurrent enrolment safe.
 
 ### Finalized means posted, not paid
 
@@ -371,9 +416,19 @@ The foreign key **restricts** rather than cascades. A tender is a genuine child 
 `CHECK` that a `monthly_salary` run has both period dates and that `instructor_batch` and `adjustment` runs have neither · `CHECK (finalized_at IS NULL) = (finalized_by IS NULL)` — an approval with no approver, or an approver with no time, is not a state the table should be able to hold.
 
 ### `payroll_lines`
-`id, payroll_run_id (FK cascade), user_id (FK restrict), staff_compensation_id (nullable FK restrict), batch_instructor_id (nullable FK restrict), corrects_payroll_line_id (nullable self-FK restrict), segment_start (nullable), segment_end (nullable), frozen_rate, frozen_days (nullable), frozen_days_in_month (nullable), computed_amount, reason (nullable), finalized_at (nullable), timestamps`
+`id, payroll_run_id (FK cascade), user_id (FK restrict), staff_compensation_id (nullable FK restrict), batch_instructor_id (nullable FK restrict), corrects_payroll_line_id (nullable self-FK restrict), segment_start (nullable), segment_end (nullable), frozen_rate (nullable), frozen_hours (nullable), frozen_days (nullable), frozen_days_in_month (nullable), computed_amount, posting_period_start, reason (nullable), finalized_at (nullable), timestamps`
 
-Line shape by run type: a **salary** line carries `staff_compensation_id` and the segment columns; an **instructor** line carries `staff_compensation_id` and `batch_instructor_id`; an **adjustment** line carries `corrects_payroll_line_id`, a signed `computed_amount` and a mandatory `reason`. A `CHECK` enforces that exactly one of these shapes is present.
+Line shape by run type, with a `CHECK` enforcing that exactly one shape is present:
+
+| Shape | Carries | Null |
+|---|---|---|
+| **salary** | `staff_compensation_id`, `segment_start`, `segment_end`, `frozen_rate`, `frozen_days`, `frozen_days_in_month` | `batch_instructor_id`, `corrects_payroll_line_id`, `frozen_hours` |
+| **instructor** | `staff_compensation_id`, `batch_instructor_id`, `frozen_rate`, `frozen_hours` | segment columns, `corrects_payroll_line_id`, `frozen_days*` |
+| **adjustment** | `corrects_payroll_line_id`, signed `computed_amount`, `reason` | every frozen column including `frozen_rate` |
+
+`frozen_rate` is **nullable**, because an adjustment line has no rate — it is a signed correction, not a calculation. Forcing a value there would mean storing a meaningless number in a column whose whole purpose is to explain how an amount was reached.
+
+`posting_period_start` is the period the line's cost belongs to, copied at finalization. For salary lines it is the segment's month; for instructor lines the run's finalization month; **for adjustment lines it is copied from the line being corrected**, which is what makes a June correction land in March's wage cost (§7).
 
 Plus the generated columns and unique indexes in §7. The cascade is correct — lines are genuine children and only a draft run is ever deletable.
 
@@ -444,6 +499,9 @@ Per `docs/ENGINEERING.md`, any design section touching money must name its write
 | Tender total equals allocation total | Lock + check in the finalizing transaction |
 | A payment never exceeds outstanding | Charge locked, outstanding derived under that lock |
 | A payment is not duplicated by a retry | **Unique index** on `idempotency_key` |
+| A replayed key returns the same request, not a different one | Fingerprint comparison on collision, refusing on mismatch |
+| A reference is never absent | **`NOT NULL UNIQUE`**, satisfied by a placeholder replaced in the same transaction |
+| Payroll locks do not deadlock | Deterministic ascending user-id lock order |
 | Amounts are positive | **MySQL `CHECK`** |
 | A card tender carries a non-blank reference | **MySQL `CHECK`** with `TRIM` |
 | Finalization actor and time are paired | **MySQL `CHECK`** |
@@ -477,7 +535,18 @@ Every enrolment now has a charge, and financial foreign keys restrict on delete.
 
 ### Cross-domain boundaries
 
-`EnrollmentQueryService` is named in the system design and `docs/ENGINEERING.md` as the way Finance reads enrolment data — **and it does not exist.** Phase 2 builds it, in task 3, **with the full surface tasks 8 and 10 also need**, so that no two tasks extend it in parallel. If a genuine gap appears later, it is raised rather than patched twice.
+`EnrollmentQueryService` is named in the system design and `docs/ENGINEERING.md` as the way Finance reads enrolment data — **and it does not exist.** Phase 2 builds it, in task 3, **with the full surface every later task needs**, so that no two tasks extend it in parallel. If a genuine gap appears later, it is raised rather than patched twice.
+
+Its task 3 contract must therefore cover four consumers, not two:
+
+| Task | Needs |
+|---|---|
+| 4 Payments | the student owning a charge's enrolment |
+| 6 Receipts | enrolment reference, course and batch codes for the printed document |
+| 8 Payroll | instructor assignments and their hours |
+| 10 Reports | the enrolment → batch → course path every revenue grouping walks |
+
+Revision 2 listed only tasks 8 and 10, which would have left task 4 walking `$charge->enrollment` — the exact cross-domain query the architecture test forbids, discovered at implementation time rather than here.
 
 `ChargeQueryService` is the read-only reverse-direction interface Finance publishes for Enrolment.
 
@@ -519,6 +588,12 @@ Beyond `composer verify`:
 - **Overpayment is tested at the boundary**, including when outstanding drops between form load and submit.
 - **The tender-total-versus-allocation-total mismatch has its own unhappy-path test**, asserting the typed refusal and that no partial row survives.
 - **A crafted cross-student allocation is tested.**
+- **Every request-path Action is tested by direct invocation with an unauthorized actor**, not only through the UI that normally calls it.
+- **An idempotency key reused with a different bill or tender split raises and creates nothing.**
+- **An admin can edit a course or batch's non-price fields** while the price sits untouched in form state.
+- **No row survives a transaction carrying a placeholder reference.**
+- **A finalized instructor line still explains its amount** after `batch_instructor.assigned_hours` is changed underneath it.
+- **A correction posts to the corrected line's period**, asserted by correcting March in June and reading March's wage cost.
 - **A reversed payment is asserted absent from every report individually.**
 - **Report boundaries are tested at local midnight and month edges** in `Africa/Tripoli`.
 - **Rounding is tested on a case that rounds.**
@@ -545,6 +620,11 @@ Beyond `composer verify`:
 | `apply_discount` held by staff | Admin and above (revision 2) |
 | Price fields merely disabled | Never dehydrated; both prices written only by their Actions (revision 2) |
 | `ChargeQueryService` deleting a charge | `DeleteUncommittedChargeAction` (revision 2) |
+| A non-nullable reference written after insert | Placeholder replaced in the same transaction (revision 3) |
+| One migration adding, backfilling and indexing | Three recoverable migrations (revision 3) |
+| Calling the pricing Action on every save | Calling it only when the price changed (revision 3) |
+| An idempotency key returning whatever owns it | Fingerprint comparison, refusing on mismatch (revision 3) |
+| A generic `frozen_quantity` on payroll lines | Shape-specific frozen columns, with instructor hours restored (revision 3) |
 
 ---
 

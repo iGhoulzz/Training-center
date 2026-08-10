@@ -1,8 +1,10 @@
 # Phase 2 — Financials Implementation Plan
 
-**Status:** Revision 2, incorporating the Codex step-0 review. **Awaiting re-review. No task begins until that review signs off.**
+**Status:** Revision 3, incorporating both rounds of the Codex step-0 review. **Awaiting re-review. No task begins until that review signs off.**
 
-**Goal:** A working system where a student is enrolled, billed, and takes a receipt away from the desk; where balances and revenue are always derivable from source rows; where staff compensation is configured and paid without history moving; and where every figure exports to Excel and PDF.
+**Goal:** A working system where a student is enrolled, billed, and takes a receipt away from the desk; where balances and revenue are always derivable from source rows; where staff compensation is configured and payroll is **approved and posted** without history moving; and where every figure exports to Excel and PDF.
+
+Payroll is posted, never disbursed — the system computes and freezes what is owed, and paying it out happens outside (design §7, system design §12).
 
 **Reference documents:**
 - Design: `docs/superpowers/specs/2026-08-09-phase-2-financials-design.md` — **authoritative for this phase**
@@ -26,12 +28,23 @@ Two findings were **declined**, both business rather than architecture, and both
 
 Three owner decisions were closed: write-offs stay as designed · `CHG-`/`RCT-` gaps are acceptable, so there is no counter table · `apply_discount` moves to admin and above.
 
-### Round 2 targets
+### Round 2 outcome (2026-08-09)
 
-1. **The enrolment write path** (design §12) — is `EnrollAndBillAction` genuinely the only entry point once the relation manager is migrated, and does the architecture rule catch a reintroduction?
-2. **Salary segmentation** (design §7) — do month-and-rate segments represent a partial previous month plus a full current month in one run, and is the split between what the unique index guarantees and what only the lock guarantees stated correctly?
-3. **`PaymentInvariantService` and idempotency** (design §5) — is the charge lock sufficient, and does the idempotency key survive a concurrent replay?
-4. **The pricing boundary** (design §3) — with prices never dehydrated, is there any remaining path that writes a price without an Action?
+Six findings, all accepted. Three were defects **introduced by revision 2** rather than surviving from revision 1, which is worth recording: a revision that fixes findings can create them.
+
+- **Reference generation was impossible as written** — a non-nullable column whose value is not known until after insert. Now a placeholder replaced inside the same transaction, and three recoverable migrations instead of one mixing DDL with DML.
+- **Frozen instructor hours were lost** when revision 2 replaced the generic quantity column with salary-specific day columns, violating the system design's requirement to freeze rate *and* hours. Restored, and `frozen_rate` made nullable so an adjustment line is not forced to store a meaningless rate.
+- **The pricing hook would have refused every ordinary admin edit.** An admin has no `manage_pricing`, but the price sits in raw form state when they rename a course, so calling the Action unconditionally authorizes and refuses. Now called only when the normalized price actually changed.
+- Idempotency keys are bound to a request fingerprint, so a reused key with a different bill raises rather than returning an unrelated receipt.
+- Adjustment runs gained their invariants, a posting-period rule, and deterministic lock ordering.
+- The payment Actions are explicitly actor-first and self-authorizing, and reach the student through `EnrollmentQueryService` rather than walking the relation.
+
+### Round 3 targets
+
+1. **Reference generation** (design §2) — does the placeholder mechanism hold under a concurrent insert, and are the three migrations independently recoverable?
+2. **Payroll line shapes** (design §7, §9) — does the `CHECK` admit exactly the three shapes and nothing else, and does an adjustment line's posting period make wage cost and profit agree?
+3. **Idempotency fingerprinting** (design §5) — is the canonical form stable across tender ordering and decimal representation?
+4. **The pricing change detection** (design §3) — is there a value pair where normalization reports "unchanged" for a real change, or the reverse?
 
 ---
 
@@ -94,7 +107,7 @@ At the end: open a PR, get the other agent's review, resolve, merge, then **tag 
 The whole schema in one task with one owner, because every other task builds on it.
 
 **File scope**
-- `database/migrations/` — nine new tables, plus the `enrollments.reference` add-backfill-index migration
+- `database/migrations/` — nine new tables, plus **three** `enrollments.reference` migrations (add nullable · backfill · index and tighten)
 - `app/Domain/Finance/Models/` — all nine models (configuration only)
 - `app/Domain/Finance/Enums/` — `TenderMethod`, `CompensationType`, `PayrollRunType`
 - `app/Domain/Finance/Support/` — `Money`, `Reference`, `ChargeBalance`
@@ -103,12 +116,10 @@ The whole schema in one task with one owner, because every other task builds on 
 - `tests/Feature/Finance/`
 
 **Does**
-Every table from design §9 with its `CHECK` constraints, foreign keys, indexes and generated columns. `Money` over integer dirham. `Reference` generating `ENR-`/`CHG-`/`RCT-` after insert inside the transaction. `ChargeBalance` as the single definition of outstanding — SQL expression and PHP computation — placed here rather than in task 4 so tasks 4 and 5 can both use it without an ordering dependency.
-
-The `enrollments.reference` migration adds nullable, backfills every existing row, then indexes and tightens to non-nullable, in that order.
+Every table from design §9 with its `CHECK` constraints, foreign keys, indexes and generated columns — including the three-shape `CHECK` on `payroll_lines` and the nullable `frozen_rate`. `Money` over integer dirham. `Reference` inserting a unique placeholder and replacing it with the real `ENR-`/`CHG-`/`RCT-` value inside the same transaction. `ChargeBalance` as the single definition of outstanding — SQL expression and PHP computation — placed here rather than in task 4 so tasks 4 and 5 can both use it without an ordering dependency.
 
 **Done when**
-Migrations run clean and roll back clean · **every `CHECK` is proven by an insert that violates it**, including the whitespace card reference and the unpaired payroll finalization columns · both generated-column unique indexes are proven by inserting a genuine duplicate and asserting MySQL refuses · the backfill is proven against pre-existing enrolment rows · `Money` is tested including a case that actually rounds · permissions seeded per design §10, with staff holding nothing financial · `composer verify` green with real output.
+Migrations run clean and roll back clean, **each of the three enrolment migrations independently** · **every `CHECK` is proven by an insert that violates it**, including the whitespace card reference, the unpaired payroll finalization columns, and each rejected payroll line shape · both generated-column unique indexes are proven by inserting a genuine duplicate and asserting MySQL refuses · the backfill is proven against pre-existing enrolment rows · **no row survives a transaction holding a placeholder reference**, and concurrent inserts produce no collision · `Money` is tested including a case that actually rounds · permissions seeded per design §10, with staff holding nothing financial · `composer verify` green with real output.
 
 ---
 
@@ -124,10 +135,14 @@ Migrations run clean and roll back clean · **every `CHECK` is proven by an inse
 - `tests/Feature/Finance/`, and the `BatchResourceTest` inversion
 
 **Does**
-Live price inheritance in `PricingService`. **The executable write boundary from design §3**: price fields `dehydrated(false)` for every actor without exception, so generic persistence never sees a price; the save hooks read `getRawState()` and call the pricing Actions; a refusal throws `Halt::rollBackDatabaseTransaction()`. Copy `WritesUserThroughActions`, which already solves this exact problem for roles and `is_active`. Discount definition create, deactivate and delete all gated on `manage_pricing`. A discount's percentage immutable once referenced.
+Live price inheritance in `PricingService`. **The executable write boundary from design §3**: price fields `dehydrated(false)` for every actor without exception, so generic persistence never sees a price; the save hooks read `getRawState()` and call the pricing Actions; a refusal throws `Halt::rollBackDatabaseTransaction()`. Copy `WritesUserThroughActions`, which already solves this exact problem for roles and `is_active`.
+
+**The Action is invoked only when the price actually changed**, comparing normalized integer dirham rather than strings. Calling it unconditionally would authorize-and-refuse on every admin edit, because the price is in raw state whether or not they touched it.
+
+Discount definition create, deactivate and delete all gated on `manage_pricing`. A discount's percentage immutable once referenced.
 
 **Done when**
-A super admin sets a price on create **and** changes it on edit, through the real Livewire component, and it persists · **an admin crafting a Livewire state update on the price field does not persist a value and the Action refuses** · no code path writes either price column outside the two Actions, mutation-tested · a referenced discount cannot have its percentage changed and cannot be deleted, the latter a typed refusal converted from MySQL 1451 · an admin cannot create or deactivate a discount definition · `BatchResourceTest` now asserts the field is present and gated · `composer verify` green.
+A super admin sets a price on create **and** changes it on edit, through the real Livewire component, and it persists · **an admin renames a course and a batch with the price untouched, and the save succeeds** · **an admin crafting a Livewire state update on the price field does not persist a value and the Action refuses** · `100` and `100.000` are not treated as a change · no code path writes either price column outside the two Actions, mutation-tested · a referenced discount cannot have its percentage changed and cannot be deleted, the latter a typed refusal converted from MySQL 1451 · an admin cannot create or deactivate a discount definition · `BatchResourceTest` now asserts the field is present and gated · `composer verify` green.
 
 ---
 
@@ -139,7 +154,7 @@ The highest integration risk in the phase, and the task that closes the unbilled
 **File scope**
 - `app/Domain/Finance/Actions/` — `EnrollAndBillAction`, `IssueChargeAction`, `DeleteUncommittedChargeAction`
 - `app/Domain/Finance/Services/ChargeQueryService.php` (read-only)
-- `app/Domain/Enrollment/Services/EnrollmentQueryService.php` — **does not exist yet**; built here with the full surface tasks 8 and 10 need
+- `app/Domain/Enrollment/Services/EnrollmentQueryService.php` — **does not exist yet**; built here with the full surface **tasks 4, 6, 8 and 10** need (design §12 names each consumer's requirement)
 - **Declared crossings:** `DeleteEnrollmentAction`, `EnrollmentsRelationManager`
 - `tests/Feature/Staff/ActionBoundaryArchTest.php` — the new enrolment rule
 - **Existing phase 1 tests:** `EnrollmentsRelationManagerTest` and any other enrolment test whose expectations change now that enrolling raises a bill
@@ -175,10 +190,12 @@ The security-critical task of the phase.
 **Does**
 Atomic create-and-finalize — payment, tenders and allocations in one transaction, no draft state. `PaymentInvariantService` locks the charge, derives outstanding under that lock, and checks tender total equals allocation total and allocation does not exceed outstanding.
 
-**The student is derived from the locked charge's enrolment**; `RecordPaymentData` has no student field. **The idempotency key** is a client-generated UUID under a unique index, with the violation converted by index name into returning the existing payment. Reversal as a set-once lifecycle transition, super admin only. The PAN-shaped-input rule. `PaymentPolicy` refusing update and delete unconditionally.
+Both Actions are **actor-first and self-authorizing**, like every other request-path Action here. **The student is resolved through `EnrollmentQueryService`** from the locked charge; `RecordPaymentData` has no student field. **The idempotency key** is a client-generated UUID under a unique index, stored with a canonical request fingerprint: an identical replay returns the existing payment, a mismatched one raises `IdempotencyConflictException`. Reversal as a set-once lifecycle transition, super admin only. The PAN-shaped-input rule. `PaymentPolicy` refusing update and delete unconditionally.
 
 **Done when**
-A split payment of 300 card + 700 cash against a 1,000 bill produces one payment, two tenders, one allocation and a zero balance · a card tender with a blank-after-trim reference is refused by the database `CHECK`, proven by direct insert · **a tender/allocation mismatch is refused with a typed exception and leaves no partial row** · paying more than outstanding is refused, including when outstanding drops between form load and submit · two concurrent payments against one bill yield one success and one typed refusal · **the same idempotency key submitted twice, sequentially and concurrently, yields exactly one payment and one receipt** · **a crafted cross-student allocation stores the payment against the bill's real student** · a reversed payment leaves every row intact and drops out of the balance · granting `update_payment` does not make the policy allow it · `composer verify` green.
+A split payment of 300 card + 700 cash against a 1,000 bill produces one payment, two tenders, one allocation and a zero balance · a card tender with a blank-after-trim reference is refused by the database `CHECK`, proven by direct insert · **a tender/allocation mismatch is refused with a typed exception and leaves no partial row** · paying more than outstanding is refused, including when outstanding drops between form load and submit · two concurrent payments against one bill yield one success and one typed refusal · **the same key and request submitted twice, sequentially and concurrently, yields exactly one payment** · **the same key with a different bill or tender split raises and creates nothing** · **the fingerprint is stable across tender ordering and decimal representation** · **a crafted cross-student allocation stores the payment against the bill's real student** · **each Action invoked directly with an unauthorized actor is denied** · a reversed payment leaves every row intact and drops out of the balance · granting `update_payment` does not make the policy allow it · `composer verify` green.
+
+Receipt assertions belong to tasks 6 and 9 — **receipts do not exist yet at this point in the phase**, so this task asserts one *payment* and cannot honestly assert one receipt.
 
 ---
 
@@ -215,7 +232,7 @@ An admin holding every charge read permission cannot adjust or write off, assert
 Queued generation to the private disk, dispatched `afterCommit()`. Every field listed in design §2. Download through a policy-authorized controller reusing the `StaffCertificateDownloadController` and `AuthenticatePrivateFileSession` pattern.
 
 **Done when**
-Every required field appears, verified against a rendered PDF · the file lands on the private disk and is unreachable without authorization · a reversed payment's receipt is not deleted · **a replayed payment submission produces no second receipt** · the template renders at `dir="rtl"` without layout breakage, logical CSS properties only · `composer verify` green.
+Every required field appears, verified against a rendered PDF · the file lands on the private disk and is unreachable without authorization · a reversed payment's receipt is not deleted · **a replayed payment submission produces exactly one receipt** — the assertion task 4 could not make, because receipts did not exist there · the enrolment reference and course and batch codes are read through `EnrollmentQueryService` · the template renders at `dir="rtl"` without layout breakage, logical CSS properties only · `composer verify` green.
 
 ---
 
@@ -249,12 +266,14 @@ A raise produces two rows with contiguous, non-overlapping periods · an overlap
 - `tests/Feature/Finance/`
 
 **Does**
-All three run types. `monthly_salary` builds **segment lines** by intersecting the run period, each calendar month, and each compensation row's validity, freezing segment bounds, rate, days and denominator. `instructor_batch` is on-demand: the draft lists assignments not already paid in a finalized run, derived by looking at finalized lines with no stored paid flag. `adjustment` runs correct finalized lines with signed amounts and a mandatory reason.
+All three run types. `monthly_salary` builds **segment lines** by intersecting the run period, each calendar month, and each compensation row's validity, freezing segment bounds, rate, days and denominator. `instructor_batch` is on-demand: the draft lists assignments not already paid in a finalized run, derived by looking at finalized lines with no stored paid flag, and **freezes the assigned hours as well as the rate**. `adjustment` runs correct finalized lines with signed amounts and a mandatory reason.
 
-Finalization copies the frozen figures and `finalized_at` onto each line and is irreversible. Overlap between finalized salary segments is refused under a `users`-row lock. Reads instructor assignments through `EnrollmentQueryService`.
+`AdjustPayrollLineAction` enforces design §7's four rules: the employee is derived from the locked target line, the target must be finalized, the amount must be non-zero, and a correction may not target another correction. A correction carries the **posting period of the line it corrects**.
+
+Finalization copies the frozen figures and `finalized_at` onto each line and is irreversible. Overlap between finalized salary segments is refused under a `users`-row lock, and **locks are taken in ascending user id order** so two runs over overlapping staff cannot deadlock. Reads instructor assignments through `EnrollmentQueryService`.
 
 **Done when**
-**A run covering a partial previous month plus a full current month produces the correct segment lines with the correct per-month denominators** · a mid-period raise splits a month into two correctly-priced segments · an assignment already paid in a finalized run cannot appear in another, **proven at the database** by inserting the duplicate directly · **overlapping salary segments across two runs are refused by the lock**, with a test that fails if the lock is removed · a finalized run cannot be edited, deleted, or have a draft adjustment added, and is corrected only by an adjustment run · wage-cost totals net correctly across a run and its correction · a rate changed after finalization does not move the finalized figure · `composer verify` green.
+**A run covering a partial previous month plus a full current month produces the correct segment lines with the correct per-month denominators** · a mid-period raise splits a month into two correctly-priced segments · an assignment already paid in a finalized run cannot appear in another, **proven at the database** by inserting the duplicate directly · **overlapping salary segments across two runs are refused by the lock**, with a test that fails if the lock is removed · **two concurrent finalizations over overlapping staff complete without deadlock** · **a finalized instructor line still explains its amount after `assigned_hours` is changed underneath it** · a finalized run cannot be edited, deleted, or have a draft adjustment added, and is corrected only by an adjustment run · **correcting March in June moves March's wage cost, not June's**, and wage cost and profit agree · a correction targeting a correction is refused · a zero-amount correction is refused · a rate changed after finalization does not move the finalized figure · `composer verify` green.
 
 ---
 
@@ -273,7 +292,7 @@ The phase's primary user-facing surface.
 The eight-step flow from design §2. Allocation is decided by context and never shown to the operator. The idempotency key is minted when the collection step is first rendered.
 
 **Done when**
-The full flow is driven through Livewire end to end and produces enrolment, bill, payment, tenders, allocation and receipt · the preview figure matches the issued charge exactly · a staff member sees no discount selector · attempting to collect more than outstanding is refused in the UI **and** by the Action · a card tender without a reference cannot be submitted · **a double-submitted collection produces one payment** · every string is translatable and the page renders at `dir="rtl"` · `composer verify` green.
+The full flow is driven through Livewire end to end and produces enrolment, bill, payment, tenders, allocation and receipt · the preview figure matches the issued charge exactly · a staff member sees no discount selector · attempting to collect more than outstanding is refused in the UI **and** by the Action · a card tender without a reference cannot be submitted · **a double-submitted collection produces one payment and one receipt** · every string is translatable and the page renders at `dir="rtl"` · `composer verify` green.
 
 ---
 
