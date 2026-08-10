@@ -64,7 +64,7 @@ A milestone is split into tasks, and the tasks are grouped into **waves**.
 
 **Independence is required within a wave, not across the milestone.** Two tasks running at the same time must share no files — two agents editing one file in parallel produces merge conflicts that cost more than the parallelism saved. **Sequential dependencies between waves are expected and allowed.**
 
-This rule previously read "no shared files, no sequential dependency" and forbade dependencies outright. That was written for phase 1, where Claude worked alone and the ordering lived in one head. It does not survive a milestone whose schema must exist before anything else can be built: phase 2 has an unavoidable dependency chain, and a rule forbidding it would be either ignored or worked around by inventing artificially large tasks. The property worth protecting was always *concurrent* file isolation.
+This rule previously read "no shared files, no sequential dependency" and forbade dependencies outright. That standing rule proved too strict for milestones whose tasks have unavoidable dependencies: phase 2's schema must exist before anything else can be built. A rule forbidding that dependency would be either ignored or worked around by inventing artificially large tasks. The property worth protecting was always *concurrent* file isolation.
 
 Each task has:
 
@@ -78,7 +78,7 @@ Task assignment lives in the milestone's plan document under `docs/superpowers/p
 
 ### Concurrency: one task each, at most
 
-**At any moment Claude may own one ready task and Codex may own one ready task.** That is the ceiling. "Parallel" means one Claude task and one Codex task whose exact file scopes do not overlap — never three simultaneous Codex tasks.
+**At any moment Claude may actively implement at most one ready task and Codex may actively implement at most one ready task.** That is the ceiling. "Parallel" means one Claude task and one Codex task whose exact file scopes do not overlap — never three simultaneous Codex tasks.
 
 The limit is not about capacity. Every extra concurrent task is another branch to keep current, another diff a reviewer must hold in mind, and another chance that two scopes overlap in a way nobody notices until merge. Two is reviewable; more is bookkeeping.
 

@@ -1,6 +1,6 @@
 # Phase 2 — Financials Implementation Plan
 
-**Status:** Revision 6 — the step-0 review is closed and the plan is approved. Scheduling reorganised into waves under the revised `docs/WORKFLOW.md`. **Task 1 may begin.**
+**Status:** Revision 6 — the financial design review is closed. Scheduling is reorganised into waves under the revised `docs/WORKFLOW.md`. **Task 1 may begin after the scheduling pull request is approved and merged.**
 
 **Goal:** A working system where a student is enrolled, billed, and takes a receipt away from the desk; where balances and revenue are always derivable from source rows; where staff compensation is configured and payroll is **approved and posted** without history moving; and where every figure exports to Excel and PDF.
 
@@ -62,7 +62,7 @@ Before returning to Codex, a fresh reviewer with no implementation context read 
 
 ### Round 4 outcome — step 0 closed (2026-08-09)
 
-A bounded cleanup of seven corrections, then confirmation. **The plan is approved and task 1 may begin.**
+A bounded cleanup of seven corrections, then confirmation. **The financial design is approved; implementation remains gated on approval and merge of the scheduling pull request.**
 
 Four questions were carried into that round and answered: nothing else under `app/` writes an enrolment row besides `EnrollStudentAction`, so the reference mechanism has one teaching point · excluding `reference` from the audit allowlist under-records nothing, because it is a deterministic function of the subject id the log already carries · each of the four enrolment migrations is independently recoverable · and the fingerprint covers every field that moves money, with `received_at` and `notes` excluded for stated reasons.
 
