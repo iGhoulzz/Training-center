@@ -29,8 +29,10 @@ use Tests\TestCase;
  * FileLifecycleTransactionTest uses DatabaseTruncation instead, because
  * RefreshDatabase wraps every test in a transaction and that transaction is
  * precisely the machinery those tests exist to exercise. Applying both would
- * quietly defeat them. Truncation keeps real commit visibility while clearing
- * rows before the next test without rebuilding the whole schema.
+ * quietly defeat them. Laravel truncates before each case but not after the
+ * final case in a file, so every truncation file must reset
+ * RefreshDatabaseState::$migrated in its own afterAll hook. That makes the next
+ * database test rebuild before it can observe committed residue.
  *
  * The cost is that isolation becomes something each author has to remember, on a
  * database every suite shares — a file that writes rows without opting in leaves

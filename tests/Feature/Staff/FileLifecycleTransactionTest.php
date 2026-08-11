@@ -12,6 +12,7 @@ use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\DatabaseTruncation;
+use Illuminate\Foundation\Testing\RefreshDatabaseState;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -25,6 +26,12 @@ use Illuminate\Support\Str;
  * callback and accidentally firing after-commit work from the rolled-back save.
  */
 uses(DatabaseTruncation::class);
+
+// DatabaseTruncation has setup but no teardown. Without this reset, a following
+// RefreshDatabase test would transact over the final case's committed rows.
+afterAll(function (): void {
+    RefreshDatabaseState::$migrated = false;
+});
 
 afterEach(function () {
     DB::disconnect(FileLifecycleService::compensationConnectionName());
@@ -215,7 +222,7 @@ it('keeps bytes when a current locking ownership read finds a committed owner', 
 | belong here rather than there: the job's ownership read runs on an independent
 | connection, so under RefreshDatabase's wrapping transaction it cannot see rows
 | the test has created and would report every file unowned. DatabaseTruncation
-| commits for real and clears rows between cases, which is the only way this pair
+| commits for real and clears rows before cases, which is the only way this pair
 | can distinguish an owned file from an orphan without rebuilding every table.
 |
 | They are a pair on purpose. Either one alone passes for a broken sweep — the

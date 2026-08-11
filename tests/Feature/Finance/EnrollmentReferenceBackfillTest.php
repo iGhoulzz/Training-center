@@ -14,7 +14,7 @@ use Carbon\CarbonImmutable;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\QueryException;
-use Illuminate\Foundation\Testing\DatabaseTruncation;
+use Illuminate\Foundation\Testing\DatabaseMigrations;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -35,7 +35,7 @@ use Illuminate\Support\Facades\Schema;
 | the states a crash would leave behind, rather than observing the schema a
 | finished `migrate` produced.
 |
-| WHY DatabaseTruncation AND NOT RefreshDatabase
+| WHY DatabaseMigrations AND NOT RefreshDatabase
 | ----------------------------------------------
 | Every test here issues DDL, and MySQL commits DDL implicitly. Under
 | RefreshDatabase — which wraps each test in one transaction and rolls it back —
@@ -44,15 +44,15 @@ use Illuminate\Support\Facades\Schema;
 | That is precisely the pollution tests/Feature/DatabaseIsolationTest.php exists
 | to prevent.
 |
-| DatabaseTruncation gives these tests production transaction behaviour without
-| rebuilding the schema for every case: Laravel migrates once, then truncates
-| row data before the next test. The afterEach below restores the four migration
-| steps to their fully-applied state before truncation hands that schema onward.
+| DatabaseMigrations deliberately pays for a fresh schema per case. These tests
+| create half-applied migration states, including states their own repair can
+| fail to restore. A following test must therefore rebuild from migration files
+| rather than trust the schema or migrations table the failed case left behind.
 |
 | The `afterEach` below is load-bearing; see its comment.
 */
 
-uses(DatabaseTruncation::class);
+uses(DatabaseMigrations::class);
 
 /**
  * The four steps, in order, by their migration names.
@@ -187,10 +187,10 @@ function referenceOf(int $id): ?string
 
 afterEach(function () {
     /*
-     * LOAD-BEARING, not tidiness. DatabaseTruncation preserves the schema and
-     * clears only row data between tests. A test that left step 3
-     * recorded-but-not-applied would therefore hand a false schema to the next
-     * case, where the failure would surface far from its cause.
+     * LOAD-BEARING, not tidiness. This restoration lets DatabaseMigrations roll
+     * the four steps back in the normal case. If restoration itself fails,
+     * DatabaseMigrations resets its shared migration flag and the next case
+     * starts with migrate:fresh instead of trusting this partial schema.
      *
      * So each test may leave the schema wherever its scenario needs it, and this
      * puts it back where the `migrations` table claims it is. Every step here is

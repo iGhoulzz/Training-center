@@ -14,6 +14,7 @@ use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\DatabaseTruncation;
+use Illuminate\Foundation\Testing\RefreshDatabaseState;
 use Illuminate\Support\Facades\DB;
 
 /*
@@ -35,8 +36,9 @@ use Illuminate\Support\Facades\DB;
 | see nothing, no matter how real the second connection is.
 | FileLifecycleTransactionTest hits the identical wall and solves it the same
 | way this file does: DatabaseTruncation instead of RefreshDatabase. It commits
-| for real, clears rows rather than rebuilding the schema between cases, and is
-| kept separate from its transaction-wrapped sibling.
+| for real and clears rows before cases rather than rebuilding the schema. The
+| afterAll boundary below forces the next database test to rebuild after this
+| file's final committed rows.
 |
 | HOW THE SECOND CONNECTION IS BUILT
 | -------------------------------------
@@ -74,6 +76,12 @@ use Illuminate\Support\Facades\DB;
 */
 
 uses(DatabaseTruncation::class);
+
+// DatabaseTruncation has setup but no teardown. Without this reset, a following
+// RefreshDatabase test would transact over this file's two committed enrolments.
+afterAll(function (): void {
+    RefreshDatabaseState::$migrated = false;
+});
 
 const REFERENCE_CONCURRENCY_SECOND_CONNECTION = 'reference_concurrency_second_connection';
 
