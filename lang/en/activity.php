@@ -68,6 +68,28 @@ return [
         'Course' => 'Course',
         'Batch' => 'Batch',
         'Enrollment' => 'Enrolment',
+
+        /*
+         * Phase 2 (P2-T01). Every Finance model using RecordsActivity needs a
+         * label here or the log shows a raw class name. LocalizationTest finds
+         * them by scanning for the trait rather than from a hardcoded list, so
+         * a model added later fails the build until somebody names it — which
+         * is how this block came to exist rather than being remembered.
+         *
+         * These read as the centre says them, not as the schema spells them: a
+         * charge is a "bill" and a payment is a "receipt" throughout the
+         * enrol-and-collect flow, and an audit line a person reads should use
+         * the word they were handed at the desk.
+         */
+        'Discount' => 'Discount',
+        'Charge' => 'Bill',
+        'Payment' => 'Receipt',
+        'PaymentTender' => 'Payment tender',
+        'PaymentAllocation' => 'Payment allocation',
+        'StaffCompensation' => 'Compensation rate',
+        'PayrollRun' => 'Payroll run',
+        'PayrollLine' => 'Payroll line',
+        'PayrollLineAdjustment' => 'Payroll line adjustment',
     ],
 
     // The composite shapes. Separator AND order are localisable — see

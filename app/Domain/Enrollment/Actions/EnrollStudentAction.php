@@ -12,7 +12,9 @@ use App\Domain\Enrollment\Exceptions\StudentNotEnrollableException;
 use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Enrollment;
 use App\Domain\Enrollment\Models\Student;
+use App\Domain\Finance\Support\Reference;
 use App\Models\User;
+use App\Support\CentreCalendar;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
@@ -45,6 +47,29 @@ use Illuminate\Support\Facades\Gate;
  * transaction under lockForUpdate(), because a batch closed or a student deleted
  * between an unlocked read and the insert would commit anyway. P1-T10d is the
  * cautionary tale: locking one row says nothing about another table's.
+ *
+ * THE `ENR-` REFERENCE IS WRITTEN TWICE, IN ONE TRANSACTION
+ * --------------------------------------------------------
+ * `enrollments.reference` is NOT NULL UNIQUE and contains the row's own id, so
+ * its final value is unknowable until the row exists and the row cannot be
+ * inserted without one. MySQL forbids a generated column from referencing an
+ * AUTO_INCREMENT column, so the stored-generated approach used elsewhere in this
+ * schema is unavailable.
+ *
+ * The insert therefore carries Reference::placeholder() — a unique UUID, unique
+ * because the column is — and the row is updated to its real `ENR-` value before
+ * this transaction commits (design section 2). Both writes commit together, so
+ * no other connection ever observes a placeholder and the constraint holds the
+ * whole way through.
+ *
+ * The replacement is deliberately NOT deferred to a `created` model listener or
+ * an afterCommit hook. A listener would run outside any transaction this Action
+ * controls, and an afterCommit hook runs after the placeholder is already
+ * visible — which is the one thing the placeholder mechanism exists to prevent.
+ *
+ * `reference` is excluded from Enrollment::auditedAttributes(), which is what
+ * keeps the placeholder out of the append-only activity log. The reasoning is
+ * recorded on the model, next to the exclusion itself.
  */
 final class EnrollStudentAction
 {
@@ -105,11 +130,17 @@ final class EnrollStudentAction
              * through Batch::isOverCapacity() as a warning, per spec line 217.
              */
             try {
-                return Enrollment::create([
+                $enrollment = Enrollment::create([
                     'student_id' => $data->studentId,
                     'batch_id' => $data->batchId,
                     'enrolled_at' => now(),
                     'status' => EnrollmentStatus::Active,
+                    /*
+                     * Not the real reference — that needs the id this insert is
+                     * about to mint. Replaced below, before this transaction
+                     * commits. See the class docblock.
+                     */
+                    'reference' => Reference::placeholder(),
                 ]);
             } catch (UniqueConstraintViolationException $exception) {
                 /*
@@ -136,6 +167,46 @@ final class EnrollStudentAction
 
                 throw new DuplicateEnrollmentException($data->studentId, $data->batchId);
             }
+
+            /*
+             * The placeholder's whole lifetime, and it ends here.
+             *
+             * OUTSIDE the catch above on purpose. That catch converts a 1062 on
+             * one named index into "this student is already on this batch", and
+             * a 1062 raised by THIS statement would be a collision on
+             * enrollments_reference_unique — a different constraint, about which
+             * that message would be confidently wrong. It is left to surface as
+             * itself.
+             */
+            $enrollment->update([
+                'reference' => Reference::format(
+                    Reference::ENROLLMENT_PREFIX,
+                    /*
+                     * THE CENTRE'S CALENDAR, NOT UTC, AND NOT A LOCAL COPY OF
+                     * THAT DECISION. Reference::format() takes a year precisely
+                     * so it owns no timezone policy — the caller does, because
+                     * only the caller knows which column dates the document, and
+                     * for an enrolment that is `enrolled_at`. Which calendar to
+                     * read it on is CentreCalendar's, shared with the backfill
+                     * migration so the two cannot produce different references
+                     * for rows nobody can tell apart (design section 8).
+                     *
+                     * The defensive copy this line used to spell out is inside
+                     * CentreCalendar::localise() now. It is still required and
+                     * still made: the `datetime` cast yields a MUTABLE Carbon
+                     * whose setTimezone() changes the instance in place, so
+                     * converting it directly would hand the caller back an
+                     * enrolment whose enrolled_at silently reads in Tripoli.
+                     * CarbonImmutable::instance() copies first, so the attribute
+                     * below is untouched — and every future caller inherits that
+                     * rather than having to remember it.
+                     */
+                    CentreCalendar::yearOf($enrollment->enrolled_at),
+                    (int) $enrollment->getKey(),
+                ),
+            ]);
+
+            return $enrollment;
         });
     }
 }

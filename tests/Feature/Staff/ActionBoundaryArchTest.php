@@ -483,7 +483,37 @@ const ENROLLMENT_WRITE_RULES = [
         ],
     ],
     'update' => [
-        'allowed' => ['WithdrawEnrollmentAction'],
+        /*
+         * TWO WRITERS, AND THE SECOND ONE IS NOT A STATUS TRANSITION.
+         *
+         * WithdrawEnrollmentAction owns the only lifecycle change phase 1 has.
+         *
+         * EnrollStudentAction was added by P2-T01 for one specific update, and
+         * one only: replacing the `reference` placeholder. `enrollments.reference`
+         * is NOT NULL UNIQUE and contains the row's own id, so the row must be
+         * inserted carrying Reference::placeholder() and updated to its real
+         * `ENR-` value inside the transaction the Action already opens (design
+         * section 2). The insert and the replacement are one atomic act; they are
+         * two statements only because MySQL will not let a generated column read
+         * an AUTO_INCREMENT column.
+         *
+         * ALLOWLISTED RATHER THAN EVADED. The update shape below matches
+         * `$enrollment->update(...)`, and this file's own comments already name
+         * the way out: the variable-name patterns are anchored, so renaming the
+         * variable would have slipped the write past unreported. Taking that
+         * route would have left the rule green while a security boundary quietly
+         * stopped covering a file — the P1-T10a failure exactly. An allowlist
+         * entry is visible in review; a laundered variable name is not.
+         *
+         * WHAT THIS COSTS, STATED HONESTLY. An allowlist exempts a FILE from the
+         * WHOLE operation, so EnrollStudentAction is no longer bound by any
+         * update shape here — a status write added to it later would not trip
+         * this rule. What still contains it: the Action holds the batch and
+         * student locks, EnrollmentTest asserts those locks and asserts the
+         * enrolment it produces is Active, and EnrollmentPolicy::update() is
+         * scoped to batches the actor teaches while creation deliberately is not.
+         */
+        'allowed' => ['WithdrawEnrollmentAction', 'EnrollStudentAction'],
         'patterns' => [
             '/->\s*enrollments\s*\(\s*\)\s*->\s*(update|updateQuietly|updateOrCreate|increment'
                 .'|decrement|touch|restore)\s*\(/',

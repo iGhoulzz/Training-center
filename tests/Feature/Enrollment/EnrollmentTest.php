@@ -17,6 +17,7 @@ use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Course;
 use App\Domain\Enrollment\Models\Enrollment;
 use App\Domain\Enrollment\Models\Student;
+use App\Domain\Finance\Support\Reference;
 use App\Domain\Staff\Actions\SystemRoleWriter;
 use App\Domain\Staff\Models\StaffProfile;
 use App\Models\User;
@@ -28,6 +29,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Spatie\Activitylog\Models\Activity;
 
 uses(RefreshDatabase::class);
 
@@ -149,6 +151,121 @@ it('does not count withdrawn enrollments towards capacity', function () {
     $this->withdraw->execute($this->admin, $third);
 
     expect($this->batch->fresh()->isOverCapacity())->toBeFalse();
+});
+
+/*
+|--------------------------------------------------------------------------
+| The ENR- reference (P2-T01)
+|--------------------------------------------------------------------------
+|
+| enrollments.reference is NOT NULL UNIQUE and contains the row's own id, so
+| EnrollStudentAction inserts a unique placeholder and replaces it with the real
+| value inside the transaction it already opened (design section 2). These cover
+| the real Action path, which is the only path that can produce one.
+*/
+
+it('gives an enrolment created through the Action a well-formed ENR- reference', function () {
+    /*
+     * READ BACK THROUGH THE QUERY BUILDER, not off the returned model. The model
+     * holds whatever the Action assigned in memory; the column holds what the
+     * transaction actually committed, and only the second one is the claim.
+     *
+     * The expected string is spelled out here rather than built by calling
+     * Reference::format() — a test that asks the generator what it generates can
+     * only ever agree with it.
+     */
+    $this->travelTo('2026-06-15 10:00:00');
+
+    $enrollment = ($this->enrolSomeone)();
+
+    $stored = (string) DB::table('enrollments')
+        ->where('id', $enrollment->getKey())
+        ->value('reference');
+
+    expect($stored)->toBe(sprintf('ENR-2026-%06d', (int) $enrollment->getKey()))
+        ->and($enrollment->reference)->toBe($stored)
+        ->and(Reference::isPlaceholder($stored))->toBeFalse();
+});
+
+it('dates the reference by the centre\'s calendar rather than by UTC', function () {
+    /*
+     * 23:30 UTC on 31 December is 01:30 on 1 January in Africa/Tripoli, which is
+     * UTC+2 all year. The walk-in standing at the desk is a January enrolment and
+     * the paperwork handed to them has to say so, even though the stored
+     * timestamp still reads December.
+     *
+     * Reference::format() takes a year precisely so it owns no timezone policy;
+     * this pins the policy the caller chose. A plain now()->year fails here.
+     */
+    $this->travelTo('2026-12-31 23:30:00');
+
+    $enrollment = ($this->enrolSomeone)();
+
+    expect((string) $enrollment->fresh()->reference)
+        ->toBe(sprintf('ENR-2027-%06d', (int) $enrollment->getKey()));
+});
+
+it('leaves no placeholder reference behind, and no two the same', function () {
+    // Three, not one: the placeholder is a UUID *because* the column is unique
+    // and concurrent inserts must not collide on it, and a single-row test says
+    // nothing about that.
+    foreach (range(1, 3) as $ignored) {
+        ($this->enrolSomeone)();
+    }
+
+    $references = DB::table('enrollments')->pluck('reference')
+        ->map(fn (mixed $reference): string => (string) $reference)
+        ->all();
+
+    expect($references)->toHaveCount(3)
+        ->and(array_unique($references))->toHaveCount(3);
+
+    foreach ($references as $reference) {
+        expect(Reference::isPlaceholder($reference))->toBeFalse(
+            "A placeholder survived the Action's transaction: {$reference}",
+        );
+
+        expect($reference)->toStartWith('ENR-');
+    }
+});
+
+it('keeps the reference and its placeholder out of the activity log', function () {
+    /*
+     * THE SUBTLE HALF OF THE PLACEHOLDER MECHANISM (design section 2).
+     *
+     * RecordsActivity logs on model events, not on Actions, so with `reference`
+     * in Enrollment::auditedAttributes() the insert would file
+     * `reference = <uuid>` and the replacement a phantom "reference changed"
+     * beside it — both into a log that has no delete path for any role. Sharing a
+     * transaction does not prevent either: they commit with everything else.
+     *
+     * Three assertions, because each alone is satisfiable by a broken
+     * arrangement. The marker appears nowhere in the whole log · the enrolment's
+     * own entries never name the column · and the replacement produced NO second
+     * entry at all, which is dontLogEmptyChanges() doing its half of the job. An
+     * excluded column that still filed an empty `updated` row would pass the
+     * first two and fail the third.
+     */
+    $this->actingAs($this->admin);
+
+    $enrollment = ($this->enrolSomeone)();
+
+    $serialise = fn (Activity $entry): string => (string) json_encode([
+        $entry->attribute_changes?->all(),
+        $entry->properties?->all(),
+    ]);
+
+    $wholeLog = Activity::query()->get()->map($serialise)->implode(' ');
+
+    $entries = Activity::query()
+        ->where('subject_type', Enrollment::class)
+        ->where('subject_id', $enrollment->getKey())
+        ->get();
+
+    expect($wholeLog)->not->toContain(Reference::PLACEHOLDER_MARKER)
+        ->and($entries->map($serialise)->implode(' '))->not->toContain('reference')
+        ->and($entries)->toHaveCount(1)
+        ->and($entries->first()->event)->toBe('created');
 });
 
 /*
@@ -823,6 +940,17 @@ it('converts a duplicate lost at INSERT time into the typed exception', function
             'batch_id' => $this->batch->getKey(),
             'enrolled_at' => now(),
             'status' => EnrollmentStatus::Active->value,
+            /*
+             * `reference` is NOT NULL UNIQUE, and this row stands in for one some
+             * other connection already committed — so it carries a real-looking
+             * value rather than a placeholder. Without it MySQL refuses this
+             * insert with 1364 before the Action's own insert can lose the race,
+             * and the test proves nothing about the 1062 branch it exists for.
+             *
+             * A reference no generated one can reach, so it cannot collide with
+             * the value the Action would have written.
+             */
+            'reference' => 'ENR-2026-999999',
             'created_at' => now(),
             'updated_at' => now(),
         ]);
