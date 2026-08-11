@@ -10,10 +10,12 @@ use Illuminate\Support\Facades\File;
 |--------------------------------------------------------------------------
 |
 | tests/Pest.php deliberately does NOT apply RefreshDatabase globally.
-| FileLifecycleTransactionTest uses DatabaseMigrations instead, because
+| FileLifecycleTransactionTest uses DatabaseTruncation instead, because
 | RefreshDatabase wraps every test in a transaction and that transaction is
 | precisely the machinery those tests exist to exercise; applying both would
-| quietly defeat them.
+| quietly defeat them. Truncation clears before a case, not after a file's last
+| case, so its declaration is incomplete without the enforced after-file reset
+| that makes the next database test rebuild before observing committed residue.
 |
 | The cost is that isolation becomes something each author has to remember, on a
 | database every suite shares. A file that writes rows without opting in leaves
@@ -34,7 +36,12 @@ use Illuminate\Support\Facades\File;
 */
 
 /** The isolation traits that make a file safe to write rows from. */
-const ISOLATION_TRAITS = ['RefreshDatabase', 'DatabaseMigrations', 'DatabaseTransactions'];
+const ISOLATION_TRAITS = [
+    'RefreshDatabase',
+    'DatabaseMigrations',
+    'DatabaseTruncation',
+    'DatabaseTransactions',
+];
 
 /**
  * Feature tests that touch no database at all, reviewed one by one.
@@ -121,11 +128,34 @@ function declaresIsolationTrait(string $source): bool
     return false;
 }
 
+/**
+ * Does a DatabaseTruncation file close its after-file isolation boundary?
+ *
+ * Laravel's trait has setup only. The final test's committed rows survive until
+ * another truncation or migration runs, so a following RefreshDatabase test
+ * would otherwise transact over them. Files using another isolation trait have
+ * no truncation-specific obligation and return true here.
+ */
+function declaresCompleteTruncationBoundary(string $source): bool
+{
+    $code = phpCodeWithoutStringsOrComments($source);
+
+    if (preg_match('/\buses\s*\([^)]*DatabaseTruncation::class/', $code) !== 1) {
+        return true;
+    }
+
+    return preg_match(
+        '/\bafterAll\s*\([\s\S]*?RefreshDatabaseState\s*::\s*\$migrated\s*=\s*false\s*;[\s\S]*?\)\s*;/',
+        $code,
+    ) === 1;
+}
+
 it('accepts a real isolation declaration', function (string $sample) {
     expect(declaresIsolationTrait($sample))->toBeTrue();
 })->with([
     "<?php\nuses(RefreshDatabase::class);\n",
     "<?php\nuses(DatabaseMigrations::class);\n",
+    "<?php\nuses(DatabaseTruncation::class);\n",
     "<?php\nuses(DatabaseTransactions::class);\n",
     "<?php\nuses(RefreshDatabase::class, WithFaker::class);\n",
     "<?php\nuses( RefreshDatabase::class );\n",
@@ -138,11 +168,28 @@ it('refuses a mention that is not a call', function (string $sample) {
 })->with([
     "<?php\n// Add uses(RefreshDatabase::class) at the top of the file.\n",
     "<?php\n/** uses(RefreshDatabase::class) */\n",
+    "<?php\n// uses(DatabaseTruncation::class);\n",
     "<?php\n\$hint = 'uses(RefreshDatabase::class)';\n",
+    "<?php\n\$hint = 'uses(DatabaseTruncation::class)';\n",
     "<?php\n\$hint = \"uses(RefreshDatabase::class)\";\n",
     // An import without the call isolates nothing.
     "<?php\nuse Illuminate\\Foundation\\Testing\\RefreshDatabase;\n",
     "<?php\nit('x', function () {});\n",
+]);
+
+it('requires DatabaseTruncation to reset migration state after its file', function (string $sample, bool $expected) {
+    expect(declaresCompleteTruncationBoundary($sample))->toBe($expected);
+})->with([
+    'complete boundary' => [
+        "<?php\nuses(DatabaseTruncation::class);\nafterAll(function (): void { RefreshDatabaseState::\$migrated = false; });\n",
+        true,
+    ],
+    'trait without reset' => ["<?php\nuses(DatabaseTruncation::class);\n", false],
+    'reset named only in prose' => [
+        "<?php\nuses(DatabaseTruncation::class);\n// afterAll(fn () => RefreshDatabaseState::\$migrated = false);\n",
+        false,
+    ],
+    'other isolation trait' => ["<?php\nuses(RefreshDatabase::class);\n", true],
 ]);
 
 it('does not let a file claim isolation from its own prose', function () {
@@ -194,6 +241,7 @@ it('confirms the read-only list is not simply everything', function () {
 
 it('requires every feature test to declare an isolation trait or be reviewed read-only', function () {
     $offenders = [];
+    $incompleteTruncationBoundaries = [];
 
     foreach (File::allFiles(base_path('tests/Feature')) as $file) {
         if (! str_ends_with($file->getFilename(), 'Test.php')) {
@@ -220,6 +268,12 @@ it('requires every feature test to declare an isolation trait or be reviewed rea
 
         if (! declaresIsolationTrait((string) file_get_contents($path))) {
             $offenders[] = $relative;
+
+            continue;
+        }
+
+        if (! declaresCompleteTruncationBoundary((string) file_get_contents($path))) {
+            $incompleteTruncationBoundaries[] = $relative;
         }
     }
 
@@ -228,7 +282,14 @@ it('requires every feature test to declare an isolation trait or be reviewed rea
         ."database, so any row they write survives into whichever file runs next:\n  "
         .implode("\n  ", $offenders)
         ."\n\nAdd uses(RefreshDatabase::class) at the top of the file — or "
-        .'DatabaseMigrations if it must exercise real transactions — or, if it genuinely '
+        .'DatabaseTruncation if it must exercise real committed transactions — or, if it genuinely '
         .'writes nothing, add it to READ_ONLY_FEATURE_TESTS after reading it.',
+    );
+
+    expect($incompleteTruncationBoundaries)->toBeEmpty(
+        'These feature tests use DatabaseTruncation without closing its after-file boundary, '
+        ."so their final committed rows can leak into the next RefreshDatabase test:\n  "
+        .implode("\n  ", $incompleteTruncationBoundaries)
+        ."\n\nAdd an afterAll hook that sets RefreshDatabaseState::\$migrated to false.",
     );
 });

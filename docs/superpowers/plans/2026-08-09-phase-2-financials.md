@@ -183,6 +183,64 @@ Migrations run clean and roll back clean, **each of the four enrolment migration
 
 ---
 
+## Task 1P — Test database performance follow-up
+**Wave 2 support · Owner: Codex · `p2/t01p-test-performance` · depends on 1**
+
+This bounded follow-up runs alongside task 5. Task 2 remains ready in wave 2,
+but starts after this task because the workflow permits one active task per
+agent. Its file scope does not overlap task 5 or task 2.
+
+**File scope**
+- `tests/Feature/Finance/EnrollmentReferenceBackfillTest.php`
+- `tests/Feature/Finance/ReferenceConcurrencyTest.php`
+- `tests/Feature/Finance/ReferenceTest.php` — comment-only companion update
+- `tests/Feature/Staff/FileLifecycleTransactionTest.php`
+- `tests/Feature/DatabaseIsolationTest.php`, `tests/Pest.php`
+- `docs/ENGINEERING.md` and this plan entry
+
+**Does**
+Replace per-test `DatabaseMigrations` rebuilds with Laravel's
+`DatabaseTruncation` only for the two files whose subject is real committed rows
+or independent connections. Each registers an after-file migration-state reset,
+and the isolation architecture test rejects any future truncation file that
+omits that boundary. `EnrollmentReferenceBackfillTest` deliberately keeps
+`DatabaseMigrations`: it creates partial schemas its own repair can fail to
+restore, so a fresh schema per case is part of the proof rather than overhead.
+No behavioral case is combined, skipped, or moved out of the full suite.
+
+**Done when**
+All thirteen existing tests retain their individual names and assertions · the
+isolation architecture test recognizes a complete `DatabaseTruncation`
+declaration, rejects the trait without its after-file reset, and rejects
+prose-only mentions of both · a test following either truncation file receives a
+fresh schema before it can observe committed residue · a failed backfill repair
+cannot hand a partial schema to the next case · focused before/after timings are
+recorded · the full `composer verify` gate remains green · CI partitioning is
+not added unless the measured result still justifies that extra workflow
+surface.
+
+**Initial measurement (superseded by cross-review)**
+The first implementation converted all three files and measured 155.092 seconds
+before versus 17.118 seconds after for the same thirteen cases and 85
+assertions. Cross-review proved that raw truncation leaked the final case's rows
+and that a failed backfill repair could poison the next case. The corrected
+hybrid keeps the backfill rebuild boundary and is re-measured below before this
+task closes; the unsafe 17.118-second result is retained here as history, not as
+an accepted outcome.
+
+**Corrected outcome after cross-review**
+The sound hybrid passed the same thirteen focused tests and 85 assertions in
+73.857 seconds, down from 155.092 seconds — an 81.235-second (52%) reduction
+without weakening the backfill recovery boundary. The full gate passed 1,328
+tests (1,327 passed, one skipped) and 4,021 assertions in 534.971 seconds,
+approximately 55 seconds faster than the pre-task run. Six added isolation
+cases enforce the truncation reset, including rejection of a prose-only claim.
+CI partitioning remains deferred: the suite is back below the ten-minute point
+that triggered this follow-up, and T4/T8 can revisit it with their measured
+costs rather than pre-adding workflow branches now.
+
+---
+
 ## Task 2 — Pricing and discounts
 **Wave 2 · Owner: Codex · `p2/t02-pricing-discounts` · depends on 1**
 

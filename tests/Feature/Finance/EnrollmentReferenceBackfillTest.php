@@ -42,11 +42,12 @@ use Illuminate\Support\Facades\Schema;
 | the first ALTER would commit the wrapper, and every row the test wrote would
 | survive into whichever file runs next on a database all worktrees share.
 | That is precisely the pollution tests/Feature/DatabaseIsolationTest.php exists
-| to prevent, and DatabaseMigrations is the trait it names for work like this.
+| to prevent.
 |
-| The cost is a full migrate:fresh per test, which is why this file has six of
-| them rather than twenty. Where a property can be established alongside another
-| without weakening either, it is.
+| DatabaseMigrations deliberately pays for a fresh schema per case. These tests
+| create half-applied migration states, including states their own repair can
+| fail to restore. A following test must therefore rebuild from migration files
+| rather than trust the schema or migrations table the failed case left behind.
 |
 | The `afterEach` below is load-bearing; see its comment.
 */
@@ -186,12 +187,10 @@ function referenceOf(int $id): ?string
 
 afterEach(function () {
     /*
-     * LOAD-BEARING, not tidiness. DatabaseMigrations rolls the entire schema
-     * back when the test ends, and that rollback calls down() on all four of
-     * these. A test that leaves step 3 recorded-but-not-applied therefore kills
-     * the teardown — dropUnique() on an index that is not there — and the
-     * failure surfaces as a broken rollback rather than as the assertion that
-     * caused it.
+     * LOAD-BEARING, not tidiness. This restoration lets DatabaseMigrations roll
+     * the four steps back in the normal case. If restoration itself fails,
+     * DatabaseMigrations resets its shared migration flag and the next case
+     * starts with migrate:fresh instead of trusting this partial schema.
      *
      * So each test may leave the schema wherever its scenario needs it, and this
      * puts it back where the `migrations` table claims it is. Every step here is

@@ -248,7 +248,7 @@ it('gives two enrolments inserted in one open transaction distinct references �
      * different and stronger claim than this test makes — it exercises the
      * batch lock, the student lock and the placeholder-then-update sequence
      * under real interleaving rather than under one session's own ordering.
-     * That file lives apart from this one because it needs DatabaseMigrations
+     * That file lives apart from this one because it needs DatabaseTruncation
      * rather than RefreshDatabase — see its own docblock — not because the
      * property belongs elsewhere conceptually. This test is kept because the
      * uncommitted-coexistence property it proves is real and is not what the

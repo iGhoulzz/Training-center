@@ -26,10 +26,13 @@ use Tests\TestCase;
  * RefreshDatabase is NOT applied globally, and that is deliberate rather than an
  * oversight (P1-T15, group 3 finding L8).
  *
- * FileLifecycleTransactionTest uses DatabaseMigrations instead, because
+ * FileLifecycleTransactionTest uses DatabaseTruncation instead, because
  * RefreshDatabase wraps every test in a transaction and that transaction is
  * precisely the machinery those tests exist to exercise. Applying both would
- * quietly defeat them.
+ * quietly defeat them. Laravel truncates before each case but not after the
+ * final case in a file, so every truncation file must reset
+ * RefreshDatabaseState::$migrated in its own afterAll hook. That makes the next
+ * database test rebuild before it can observe committed residue.
  *
  * The cost is that isolation becomes something each author has to remember, on a
  * database every suite shares — a file that writes rows without opting in leaves
