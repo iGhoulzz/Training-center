@@ -14,7 +14,7 @@ use Carbon\CarbonImmutable;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\QueryException;
-use Illuminate\Foundation\Testing\DatabaseMigrations;
+use Illuminate\Foundation\Testing\DatabaseTruncation;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -35,23 +35,24 @@ use Illuminate\Support\Facades\Schema;
 | the states a crash would leave behind, rather than observing the schema a
 | finished `migrate` produced.
 |
-| WHY DatabaseMigrations AND NOT RefreshDatabase
+| WHY DatabaseTruncation AND NOT RefreshDatabase
 | ----------------------------------------------
 | Every test here issues DDL, and MySQL commits DDL implicitly. Under
 | RefreshDatabase — which wraps each test in one transaction and rolls it back —
 | the first ALTER would commit the wrapper, and every row the test wrote would
 | survive into whichever file runs next on a database all worktrees share.
 | That is precisely the pollution tests/Feature/DatabaseIsolationTest.php exists
-| to prevent, and DatabaseMigrations is the trait it names for work like this.
+| to prevent.
 |
-| The cost is a full migrate:fresh per test, which is why this file has six of
-| them rather than twenty. Where a property can be established alongside another
-| without weakening either, it is.
+| DatabaseTruncation gives these tests production transaction behaviour without
+| rebuilding the schema for every case: Laravel migrates once, then truncates
+| row data before the next test. The afterEach below restores the four migration
+| steps to their fully-applied state before truncation hands that schema onward.
 |
 | The `afterEach` below is load-bearing; see its comment.
 */
 
-uses(DatabaseMigrations::class);
+uses(DatabaseTruncation::class);
 
 /**
  * The four steps, in order, by their migration names.
@@ -186,12 +187,10 @@ function referenceOf(int $id): ?string
 
 afterEach(function () {
     /*
-     * LOAD-BEARING, not tidiness. DatabaseMigrations rolls the entire schema
-     * back when the test ends, and that rollback calls down() on all four of
-     * these. A test that leaves step 3 recorded-but-not-applied therefore kills
-     * the teardown — dropUnique() on an index that is not there — and the
-     * failure surfaces as a broken rollback rather than as the assertion that
-     * caused it.
+     * LOAD-BEARING, not tidiness. DatabaseTruncation preserves the schema and
+     * clears only row data between tests. A test that left step 3
+     * recorded-but-not-applied would therefore hand a false schema to the next
+     * case, where the failure would surface far from its cause.
      *
      * So each test may leave the schema wherever its scenario needs it, and this
      * puts it back where the `migrations` table claims it is. Every step here is

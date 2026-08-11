@@ -10,10 +10,11 @@ use Illuminate\Support\Facades\File;
 |--------------------------------------------------------------------------
 |
 | tests/Pest.php deliberately does NOT apply RefreshDatabase globally.
-| FileLifecycleTransactionTest uses DatabaseMigrations instead, because
+| FileLifecycleTransactionTest uses DatabaseTruncation instead, because
 | RefreshDatabase wraps every test in a transaction and that transaction is
 | precisely the machinery those tests exist to exercise; applying both would
-| quietly defeat them.
+| quietly defeat them. Truncation keeps production transaction behaviour while
+| clearing committed rows before the next test.
 |
 | The cost is that isolation becomes something each author has to remember, on a
 | database every suite shares. A file that writes rows without opting in leaves
@@ -34,7 +35,12 @@ use Illuminate\Support\Facades\File;
 */
 
 /** The isolation traits that make a file safe to write rows from. */
-const ISOLATION_TRAITS = ['RefreshDatabase', 'DatabaseMigrations', 'DatabaseTransactions'];
+const ISOLATION_TRAITS = [
+    'RefreshDatabase',
+    'DatabaseMigrations',
+    'DatabaseTruncation',
+    'DatabaseTransactions',
+];
 
 /**
  * Feature tests that touch no database at all, reviewed one by one.
@@ -126,6 +132,7 @@ it('accepts a real isolation declaration', function (string $sample) {
 })->with([
     "<?php\nuses(RefreshDatabase::class);\n",
     "<?php\nuses(DatabaseMigrations::class);\n",
+    "<?php\nuses(DatabaseTruncation::class);\n",
     "<?php\nuses(DatabaseTransactions::class);\n",
     "<?php\nuses(RefreshDatabase::class, WithFaker::class);\n",
     "<?php\nuses( RefreshDatabase::class );\n",
@@ -228,7 +235,7 @@ it('requires every feature test to declare an isolation trait or be reviewed rea
         ."database, so any row they write survives into whichever file runs next:\n  "
         .implode("\n  ", $offenders)
         ."\n\nAdd uses(RefreshDatabase::class) at the top of the file — or "
-        .'DatabaseMigrations if it must exercise real transactions — or, if it genuinely '
+        .'DatabaseTruncation if it must exercise real committed transactions — or, if it genuinely '
         .'writes nothing, add it to READ_ONLY_FEATURE_TESTS after reading it.',
     );
 });

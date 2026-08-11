@@ -227,7 +227,12 @@ Apply the same reasoning to any future resource whose per-record policy has a pr
 
 Feature tests over unit tests — the risk in this system is in how pieces connect.
 
-- `RefreshDatabase` on every feature test.
+- `RefreshDatabase` on every feature test by default. A test that must observe
+  real commits from another connection, or issue MySQL DDL, uses
+  `DatabaseTruncation` instead: the schema is migrated once and committed rows
+  are cleared between cases. `DatabaseMigrations` is reserved for a test whose
+  subject is Laravel's full migration/rollback lifecycle itself; do not pay for
+  a full schema rebuild merely to escape the test transaction.
 - Factories with states for all test data.
 - `Mail::fake()`, `Queue::fake()`, `Event::fake()`. Never hit real external services.
 - **Every permission test asserts both the positive and the negative** — what a role can do *and* what it cannot. Negative assertions are where authorization bugs hide.

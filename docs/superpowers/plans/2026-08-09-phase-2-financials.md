@@ -183,6 +183,48 @@ Migrations run clean and roll back clean, **each of the four enrolment migration
 
 ---
 
+## Task 1P — Test database performance follow-up
+**Wave 2 support · Owner: Codex · `p2/t01p-test-performance` · depends on 1**
+
+This bounded follow-up runs alongside task 5. Task 2 remains ready in wave 2,
+but starts after this task because the workflow permits one active task per
+agent. Its file scope does not overlap task 5 or task 2.
+
+**File scope**
+- `tests/Feature/Finance/EnrollmentReferenceBackfillTest.php`
+- `tests/Feature/Finance/ReferenceConcurrencyTest.php`
+- `tests/Feature/Finance/ReferenceTest.php` — comment-only companion update
+- `tests/Feature/Staff/FileLifecycleTransactionTest.php`
+- `tests/Feature/DatabaseIsolationTest.php`, `tests/Pest.php`
+- `docs/ENGINEERING.md` and this plan entry
+
+**Does**
+Replace per-test `DatabaseMigrations` rebuilds with Laravel's
+`DatabaseTruncation` for the three files that need real commits or DDL. The
+backfill file continues restoring the four reference migrations after every
+scenario; truncation clears row data between scenarios without wrapping them in
+the transaction that would invalidate their proofs. No behavioral case is
+combined, skipped, or moved out of the full suite.
+
+**Done when**
+All thirteen existing tests retain their individual names and assertions · the
+isolation architecture test recognizes a real `DatabaseTruncation` declaration
+and still rejects prose-only mentions · focused before/after timings are
+recorded for all three files · the full `composer verify` gate remains green ·
+CI partitioning is not added unless the measured result still justifies that
+extra workflow surface.
+
+**Measured outcome (2026-08-11, local MySQL)**
+The three pre-change focused runs totalled 155.092 seconds
+(79.510 + 14.206 + 61.376). The same thirteen cases after the change passed in
+17.118 seconds with all 85 assertions intact. The full gate passed 1,322 tests
+(1,321 passed, one skipped) and 4,016 assertions in 448.481 seconds, down from
+the approximately 590-second pre-change run. That reduction is large enough
+that CI partitioning is deliberately deferred; adding jobs and Composer entry
+points now would cost more complexity for less benefit than this direct fix.
+
+---
+
 ## Task 2 — Pricing and discounts
 **Wave 2 · Owner: Codex · `p2/t02-pricing-discounts` · depends on 1**
 

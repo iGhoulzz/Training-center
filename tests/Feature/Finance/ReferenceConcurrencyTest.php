@@ -13,7 +13,7 @@ use App\Domain\Staff\Actions\SystemRoleWriter;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Database\Events\QueryExecuted;
-use Illuminate\Foundation\Testing\DatabaseMigrations;
+use Illuminate\Foundation\Testing\DatabaseTruncation;
 use Illuminate\Support\Facades\DB;
 
 /*
@@ -34,9 +34,9 @@ use Illuminate\Support\Facades\DB;
 | under RefreshDatabase — so a second-connection assertion in that file would
 | see nothing, no matter how real the second connection is.
 | FileLifecycleTransactionTest hits the identical wall and solves it the same
-| way this file does: DatabaseMigrations instead of RefreshDatabase, which
-| commits for real, kept in its own file separate from its RefreshDatabase
-| sibling rather than mixed into it.
+| way this file does: DatabaseTruncation instead of RefreshDatabase. It commits
+| for real, clears rows rather than rebuilding the schema between cases, and is
+| kept separate from its transaction-wrapped sibling.
 |
 | HOW THE SECOND CONNECTION IS BUILT
 | -------------------------------------
@@ -73,7 +73,7 @@ use Illuminate\Support\Facades\DB;
 | against each other instead of proving anything.
 */
 
-uses(DatabaseMigrations::class);
+uses(DatabaseTruncation::class);
 
 const REFERENCE_CONCURRENCY_SECOND_CONNECTION = 'reference_concurrency_second_connection';
 

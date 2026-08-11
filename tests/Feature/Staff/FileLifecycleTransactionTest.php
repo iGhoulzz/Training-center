@@ -11,7 +11,7 @@ use App\Domain\Staff\Services\FileLifecycleService;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Database\Events\QueryExecuted;
-use Illuminate\Foundation\Testing\DatabaseMigrations;
+use Illuminate\Foundation\Testing\DatabaseTruncation;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -24,7 +24,7 @@ use Illuminate\Support\Str;
  * because the dangerous case was re-entering that manager from a root rollback
  * callback and accidentally firing after-commit work from the rolled-back save.
  */
-uses(DatabaseMigrations::class);
+uses(DatabaseTruncation::class);
 
 afterEach(function () {
     DB::disconnect(FileLifecycleService::compensationConnectionName());
@@ -214,9 +214,9 @@ it('keeps bytes when a current locking ownership read finds a committed owner', 
 | dispatches them. These two cover what actually happens to the BYTES, and they
 | belong here rather than there: the job's ownership read runs on an independent
 | connection, so under RefreshDatabase's wrapping transaction it cannot see rows
-| the test has created and would report every file unowned. DatabaseMigrations
-| commits for real, which is the only way this pair can distinguish an owned file
-| from an orphan.
+| the test has created and would report every file unowned. DatabaseTruncation
+| commits for real and clears rows between cases, which is the only way this pair
+| can distinguish an owned file from an orphan without rebuilding every table.
 |
 | They are a pair on purpose. Either one alone passes for a broken sweep — the
 | first for one that dispatches nothing at all, the second for one that ignores
