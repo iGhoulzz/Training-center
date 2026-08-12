@@ -23,9 +23,9 @@ use Livewire\Livewire;
  * The policy tests prove the rules; these prove the resource is wired to them.
  * Both are needed — a correct policy nobody consults denies nothing.
  *
- * The price assertions here are the phase-discipline guard. batches.price exists
- * in the schema for phase 2's benefit; if anyone helpfully surfaces it in the
- * form or the table, these fail.
+ * The price assertions enforce the phase 2 ability boundary: admins see no
+ * field and cannot smuggle its state, while super admins write through the real
+ * Action-backed pages.
  */
 uses(RefreshDatabase::class);
 
@@ -264,13 +264,12 @@ it('shows the inherited hours in the schedule table', function () {
 
 /*
 |--------------------------------------------------------------------------
-| PHASE DISCIPLINE: no price anywhere in the UI
+| Pricing ability boundary
 |--------------------------------------------------------------------------
 |
-| batches.price is a phase 2 column created early so phase 2 never has to ALTER
-| a table holding production data. Phase 1 has no financial features, so the
-| field must be unreachable, not merely unused. These are the guard against
-| someone helpfully surfacing it later.
+| Admins retain the phase 1 form with no price field. Super admins see the field,
+| but generic Filament persistence never receives it: the page hook calls the
+| self-authorizing pricing Action.
 */
 
 it('exposes no price field on the create page', function () {
@@ -300,6 +299,43 @@ it('exposes no price field on the view page', function () {
         ->assertFormFieldDoesNotExist('price');
 });
 
+it('lets a super admin set the price when creating a batch', function () {
+    $course = Course::factory()->create();
+
+    Livewire::actingAs(($this->makeUser)('super_admin'))
+        ->test(CreateBatch::class)
+        ->assertFormFieldExists('price')
+        ->fillForm([
+            'course_id' => $course->getKey(),
+            'code' => 'ENG-PRICED',
+            'status' => BatchStatus::Planned->value,
+            'capacity' => 20,
+            'price' => '325.250',
+        ])
+        ->call('create')
+        ->assertHasNoFormErrors();
+
+    expect(Batch::where('code', 'ENG-PRICED')->value('price'))->toBe('325.250');
+});
+
+it('lets a super admin view and change a batch price', function () {
+    $batch = Batch::factory()->create(['price' => '100.000']);
+    $superAdmin = ($this->makeUser)('super_admin');
+
+    Livewire::actingAs($superAdmin)
+        ->test(ViewBatch::class, ['record' => $batch->getKey()])
+        ->assertFormFieldExists('price');
+
+    Livewire::actingAs($superAdmin)
+        ->test(EditBatch::class, ['record' => $batch->getKey()])
+        ->assertFormFieldExists('price')
+        ->fillForm(['price' => '125.500'])
+        ->call('save')
+        ->assertHasNoFormErrors();
+
+    expect($batch->fresh()?->price)->toBe('125.500');
+});
+
 it('exposes no price column in the schedule table', function () {
     Batch::factory()->create();
 
@@ -310,9 +346,8 @@ it('exposes no price column in the schedule table', function () {
 });
 
 it('ignores a price smuggled into the create payload', function () {
-    // price IS fillable on the model — phase 2 needs it to be — so the only
-    // thing keeping it out of a phase 1 write is its absence from the form.
-    // This submits it the way a hand-written Livewire payload would.
+    // This submits the hidden state the way a hand-written Livewire payload
+    // would. The ability check must happen before the page reads raw state.
     $course = Course::factory()->create();
 
     Livewire::actingAs(($this->makeUser)('admin'))

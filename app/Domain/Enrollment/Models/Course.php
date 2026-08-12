@@ -24,9 +24,9 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * No business logic and no write guards; see App\Models\User for why that
  * architecture was removed in P1-T04c.
  *
- * `default_price` is fillable but exists for phase 2 alone. It is absent from
- * CourseResource entirely, and CourseTest asserts that absence so nobody
- * helpfully surfaces it: phase 1 has no financial features of any kind.
+ * `default_price` is fillable for UpdateCoursePriceAction, the only application
+ * writer. CourseResource exposes an always-non-dehydrated field only with
+ * `manage_pricing`, so generic Filament persistence never receives the value.
  */
 #[Fillable([
     'code',

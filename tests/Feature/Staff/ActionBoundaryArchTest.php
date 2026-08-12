@@ -275,6 +275,11 @@ it('does not delete or deactivate users outside the sanctioned Actions', functio
             // Batches (P1-T11): refuses while enrolments or instructor
             // allocations remain, and owns the 1451 conversion.
             'DeleteBatchAction',
+            // Discount definitions: deletion is allowed only before use and
+            // converts MySQL 1451 into a typed refusal; deactivation is their
+            // sole post-use lifecycle transition.
+            'DeleteDiscountAction',
+            'DeactivateDiscountAction',
             // Enrolments (P1-T11): single-record only, authorizes against the
             // row locked by EnrollmentMutex.
             'DeleteEnrollmentAction',

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Domain\Enrollment\Filament\Resources\BatchResource\Pages;
 
 use App\Domain\Enrollment\Filament\Resources\BatchResource;
+use App\Domain\Finance\Filament\Concerns\WritesPricingThroughActions;
 use Filament\Resources\Pages\EditRecord;
 
 /**
@@ -21,6 +22,8 @@ use Filament\Resources\Pages\EditRecord;
  */
 class EditBatch extends EditRecord
 {
+    use WritesPricingThroughActions;
+
     protected static string $resource = BatchResource::class;
 
     /**
@@ -29,6 +32,11 @@ class EditBatch extends EditRecord
      * bool is a fatal incompatible-property-type error.
      */
     protected ?bool $hasDatabaseTransactions = true;
+
+    protected function afterSave(): void
+    {
+        $this->writeBatchPrice();
+    }
 
     /**
      * authorize(), not merely visible(). visible() is a UX affordance that a

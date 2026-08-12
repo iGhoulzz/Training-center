@@ -27,14 +27,13 @@ use Filament\Tables\Table;
 /**
  * The course catalogue (P1-T08).
  *
- * NO PRICE FIELD, ANYWHERE
- * ------------------------
- * `courses.default_price` exists in the schema so that phase 2 never has to
- * ALTER a table holding production data. It appears in neither the form nor the
- * table, and that is not an oversight to be tidied up later — phase 1 has no
- * financial features of any kind. CourseTest asserts the field's absence from
- * both, so restoring it fails the build rather than quietly shipping a price
- * someone can edit before any of the money rules exist.
+ * PRICE WRITES BYPASS GENERIC PERSISTENCE
+ * ---------------------------------------
+ * `default_price` is visible only with `manage_pricing` and is always
+ * dehydrated(false), so Filament's generic create/update never sees it.
+ * CreateCourse and EditCourse send raw state through UpdateCoursePriceAction.
+ * Admins therefore keep a form with no price field, while every price write has
+ * an explicit actor and authorization boundary.
  *
  * FULL PAGES, NOT MODAL ACTIONS
  * -----------------------------
@@ -117,6 +116,17 @@ class CourseResource extends Resource
                 ->maxValue(65535)
                 ->default(0),
 
+            TextInput::make('default_price')
+                ->label(__('pricing.course_default_price'))
+                ->helperText(__('pricing.course_default_price_hint'))
+                ->required()
+                ->numeric()
+                ->minValue(0)
+                ->rules(['decimal:0,3', 'max:999999999.999'])
+                ->default('0.000')
+                ->visible(fn (): bool => auth()->user()?->can('manage_pricing') ?? false)
+                ->dehydrated(false),
+
             Toggle::make('is_active')
                 ->label(__('enrollment.is_active'))
                 ->helperText(__('enrollment.is_active_course_hint'))
@@ -132,7 +142,6 @@ class CourseResource extends Resource
                 ->rows(3)
                 ->columnSpanFull(),
 
-            // DELIBERATELY ABSENT: default_price. Phase 2 owns it.
         ]);
     }
 
@@ -192,7 +201,8 @@ class CourseResource extends Resource
                     ->boolean()
                     ->sortable(),
 
-                // DELIBERATELY ABSENT: default_price. Phase 2 owns it.
+                // Deliberately absent from the table: pricing is changed from
+                // the guarded form field, not inline from a listing.
             ])
             ->defaultSort('code')
             // Delete belongs on the row, not only on the edit page.
