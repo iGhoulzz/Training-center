@@ -42,6 +42,10 @@ class AdminPanelProvider extends PanelProvider
                 for: 'App\Domain\Enrollment\Filament\Resources',
             )
             ->discoverResources(
+                in: app_path('Domain/Finance/Filament/Resources'),
+                for: 'App\Domain\Finance\Filament\Resources',
+            )
+            ->discoverResources(
                 in: app_path('Domain/Staff/Filament/Resources'),
                 for: 'App\Domain\Staff\Filament\Resources',
             )

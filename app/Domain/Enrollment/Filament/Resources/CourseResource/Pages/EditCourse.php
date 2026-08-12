@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Domain\Enrollment\Filament\Resources\CourseResource\Pages;
 
 use App\Domain\Enrollment\Filament\Resources\CourseResource;
+use App\Domain\Finance\Filament\Concerns\WritesPricingThroughActions;
 use Filament\Resources\Pages\EditRecord;
 
 /**
@@ -19,6 +20,8 @@ use Filament\Resources\Pages\EditRecord;
  */
 class EditCourse extends EditRecord
 {
+    use WritesPricingThroughActions;
+
     protected static string $resource = CourseResource::class;
 
     /**
@@ -27,6 +30,11 @@ class EditCourse extends EditRecord
      * bool is a fatal incompatible-property-type error.
      */
     protected ?bool $hasDatabaseTransactions = true;
+
+    protected function afterSave(): void
+    {
+        $this->writeCoursePrice();
+    }
 
     /**
      * authorize(), not merely visible(). visible() is a UX affordance that a

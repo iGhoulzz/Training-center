@@ -12,6 +12,8 @@ use App\Domain\Enrollment\Policies\BatchPolicy;
 use App\Domain\Enrollment\Policies\CoursePolicy;
 use App\Domain\Enrollment\Policies\EnrollmentPolicy;
 use App\Domain\Enrollment\Policies\StudentPolicy;
+use App\Domain\Finance\Models\Discount;
+use App\Domain\Finance\Policies\DiscountPolicy;
 use App\Domain\Staff\Console\GuardedBackupCommand;
 use App\Domain\Staff\Console\GuardedCleanupCommand;
 use App\Domain\Staff\Console\GuardedListCommand;
@@ -109,6 +111,7 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(Course::class, CoursePolicy::class);
         Gate::policy(Batch::class, BatchPolicy::class);
         Gate::policy(Enrollment::class, EnrollmentPolicy::class);
+        Gate::policy(Discount::class, DiscountPolicy::class);
         Gate::policy(Activity::class, ActivityPolicy::class);
 
         /*

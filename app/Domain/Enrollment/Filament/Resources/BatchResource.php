@@ -33,14 +33,13 @@ use Illuminate\Database\Eloquent\Builder;
 /**
  * Intakes of a course (P1-T09).
  *
- * NO PRICE FIELD, ANYWHERE
- * ------------------------
- * `batches.price` exists in the schema so that phase 2 never has to ALTER a
- * table holding production data. It appears in neither the form nor the table,
- * and that is not an oversight to be tidied up later — phase 1 has no financial
- * features of any kind. BatchResourceTest asserts the field's absence from both,
- * so restoring it fails the build rather than quietly shipping a price someone
- * can edit before any of the money rules exist.
+ * PRICE WRITES BYPASS GENERIC PERSISTENCE
+ * ---------------------------------------
+ * `price` is visible only with `manage_pricing` and is always dehydrated(false),
+ * so Filament's generic create/update never sees it. CreateBatch and EditBatch
+ * send raw state through UpdateBatchPriceAction. Admins therefore keep a form
+ * with no price field, while every price write has an explicit actor and
+ * authorization boundary.
  *
  * THE HOURS FIELD IS NULLABLE ON PURPOSE
  * --------------------------------------
@@ -267,7 +266,15 @@ class BatchResource extends Resource
                 ->maxValue(65535)
                 ->placeholder(__('enrollment.inherits_from_course')),
 
-            // DELIBERATELY ABSENT: price. Phase 2 owns it.
+            TextInput::make('price')
+                ->label(__('pricing.batch_price'))
+                ->helperText(__('pricing.batch_price_hint'))
+                ->numeric()
+                ->minValue(0)
+                ->rules(['nullable', 'decimal:0,3', 'max:999999999.999'])
+                ->placeholder(__('pricing.inherits_course_price'))
+                ->visible(fn (): bool => auth()->user()?->can('manage_pricing') ?? false)
+                ->dehydrated(false),
         ]);
     }
 
@@ -377,7 +384,8 @@ class BatchResource extends Resource
                         ? __('enrollment.hour_mismatch_hint')
                         : null),
 
-                // DELIBERATELY ABSENT: price. Phase 2 owns it.
+                // Deliberately absent from the table: pricing is changed from
+                // the guarded form field, not inline from a listing.
             ])
             /*
              * Soonest first, undated last.

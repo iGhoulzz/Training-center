@@ -34,9 +34,9 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * to batch_instructor goes through AssignInstructorAction /
  * RemoveInstructorAction, never through the relation here.
  *
- * `price` is fillable but exists for phase 2 alone. It is absent from
- * BatchResource entirely, and BatchResourceTest asserts that absence so nobody
- * helpfully surfaces it: phase 1 has no financial features of any kind.
+ * `price` is fillable for UpdateBatchPriceAction, the only application writer.
+ * BatchResource exposes an always-non-dehydrated field only with
+ * `manage_pricing`, so generic Filament persistence never receives the value.
  */
 #[Fillable([
     'course_id',

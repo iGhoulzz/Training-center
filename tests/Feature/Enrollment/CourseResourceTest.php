@@ -21,9 +21,9 @@ use Livewire\Livewire;
  * The policy tests prove the rules; these prove the resource is wired to them.
  * Both are needed — a correct policy nobody consults denies nothing.
  *
- * The price assertions here are the phase-discipline guard. courses.default_price
- * exists in the schema for phase 2's benefit; if anyone helpfully surfaces it in
- * the form or the table, these fail.
+ * The price assertions enforce the phase 2 ability boundary: admins see no
+ * field and cannot smuggle its state, while super admins write through the real
+ * Action-backed pages.
  */
 uses(RefreshDatabase::class);
 
@@ -183,13 +183,12 @@ it('saves a real edit made by an admin', function () {
 
 /*
 |--------------------------------------------------------------------------
-| PHASE DISCIPLINE: no price anywhere in the UI
+| Pricing ability boundary
 |--------------------------------------------------------------------------
 |
-| courses.default_price is a phase 2 column created early so phase 2 never has
-| to ALTER a table holding production data. Phase 1 has no financial features,
-| so the field must be unreachable, not merely unused. These are the guard
-| against someone helpfully surfacing it later.
+| Admins retain the phase 1 form with no price field. Super admins see the field,
+| but generic Filament persistence never receives it: the page hook calls the
+| self-authorizing pricing Action.
 */
 
 it('exposes no price field on the create page', function () {
@@ -219,6 +218,40 @@ it('exposes no price field on the view page', function () {
         ->assertFormFieldDoesNotExist('default_price');
 });
 
+it('lets a super admin set the default price when creating a course', function () {
+    Livewire::actingAs(($this->makeUser)('super_admin'))
+        ->test(CreateCourse::class)
+        ->assertFormFieldExists('default_price')
+        ->fillForm([
+            'code' => 'ENG-PRICED',
+            'name_en' => 'Priced Course',
+            'total_hours' => 30,
+            'default_price' => '425.750',
+        ])
+        ->call('create')
+        ->assertHasNoFormErrors();
+
+    expect(Course::where('code', 'ENG-PRICED')->value('default_price'))->toBe('425.750');
+});
+
+it('lets a super admin view and change a course default price', function () {
+    $course = Course::factory()->create(['default_price' => '100.000']);
+    $superAdmin = ($this->makeUser)('super_admin');
+
+    Livewire::actingAs($superAdmin)
+        ->test(ViewCourse::class, ['record' => $course->getKey()])
+        ->assertFormFieldExists('default_price');
+
+    Livewire::actingAs($superAdmin)
+        ->test(EditCourse::class, ['record' => $course->getKey()])
+        ->assertFormFieldExists('default_price')
+        ->fillForm(['default_price' => '125.500'])
+        ->call('save')
+        ->assertHasNoFormErrors();
+
+    expect($course->fresh()?->default_price)->toBe('125.500');
+});
+
 it('exposes no price column in the catalogue table', function () {
     Course::factory()->create();
 
@@ -229,9 +262,8 @@ it('exposes no price column in the catalogue table', function () {
 });
 
 it('ignores a default_price smuggled into the create payload', function () {
-    // default_price IS fillable on the model — phase 2 needs it to be — so the
-    // only thing keeping it out of a phase 1 write is its absence from the
-    // form. This submits it the way a hand-written Livewire payload would.
+    // This submits the hidden state the way a hand-written Livewire payload
+    // would. The ability check must happen before the page reads raw state.
     Livewire::actingAs(($this->makeUser)('admin'))
         ->test(CreateCourse::class)
         ->fillForm([

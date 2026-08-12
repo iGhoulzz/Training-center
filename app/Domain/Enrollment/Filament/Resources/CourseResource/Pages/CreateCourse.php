@@ -5,16 +5,19 @@ declare(strict_types=1);
 namespace App\Domain\Enrollment\Filament\Resources\CourseResource\Pages;
 
 use App\Domain\Enrollment\Filament\Resources\CourseResource;
+use App\Domain\Finance\Filament\Concerns\WritesPricingThroughActions;
 use Filament\Resources\Pages\CreateRecord;
 
 /**
- * A plain create page: a course is ordinary catalogue data with no Action-owned
- * write behaviour, so Filament's own persistence is the whole of it. Access is
- * gated by CreateRecord::authorizeAccess(), which aborts 403 unless the actor
- * passes CoursePolicy::create() — which staff do not.
+ * Filament persists ordinary catalogue fields; the always-non-dehydrated price
+ * is applied afterwards through UpdateCoursePriceAction. Access is gated by
+ * CreateRecord::authorizeAccess(), which aborts 403 unless the actor passes
+ * CoursePolicy::create().
  */
 class CreateCourse extends CreateRecord
 {
+    use WritesPricingThroughActions;
+
     protected static string $resource = CourseResource::class;
 
     /**
@@ -23,4 +26,11 @@ class CreateCourse extends CreateRecord
      * bool is a fatal incompatible-property-type error.
      */
     protected ?bool $hasDatabaseTransactions = true;
+
+    protected function afterCreate(): void
+    {
+        $this->record->refresh();
+
+        $this->writeCoursePrice();
+    }
 }
