@@ -130,6 +130,37 @@ it('keeps both price fields out of generic Filament persistence on create and ed
     );
 });
 
+it('checks the pricing ability before reading crafted raw form state', function () {
+    $admin = ($this->makePricingActor)('admin');
+    $course = Course::factory()->create([
+        'name_en' => 'English B1',
+        'default_price' => '100.000',
+    ]);
+    $batch = Batch::factory()->for($course)->create([
+        'code' => 'ENG-B1-MORNING',
+        'price' => null,
+    ]);
+
+    Livewire::actingAs($admin)
+        ->test(EditCourse::class, ['record' => $course->getKey()])
+        ->set('data.name_en', 'English B1 Evening')
+        ->set('data.default_price', '999.999')
+        ->call('save')
+        ->assertHasNoFormErrors();
+
+    Livewire::actingAs($admin)
+        ->test(EditBatch::class, ['record' => $batch->getKey()])
+        ->set('data.code', 'ENG-B1-EVENING')
+        ->set('data.price', '999.999')
+        ->call('save')
+        ->assertHasNoFormErrors();
+
+    expect($course->fresh()?->name_en)->toBe('English B1 Evening')
+        ->and($course->fresh()?->default_price)->toBe('100.000')
+        ->and($batch->fresh()?->code)->toBe('ENG-B1-EVENING')
+        ->and($batch->fresh()?->price)->toBeNull();
+});
+
 it('does not invoke the course price Action for an equivalent decimal', function () {
     $course = Course::factory()->create([
         'name_en' => 'English B1',
