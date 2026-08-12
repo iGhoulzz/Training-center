@@ -165,12 +165,19 @@ class ChargeResource extends Resource
      * below — without it the list is a textbook N+1, one query per row for
      * `enrollment.batch.course.code`.
      *
-     * `select('charges.*')` is deliberate rather than incidental: it is what
-     * keeps every column in scope for `having()` and `orderBy()` against the
-     * alias selected next to it, the same shape
-     * `tests/Feature/Finance/ChargeBalanceTest.php` proves works. No
-     * `GROUP BY` — the balance is a correlated subquery, not a join, so it
-     * never multiplies a charge into more than one row.
+     * `select('charges.*')` is deliberate rather than incidental, and NOT
+     * because of `having()` — there is no `having()` anywhere in this file;
+     * the class docblock explains why the alias cannot compose into one
+     * through Filament's filter pipeline. The real reason: `selectRaw()`
+     * REPLACES Eloquent's implicit `select *` rather than adding to it —
+     * once any column is named, the builder stops defaulting to `*`.
+     * Confirmed with `DB::listen()`: dropping `select('charges.*')` here
+     * turns the emitted SQL from
+     * `select \`charges\`.*, (...) as outstanding_amount from \`charges\``
+     * into `select (...) as outstanding_amount from \`charges\`` — every
+     * charge column gone except the alias itself. No `GROUP BY` — the
+     * balance is a correlated subquery, not a join, so it never multiplies a
+     * charge into more than one row.
      *
      * NOT `enrollment.student` — see the class docblock.
      *
@@ -360,7 +367,27 @@ class ChargeResource extends Resource
                     ->rule('regex:/^\d{1,9}(\.\d{1,3})?$/')
                     ->validationMessages([
                         'regex' => __('charges.amount_format_error'),
-                    ]),
+                    ])
+                    // ->numeric() buys the decimal keypad hint and the
+                    // `numeric` rule at the cost of NumberStateCast, which
+                    // runs floatval() on hydration: a 1000.000 charge mounts
+                    // showing "1000", the third decimal place gone before an
+                    // operator ever sees it — a small misreading waiting to
+                    // happen against a row that genuinely says 1000.000.
+                    // rawState(), not state(), reformats the ALREADY-CAST
+                    // value back to three decimals here; state() would run
+                    // the same cast again and undo this in the same breath.
+                    // Nothing above changes: the regex still validates
+                    // whatever is submitted, typed or left as the default,
+                    // before Money::fromDecimal() ever sees it — this only
+                    // touches what is shown before anyone has typed anything.
+                    ->afterStateHydrated(function (TextInput $component, int|float|string|null $state): void {
+                        if ($state === null || $state === '') {
+                            return;
+                        }
+
+                        $component->rawState(number_format((float) $state, 3, '.', ''));
+                    }),
 
                 Textarea::make('reason')
                     ->label(__('charges.reason'))

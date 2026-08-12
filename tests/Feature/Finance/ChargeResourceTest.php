@@ -305,12 +305,21 @@ it('sorts the table by outstanding balance, in both directions', function () {
 */
 
 it('filters the table to only charges with something still outstanding', function () {
-    // ChargeBalance's own docblock: the expression does not compose into a
-    // bare having(). ChargeResource::table() selects the alias first and
-    // filters on the alias NAME — the first of the two shapes
-    // ChargeBalanceTest proves works. This is the assertion that the
-    // production filter actually uses that shape and actually returns the
-    // right rows, not merely that it runs without a "column not found" error.
+    // This is the test that exists to catch the defect this filter shipped
+    // with once: ChargeResource::table() used to select the alias first and
+    // call having() on its NAME — the shape ChargeBalanceTest proves works —
+    // but that proof runs against a bare DB::table() query, never through
+    // Filament's filter pipeline. HasFilters::applyFiltersToTableQuery()
+    // wraps every filter's apply() in $query->where(fn ($query) => …), and
+    // Builder::addNestedWhereQuery() merges only the nested builder's
+    // `wheres` back — its `havings` are silently dropped. The having()
+    // version emitted valid SQL with no HAVING clause and returned every
+    // row, filtered or not; a test that only asserted the query ran would
+    // have passed against it just as happily. ChargeResource::table() now
+    // uses whereRaw, and what pins that shape here is that this assertion
+    // checks the actual ROWS returned, not merely the absence of a "column
+    // not found" error. Do not reconcile this comment back to the
+    // having()-on-the-alias shape; that is the bug.
     $unpaid = Charge::factory()->create(['list_price' => '1000.000', 'amount' => '1000.000']);
 
     $settled = Charge::factory()->create(['list_price' => '1000.000', 'amount' => '1000.000']);

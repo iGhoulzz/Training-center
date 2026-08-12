@@ -11,6 +11,7 @@ use App\Domain\Finance\Models\Payment;
 use App\Domain\Finance\Models\PaymentAllocation;
 use App\Domain\Finance\Support\Money;
 use App\Domain\Staff\Actions\SystemRoleWriter;
+use App\Domain\Staff\Filament\Resources\ActivityResource;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -243,6 +244,18 @@ it('writes the reason and the before/after diff to one activity entry', function
         ->and($entry->getProperty('reason'))->toBe('The enrolment fee was entered twice.')
         ->and($entry->attribute_changes?->get('attributes'))->toBe(['amount' => '750.000'])
         ->and($entry->attribute_changes?->get('old'))->toBe(['amount' => '1000.000']);
+
+    // The plan's Task 5 DoD does not stop at the stored row: the reason must
+    // also be VISIBLE in ActivityResource. Calling the resource's own
+    // renderers — not a copy of what they do — is what pins that; the two
+    // lines below are what ActivityResource::table()'s "changes" and
+    // "details" columns actually put on screen for this entry.
+    // describeProperties() reaches this only because it excludes just
+    // `ip`/`causer_name`, not because `reason` is named anywhere — a future
+    // narrowing to a whitelist would silently drop the one field design
+    // section 4 calls the audit record, with nothing here to catch it.
+    expect(ActivityResource::describeProperties($entry))->toBe('reason: The enrolment fee was entered twice.')
+        ->and(ActivityResource::describeChanges($entry))->toBe('amount: 1000.000 → 750.000');
 });
 
 /*
