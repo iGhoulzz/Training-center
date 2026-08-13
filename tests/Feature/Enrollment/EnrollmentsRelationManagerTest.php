@@ -11,6 +11,8 @@ use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Course;
 use App\Domain\Enrollment\Models\Enrollment;
 use App\Domain\Enrollment\Models\Student;
+use App\Domain\Finance\Models\Charge;
+use App\Domain\Finance\Support\Reference;
 use App\Domain\Staff\Actions\SystemRoleWriter;
 use App\Domain\Staff\Models\StaffProfile;
 use App\Models\User;
@@ -68,6 +70,37 @@ it('enrolls a student through the panel', function () {
 
     expect(Enrollment::query()->count())->toBe(1)
         ->and(Enrollment::query()->sole()->status)->toBe(EnrollmentStatus::Active);
+});
+
+it('raises the bill as part of enrolling through the panel', function () {
+    /*
+     * THE ASSERTION THAT PROVES THE SURFACE WAS ACTUALLY MIGRATED (P2-T03).
+     *
+     * Design section 12 is explicit that this file must change: this screen was
+     * the one UI path that could create an enrolment with no bill, and a phase 2
+     * suite passing while this file still asserted only the phase 1 behaviour
+     * would mean the migration never happened. Every case above passed unchanged
+     * against EnrollAndBillAction — which is correct, and is exactly why it
+     * proves nothing on its own.
+     *
+     * Driven through the real component rather than the Action, because the
+     * defect being closed was in the wiring, not in either Action.
+     */
+    $student = Student::factory()->create();
+
+    ($this->mountPanel)(($this->makeUser)('admin'))
+        ->callTableAction('enroll', null, ['student_id' => $student->getKey()]);
+
+    $enrollment = Enrollment::query()->sole();
+    $charge = Charge::query()->sole();
+
+    expect((int) $charge->enrollment_id)->toBe((int) $enrollment->getKey())
+        ->and($charge->reference)->toStartWith(Reference::CHARGE_PREFIX)
+        // Full price: this screen offers no discount, by design section 3.
+        ->and($charge->discount_id)->toBeNull()
+        ->and($charge->amount)->toBe($charge->list_price)
+        // Design section 4: due on the day the debt was incurred.
+        ->and($charge->due_date->toDateString())->toBe($enrollment->enrolled_at->toDateString());
 });
 
 it('takes the batch from the owner record, not a crafted payload', function () {

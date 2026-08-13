@@ -139,6 +139,11 @@ A seam is a file whose content is an enumeration that grows whenever a task adds
 | `tests/Feature/Staff/ActionBoundaryArchTest.php` | adds an Action calling `->delete()`/`->forceDelete()`, or writing `is_active => false` | **open**; the delete rule is deliberately broad, so its allowlist grows per Action, not per model |
 | `RolePermissionSeeder` + `FinancePermissionSeedingTest` | needs a permission | **closed for phase 2** — T1 seeded the whole set from design §10 |
 | `tests/Feature/LocalizationTest.php` | adds a translation catalogue | **closed** — T1 made the Arabic-empty dataset derive from `lang/en` |
+| `tests/Feature/DatabaseIsolationTest.php` — the exempt-file list | adds a test file that declares no database isolation trait | **open**; grows per architecture-style test |
+
+**The last row was added by T3, and it is the most instructive one here.** It was missing when this table was written in T00C, and the very next task — T2P — joined it, correctly and with the owner's approval, but without declaring it, because nothing in the inventory prompted them to. A seam the inventory omits is a seam nobody is asked to declare, so the omission propagates as compliance.
+
+**The lesson is about the inventory, not about that task.** This table is hand-maintained against a codebase that keeps growing registries, which is the same shape of defect as `KNOWN_PIVOT_MUTATORS` before its reflection guard, and as the money-field list T2P deferred to T12. Until something derives it, **each task re-reads this table against `main` rather than trusting it**, and adds what it finds.
 
 **No test asserts any of these.** A dropped `Gate::policy()` line fails *silently*, because Laravel's convention discovery resolves those policies unaided; a duplicated `discoverResources()` line fails silently too. Silence in both directions is why the verification step below counts rather than reads.
 
