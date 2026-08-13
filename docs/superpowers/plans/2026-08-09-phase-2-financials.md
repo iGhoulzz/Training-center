@@ -78,13 +78,15 @@ Per `docs/WORKFLOW.md`: **at most one Claude task and one Codex task run at a ti
 |---|---|---|---|
 | 1 | **T1** Finance foundation | *(reviews T1)* | everything |
 | 2 | **T5** Charge corrections | **T2** Pricing & discounts | T2 unblocks T3 |
+| 2P | *(reviews T2P)* | **T2P** Money boundary & guard | closes a T2 defect and lands the money-cast guard before any further money forms are written |
 | 3 | **T3** Enrol & bill | **T7** Compensation | T3 unblocks T4/T8/T10; T7 unblocks T8 |
 | 4 | **T4** Payments & tenders | **T8** Payroll runs | T4 unblocks T6/T9/T10 |
 | 5 | **T10** Report queries | **T6** Receipts | both unblock T11; T6 unblocks T9 |
-| 6 | **T9** Enrol-and-collect | **T11** Report pages & export | |
-| 7 | **T12** Phase reconciliation | *(reviews T12)* | milestone closes |
+| 6 | **T9** Enrol-and-collect | *(reviews T9)* | T9 lands the page-discovery line T11 needs |
+| 7 | *(reviews T11)* | **T11** Report pages & export | |
+| 8 | **T12** Phase reconciliation | *(reviews T12)* | milestone closes |
 
-Seven waves, and **both agents have work in waves 2 through 6** — no idle slot in the middle of the phase.
+**Revision 5 split what was wave 6.** T9 and T11 both need the same `discoverPages()` registration, and `docs/WORKFLOW.md` permits only one task per wave to modify a seam, so they run in sequence — see "Same-wave file isolation" below for why that is worth a wave. Both agents still have work in waves 2 through 5.
 
 ### Two ownership changes, and why
 
@@ -145,16 +147,28 @@ A seam is a file whose content is an enumeration that grows whenever a task adds
 | Wave | Pair | Seams each joins | Verdict |
 |---|---|---|---|
 | 3 | T3 · T7 | T3 → arch test, the delete allowlist for `DeleteUncommittedChargeAction`, in a file it already declares · T7 → `AppServiceProvider`, for `StaffCompensationPolicy` | **No collision.** Different seams, one writer each. T7's crossing is undeclared and is declared below. |
-| 4 | T4 · T8 | **Both** → `AppServiceProvider`: `PaymentPolicy` and `PayrollRunPolicy` | **Collision.** The wave-2 pair exactly — on the file that at least conflicts loudly. |
-| 5 | T10 · T6 | T6 → `routes/web.php` and the mPDF dependency, both declared, plus `AppServiceProvider` if it introduces a receipt policy · T10 → none | **No collision**, single writer. |
-| 6 | T9 · T11 | **Both** → `AdminPanelProvider`, `discoverPages()` for `app/Domain/Finance/Filament/Pages` | **Collision, and the dangerous kind.** Two identical lines: the shape that auto-merges in silence. |
+| 4 | T4 · T8 | **Both** → `AppServiceProvider`: `PaymentPolicy` and `PayrollRunPolicy` | **Collision — dissolved without sequencing.** See below: neither task needs to touch the file. |
+| 5 | T10 · T6 | T6 → `routes/web.php` and the mPDF dependency, both declared, plus a receipt policy if it introduces one · T10 → none | **No collision**, single writer. |
+| 6 | T9 · T11 | **Both** → `AdminPanelProvider`, `discoverPages()` for `app/Domain/Finance/Filament/Pages` | **Collision, and the dangerous kind.** Two identical lines: the shape that auto-merges in silence. **Sequenced — see the revised wave table.** |
 
-Wave 6 deserves the detail, because nothing in the plan hints at it today. The panel discovers pages from **`app/Filament/Pages` only**; every `Pages` directory under `app/Domain` is resource-scoped and reached through its resource. T9's `EnrollAndCollect` and T11's `Pages/Reports/` are each the first *standalone* page in a domain namespace, so each needs the same one-line registration, and neither task's scope mentions the provider.
+#### Wave 4 dissolves, because the seam is optional
+
+The `Gate::policy()` list is **redundant**, and that is checkable rather than arguable. Laravel's `Gate::guessPolicyName()` maps a class whose namespace contains `\Models\` onto the sibling `\Policies\` namespace — `vendor/laravel/framework/src/Illuminate/Auth/Access/Gate.php:725-727`. Every model here is `App\Domain\{Domain}\Models\{X}` and every policy `App\Domain\{Domain}\Policies\{X}Policy`, so **discovery already resolves all of them**; the nine explicit lines change no behaviour. P2-T05 confirmed the same thing empirically from the other direction — its suite passed before the `ChargePolicy` line was added.
+
+So **T4 and T8 register nothing in `AppServiceProvider`**, join no seam, and stay concurrent. Wave 4 is unchanged.
+
+The comment above those lines — "These policies live outside app/Policies, so Laravel's convention-based discovery will not find them. Without these lines every check against them silently falls through to false" — **is false**, and it is the reason every task so far has dutifully appended to a list it did not need. Correcting it, and deciding whether the nine existing lines stay as deliberate explicitness or go, belongs to **T12**, which already owns reconciliation. Neither is urgent: the lines are harmless, and the behaviour is identical either way.
+
+#### Wave 6 does not dissolve, and is sequenced
+
+Page discovery has no convention fallback — an unregistered directory is simply never scanned. The panel discovers pages from **`app/Filament/Pages` only**; every `Pages` directory under `app/Domain` is resource-scoped and reached through its resource. T9's `EnrollAndCollect` and T11's `Pages/Reports/` are each the first *standalone* page in a domain namespace, and **neither can pass its own tests until the line exists**, so the line cannot simply be dropped the way the policy registration can.
+
+T9 and T11 are therefore sequenced. T9 lands the line; T11 starts from `main` afterwards and adds nothing to the provider, because one `discoverPages()` call covers the whole namespace including `Pages/Reports/`.
 
 ### What each task must now do
 
 1. **Declare the seams, not just the files.** A task's file scope names the registries it will join and the line it expects to add. A seam discovered during implementation is raised, exactly as an unplanned file would be.
-2. **Where a wave's two tasks join one seam, the first to merge adds the line.** The second rebases onto merged `main` and **removes its own copy** rather than keeping both. A plan-level decision, not a rebase-time judgement call — precisely because the rebase offers no signal to judge on.
+2. **Only one task per wave may modify a given seam** (`docs/WORKFLOW.md`, "Declared shared seams"). Where two would, they are **sequenced rather than run concurrently**: the second starts from `main` after the first has merged with green CI, and rebases onto it. Prevention, not a resolution protocol — a protocol only helps if somebody is looking, and a silent auto-merge is exactly the case where nobody is. Two tasks joining *different* seams in one wave is fine; wave 3 is that case.
 3. **After any rebase touching a seam, verify by counting.** Reading the file is what missed it the first time:
 
 ```bash
@@ -163,7 +177,18 @@ grep -c "Domain/Finance/Filament/Pages" app/Providers/Filament/AdminPanelProvide
 grep -n "Gate::policy" app/Providers/AppServiceProvider.php                                 # every domain, once each
 ```
 
-Waves 4 and 6 could instead be dissolved by rescheduling, at the cost of an extra wave with one agent idle. That trade is the owner's to make; this protocol assumes the schedule stands.
+**What this costs: one wave.** Wave 4 survives intact because its seam turned out to be optional. Wave 6 splits, so the phase runs to eight waves rather than seven:
+
+| Wave | Claude | Codex | Change |
+|---|---|---|---|
+| 3 | **T3** Enrol & bill | **T7** Compensation | unchanged — different seams |
+| 4 | **T4** Payments & tenders | **T8** Payroll runs | unchanged — neither joins the policy seam |
+| 5 | **T10** Report queries | **T6** Receipts | unchanged |
+| 6 | **T9** Enrol-and-collect | *(reviews T9)* | **split** — T9 lands the `discoverPages()` line |
+| 7 | *(reviews T11)* | **T11** Report pages & export | **split** — starts after T9 merges |
+| 8 | **T12** Phase reconciliation | *(reviews T12)* | was wave 7 |
+
+Waves 6 and 7 each carry one task, and the idle agent reviews — which `docs/WORKFLOW.md` already provides for. One wave is the honest price of never resolving a silent auto-merge by hand.
 
 ### File ownership, checked for real
 
@@ -316,6 +341,32 @@ A super admin sets a price on create **and** changes it on edit, through the rea
 
 ---
 
+## Task 2P — The discount float boundary, and the money-cast guard
+**Wave 2 follow-up · Owner: Codex · `p2/t02p-money-boundary` · depends on 2, 5 · merges before wave 3 opens**
+
+Two findings from P2-T05's cross-review, neither of which belonged in that branch: one is a defect in task 2's merged code, and the other is a phase-wide protection the design already claims to have.
+
+**File scope**
+- `app/Domain/Finance/Filament/Resources/DiscountResource.php` — the `percentage` field
+- `tests/Feature/Finance/DiscountDefinitionTest.php` — the regression
+- `tests/Feature/Finance/MoneyCastArchTest.php` — **new file**, the guard
+- Joins no seam. Nothing under `app/Providers/`, and the guard is a new file rather than an addition to `ActionBoundaryArchTest`, which task 3 is editing in the next wave.
+
+**Does**
+
+`DiscountResource::form()`'s `percentage` calls `->numeric()`, which installs Filament's `NumberStateCast` — `get()` and `set()` both `floatval()`. `CreateDiscount::handleRecordCreation()` then reads the cast `$data['percentage']`, so the value feeding design §3's rounding rule reaches `CreateDiscountAction` having already been a float. Same defect P2-T05 fixed in `ChargeResource`, and the same fix: drop the component call, restore the keypad with `->inputMode('decimal')`.
+
+**The distinction that matters: `->numeric()` the component call installs a state cast; `'numeric'` the validation rule does not.** Validation reads the value, it does not rewrite the state. Keeping `['numeric', 'decimal:0,2', 'min:0.01', 'max:100']` as explicit `->rules()` preserves every constraint the form has today — including the bounds `->minValue()`/`->maxValue()` were adding, which is why those two calls go with it rather than being left behind to compare string lengths.
+
+Then the guard **design §6 line 308 says already exists**: "an architecture test forbids float casts on money attributes anywhere in `app/Domain/Finance`". No such test exists — nothing under `tests/` scans for it. The design has been asserting a protection the code does not have since the phase opened, which is this project's most frequent defect, in the one place it protects money. Build it: no `(float)`/`floatval()`/`(double)` in `app/Domain/Finance`, and no `->numeric()` on a field whose name is a money or rate column. Both rules **proven by mutation** — inject a violation, watch the rule name the file, remove it again.
+
+**Done when**
+The mounted `percentage` state is the exact string `'10.00'` rather than `10.0`, asserted through `getState()` the way `ChargeResourceTest` asserts the charge amount · the existing discount immutability, delete-before-use and FK-refusal assertions pass unchanged · the guard fails when a `(float)` cast is injected anywhere under `app/Domain/Finance`, and when `->numeric()` is injected on a money field, each proven by injection rather than by inspection · `composer verify` green.
+
+**Why before task 3, rather than alongside it.** Task 3 issues the first real charge, and tasks 4, 8 and 11 all build money-carrying forms on top of it. A guard that arrives after them protects nothing they were written against.
+
+---
+
 ## Task 3 — Enrol and bill
 **Wave 3 · Owner: Claude · `p2/t03-enroll-and-bill` · depends on 1, 2**
 
@@ -355,7 +406,7 @@ The security-critical task of the phase.
 - `app/Domain/Finance/Services/PaymentInvariantService.php`
 - `app/Domain/Finance/Data/` — `RecordPaymentData`, `TenderData`
 - `app/Domain/Finance/Filament/Resources/PaymentResource*`, `Policies/PaymentPolicy.php`
-- **Declared seam: `app/Providers/AppServiceProvider.php`** — one `Gate::policy(Payment::class, PaymentPolicy::class)` line. **T8 joins the same seam this wave**; whichever merges first adds its line, and the second rebases onto merged `main` and keeps only its own. Two policy lines for two models is the legitimate outcome here — what is not is a duplicate of either.
+- **Joins no seam. Do not register `PaymentPolicy` in `AppServiceProvider`** — T8 runs in the same wave and the file may have only one writer per wave. Nothing is lost: Laravel's discovery resolves `App\Domain\Finance\Policies\PaymentPolicy` from `App\Domain\Finance\Models\Payment` unaided (`Gate.php:725-727`), so the registration would change no behaviour. `PaymentPolicy` still must be *tested* through the panel exactly as before — discovery resolving it is a claim this task proves, not one it assumes.
 - `app/Domain/Finance/Rules/NotACardNumber.php`
 - `lang/en/payments.php`, `lang/ar/payments.php` (empty)
 - `tests/Feature/Finance/RecordPaymentTest.php` — split tenders, allocation equality, overpayment refusal, derived student
@@ -444,7 +495,7 @@ A raise produces two rows with contiguous, non-overlapping periods · an overlap
 - `app/Domain/Finance/Services/PayrollCalculator.php`
 - `app/Domain/Finance/Filament/Resources/PayrollRunResource*` and its draft-review page
 - `app/Domain/Finance/Policies/PayrollRunPolicy.php`
-- **Declared seam: `app/Providers/AppServiceProvider.php`** — one `Gate::policy(PayrollRun::class, PayrollRunPolicy::class)` line, under the same first-to-merge rule task 4 states.
+- **Joins no seam.** Same as task 4 and for the same reason: `PayrollRunPolicy` is resolved by discovery, so it is not registered in `AppServiceProvider` while another task shares the wave.
 - `lang/en/payroll.php` — **additions only**; the file is created in task 7
 - `tests/Feature/Finance/PayrollSegmentTest.php` — partial previous month plus full current month, mid-period raise, denominators
 - `tests/Feature/Finance/PayrollFinalizationTest.php` — double-pay refused at the database, overlap refused by the lock, shape-versus-type
@@ -469,7 +520,7 @@ The phase's primary user-facing surface.
 
 **File scope**
 - `app/Domain/Finance/Filament/Pages/EnrollAndCollect.php` and its schema/steps
-- **Declared seam: `app/Providers/Filament/AdminPanelProvider.php`** — one `discoverPages(in: app_path('Domain/Finance/Filament/Pages'), for: 'App\Domain\Finance\Filament\Pages')` line. The panel discovers pages from `app/Filament/Pages` alone today, so this page is unreachable without it. **T11 needs the identical line in the same wave**: whichever merges first adds it, the second rebases and removes its own copy, then confirms the count is 1. Two identical lines auto-merge without a conflict marker — that is how wave 2 got a doubled `discoverResources()`.
+- **Declared seam: `app/Providers/Filament/AdminPanelProvider.php`** — one `discoverPages(in: app_path('Domain/Finance/Filament/Pages'), for: 'App\Domain\Finance\Filament\Pages')` line. The panel discovers pages from `app/Filament/Pages` alone today, so this page is unreachable without it. **This task is the sole writer of that line**; T11 needs it too and is sequenced into wave 7 behind this merge, so one line serves both and no second copy is ever written.
 - `resources/views/filament/finance/`
 - `lang/en/collect.php`, `lang/ar/collect.php` (empty)
 - `tests/Feature/Finance/EnrollAndCollectFlowTest.php` — the full flow through Livewire, staff sees no discount, double-submit
@@ -502,11 +553,11 @@ Every report is asserted against a fixture with known figures · **a reversed pa
 ---
 
 ## Task 11 — Report pages and export
-**Wave 6 · Owner: Codex · `p2/t11-reports-export` · depends on 6, 10**
+**Wave 7 · Owner: Codex · `p2/t11-reports-export` · depends on 6, 9, 10** — moved out of wave 6 by revision 5: it shares the page-discovery seam with task 9, so it follows that merge rather than running beside it
 
 **File scope**
 - `app/Domain/Finance/Filament/Pages/Reports/`
-- **Declared seam: `app/Providers/Filament/AdminPanelProvider.php`** — the same single `discoverPages()` line task 9 declares, under the same first-to-merge rule. One line covers both tasks' pages; a second copy is the defect.
+- **Joins no seam — the `discoverPages()` line already exists**, landed by task 9 in wave 6, and one call covers the whole namespace including `Pages/Reports/`. **Verify it rather than add it:** `grep -c "Domain/Finance/Filament/Pages" app/Providers/Filament/AdminPanelProvider.php` must be 1 both before and after this task's rebase.
 - `app/Domain/Finance/Exports/` — Filament exporters
 - `app/Domain/Finance/Jobs/GenerateReportPdfJob.php`, `resources/views/finance/reports/`
 - `database/migrations/` — publish Filament's `exports` and `failed_import_rows` tables. **A deliberate exception to task 1 owning the schema:** these are vendor-published tables serving only this task, and nothing else in the phase depends on them
@@ -523,16 +574,17 @@ An admin can view and export; a staff member can reach neither · **the export q
 ---
 
 ## Task 12 — Phase reconciliation
-**Wave 7 · Owner: Claude · `p2/t12-reconciliation` · depends on all**
+**Wave 8 · Owner: Claude · `p2/t12-reconciliation` · depends on all**
 
 **File scope**
 - `docs/superpowers/specs/2026-07-20-training-center-dashboard-design.md`, `docs/ENGINEERING.md`, `docs/CHANGELOG.md`, this plan
 - `lang/en/`, `lang/ar/` — gaps found by the i18n sweep
 - `tests/Feature/LocalizationTest.php`, `tests/Feature/ActivityLogTest.php` — coverage extensions only
-- No `app/` changes. If the sweep finds a hardcoded string in application code, that is a fix in the owning task's file, raised rather than absorbed here.
+- **`app/Providers/AppServiceProvider.php` — comment only, and the one exception to "no `app/` changes" below.** The comment above the `Gate::policy()` list says those policies "live outside app/Policies, so Laravel's convention-based discovery will not find them" and that "without these lines every check against them silently falls through to false". **Both claims are false** — `Gate::guessPolicyName()` maps `\Models\` to `\Policies\` (`Gate.php:725-727`), which resolves every policy in this codebase. It is also the claim that made each phase-2 task dutifully append to a list it did not need. Correct the comment; then decide, and record, whether the existing lines stay as deliberate explicitness or go. Either is defensible; the comment asserting a necessity that does not exist is not.
+- No other `app/` changes. If the sweep finds a hardcoded string in application code, that is a fix in the owning task's file, raised rather than absorbed here.
 
 **Does**
-The i18n sweep and its enforcement test extended over every new surface. Activity-log coverage confirmed for every financial mutation in design §12. Then the documentation, in the same pass: the system design corrected wherever phase 2 changed it, `docs/ENGINEERING.md` updated with any convention this phase established — the local-period-to-UTC rule and the never-dehydrate-a-guarded-field rule are both candidates — this plan marked complete with its deviations recorded, and `docs/CHANGELOG.md` written in plain language.
+The i18n sweep and its enforcement test extended over every new surface. Activity-log coverage confirmed for every financial mutation in design §12. Then the documentation, in the same pass: the system design corrected wherever phase 2 changed it, `docs/ENGINEERING.md` updated with any convention this phase established — the local-period-to-UTC rule, the never-dehydrate-a-guarded-field rule, and **the money-field rule task 2P enforces** (`->numeric()` installs a float state cast, so a money field uses `->inputMode('decimal')` and validation rules instead) are all candidates. That file is deliberately left to this task rather than edited by each task that learns something, for the reason the seam analysis gives — this plan marked complete with its deviations recorded, and `docs/CHANGELOG.md` written in plain language.
 
 **Done when**
 No hardcoded user-facing string survives the enforcement test · every financial mutation produces a log entry with the right actor · no document contradicts the code · `composer verify` green on `main`.

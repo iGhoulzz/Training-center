@@ -67,6 +67,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # AN EMPTY .env, PURELY SO ONE EXISTS.
+      #
+      # Configuration still comes from the job-level env above, and Laravel
+      # loads .env immutably, so a real environment variable always wins over a
+      # file entry. This file is empty and is meant to stay that way — it is not
+      # a place to configure CI.
+      #
+      # What it fixes: phpdotenv reads the file with `@file_get_contents()`
+      # (vendor/vlucas/phpdotenv/src/Store/File/Reader.php:73) and handles the
+      # false return itself, so a missing .env is harmless AT RUNTIME. Under
+      # PHPUnit it is not harmless: PHPUnit's error handler does not honour the
+      # `@` suppression operator, so every application boot became a test
+      # warning. That is one boot per test — 1347 of 1407 tests on this
+      # workflow, against 0 locally, where a .env exists.
+      #
+      # The suite reported "success" throughout, because warnings do not fail a
+      # run by default. `failOnWarning` in phpunit.xml now closes that half; this
+      # step closes the other, by removing the warning rather than tolerating it.
+      - name: Create an empty .env
+        run: touch .env
+
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
         with:

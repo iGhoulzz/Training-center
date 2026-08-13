@@ -1,8 +1,41 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+    WARNINGS ARE FAILURES, AND THEIR DETAILS ARE PRINTED.
+
+    Neither was true until 2026-08-13, and the cost was concrete: CI reported
+    "success" on every run while PHPUnit classified 1347 of 1407 tests as
+    warnings rather than passes. Nothing in the local workflow showed it — the
+    summary reads "passed" — so the suite looked clean from the only place
+    anyone was looking.
+
+    The cause was a single suppressed vendor call: phpdotenv reads .env with
+    `@file_get_contents()` and handles a missing file itself, but PHPUnit's
+    error handler does not honour `@`, so every application boot in an
+    environment without a .env became a test warning. CI had no .env by design.
+    It now creates an empty one, and this file refuses to call a warning a pass.
+
+    displayDetails* is what makes a warning actionable rather than a badge: the
+    message and the originating file:line are printed. failOnWarning is what
+    stops the next one from hiding behind a green run for a phase and a half.
+
+    NOTICES AND DEPRECATIONS PRINT BUT DO NOT FAIL, DELIBERATELY. The evidence
+    gathered here covers warnings only, and the lesson of finding this at all is
+    that a locally clean run says nothing about CI — the 1347 warnings were CI's
+    alone. Gating a category nobody has counted yet would be the same mistake in
+    the other direction. Their details are displayed, so the next run reports
+    what is actually there; gate them once that list is known and empty.
+-->
 <phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
          bootstrap="tests/bootstrap.php"
          colors="true"
+
+         displayDetailsOnTestsThatTriggerWarnings="true"
+         displayDetailsOnTestsThatTriggerNotices="true"
+         displayDetailsOnTestsThatTriggerDeprecations="true"
+         displayDetailsOnTestsThatTriggerErrors="true"
+
+         failOnWarning="true"
 >
     <testsuites>
         <testsuite name="Unit">
