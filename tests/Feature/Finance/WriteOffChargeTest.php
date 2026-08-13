@@ -8,12 +8,14 @@ use App\Domain\Finance\Exceptions\ChargeAlreadyWrittenOffException;
 use App\Domain\Finance\Models\Charge;
 use App\Domain\Finance\Support\ChargeBalance;
 use App\Domain\Staff\Actions\SystemRoleWriter;
+use App\Domain\Staff\Filament\Resources\ActivityResource;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Spatie\Activitylog\Models\Activity;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
 
@@ -182,6 +184,101 @@ it('refuses to write off an already written-off charge, leaving the original dec
         ->and((int) $fresh->written_off_by)->toBe($originalBy)
         ->and($fresh->written_off_reason)->toBe($originalReason)
         ->and((int) $fresh->written_off_by)->not->toBe((int) $secondSuperAdmin->getKey());
+});
+
+/*
+|--------------------------------------------------------------------------
+| The audit entry names the Action's actor, never the session
+|--------------------------------------------------------------------------
+|
+| `written_off_by` is set from the actor this Action authorized. The activity
+| entry has to agree with it, or the row and the append-only log tell two
+| different stories about who decided a debt was uncollectable — and the log is
+| the one design section 4 treats as the audit record.
+|
+| Spatie resolves a causer from the authenticated session unless it is told
+| otherwise, so both failure modes below are real: a console invocation with no
+| session records nobody, and an invocation while somebody else holds the
+| session records the wrong person. The T2 pricing and discount Actions already
+| pass their actor through CauserResolver for exactly this reason;
+| DiscountDefinitionTest carries the same two-sided assertion.
+*/
+
+/**
+ * The causer recorded against this charge's most recent update entry.
+ *
+ * Null means the entry named nobody at all, which is a distinct failure from
+ * naming the wrong person — the two tests below separate them deliberately, so
+ * one run reports both rather than short-circuiting on the first.
+ */
+function writeOffCauserId(Charge $charge): ?int
+{
+    $causerId = Activity::query()
+        ->where('subject_type', Charge::class)
+        ->where('subject_id', $charge->getKey())
+        ->where('event', 'updated')
+        ->latest('id')
+        ->value('causer_id');
+
+    return $causerId === null ? null : (int) $causerId;
+}
+
+it('attributes the write-off to the Action actor when no session exists at all', function () {
+    // A console or queued invocation: nobody is signed in, and the entry must
+    // still name the actor this Action authorized.
+    $charge = Charge::factory()->create(['amount' => '400.000']);
+
+    $this->writeOff->execute($this->superAdmin, new WriteOffChargeData(
+        (int) $charge->getKey(),
+        'Written off with no session, the way a console invocation runs.',
+    ));
+
+    expect(writeOffCauserId($charge))->toBe((int) $this->superAdmin->getKey());
+});
+
+it('attributes the write-off to the Action actor while a different user holds the session', function () {
+    $this->actingAs($this->admin);
+
+    $charge = Charge::factory()->create(['amount' => '400.000']);
+
+    $this->writeOff->execute($this->superAdmin, new WriteOffChargeData(
+        (int) $charge->getKey(),
+        'Written off by a super admin while an admin holds the session.',
+    ));
+
+    expect(writeOffCauserId($charge))->toBe((int) $this->superAdmin->getKey())
+        ->and(writeOffCauserId($charge))->not->toBe((int) $this->admin->getKey());
+
+    // The row and the log have to tell the same story about who decided this.
+    expect((int) $charge->fresh()->written_off_by)->toBe(writeOffCauserId($charge));
+});
+
+it('puts the reason and both other write-off columns in the diff a reader opens', function () {
+    $charge = Charge::factory()->create(['amount' => '900.000']);
+
+    $this->writeOff->execute($this->superAdmin, new WriteOffChargeData(
+        (int) $charge->getKey(),
+        'Student left the country; the centre will not pursue this.',
+    ));
+
+    $entry = Activity::query()
+        ->where('subject_type', Charge::class)
+        ->where('subject_id', $charge->getKey())
+        ->where('event', 'updated')
+        ->latest('id')
+        ->firstOrFail();
+
+    // describeChanges() is what ActivityResource actually renders, so asserting
+    // its output is asserting what a reader is shown. No manual entry is built
+    // by this Action, and none needs to be: all three columns are audited (see
+    // the Action's docblock). Asserted on the field names and the operator's own
+    // words, never on the translated framing around them.
+    $changes = ActivityResource::describeChanges($entry);
+
+    expect($changes)->toContain('written_off_reason')
+        ->and($changes)->toContain('Student left the country; the centre will not pursue this.')
+        ->and($changes)->toContain('written_off_at')
+        ->and($changes)->toContain('written_off_by');
 });
 
 /*

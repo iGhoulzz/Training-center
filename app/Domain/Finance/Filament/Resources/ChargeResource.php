@@ -357,37 +357,56 @@ class ChargeResource extends Resource
                     ->label(__('charges.new_amount'))
                     ->helperText(__('charges.new_amount_hint'))
                     ->default(fn (Charge $record): string => $record->amount)
-                    ->numeric()
-                    ->minValue(0)
                     ->required()
+                    /*
+                     * NO ->numeric() ON A MONEY FIELD. EVER.
+                     * -----------------------------------------
+                     * It installs Filament's NumberStateCast, whose get() and
+                     * set() both run floatval(), so the amount would be a float
+                     * on both sides of this form — hydrated out of a
+                     * `decimal(12,3)` column into one, and handed to the Action
+                     * as one. Design section 6 and CLAUDE.md's third
+                     * non-negotiable forbid exactly that: a float cannot
+                     * represent 0.001, and the dirham is the digit it loses.
+                     *
+                     * It also defeats the arrangement this task is built on.
+                     * `Money::fromDecimal()` inside `AdjustChargeData` is meant
+                     * to be the FIRST thing that parses the operator's
+                     * keystrokes; behind a float cast it re-parses a string
+                     * that PHP has already re-serialised out of a double.
+                     *
+                     * An `afterStateHydrated()` reformat does not rescue it —
+                     * that only changes what is DISPLAYED. `getState()`, which
+                     * is what dehydrates into `$data` below, runs the cast
+                     * regardless. `ChargeResourceTest` asserts getState() is the
+                     * exact string, and asserts this field is not numeric, so
+                     * re-adding the call fails there rather than silently.
+                     *
+                     * What is lost by dropping it, and how each is replaced:
+                     * the mobile decimal keypad, restored by inputMode() below
+                     * — that is all ->numeric() was doing for it; and the
+                     * `numeric` validation rule, which the regex already
+                     * subsumes and improves on, since `numeric` accepts "1e3"
+                     * and a fourth decimal place while the regex does not.
+                     *
+                     * The T2 price fields keep ->numeric() and are safe by a
+                     * different route: they are dehydrated(false) and their
+                     * Actions read `$this->form->getRawState()`, the uncast
+                     * value. A modal action has no equivalent raw-state hook,
+                     * so here the cast is simply not installed.
+                     */
+                    ->inputMode('decimal')
                     // decimal(12,3): up to 9 whole digits, at most 3 decimal
-                    // places. Money::fromDecimal() enforces the same shape; this
-                    // is what turns a violation into a field error instead of an
-                    // uncaught exception.
+                    // places, and no sign — which is also what makes a
+                    // minValue(0) unnecessary here (without ->numeric() a
+                    // `min:0` rule would compare string LENGTH, and quietly
+                    // guard nothing at all). Money::fromDecimal() enforces the
+                    // same shape; this is what turns a violation into a field
+                    // error instead of an uncaught exception.
                     ->rule('regex:/^\d{1,9}(\.\d{1,3})?$/')
                     ->validationMessages([
                         'regex' => __('charges.amount_format_error'),
-                    ])
-                    // ->numeric() buys the decimal keypad hint and the
-                    // `numeric` rule at the cost of NumberStateCast, which
-                    // runs floatval() on hydration: a 1000.000 charge mounts
-                    // showing "1000", the third decimal place gone before an
-                    // operator ever sees it — a small misreading waiting to
-                    // happen against a row that genuinely says 1000.000.
-                    // rawState(), not state(), reformats the ALREADY-CAST
-                    // value back to three decimals here; state() would run
-                    // the same cast again and undo this in the same breath.
-                    // Nothing above changes: the regex still validates
-                    // whatever is submitted, typed or left as the default,
-                    // before Money::fromDecimal() ever sees it — this only
-                    // touches what is shown before anyone has typed anything.
-                    ->afterStateHydrated(function (TextInput $component, int|float|string|null $state): void {
-                        if ($state === null || $state === '') {
-                            return;
-                        }
-
-                        $component->rawState(number_format((float) $state, 3, '.', ''));
-                    }),
+                    ]),
 
                 Textarea::make('reason')
                     ->label(__('charges.reason'))

@@ -10,6 +10,7 @@ use App\Domain\Finance\Models\Charge;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Spatie\Activitylog\Support\CauserResolver;
 
 /**
  * Retire a debt the centre has accepted it will never collect.
@@ -69,9 +70,28 @@ use Illuminate\Support\Facades\Gate;
  * the before/after diff `ActivityResource::describeChanges()` renders,
  * without this Action lifting a finger. Reaching for `disableLogging()` here
  * as well would only throw that diff away for no reason.
+ *
+ * BUT THE AUTOMATIC ENTRY STILL HAS TO BE TOLD WHO THE ACTOR IS
+ * ----------------------------------------------------------------
+ * That is the one thing the automatic path does NOT get for free. Spatie
+ * resolves the causer from the authenticated session, while this Action
+ * authorizes and records `written_off_by` from the actor it was PASSED — and
+ * the two are not the same thing. Left alone, a console or queued invocation
+ * writes an entry with no causer at all, and an invocation made while somebody
+ * else holds the session writes that person's name over the actor's. Either
+ * way `written_off_by` and the append-only log disagree about who decided a
+ * debt was uncollectable, which is precisely the fact design section 4 keeps
+ * both of them for.
+ *
+ * So the update runs inside `CauserResolver::withCauser()`, the same way every
+ * T2 pricing and discount Action does it. `AdjustChargeAction` needs no
+ * equivalent: it builds its entry by hand and names the actor with
+ * `causedBy($actor)` directly.
  */
 final class WriteOffChargeAction
 {
+    public function __construct(private readonly CauserResolver $causers) {}
+
     /**
      * @throws ChargeAlreadyWrittenOffException if this charge already carries
      *                                          a write-off.
@@ -87,11 +107,14 @@ final class WriteOffChargeAction
                 throw new ChargeAlreadyWrittenOffException((int) $charge->getKey());
             }
 
-            $charge->update([
-                'written_off_at' => now(),
-                'written_off_by' => (int) $actor->getKey(),
-                'written_off_reason' => $data->reason,
-            ]);
+            $this->causers->withCauser(
+                $actor,
+                fn (): bool => $charge->update([
+                    'written_off_at' => now(),
+                    'written_off_by' => (int) $actor->getKey(),
+                    'written_off_reason' => $data->reason,
+                ]),
+            );
 
             return $charge;
         });

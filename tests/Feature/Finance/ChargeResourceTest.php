@@ -14,6 +14,8 @@ use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Filament\Actions\CreateAction;
 use Filament\Actions\EditAction;
+use Filament\Forms\Components\TextInput;
+use Filament\Schemas\Components\StateCasts\NumberStateCast;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
@@ -409,6 +411,79 @@ it('lets a super admin write off a charge through the table action', function ()
 | A refused adjustment surfaces as a notification, not an exception
 |--------------------------------------------------------------------------
 */
+
+/*
+|--------------------------------------------------------------------------
+| The amount never crosses a float boundary
+|--------------------------------------------------------------------------
+|
+| Design section 6 and CLAUDE.md's third non-negotiable: money is
+| `decimal(12,3)` and never a float, because a float cannot represent 0.001 —
+| the dirham is exactly the digit lost. `Money::fromDecimal()` is meant to be
+| the FIRST thing that parses an operator's keystrokes.
+|
+| `->numeric()` quietly defeats that. It installs Filament's NumberStateCast,
+| whose get() and set() both run floatval(), so the schema state on both sides
+| of the boundary is a float and the DTO's string cast merely re-serialises one.
+| An `afterStateHydrated()` reformat cannot fix it either: raw state is what is
+| DISPLAYED, and getState() — what dehydrates into the action's `$data` — runs
+| the cast regardless.
+|
+| So the assertion is on getState(), the value the Action actually receives,
+| and on the field never being numeric again. No value in decimal(12,3) is
+| corrupted by a float round trip at PHP's default precision, which is exactly
+| why this needs a test rather than a bug report: the rule holds the line
+| before a wider column or an in-form sum makes it visible as money.
+*/
+
+it('hands the Action an exact decimal string for the amount, never a float', function () {
+    $charge = Charge::factory()->create(['list_price' => '1000.000', 'amount' => '1000.000']);
+
+    $context = ['table' => true, 'recordKey' => (string) $charge->getKey()];
+
+    $component = Livewire::actingAs($this->superAdmin)->test(ListCharges::class);
+    $component->call('mountAction', 'adjust', [], $context);
+
+    expect($component->get('mountedActions'))->not->toBeEmpty(
+        'The adjust action did not mount, so nothing below proves anything.'
+    );
+
+    $livewire = $component->instance();
+    $schema = $livewire->getSchema($livewire->getMountedActionSchemaName());
+
+    $amount = collect($schema->getComponents())
+        ->first(fn (object $field): bool => $field instanceof TextInput && $field->getName() === 'amount');
+
+    expect($amount)->not->toBeNull('The adjust form has no amount field to check.');
+
+    // getState() is what dehydrates into the action's $data. A float here is
+    // the violation, whatever the field happens to display.
+    expect($amount->getState())->toBe('1000.000');
+
+    // And the cast that would reintroduce one is not installed. Structural,
+    // so re-adding ->numeric() fails here rather than only on the value.
+    $casts = array_map(static fn (object $cast): string => $cast::class, $amount->getStateCasts());
+
+    expect($casts)->not->toContain(NumberStateCast::class)
+        ->and($amount->isNumeric())->toBeFalse();
+});
+
+it('stores a three-decimal adjustment exactly as submitted', function () {
+    // The submitted half of the same boundary, driven through the real
+    // component: the third decimal place survives from keystroke to column.
+    $charge = Charge::factory()->create(['list_price' => '1000.000', 'amount' => '1000.000']);
+
+    Livewire::actingAs($this->superAdmin)
+        ->test(ListCharges::class)
+        ->callTableAction('adjust', $charge, [
+            'amount' => '612.345',
+            'reason' => 'Corrected against the signed enrolment form.',
+        ])
+        ->assertHasNoTableActionErrors();
+
+    expect((string) DB::table('charges')->where('id', $charge->getKey())->value('amount'))
+        ->toBe('612.345');
+});
 
 it('surfaces a refused adjustment below the allocated total as a notification, not an unhandled exception', function () {
     // ChargeAmountBelowAllocatedException is the one typed exception this
