@@ -94,7 +94,7 @@ A **seam** is a file whose content is an enumeration that grows whenever a task 
 
 **Only one task per wave may modify a given seam.** Where two tasks would, they are not run concurrently: they are **sequenced** — the second starts from `main` after the first has merged with green CI, and rebases onto it. This costs a wave. It is worth it, and the reason is what happens instead:
 
-> Phase 2's T2 and T5 both added the same `discoverResources()` line. `AppServiceProvider` conflicted loudly and was resolved by hand — the safe outcome. `AdminPanelProvider` **auto-merged with no conflict marker** into two identical blocks: a clean rebase, a green suite, and Filament scanning one directory twice. Nothing in the suite asserts otherwise, so nothing would have caught it.
+> Phase 2's T2 and T5 each had to register a policy **and** wire a namespace into the panel, because each was the first Filament resource in a new domain — two seams, neither declared by either task. `AppServiceProvider` conflicted loudly and was resolved by hand: the safe outcome. `AdminPanelProvider` took the same `discoverResources()` line from both branches and **auto-merged it with no conflict marker**, producing two identical blocks — a clean rebase, a green suite, and Filament scanning one directory twice. Nothing in the suite asserts otherwise, so nothing would have caught it.
 
 When two branches do **the same thing for the same reason**, git's confidence is highest exactly where "keep both" is wrong. That is why the rule is prevention rather than a resolution protocol — a protocol only helps if somebody is looking, and a silent auto-merge is precisely the case where nobody is.
 
