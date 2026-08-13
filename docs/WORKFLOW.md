@@ -84,6 +84,31 @@ The limit is not about capacity. Every extra concurrent task is another branch t
 
 A wave may legitimately carry only one task, when the dependency graph leaves the other agent nothing ready. The idle agent reviews.
 
+### Declared shared seams
+
+A file scope says what a task **owns**. It says nothing about the registries a task **joins**, and phase 2 wave 2 proved that is where same-wave tasks actually meet.
+
+A **seam** is a file whose content is an enumeration that grows whenever a task adds a unit of some kind — a policy registration list, a panel's discovery calls, an architecture test's allowlist, a permission seeder. No task owns it; each appends to it. Two tasks compared on their declared scopes can look perfectly disjoint and still both append to the same seam, for the same structural reason, on the same day.
+
+**Every task declares the seams it will join, alongside the files it owns**, naming the line it expects to add. A seam discovered during implementation is raised, exactly as an unplanned file would be.
+
+**Only one task per wave may modify a given seam.** Where two tasks would, they are not run concurrently: they are **sequenced** — the second starts from `main` after the first has merged with green CI, and rebases onto it. This costs a wave. It is worth it, and the reason is what happens instead:
+
+> Phase 2's T2 and T5 were both Finance work, running concurrently, and each independently introduced the first Filament resource its branch knew of. Each therefore added the **same** `Domain/Finance` `discoverResources()` line, and — following the guidance then in force — a **different** policy registration apiece, which later turned out to have been redundant all along, since Laravel discovers those policies unaided. Two seams, neither declared by either task. `AppServiceProvider` conflicted loudly on the two different lines and was resolved by hand: the safe outcome. `AdminPanelProvider` took the identical line from both branches and **auto-merged it with no conflict marker**, producing two identical blocks — a clean rebase, a green suite, and Filament scanning one directory twice. Nothing in the suite asserts otherwise, so nothing would have caught it.
+>
+> Note which half was dangerous. The registrations that *differed* conflicted and got human attention; the line that was *identical* merged in silence. Sameness is the hazard, not disagreement.
+
+When two branches do **the same thing for the same reason**, git's confidence is highest exactly where "keep both" is wrong. That is why the rule is prevention rather than a resolution protocol — a protocol only helps if somebody is looking, and a silent auto-merge is precisely the case where nobody is.
+
+**After any rebase that touches a seam, verify by counting rather than reading.** Reading the file is what missed it the first time:
+
+```bash
+grep -c "Domain/<Domain>/Filament/Resources" app/Providers/Filament/AdminPanelProvider.php   # expect 1
+grep -n "Gate::policy" app/Providers/AppServiceProvider.php                                  # expect each model once
+```
+
+A dropped registration fails **silently** — Laravel's convention discovery resolves those policies unaided — and a duplicated discovery line fails silently too. Silence in both directions is why this step counts.
+
 ### Starting a downstream task
 
 **A downstream worktree is created from updated `main`, and only after the PR it depends on has merged with green CI.**
