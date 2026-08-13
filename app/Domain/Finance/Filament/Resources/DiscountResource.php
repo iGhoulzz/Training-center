@@ -60,10 +60,8 @@ final class DiscountResource extends Resource
             TextInput::make('percentage')
                 ->label(__('pricing.discount_percentage'))
                 ->required()
-                ->numeric()
-                ->minValue(0.01)
-                ->maxValue(100)
-                ->rules(['decimal:0,2'])
+                ->inputMode('decimal')
+                ->rules(['numeric', 'decimal:0,2', 'min:0.01', 'max:100'])
                 ->suffix(__('pricing.percentage_suffix')),
         ]);
     }
