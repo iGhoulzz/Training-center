@@ -14,9 +14,20 @@
     environment without a .env became a test warning. CI had no .env by design.
     It now creates an empty one, and this file refuses to call a warning a pass.
 
-    displayDetails* is what makes a warning actionable rather than a badge: the
-    message and the originating file:line are printed. failOnWarning is what
-    stops the next one from hiding behind a green run for a phase and a half.
+    displayDetailsOnAllIssues is what makes an issue actionable rather than a
+    badge: the message and the originating file:line are printed. failOnWarning
+    is what stops the next one from hiding behind a green run for a phase.
+
+    ALL ISSUES, RATHER THAN A LIST OF CATEGORIES. This began as four
+    displayDetailsOnTestsThatTrigger* flags, and cross-review found the gap that
+    shape creates: PHPUnit separates issues IT raises from issues the code under
+    test raises, so displayDetailsOnPhpunitNotices and
+    displayDetailsOnPhpunitDeprecations were still false while the comment here
+    claimed everything was displayed. A hand-maintained list of categories drifts
+    exactly the way a hand-maintained list of method names does — the mistake
+    ActionBoundaryArchTest already documents. One attribute covers every category
+    PHPUnit has now and any it adds later, and it cannot be true of some
+    categories and false of others.
 
     NOTICES AND DEPRECATIONS PRINT BUT DO NOT FAIL, DELIBERATELY. The evidence
     gathered here covers warnings only, and the lesson of finding this at all is
@@ -24,16 +35,18 @@
     alone. Gating a category nobody has counted yet would be the same mistake in
     the other direction. Their details are displayed, so the next run reports
     what is actually there; gate them once that list is known and empty.
+
+    WarningGateTest proves the gate rather than trusting this file: it runs a
+    child PHPUnit over a probe that triggers a warning, with the attributes read
+    from THIS file, and asserts the run exits non-zero — then flips
+    failOnWarning off and asserts the same probe passes.
 -->
 <phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
          bootstrap="tests/bootstrap.php"
          colors="true"
 
-         displayDetailsOnTestsThatTriggerWarnings="true"
-         displayDetailsOnTestsThatTriggerNotices="true"
-         displayDetailsOnTestsThatTriggerDeprecations="true"
-         displayDetailsOnTestsThatTriggerErrors="true"
+         displayDetailsOnAllIssues="true"
 
          failOnWarning="true"
 >
