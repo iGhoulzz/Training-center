@@ -105,7 +105,7 @@ The dependency graph, not preference, decides these. With one task per agent per
 
 The rule that matters is that **concurrent** scopes do not overlap. Each pair below was checked against the file scopes as written, not assumed:
 
-| Wave | Pair | Overlap |
+| Wave | Pair | Overlap in declared scopes |
 |---|---|---|
 | 2 | T5 charges · T2 pricing | none — `ChargeResource`/`charges.php` against `DiscountResource`/pricing Actions/`pricing.php` and the two Enrollment resource tests |
 | 3 | T3 billing · T7 compensation | none — Finance Actions, the two query services and `billing.php` against the compensation resource and `payroll.php` |
@@ -114,6 +114,56 @@ The rule that matters is that **concurrent** scopes do not overlap. Each pair be
 | 6 | T9 flow · T11 report pages | none — the collect page and `collect.php` against report pages, exporters and `reports.php` |
 
 Three files are touched by more than one task, and every case is **sequential across waves**, never concurrent: `tests/Feature/Staff/ActionBoundaryArchTest.php` (T1 → T3 → T6), `lang/en/payroll.php` (T7 → T8), and `RecordPaymentAction` (T4, then T6 adds its dispatch line).
+
+### Revision 5 — that table is not the whole check, and wave 2 proved it
+
+**Every cell above is still accurate, and wave 2 collided anyway.** T2 and T5 were compared on their declared scopes, found disjoint, and then both edited `app/Providers/AppServiceProvider.php` and `app/Providers/Filament/AdminPanelProvider.php` — files neither task named — for the same structural reason: **each was the first Filament resource in a new domain**, so each had to wire the namespace into the panel and register a policy. T2 also extended `ActionBoundaryArchTest`'s delete allowlist, undeclared, for its two discount Actions.
+
+`AppServiceProvider` conflicted loudly during the rebase, which is the safe outcome: it was resolved by hand and both `Gate::policy()` lines kept. `AdminPanelProvider` **auto-merged with no conflict marker** and produced **two identical `discoverResources()` blocks** for the same namespace. A clean rebase, a green tree, Filament scanning one directory twice, and **no test in the suite asserts otherwise** — so nothing would have caught it.
+
+That is the general shape, and it is worth naming: when two branches do **the same thing for the same reason**, git's confidence is highest exactly where "keep both" is wrong.
+
+So the isolation check gains a second half. A declared file scope says what a task **owns**. It says nothing about the registries a task **joins**, and those are where same-wave tasks meet.
+
+### The shared wiring seams
+
+A seam is a file whose content is an enumeration that grows whenever a task adds a unit of some kind. No task owns it; each appends to it. Every row below was read against the current `main`, not assumed:
+
+| Seam | A task joins it when it… | State |
+|---|---|---|
+| `AppServiceProvider` — the `Gate::policy()` list | adds a Policy class | **open**; every remaining task with a resource joins it |
+| `AdminPanelProvider` — `discoverResources()` | adds the first resource in a domain namespace | **closed for Finance** — T2 landed the line, T5's duplicate was removed |
+| `AdminPanelProvider` — `discoverPages()` | adds a standalone panel page **outside `app/Filament/Pages`** | **open, and not yet noticed** — see wave 6 below |
+| `tests/Feature/Staff/ActionBoundaryArchTest.php` | adds an Action calling `->delete()`/`->forceDelete()`, or writing `is_active => false` | **open**; the delete rule is deliberately broad, so its allowlist grows per Action, not per model |
+| `RolePermissionSeeder` + `FinancePermissionSeedingTest` | needs a permission | **closed for phase 2** — T1 seeded the whole set from design §10 |
+| `tests/Feature/LocalizationTest.php` | adds a translation catalogue | **closed** — T1 made the Arabic-empty dataset derive from `lang/en` |
+
+**No test asserts any of these.** A dropped `Gate::policy()` line fails *silently*, because Laravel's convention discovery resolves those policies unaided; a duplicated `discoverResources()` line fails silently too. Silence in both directions is why the verification step below counts rather than reads.
+
+### The revised pair check, wave by wave
+
+| Wave | Pair | Seams each joins | Verdict |
+|---|---|---|---|
+| 3 | T3 · T7 | T3 → arch test, the delete allowlist for `DeleteUncommittedChargeAction`, in a file it already declares · T7 → `AppServiceProvider`, for `StaffCompensationPolicy` | **No collision.** Different seams, one writer each. T7's crossing is undeclared and is declared below. |
+| 4 | T4 · T8 | **Both** → `AppServiceProvider`: `PaymentPolicy` and `PayrollRunPolicy` | **Collision.** The wave-2 pair exactly — on the file that at least conflicts loudly. |
+| 5 | T10 · T6 | T6 → `routes/web.php` and the mPDF dependency, both declared, plus `AppServiceProvider` if it introduces a receipt policy · T10 → none | **No collision**, single writer. |
+| 6 | T9 · T11 | **Both** → `AdminPanelProvider`, `discoverPages()` for `app/Domain/Finance/Filament/Pages` | **Collision, and the dangerous kind.** Two identical lines: the shape that auto-merges in silence. |
+
+Wave 6 deserves the detail, because nothing in the plan hints at it today. The panel discovers pages from **`app/Filament/Pages` only**; every `Pages` directory under `app/Domain` is resource-scoped and reached through its resource. T9's `EnrollAndCollect` and T11's `Pages/Reports/` are each the first *standalone* page in a domain namespace, so each needs the same one-line registration, and neither task's scope mentions the provider.
+
+### What each task must now do
+
+1. **Declare the seams, not just the files.** A task's file scope names the registries it will join and the line it expects to add. A seam discovered during implementation is raised, exactly as an unplanned file would be.
+2. **Where a wave's two tasks join one seam, the first to merge adds the line.** The second rebases onto merged `main` and **removes its own copy** rather than keeping both. A plan-level decision, not a rebase-time judgement call — precisely because the rebase offers no signal to judge on.
+3. **After any rebase touching a seam, verify by counting.** Reading the file is what missed it the first time:
+
+```bash
+grep -c "Domain/Finance/Filament/Resources" app/Providers/Filament/AdminPanelProvider.php   # expect 1
+grep -c "Domain/Finance/Filament/Pages" app/Providers/Filament/AdminPanelProvider.php       # expect 1, from wave 6 on
+grep -n "Gate::policy" app/Providers/AppServiceProvider.php                                 # every domain, once each
+```
+
+Waves 4 and 6 could instead be dissolved by rescheduling, at the cost of an extra wave with one agent idle. That trade is the owner's to make; this protocol assumes the schedule stands.
 
 ### File ownership, checked for real
 
@@ -276,7 +326,7 @@ The highest integration risk in the phase, and the task that closes the unbilled
 - `app/Domain/Finance/Services/ChargeQueryService.php` (read-only)
 - `app/Domain/Enrollment/Services/EnrollmentQueryService.php` — **does not exist yet**; built here with the full surface **tasks 4, 6, 8 and 10** need (design §12 names each consumer's requirement)
 - **Declared crossings:** `DeleteEnrollmentAction`, `EnrollmentsRelationManager`
-- `tests/Feature/Staff/ActionBoundaryArchTest.php` — the new enrolment rule
+- `tests/Feature/Staff/ActionBoundaryArchTest.php` — the new enrolment rule, **and the delete allowlist**: the deletion rule there is deliberately broad enough to match any `->delete()` in `app/`, so `DeleteUncommittedChargeAction` must be named in it. That is a seam this task is the only writer of this wave; T7 joins a different one.
 - **Existing phase 1 tests:** `EnrollmentsRelationManagerTest` and any other enrolment test whose expectations change now that enrolling raises a bill
 - `app/Domain/Finance/Exceptions/`, `lang/en/billing.php`
 - `tests/Feature/Finance/EnrollAndBillTest.php` — the wrapped transaction, discount authorization, frozen charge figures
@@ -305,6 +355,7 @@ The security-critical task of the phase.
 - `app/Domain/Finance/Services/PaymentInvariantService.php`
 - `app/Domain/Finance/Data/` — `RecordPaymentData`, `TenderData`
 - `app/Domain/Finance/Filament/Resources/PaymentResource*`, `Policies/PaymentPolicy.php`
+- **Declared seam: `app/Providers/AppServiceProvider.php`** — one `Gate::policy(Payment::class, PaymentPolicy::class)` line. **T8 joins the same seam this wave**; whichever merges first adds its line, and the second rebases onto merged `main` and keeps only its own. Two policy lines for two models is the legitimate outcome here — what is not is a duplicate of either.
 - `app/Domain/Finance/Rules/NotACardNumber.php`
 - `lang/en/payments.php`, `lang/ar/payments.php` (empty)
 - `tests/Feature/Finance/RecordPaymentTest.php` — split tenders, allocation equality, overpayment refusal, derived student
@@ -372,6 +423,7 @@ Every required field appears, verified against a rendered PDF · the file lands 
 - `app/Domain/Finance/Actions/ChangeCompensationAction.php`
 - `app/Domain/Finance/Services/CompensationPeriodInvariantService.php`
 - `app/Domain/Finance/Filament/Resources/StaffCompensationResource*`, `Policies/StaffCompensationPolicy.php`
+- **Declared seam: `app/Providers/AppServiceProvider.php`** — one `Gate::policy(StaffCompensation::class, StaffCompensationPolicy::class)` line. T3 joins no seam this wave, so this task is the only writer; the resource-discovery line for the Finance namespace already exists from T2 and must not be added again.
 - `lang/en/payroll.php`, `lang/ar/payroll.php` (empty)
 - `tests/Feature/Finance/CompensationTest.php` — raise closes and inserts, overlap refused, update permission refused
 - `tests/Feature/Finance/CompensationConcurrencyTest.php` — two first rows from an empty table
@@ -392,6 +444,7 @@ A raise produces two rows with contiguous, non-overlapping periods · an overlap
 - `app/Domain/Finance/Services/PayrollCalculator.php`
 - `app/Domain/Finance/Filament/Resources/PayrollRunResource*` and its draft-review page
 - `app/Domain/Finance/Policies/PayrollRunPolicy.php`
+- **Declared seam: `app/Providers/AppServiceProvider.php`** — one `Gate::policy(PayrollRun::class, PayrollRunPolicy::class)` line, under the same first-to-merge rule task 4 states.
 - `lang/en/payroll.php` — **additions only**; the file is created in task 7
 - `tests/Feature/Finance/PayrollSegmentTest.php` — partial previous month plus full current month, mid-period raise, denominators
 - `tests/Feature/Finance/PayrollFinalizationTest.php` — double-pay refused at the database, overlap refused by the lock, shape-versus-type
@@ -416,6 +469,7 @@ The phase's primary user-facing surface.
 
 **File scope**
 - `app/Domain/Finance/Filament/Pages/EnrollAndCollect.php` and its schema/steps
+- **Declared seam: `app/Providers/Filament/AdminPanelProvider.php`** — one `discoverPages(in: app_path('Domain/Finance/Filament/Pages'), for: 'App\Domain\Finance\Filament\Pages')` line. The panel discovers pages from `app/Filament/Pages` alone today, so this page is unreachable without it. **T11 needs the identical line in the same wave**: whichever merges first adds it, the second rebases and removes its own copy, then confirms the count is 1. Two identical lines auto-merge without a conflict marker — that is how wave 2 got a doubled `discoverResources()`.
 - `resources/views/filament/finance/`
 - `lang/en/collect.php`, `lang/ar/collect.php` (empty)
 - `tests/Feature/Finance/EnrollAndCollectFlowTest.php` — the full flow through Livewire, staff sees no discount, double-submit
@@ -452,6 +506,7 @@ Every report is asserted against a fixture with known figures · **a reversed pa
 
 **File scope**
 - `app/Domain/Finance/Filament/Pages/Reports/`
+- **Declared seam: `app/Providers/Filament/AdminPanelProvider.php`** — the same single `discoverPages()` line task 9 declares, under the same first-to-merge rule. One line covers both tasks' pages; a second copy is the defect.
 - `app/Domain/Finance/Exports/` — Filament exporters
 - `app/Domain/Finance/Jobs/GenerateReportPdfJob.php`, `resources/views/finance/reports/`
 - `database/migrations/` — publish Filament's `exports` and `failed_import_rows` tables. **A deliberate exception to task 1 owning the schema:** these are vendor-published tables serving only this task, and nothing else in the phase depends on them
