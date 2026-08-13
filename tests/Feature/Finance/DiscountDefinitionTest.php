@@ -16,6 +16,7 @@ use App\Domain\Staff\Actions\SystemRoleWriter;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Filament\Actions\CreateAction;
+use Filament\Forms\Components\TextInput;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\File;
@@ -91,6 +92,23 @@ it('creates a discount through its Action-backed page and audits the actor', fun
         ->and($discount->percentage)->toBe('10.00')
         ->and($discount->is_active)->toBeTrue()
         ->and((int) $activity->causer_id)->toBe((int) $superAdmin->getKey());
+});
+
+it('hands the create Action the exact percentage string entered by the operator', function () {
+    $superAdmin = ($this->makeDiscountActor)('super_admin');
+
+    $component = Livewire::actingAs($superAdmin)
+        ->test(CreateDiscount::class)
+        ->fillForm([
+            'name' => 'Exact percentage',
+            'percentage' => '10.00',
+        ]);
+
+    $percentage = collect($component->instance()->getSchema('form')?->getComponents())
+        ->first(fn (object $field): bool => $field instanceof TextInput && $field->getName() === 'percentage');
+
+    expect($percentage)->not->toBeNull('The create form has no percentage field to check.')
+        ->and($percentage->getState())->toBe('10.00');
 });
 
 it('attributes every discount lifecycle event to the explicit actor', function () {
