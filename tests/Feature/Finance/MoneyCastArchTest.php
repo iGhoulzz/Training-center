@@ -25,6 +25,12 @@ function financeSourceFiles(): array
         ->all();
 }
 
+it('scans a meaningful number of Finance files', function () {
+    // The real count was 38 when this floor was added. This catches an empty
+    // or broken scan root without making ordinary domain cleanup fail.
+    expect(count(financeSourceFiles()))->toBeGreaterThan(20);
+});
+
 /** @return array<int, Node> */
 function financeAst(string $source): array
 {
@@ -206,6 +212,12 @@ it('forbids PHP floating-point casts throughout the Finance domain', function ()
     );
 });
 
+/*
+ * These guards cover explicit PHP float boundaries and Filament numeric state
+ * casts inside Finance. Money's behavioural tests cover implicit arithmetic;
+ * CourseResource and BatchResource live outside this scan, never dehydrate
+ * their price fields, and write prices through dedicated Actions instead.
+ */
 it('forbids numeric calls on financial decimal TextInput fields', function () {
     $violations = [];
 
