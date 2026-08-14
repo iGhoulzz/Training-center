@@ -207,21 +207,6 @@ it('gives task 8 an empty list for a batch nobody teaches, rather than failing',
 |--------------------------------------------------------------------------
 */
 
-it('gives task 10 the batch and course an enrolment sits under', function () {
-    $enrollment = Enrollment::factory()
-        ->for($this->student)
-        ->for($this->batch)
-        ->create();
-
-    expect($this->enrollments->catalogueContextFor((int) $enrollment->getKey()))
-        ->toBe([
-            'batch_id' => (int) $this->batch->getKey(),
-            'batch_code' => 'ENG-101-A',
-            'course_id' => (int) $this->course->getKey(),
-            'course_code' => 'ENG-101',
-        ]);
-});
-
 it('gives task 10 a join it can group and sum in one query', function () {
     /*
      * THE SHAPE T10 ACTUALLY NEEDS, WHICH IS NOT A LOOKUP.
@@ -255,6 +240,7 @@ it('gives task 10 a join it can group and sum in one query', function () {
     $revenue = $this->enrollments->joinCatalogueTo(
         DB::table('charges')->selectRaw('SUM(charges.amount) as billed'),
         'charges.enrollment_id',
+        [EnrollmentQueryService::DIMENSION_BATCH],
     )
         ->groupBy(EnrollmentQueryService::BATCH_ID, EnrollmentQueryService::BATCH_CODE)
         ->get()
@@ -266,6 +252,54 @@ it('gives task 10 a join it can group and sum in one query', function () {
 
     expect($revenue['ENG-101-A'])->toBe('350.000')
         ->and($revenue['ENG-101-B'])->toBe('400.000');
+});
+
+it('aggregates two batches of one course into a single course row', function () {
+    /*
+     * THE INVERSE CONTRACT, AND THE ONE THE FIRST VERSION COULD NOT SERVE.
+     *
+     * Selecting all four columns unconditionally works for a per-batch grouping
+     * only because a course is functionally determined by its batch. Design
+     * section 8 also requires revenue BY COURSE, and there the batch columns are
+     * fatal: under ONLY_FULL_GROUP_BY MySQL rejects them, and adding them to the
+     * GROUP BY silently answers per batch instead. Same fixture as the test
+     * above, grouped one level up: two batches of one course, one row.
+     */
+    $second = Batch::factory()->for($this->course)->create(['code' => 'ENG-101-B']);
+
+    foreach ([['100.000', $this->batch], ['250.000', $this->batch], ['400.000', $second]] as [$amount, $batch]) {
+        $charge = Charge::factory()->create(['amount' => $amount]);
+        $charge->enrollment->update(['batch_id' => $batch->getKey()]);
+    }
+
+    $queries = 0;
+    DB::listen(function () use (&$queries): void {
+        $queries++;
+    });
+
+    $rows = $this->enrollments->joinCatalogueTo(
+        DB::table('charges')->selectRaw('SUM(charges.amount) as billed'),
+        'charges.enrollment_id',
+        [EnrollmentQueryService::DIMENSION_COURSE],
+    )
+        ->groupBy(EnrollmentQueryService::COURSE_ID, EnrollmentQueryService::COURSE_CODE)
+        ->get();
+
+    expect($queries)->toBe(1)
+        ->and($rows)->toHaveCount(1, 'Two batches of one course must aggregate into one row.');
+
+    expect($rows->first()->{EnrollmentQueryService::COURSE_CODE})->toBe('ENG-101')
+        ->and((string) $rows->first()->billed)->toBe('750.000');
+});
+
+it('refuses a catalogue join that names no dimension, or an unknown one', function () {
+    $base = fn (): object => DB::table('charges')->selectRaw('SUM(charges.amount) as billed');
+
+    expect(fn () => $this->enrollments->joinCatalogueTo($base(), 'charges.enrollment_id', []))
+        ->toThrow(InvalidArgumentException::class);
+
+    expect(fn () => $this->enrollments->joinCatalogueTo($base(), 'charges.enrollment_id', ['student']))
+        ->toThrow(InvalidArgumentException::class);
 });
 
 /*

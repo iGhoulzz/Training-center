@@ -34,8 +34,13 @@ use Illuminate\Support\Facades\Gate;
  *
  * ONE TRANSACTION, AND THE DISCOUNT IS AUTHORIZED BEFORE ANY ROW EXISTS
  * --------------------------------------------------------------------
- * `create` on Enrollment is checked by EnrollStudentAction, where it has always
- * been. `apply_discount` is checked HERE, and before the enrolment is written,
+ * `create` on Enrollment is checked HERE FIRST, at the entry boundary, and again
+ * by EnrollStudentAction as defence in depth. Delegating it entirely left this
+ * wrapper not self-authorizing for its own primary write, and let an actor
+ * holding `apply_discount` without `create_enrollment` learn whether a discount
+ * id was unknown or merely retired before being refused.
+ *
+ * `apply_discount` is checked after it, and before the enrolment is written,
  * because a refusal after the insert would be a rollback of work that should
  * never have started — and because an actor without the ability learns nothing
  * about whether the discount id they guessed exists.

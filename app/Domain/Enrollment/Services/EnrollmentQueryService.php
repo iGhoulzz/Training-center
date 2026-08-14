@@ -8,6 +8,7 @@ use App\Domain\Enrollment\Models\Enrollment;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use InvalidArgumentException;
 use RuntimeException;
 
 /**
@@ -221,12 +222,20 @@ final class EnrollmentQueryService
             ->values();
     }
 
+    /** Group by the batch an enrolment sits on. */
+    public const DIMENSION_BATCH = 'batch';
+
+    /** Group by the course, across every batch of it. */
+    public const DIMENSION_COURSE = 'course';
+
     /**
      * The column aliases {@see joinCatalogueTo()} makes available.
      *
      * Named rather than spelled out at both ends, following
-     * ChargeBalance::OUTSTANDING_ALIAS: a typo in a report's `groupBy` against
-     * the alias its join selected produces an empty grouping, not an error.
+     * ChargeBalance::OUTSTANDING_ALIAS, so a report groups on a constant rather
+     * than a string it retyped. A mistyped alias is reported by MySQL as an
+     * unknown column — loud, and the reason to prefer the constant is
+     * refactorability rather than silence.
      */
     public const BATCH_ID = 'catalogue_batch_id';
 
@@ -240,7 +249,9 @@ final class EnrollmentQueryService
      * Add the enrolment → batch → course path to somebody else's query.
      *
      * TASK 10 GROUPS AND SUMS IN SQL, SO IT NEEDS A JOIN, NOT LOOKUPS.
-     * `catalogueContextFor()` answers one enrolment per call, which a revenue
+     * This replaced a `catalogueContextFor($enrollmentId)` lookup, which was
+     * removed rather than left beside it: it answered one enrolment per call,
+     * which a revenue
      * report can only use by calling it per row and summing in PHP — an N+1, and
      * against design §6's rule that aggregation happens in SQL where MySQL's
      * DECIMAL sums are exact. The cross-review of P2-T03 caught that this
@@ -252,45 +263,62 @@ final class EnrollmentQueryService
      * boundary and the architecture rule keeps meaning something. Callers get
      * aliases, not table names.
      *
+     * THE CALLER STATES ITS DIMENSION, AND THE SELECTION FOLLOWS IT.
+     * The first version selected all four columns unconditionally, which works
+     * for a per-batch grouping only because a course is functionally determined
+     * by its batch. A revenue-by-course report — design §8 requires one — then
+     * has no good option: under `ONLY_FULL_GROUP_BY` MySQL rejects the ungrouped
+     * batch columns, and adding them to the `GROUP BY` silently turns the answer
+     * into one row per batch. Cross-review of P2-T03 caught it. `$dimensions` is
+     * required rather than defaulted, because a default is how the caller ends
+     * up with columns it did not ask for.
+     *
      * @param  Builder  $query  A query already selecting from a table that
      *                          carries an enrolment id.
      * @param  string  $enrollmentIdColumn  Qualified, e.g. `charges.enrollment_id`.
+     *                                      `list<string>` rather than `non-empty-list<self::DIMENSION_*>`: this is a
+     *                                      boundary that validates caller input, and annotating the argument as
+     *                                      already-valid makes the check below unreachable by PHPStan's reckoning —
+     *                                      which is a claim about the caller, not about this method.
+     * @param  list<string>  $dimensions  One or more self::DIMENSION_* values.
+     *
+     * @throws InvalidArgumentException on an unknown or empty dimension.
      */
-    public function joinCatalogueTo(Builder $query, string $enrollmentIdColumn): Builder
+    public function joinCatalogueTo(Builder $query, string $enrollmentIdColumn, array $dimensions): Builder
     {
-        return $query
-            ->join('enrollments', 'enrollments.id', '=', $enrollmentIdColumn)
-            ->join('batches', 'batches.id', '=', 'enrollments.batch_id')
-            ->join('courses', 'courses.id', '=', 'batches.course_id')
-            ->addSelect([
+        $columns = [
+            self::DIMENSION_BATCH => [
                 'batches.id as '.self::BATCH_ID,
                 'batches.code as '.self::BATCH_CODE,
+            ],
+            self::DIMENSION_COURSE => [
                 'courses.id as '.self::COURSE_ID,
                 'courses.code as '.self::COURSE_CODE,
-            ]);
-    }
-
-    /**
-     * The batch and course an enrolment sits under.
-     *
-     * TASK 10 READS THIS. Every revenue grouping in design §8 walks
-     * enrolment → batch → course, and a report that walked it through Eloquent
-     * relations from Finance would be the cross-domain query the architecture
-     * test forbids.
-     *
-     * @return array{batch_id: int, batch_code: string, course_id: int, course_code: string}
-     *
-     * @throws RuntimeException if the enrolment does not exist.
-     */
-    public function catalogueContextFor(int $enrollmentId): array
-    {
-        $context = $this->receiptContextFor($enrollmentId);
-
-        return [
-            'batch_id' => $context['batch_id'],
-            'batch_code' => $context['batch_code'],
-            'course_id' => $context['course_id'],
-            'course_code' => $context['course_code'],
+            ],
         ];
+
+        $unknown = array_diff($dimensions, array_keys($columns));
+
+        if ($dimensions === [] || $unknown !== []) {
+            throw new InvalidArgumentException(
+                'Name at least one known catalogue dimension: '.implode(', ', array_keys($columns)).'.'
+            );
+        }
+
+        /*
+         * `batches` is joined even for a course-only query — it is the path from
+         * an enrolment to its course — but its columns are not selected, which
+         * is what keeps the aggregate one row per course.
+         */
+        $query
+            ->join('enrollments', 'enrollments.id', '=', $enrollmentIdColumn)
+            ->join('batches', 'batches.id', '=', 'enrollments.batch_id')
+            ->join('courses', 'courses.id', '=', 'batches.course_id');
+
+        foreach ($dimensions as $dimension) {
+            $query->addSelect($columns[$dimension]);
+        }
+
+        return $query;
     }
 }
