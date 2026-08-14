@@ -127,8 +127,13 @@ it('sets the due date to the enrolment date, per design section 4', function () 
 
     $charge = Charge::query()->where('enrollment_id', $enrollment->getKey())->firstOrFail();
 
-    expect($charge->due_date->toDateString())
-        ->toBe($enrollment->enrolled_at->toDateString());
+    /*
+     * The literal centre-calendar date, not `enrolled_at`'s UTC one. Comparing
+     * the two dates only proves they agree, which at 09:30 UTC they always do —
+     * so the assertion could not fail for the reason it exists. The boundary
+     * case that can is the test below, at 22:30.
+     */
+    expect($charge->due_date->toDateString())->toBe('2026-08-13');
 });
 
 /*

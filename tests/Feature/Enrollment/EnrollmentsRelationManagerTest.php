@@ -86,6 +86,9 @@ it('raises the bill as part of enrolling through the panel', function () {
      * Driven through the real component rather than the Action, because the
      * defect being closed was in the wiring, not in either Action.
      */
+    // 22:30 UTC is 00:30 the NEXT day in Tripoli — see the due-date assertion.
+    $this->travelTo('2026-08-14 22:30:00');
+
     $student = Student::factory()->create();
 
     /*
@@ -109,8 +112,21 @@ it('raises the bill as part of enrolling through the panel', function () {
         ->and($charge->discount_id)->toBeNull()
         ->and($charge->list_price)->toBe('850.000')
         ->and($charge->amount)->toBe('850.000')
-        // Design section 4: due on the day the debt was incurred.
-        ->and($charge->due_date->toDateString())->toBe($enrollment->enrolled_at->toDateString());
+        /*
+         * Design section 4: due on the day the debt was incurred, ON THE
+         * CENTRE'S CALENDAR.
+         *
+         * This compared against `enrolled_at`'s UTC date, which is the exact
+         * confusion the Action was fixed to stop making — and it was
+         * CLOCK-DEPENDENT: green whenever UTC and Tripoli share a date, red
+         * between 22:00 and midnight UTC. CI failed it at 22:xx with
+         * `-'2026-08-14' +'2026-08-15'` after the local gate had passed.
+         *
+         * Pinned inside that window, so it now proves the property instead of
+         * restating whatever the clock makes true, and a regression to UTC
+         * truncation fails it every time rather than two hours a day.
+         */
+        ->and($charge->due_date->toDateString())->toBe('2026-08-15');
 });
 
 it('takes the batch from the owner record, not a crafted payload', function () {
