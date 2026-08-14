@@ -11,6 +11,8 @@ use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Course;
 use App\Domain\Enrollment\Models\Enrollment;
 use App\Domain\Enrollment\Models\Student;
+use App\Domain\Finance\Models\Charge;
+use App\Domain\Finance\Support\Reference;
 use App\Domain\Staff\Actions\SystemRoleWriter;
 use App\Domain\Staff\Models\StaffProfile;
 use App\Models\User;
@@ -68,6 +70,63 @@ it('enrolls a student through the panel', function () {
 
     expect(Enrollment::query()->count())->toBe(1)
         ->and(Enrollment::query()->sole()->status)->toBe(EnrollmentStatus::Active);
+});
+
+it('raises the bill as part of enrolling through the panel', function () {
+    /*
+     * THE ASSERTION THAT PROVES THE SURFACE WAS ACTUALLY MIGRATED (P2-T03).
+     *
+     * Design section 12 is explicit that this file must change: this screen was
+     * the one UI path that could create an enrolment with no bill, and a phase 2
+     * suite passing while this file still asserted only the phase 1 behaviour
+     * would mean the migration never happened. Every case above passed unchanged
+     * against EnrollAndBillAction — which is correct, and is exactly why it
+     * proves nothing on its own.
+     *
+     * Driven through the real component rather than the Action, because the
+     * defect being closed was in the wiring, not in either Action.
+     */
+    // 22:30 UTC is 00:30 the NEXT day in Tripoli — see the due-date assertion.
+    $this->travelTo('2026-08-14 22:30:00');
+
+    $student = Student::factory()->create();
+
+    /*
+     * A REAL PRICE, BECAUSE THE FACTORY DEFAULTS MAKE THE MONEY ASSERTION
+     * VACUOUS. BatchFactory leaves `price` null and CourseFactory sets
+     * `default_price` to 0, so "amount equals list price" would be
+     * '0.000' === '0.000' — true for any implementation, including one that
+     * bills nothing. The independent review caught this.
+     */
+    $this->batch->update(['price' => '850.000']);
+
+    ($this->mountPanel)(($this->makeUser)('admin'))
+        ->callTableAction('enroll', null, ['student_id' => $student->getKey()]);
+
+    $enrollment = Enrollment::query()->sole();
+    $charge = Charge::query()->sole();
+
+    expect((int) $charge->enrollment_id)->toBe((int) $enrollment->getKey())
+        ->and($charge->reference)->toStartWith(Reference::CHARGE_PREFIX)
+        // Full price: this screen offers no discount, by design section 3.
+        ->and($charge->discount_id)->toBeNull()
+        ->and($charge->list_price)->toBe('850.000')
+        ->and($charge->amount)->toBe('850.000')
+        /*
+         * Design section 4: due on the day the debt was incurred, ON THE
+         * CENTRE'S CALENDAR.
+         *
+         * This compared against `enrolled_at`'s UTC date, which is the exact
+         * confusion the Action was fixed to stop making — and it was
+         * CLOCK-DEPENDENT: green whenever UTC and Tripoli share a date, red
+         * between 22:00 and midnight UTC. CI failed it at 22:xx with
+         * `-'2026-08-14' +'2026-08-15'` after the local gate had passed.
+         *
+         * Pinned inside that window, so it now proves the property instead of
+         * restating whatever the clock makes true, and a regression to UTC
+         * truncation fails it every time rather than two hours a day.
+         */
+        ->and($charge->due_date->toDateString())->toBe('2026-08-15');
 });
 
 it('takes the batch from the owner record, not a crafted payload', function () {

@@ -7,6 +7,7 @@ namespace App\Domain\Enrollment\Actions;
 use App\Domain\Enrollment\Exceptions\EnrollmentBatchChangedException;
 use App\Domain\Enrollment\Models\Enrollment;
 use App\Domain\Enrollment\Support\EnrollmentMutex;
+use App\Domain\Finance\Actions\DeleteUncommittedChargeAction;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
@@ -38,7 +39,10 @@ use Illuminate\Support\Facades\Gate;
  */
 final class DeleteEnrollmentAction
 {
-    public function __construct(private readonly EnrollmentMutex $mutex) {}
+    public function __construct(
+        private readonly EnrollmentMutex $mutex,
+        private readonly DeleteUncommittedChargeAction $deleteCharge,
+    ) {}
 
     /**
      * @throws EnrollmentBatchChangedException if the enrolment moved batches.
@@ -50,6 +54,28 @@ final class DeleteEnrollmentAction
             $held = $this->mutex->acquire($enrollment);
 
             Gate::forUser($actor)->authorize('delete', $held->enrollment);
+
+            /*
+             * THE BILL GOES FIRST, IN THIS TRANSACTION (P2-T03, design §12).
+             *
+             * Every enrolment carries a charge from phase 2, and charges
+             * restrict on delete — without this the first enrolment recorded in
+             * error would be undeletable, and the system design's "or the
+             * mistake is permanent" is precisely what P1-T11 shipped a separate
+             * delete grant to avoid.
+             *
+             * It refuses with ChargeAlreadyCommittedException if the bill has an
+             * allocation, an adjustment or a write-off, which is deliberately a
+             * BUSINESS-RULE refusal rather than an authorization one: the actor
+             * may delete enrolments, and this particular one has money attached.
+             * The exception propagates out of the transaction, so nothing is
+             * half-removed.
+             *
+             * It takes no actor and consults no policy on purpose — see its own
+             * docblock. The entitlement was checked one line above, against the
+             * row this transaction holds locked.
+             */
+            $this->deleteCharge->execute((int) $held->enrollment->getKey());
 
             $held->enrollment->delete();
         });

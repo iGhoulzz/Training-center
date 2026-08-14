@@ -283,6 +283,17 @@ it('does not delete or deactivate users outside the sanctioned Actions', functio
             // Enrolments (P1-T11): single-record only, authorizes against the
             // row locked by EnrollmentMutex.
             'DeleteEnrollmentAction',
+            /*
+             * The bill that goes with a deleted enrolment (P2-T03). Internal:
+             * no actor, no policy, one caller — DeleteEnrollmentAction, which
+             * checked delete_enrollment against the row it holds locked before
+             * calling this. It owns the refusal that keeps money safe: any
+             * allocation, adjustment or write-off and the delete is refused
+             * with ChargeAlreadyCommittedException, read under the charge's
+             * own lock. ChargePolicy::delete() still refuses everyone
+             * unconditionally, which is a different question (design §4).
+             */
+            'DeleteUncommittedChargeAction',
             // Staff files (P1-T06b): each removes a record AND owns the durable
             // commit-first/delete-after file lifecycle. The certificate and
             // profile Actions authorize the actor and write a
@@ -606,6 +617,78 @@ const ACTIVITY_WRITE_SHAPES = [
     'instance' => '/\$\w*activit\w*\s*->\s*(update|updateQuietly|save|saveQuietly|delete'
         .'|forceDelete|fill|forceFill|restore)\s*\(/i',
 ];
+
+/*
+ * ENROLLING WITHOUT BILLING, CLOSED (P2-T03).
+ *
+ * Design section 12 found this as a live UI path: EnrollmentsRelationManager
+ * called EnrollStudentAction directly — correct in phase 1, and from phase 2 a
+ * way to create an enrolment with NO BILL, silently, on the batch screen staff
+ * already use. Every enrolment carries exactly one charge, so the two writes are
+ * one act or that invariant is a convention.
+ *
+ * EnrollAndBillAction is the only application caller. The allowlist exempts a
+ * FILE, which is what makes adding a second caller a visible act in review.
+ * EnrollStudentAction names itself because the string appears in its own class
+ * declaration.
+ *
+ * tests/ is deliberately out of scope: EnrollmentTest calls the Action directly
+ * because it is that Action's own test, and a rule forbidding that would be a
+ * rule against testing the unit.
+ *
+ * THE DETECTOR IS THE CLASS NAME, NOT A CALL SHAPE. `app(EnrollStudentAction::
+ * class)`, a constructor injection, a string reference in a container binding
+ * and a `use` import all reach the same place, and a rule that matched only
+ * `->execute(` would miss three of the four.
+ */
+it('calls EnrollStudentAction from nowhere but EnrollAndBillAction', function () {
+    $offenders = filesMatching(
+        '/\bEnrollStudentAction\b/',
+        ['EnrollAndBillAction', 'EnrollStudentAction'],
+    );
+
+    expect($offenders)->toBeEmpty(
+        'Enrolling raises a bill: route it through EnrollAndBillAction rather than '
+        .'EnrollStudentAction: '.implode(', ', $offenders),
+    );
+});
+
+/*
+ * THE INTERNAL FINANCE ACTIONS, EACH BOUND TO ITS ONE CALLER (P2-T03).
+ *
+ * Design §11 requires this and names it: "IssueChargeAction,
+ * DeleteUncommittedChargeAction or AttachReceiptAction called from anything
+ * other than its one permitted caller" is prohibited, "enforced by extending
+ * ActionBoundaryArchTest". The first two ship in this task; the third arrives
+ * with receipts in task 6 and gets its row then.
+ *
+ * These two are the only writers of the `charges` table that take NO actor and
+ * consult NO policy. That is safe exactly as long as each has one caller which
+ * has already authorized the act — IssueChargeAction under `create` on
+ * Enrollment, DeleteUncommittedChargeAction under `delete_enrollment`. "One
+ * caller" is the whole safety argument, so it is the thing to enforce; without
+ * these rules a second caller would inherit an unauthorized write path and
+ * nothing would say so.
+ *
+ * The independent review of P2-T03 found both missing. They report clean today.
+ */
+const INTERNAL_FINANCE_ACTIONS = [
+    'IssueChargeAction' => 'EnrollAndBillAction',
+    'DeleteUncommittedChargeAction' => 'DeleteEnrollmentAction',
+];
+
+it('calls each internal Finance Action from nowhere but its one permitted caller', function () {
+    foreach (INTERNAL_FINANCE_ACTIONS as $action => $caller) {
+        // The class names itself in its own declaration, so it is always exempt.
+        $offenders = filesMatching('/\b'.$action.'\b/', [$action, $caller]);
+
+        expect($offenders)->toBeEmpty(
+            "{$action} authorizes nothing and is safe only because {$caller} is its "
+            .'sole caller, which has already checked the ability. Found in: '
+            .implode(', ', $offenders),
+        );
+    }
+});
 
 it('never writes the activity log from application code', function () {
     foreach (ACTIVITY_WRITE_SHAPES as $shape => $pattern) {

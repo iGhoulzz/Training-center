@@ -5,9 +5,7 @@ declare(strict_types=1);
 namespace App\Domain\Enrollment\Filament\Resources\BatchResource\RelationManagers;
 
 use App\Domain\Enrollment\Actions\DeleteEnrollmentAction;
-use App\Domain\Enrollment\Actions\EnrollStudentAction;
 use App\Domain\Enrollment\Actions\WithdrawEnrollmentAction;
-use App\Domain\Enrollment\Data\EnrollStudentData;
 use App\Domain\Enrollment\Enums\EnrollmentStatus;
 use App\Domain\Enrollment\Exceptions\BatchClosedException;
 use App\Domain\Enrollment\Exceptions\DuplicateEnrollmentException;
@@ -17,6 +15,9 @@ use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Enrollment;
 use App\Domain\Enrollment\Models\Student;
 use App\Domain\Enrollment\Support\EnrollmentUpdateRule;
+use App\Domain\Finance\Actions\EnrollAndBillAction;
+use App\Domain\Finance\Data\EnrollAndBillData;
+use App\Domain\Finance\Exceptions\ChargeAlreadyCommittedException;
 use App\Models\User;
 use Filament\Actions\Action;
 use Filament\Forms\Components\Select;
@@ -263,7 +264,23 @@ class EnrollmentsRelationManager extends RelationManager
                 $batch = $this->getOwnerRecord();
 
                 try {
-                    app(EnrollStudentAction::class)->execute($actor, new EnrollStudentData(
+                    /*
+                     * ENROLLING RAISES THE BILL (P2-T03, design section 12).
+                     *
+                     * This called EnrollStudentAction directly until phase 2,
+                     * which turned it into the one UI path that creates an
+                     * enrolment carrying no charge — silently, on the screen
+                     * staff use most. EnrollAndBillAction wraps both writes in
+                     * one transaction, and ActionBoundaryArchTest asserts that
+                     * nothing under app/ reaches around it.
+                     *
+                     * No discount is offered here, which is not an omission.
+                     * Design section 3 puts the discount on the enrol-and-collect
+                     * flow, where an actor holding apply_discount chooses one
+                     * against a preview; this screen bills at full price for
+                     * everybody, exactly as it did before.
+                     */
+                    app(EnrollAndBillAction::class)->execute($actor, new EnrollAndBillData(
                         studentId: (int) $data['student_id'],
                         // FROM THE OWNER RECORD, NEVER THE PAYLOAD. A crafted
                         // submission naming another batch cannot redirect the write.
@@ -345,7 +362,16 @@ class EnrollmentsRelationManager extends RelationManager
 
                 try {
                     app(DeleteEnrollmentAction::class)->execute($actor, $record);
-                } catch (AuthorizationException $exception) {
+                } catch (ChargeAlreadyCommittedException|AuthorizationException $exception) {
+                    /*
+                     * From P2-T03 a deletion can be refused for a reason that is
+                     * not about permission at all: the bill carries a payment, a
+                     * correction or a write-off. Catching it here is what turns
+                     * that into a readable notification rather than a 500 —
+                     * design section 12 keeps an enrolment recorded in error
+                     * deletable, and this is the boundary where "in error" stops
+                     * being true.
+                     */
                     self::refuse($exception);
                 }
             });
@@ -361,7 +387,8 @@ class EnrollmentsRelationManager extends RelationManager
      */
     private static function refuse(
         BatchClosedException|DuplicateEnrollmentException|StudentNotEnrollableException
-        |EnrollmentNotWithdrawableException|AuthorizationException $exception,
+        |EnrollmentNotWithdrawableException|ChargeAlreadyCommittedException
+        |AuthorizationException $exception,
     ): void {
         Notification::make()
             ->title($exception instanceof AuthorizationException

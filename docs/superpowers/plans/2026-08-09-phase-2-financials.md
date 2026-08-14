@@ -139,6 +139,11 @@ A seam is a file whose content is an enumeration that grows whenever a task adds
 | `tests/Feature/Staff/ActionBoundaryArchTest.php` | adds an Action calling `->delete()`/`->forceDelete()`, or writing `is_active => false` | **open**; the delete rule is deliberately broad, so its allowlist grows per Action, not per model |
 | `RolePermissionSeeder` + `FinancePermissionSeedingTest` | needs a permission | **closed for phase 2** — T1 seeded the whole set from design §10 |
 | `tests/Feature/LocalizationTest.php` | adds a translation catalogue | **closed** — T1 made the Arabic-empty dataset derive from `lang/en` |
+| `tests/Feature/DatabaseIsolationTest.php` — the exempt-file list | adds a test file that declares no database isolation trait | **open**; grows per architecture-style test |
+
+**The last row was added by T3, and it is the most instructive one here.** It was missing when this table was written in T00C, and the very next task — T2P — joined it, correctly and with the owner's approval, but without declaring it, because nothing in the inventory prompted them to. A seam the inventory omits is a seam nobody is asked to declare, so the omission propagates as compliance.
+
+**The lesson is about the inventory, not about that task.** This table is hand-maintained against a codebase that keeps growing registries, which is the same shape of defect as `KNOWN_PIVOT_MUTATORS` before its reflection guard, and as the money-field list T2P deferred to T12. Until something derives it, **each task re-reads this table against `main` rather than trusting it**, and adds what it finds.
 
 **No test asserts any of these.** A dropped `Gate::policy()` line fails *silently*, because Laravel's convention discovery resolves those policies unaided; a duplicated `discoverResources()` line fails silently too. Silence in both directions is why the verification step below counts rather than reads.
 
@@ -527,6 +532,8 @@ The phase's primary user-facing surface.
 
 **Does**
 The eight-step flow from design §2. Allocation is decided by context and never shown to the operator. The idempotency key is minted when the collection step is first rendered.
+
+**The discount selector lists active definitions only** — `Discount::query()->active()`. This is the UI half of a rule the server already enforces: P2-T03's `EnrollAndBillAction` refuses a deactivated definition with `DiscountNotApplicableException` rather than applying it or silently dropping it to full price. Both halves are required and neither replaces the other: an unfiltered picker offers a choice that will be refused, and a picker-only filter would leave `DeactivateDiscountAction` with no server-side effect at all.
 
 **Done when**
 The full flow is driven through Livewire end to end and produces enrolment, bill, payment, tenders, allocation and receipt · the preview figure matches the issued charge exactly · a staff member sees no discount selector · attempting to collect more than outstanding is refused in the UI **and** by the Action · a card tender without a reference cannot be submitted · **a double-submitted collection produces one payment and one receipt** · every string is translatable and the page renders at `dir="rtl"` · `composer verify` green.
