@@ -653,6 +653,43 @@ it('calls EnrollStudentAction from nowhere but EnrollAndBillAction', function ()
     );
 });
 
+/*
+ * THE INTERNAL FINANCE ACTIONS, EACH BOUND TO ITS ONE CALLER (P2-T03).
+ *
+ * Design §11 requires this and names it: "IssueChargeAction,
+ * DeleteUncommittedChargeAction or AttachReceiptAction called from anything
+ * other than its one permitted caller" is prohibited, "enforced by extending
+ * ActionBoundaryArchTest". The first two ship in this task; the third arrives
+ * with receipts in task 6 and gets its row then.
+ *
+ * These two are the only writers of the `charges` table that take NO actor and
+ * consult NO policy. That is safe exactly as long as each has one caller which
+ * has already authorized the act — IssueChargeAction under `create` on
+ * Enrollment, DeleteUncommittedChargeAction under `delete_enrollment`. "One
+ * caller" is the whole safety argument, so it is the thing to enforce; without
+ * these rules a second caller would inherit an unauthorized write path and
+ * nothing would say so.
+ *
+ * The independent review of P2-T03 found both missing. They report clean today.
+ */
+const INTERNAL_FINANCE_ACTIONS = [
+    'IssueChargeAction' => 'EnrollAndBillAction',
+    'DeleteUncommittedChargeAction' => 'DeleteEnrollmentAction',
+];
+
+it('calls each internal Finance Action from nowhere but its one permitted caller', function () {
+    foreach (INTERNAL_FINANCE_ACTIONS as $action => $caller) {
+        // The class names itself in its own declaration, so it is always exempt.
+        $offenders = filesMatching('/\b'.$action.'\b/', [$action, $caller]);
+
+        expect($offenders)->toBeEmpty(
+            "{$action} authorizes nothing and is safe only because {$caller} is its "
+            .'sole caller, which has already checked the ability. Found in: '
+            .implode(', ', $offenders),
+        );
+    }
+});
+
 it('never writes the activity log from application code', function () {
     foreach (ACTIVITY_WRITE_SHAPES as $shape => $pattern) {
         $offenders = filesMatching($pattern);

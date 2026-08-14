@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Finance\Exceptions;
 
+use InvalidArgumentException;
 use RuntimeException;
 
 /**
@@ -48,12 +49,37 @@ final class ChargeAlreadyCommittedException extends RuntimeException
      *
      * The `$reason` is a KEY, not a sentence, so the three cases keep their own
      * translated lines and callers can still tell them apart programmatically.
+     *
+     * EVERY TRANSLATION KEY IS SPELLED OUT IN FULL, NOT ASSEMBLED.
+     * The first version built the key as `'billing.charge_committed_'.$reason`,
+     * and LocalizationTest failed it: its scanner reads the literal fragment,
+     * found `billing.charge_committed_`, and reported a key resolving to
+     * nothing. That is the scanner being right rather than limited — a key no
+     * static reader can resolve is a key nobody can audit for a missing Arabic
+     * line, which is the entire job of that test three phases before Arabic
+     * ships. A `match` also turns an unknown reason into an UnhandledMatchError
+     * at the throw site instead of a missing-string label in the panel.
      */
-    public function __construct(
+    private function __construct(
         public readonly int $chargeId,
         public readonly string $reason,
     ) {
-        parent::__construct(__('billing.charge_committed_'.$reason));
+        parent::__construct(match ($reason) {
+            self::ALLOCATED => __('billing.charge_committed_allocated'),
+            self::ADJUSTED => __('billing.charge_committed_adjusted'),
+            self::WRITTEN_OFF => __('billing.charge_committed_written_off'),
+            /*
+             * Unreachable by construction — the constructor is private and the
+             * three factories below are the only way in. It is written out
+             * because PHPStan cannot prove that from a `string`, and because
+             * "unhandled match" is the wrong failure for a fourth reason added
+             * later: this names what went wrong at the throw site instead of
+             * letting a missing-string label appear in the panel.
+             */
+            default => throw new InvalidArgumentException(
+                "Unknown charge commitment reason [{$reason}]."
+            ),
+        });
     }
 
     public static function allocated(int $chargeId): self

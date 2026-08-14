@@ -533,6 +533,8 @@ The phase's primary user-facing surface.
 **Does**
 The eight-step flow from design §2. Allocation is decided by context and never shown to the operator. The idempotency key is minted when the collection step is first rendered.
 
+**The discount selector lists active definitions only** — `Discount::query()->active()`. This is the UI half of a rule the server already enforces: P2-T03's `EnrollAndBillAction` refuses a deactivated definition with `DiscountNotApplicableException` rather than applying it or silently dropping it to full price. Both halves are required and neither replaces the other: an unfiltered picker offers a choice that will be refused, and a picker-only filter would leave `DeactivateDiscountAction` with no server-side effect at all.
+
 **Done when**
 The full flow is driven through Livewire end to end and produces enrolment, bill, payment, tenders, allocation and receipt · the preview figure matches the issued charge exactly · a staff member sees no discount selector · attempting to collect more than outstanding is refused in the UI **and** by the Action · a card tender without a reference cannot be submitted · **a double-submitted collection produces one payment and one receipt** · every string is translatable and the page renders at `dir="rtl"` · `composer verify` green.
 

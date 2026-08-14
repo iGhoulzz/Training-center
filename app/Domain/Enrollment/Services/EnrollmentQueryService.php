@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Domain\Enrollment\Services;
 
 use App\Domain\Enrollment\Models\Enrollment;
+use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -99,17 +100,23 @@ final class EnrollmentQueryService
     public function receiptContextFor(int $enrollmentId): array
     {
         /*
-         * THE QUERY BUILDER, NOT ELOQUENT, AND THAT IS THE POINT.
+         * THROUGH THE MODEL, BUT NOT HYDRATED INTO ONE — AND BOTH HALVES ARE
+         * ENFORCED BY A TEST THAT ALREADY EXISTED.
          *
-         * This projects scalars across four tables; hydrating an Enrollment and
-         * hanging joined columns off it would be a model that is not really the
-         * row it claims to be — PHPStan says so, and it is right. ChargeBalance
-         * is written against table and column names for the same reason.
+         * Not hydrated, because this projects scalars across four tables:
+         * hanging joined columns off an Enrollment produces a model that is not
+         * really the row it claims to be, which PHPStan rejects and which would
+         * let a caller walk a half-built model into Finance.
          *
-         * It also keeps the promise in this class's docblock: no Enrollment
-         * model leaves this service, so no caller can walk one.
+         * Through the model, because `ActionBoundaryArchTest` forbids
+         * `DB::table('enrollments')` in ANY file — "the table is reached through
+         * the model or not at all". The first version of this method used the
+         * raw builder to satisfy PHPStan and tripped that rule on the full gate.
+         *
+         * `toBase()` satisfies both: the query is built from Enrollment's own
+         * builder, and the result comes back as plain rows rather than models.
          */
-        $row = DB::table('enrollments')
+        $row = Enrollment::query()
             ->where('enrollments.id', $enrollmentId)
             ->join('students', 'students.id', '=', 'enrollments.student_id')
             ->join('batches', 'batches.id', '=', 'enrollments.batch_id')
@@ -125,6 +132,7 @@ final class EnrollmentQueryService
                 'courses.id as course_id',
                 'courses.code as course_code',
             ])
+            ->toBase()
             ->first();
 
         if ($row === null) {
@@ -158,15 +166,55 @@ final class EnrollmentQueryService
      * this returns them rather than leaving payroll to join a table it does not
      * own.
      *
-     * @return Collection<int, array{user_id: int, assigned_hours: int}>
+     * THE ASSIGNMENT'S OWN ID IS PART OF THE ANSWER, NOT AN INTERNAL DETAIL.
+     * `payroll_lines.batch_instructor_id` is a foreign key to this row, and
+     * design §7's "an instructor assignment is paid at most once" unique index
+     * is keyed on it. Returning only the user and the hours would leave task 8
+     * unable to write a payroll line at all — the independent review of P2-T03
+     * caught that, and it is exactly the "build the whole surface once" failure
+     * this class exists to prevent.
+     *
+     * @return Collection<int, array{id: int, batch_id: int, user_id: int, assigned_hours: int}>
      */
     public function instructorAssignmentsFor(int $batchId): Collection
     {
-        return DB::table('batch_instructor')
-            ->where('batch_id', $batchId)
+        return $this->instructorAssignmentRows(
+            DB::table('batch_instructor')->where('batch_id', $batchId)
+        );
+    }
+
+    /**
+     * Every instructor assignment in the centre, for a payroll run that is not
+     * scoped to one batch.
+     *
+     * Design §7: an `instructor_batch` run "lists every instructor-hour
+     * assignment not already paid in a finalized run, **whatever the batch's
+     * status**". Task 8 cannot enumerate batch ids first and call the per-batch
+     * method — walking Enrolment's tables to build that list is precisely the
+     * cross-domain query this boundary exists to prevent.
+     *
+     * Which assignments have already been paid is Finance's own question,
+     * answered from `payroll_lines`, so it is deliberately not a parameter here.
+     *
+     * @return Collection<int, array{id: int, batch_id: int, user_id: int, assigned_hours: int}>
+     */
+    public function allInstructorAssignments(): Collection
+    {
+        return $this->instructorAssignmentRows(DB::table('batch_instructor'));
+    }
+
+    /**
+     * @return Collection<int, array{id: int, batch_id: int, user_id: int, assigned_hours: int}>
+     */
+    private function instructorAssignmentRows(Builder $query): Collection
+    {
+        return $query
+            ->orderBy('batch_id')
             ->orderBy('user_id')
-            ->get(['user_id', 'assigned_hours'])
+            ->get(['id', 'batch_id', 'user_id', 'assigned_hours'])
             ->map(fn (object $row): array => [
+                'id' => (int) $row->id,
+                'batch_id' => (int) $row->batch_id,
                 'user_id' => (int) $row->user_id,
                 'assigned_hours' => (int) $row->assigned_hours,
             ])

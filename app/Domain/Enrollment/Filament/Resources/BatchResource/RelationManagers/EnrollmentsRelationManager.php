@@ -34,12 +34,12 @@ use Illuminate\Support\Facades\Gate;
 /**
  * Who is on this batch (P1-T11).
  *
- * EVERY WRITE ROUTES THROUGH AN ACTION â€” NONE THROUGH THE RELATION
+ * EVERY WRITE ROUTES THROUGH AN ACTION — NONE THROUGH THE RELATION
  * ---------------------------------------------------------------
  * Filament's CreateAction, EditAction, AttachAction, AssociateAction and
  * DeleteAction persist with a bare create()/update()/delete() on the relation,
  * reaching around EnrollStudentAction, WithdrawEnrollmentAction and
- * DeleteEnrollmentAction â€” and with them the closed-batch refusal, the duplicate
+ * DeleteEnrollmentAction — and with them the closed-batch refusal, the duplicate
  * refusal, the deleted-student refusal, the row locks and the actor check. None
  * is registered here; the buttons below are plain Actions with their own
  * handlers, so there is no built-in persistence to reach in the first place.
@@ -49,7 +49,7 @@ use Illuminate\Support\Facades\Gate;
  * NO STATUS FIELD, ANYWHERE
  * -------------------------
  * The only transition phase 1 has is withdrawal, and it has a button of its own.
- * A status Select would let a crafted submission set `completed` â€” a state spec
+ * A status Select would let a crafted submission set `completed` — a state spec
  * line 71 reserves for phase 3, and one phase 3 issues certificates against.
  *
  * THE ASSOCIATION IS NOT EDITABLE
@@ -64,7 +64,7 @@ use Illuminate\Support\Facades\Gate;
  * Filament authorizes a bulk action once against a *Any policy method and never
  * consults the per-record one, so a bulk withdrawal could not express the
  * assigned-batch rule at all. EnrollmentPolicy::deleteAny() is written out and
- * refuses, which is what keeps it that way â€” Filament resolves a MISSING policy
+ * refuses, which is what keeps it that way — Filament resolves a MISSING policy
  * method to Response::allow(), so the refusal has to be stated, not implied.
  */
 class EnrollmentsRelationManager extends RelationManager
@@ -106,7 +106,7 @@ class EnrollmentsRelationManager extends RelationManager
      * internals, which change between releases and would make the test a
      * statement about the framework rather than about the search.
      *
-     * student_code matches from the START â€” it is an identifier people read off a
+     * student_code matches from the START — it is an identifier people read off a
      * form, so a prefix match is what they expect, and it stays index-friendly.
      * Either name matches anywhere, because people search for "zarrouk" without
      * knowing which field it lives in.
@@ -161,7 +161,7 @@ class EnrollmentsRelationManager extends RelationManager
                  * exist and fails the first time somebody types in the search box.
                  *
                  * Search is therefore given an explicit query against the real
-                 * columns. Sorting is NOT offered on this column at all â€” ordering
+                 * columns. Sorting is NOT offered on this column at all — ordering
                  * a composed name means choosing whether "last, first" or "first
                  * last" is the order, which the centre has not been asked.
                  * student_code and enrolled_at are sortable instead, and both are
@@ -211,7 +211,7 @@ class EnrollmentsRelationManager extends RelationManager
      * May the current actor amend enrolments on the batch being viewed?
      *
      * ONE LOOKUP FOR THE WHOLE PANEL, NOT ONE PER ROW. Every row belongs to the
-     * same batch, so this has one answer â€” but a per-record Gate::allows() asks
+     * same batch, so this has one answer — but a per-record Gate::allows() asks
      * it once per row, and each ask is a pivot query.
      *
      * This is a RENDERING decision: which controls to show. It is not the
@@ -269,7 +269,7 @@ class EnrollmentsRelationManager extends RelationManager
                      *
                      * This called EnrollStudentAction directly until phase 2,
                      * which turned it into the one UI path that creates an
-                     * enrolment carrying no charge â€” silently, on the screen
+                     * enrolment carrying no charge — silently, on the screen
                      * staff use most. EnrollAndBillAction wraps both writes in
                      * one transaction, and ActionBoundaryArchTest asserts that
                      * nothing under app/ reaches around it.
@@ -294,7 +294,7 @@ class EnrollmentsRelationManager extends RelationManager
                     }
 
                 /*
-                 * Over-capacity WARNS and never blocks â€” spec line 217. The
+                 * Over-capacity WARNS and never blocks — spec line 217. The
                  * enrolment has already committed; this tells the reader the batch
                  * is now over its stated ceiling so they can act on it, rather than
                  * refusing a decision the centre is entitled to make.
@@ -342,7 +342,7 @@ class EnrollmentsRelationManager extends RelationManager
     }
 
     /**
-     * Remove the record entirely â€” a separate grant from withdrawing it.
+     * Remove the record entirely — a separate grant from withdrawing it.
      *
      * Not Filament's DeleteAction, which persists by calling $record->delete()
      * and reaches around DeleteEnrollmentAction.
@@ -381,8 +381,8 @@ class EnrollmentsRelationManager extends RelationManager
      * Turn a refusal into a notification the reader can actually read.
      *
      * The domain exceptions carry __() messages already. AuthorizationException
-     * does NOT â€” its message is Laravel's hardcoded English, which would appear
-     * verbatim in an Arabic panel from phase 4 â€” so it is mapped to a key of this
+     * does NOT — its message is Laravel's hardcoded English, which would appear
+     * verbatim in an Arabic panel from phase 4 — so it is mapped to a key of this
      * domain's own. See InstructorsRelationManager::refuse().
      */
     private static function refuse(

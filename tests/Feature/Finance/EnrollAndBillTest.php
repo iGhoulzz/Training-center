@@ -8,6 +8,7 @@ use App\Domain\Enrollment\Models\Enrollment;
 use App\Domain\Enrollment\Models\Student;
 use App\Domain\Finance\Actions\EnrollAndBillAction;
 use App\Domain\Finance\Data\EnrollAndBillData;
+use App\Domain\Finance\Exceptions\DiscountNotApplicableException;
 use App\Domain\Finance\Models\Charge;
 use App\Domain\Finance\Models\Discount;
 use App\Domain\Finance\Support\Reference;
@@ -15,6 +16,7 @@ use App\Domain\Staff\Actions\SystemRoleWriter;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Spatie\Activitylog\Models\Activity;
@@ -134,12 +136,66 @@ it('sets the due date to the enrolment date, per design section 4', function () 
 |--------------------------------------------------------------------------
 */
 
-it('leaves no enrolment behind when the bill cannot be raised', function () {
+it('writes the enrolment and the bill at the same transaction depth', function () {
+    /*
+     * THE PREVIOUS VERSION OF THIS TEST COULD NOT FAIL, AND THE INDEPENDENT
+     * REVIEW PROVED IT BY DELETING THE TRANSACTION.
+     *
+     * It passed a discount id that does not exist and asserted no rows
+     * survived. But authorizedDiscount() runs FIRST, so findOrFail() threw
+     * before EnrollStudentAction was ever reached — nothing was inserted, so
+     * nothing needed rolling back, and the assertions were trivially true. With
+     * `DB::transaction()` removed from EnrollAndBillAction the whole file stayed
+     * green. A rollback test whose failure happens before the first write is
+     * not a rollback test.
+     *
+     * RefreshDatabase is why the obvious repair is not enough either: it holds
+     * a transaction open around every test, so an Action that opens none still
+     * sees `lockForUpdate()` emit `for update` and still appears to roll back.
+     * The technique this repository settled on is to measure the DEPTH, and to
+     * measure it as a DELTA — an absolute level of 1 also passes for an Action
+     * that opens nothing.
+     */
     $batch = ($this->batchPriced)('1000.000');
     $student = Student::factory()->create();
 
-    // A discount id that does not exist: the charge insert fails on its foreign
-    // key AFTER the enrolment row has been created inside the same transaction.
+    $baseline = DB::transactionLevel();
+    $depths = [];
+
+    DB::listen(function ($query) use (&$depths): void {
+        if (str_contains($query->sql, 'insert into `enrollments`')) {
+            $depths['enrollment'] = DB::transactionLevel();
+        }
+
+        if (str_contains($query->sql, 'insert into `charges`')) {
+            $depths['charge'] = DB::transactionLevel();
+        }
+    });
+
+    $this->enrollAndBill->execute($this->staff, new EnrollAndBillData(
+        studentId: (int) $student->getKey(),
+        batchId: (int) $batch->getKey(),
+    ));
+
+    expect($depths)->toHaveKeys(['enrollment', 'charge']);
+
+    expect($depths['enrollment'])->toBeGreaterThan(
+        $baseline,
+        'The enrolment was inserted outside any transaction this Action opened.',
+    );
+
+    expect($depths['charge'])->toBe(
+        $depths['enrollment'],
+        'The bill and the enrolment were written at different depths, so one can commit without the other.',
+    );
+});
+
+it('refuses an unknown discount before it writes anything at all', function () {
+    // What the old rollback test actually exercised, kept and named honestly:
+    // the discount is resolved first, so a bad id costs nothing.
+    $batch = ($this->batchPriced)('1000.000');
+    $student = Student::factory()->create();
+
     $thrown = null;
 
     try {
@@ -152,13 +208,10 @@ it('leaves no enrolment behind when the bill cannot be raised', function () {
         $thrown = $exception;
     }
 
-    expect($thrown)->not->toBeNull('The bill must fail on a discount that does not exist.');
+    expect($thrown)->toBeInstanceOf(ModelNotFoundException::class);
 
-    expect(Enrollment::query()->where('student_id', $student->getKey())->exists())->toBeFalse(
-        'An enrolment survived a failed billing. Enrolling and billing are one transaction.',
-    );
-
-    expect(Charge::query()->count())->toBe(0);
+    expect(Enrollment::query()->count())->toBe(0)
+        ->and(Charge::query()->count())->toBe(0);
 });
 
 /*
@@ -186,6 +239,97 @@ it('freezes the discount figures on the charge when an admin applies one', funct
         ->and($charge->discount_percentage)->toBe('25.00')
         ->and((int) $charge->discount_id)->toBe((int) $discount->getKey())
         ->and($charge->amount)->toBe('750.000');
+});
+
+it('writes the rounded figure onto the row, not an exact-division one', function () {
+    /*
+     * THE DISCOUNT CASE THAT ACTUALLY ROUNDS.
+     *
+     * 1000.000 @ 25% divides exactly, so the case above would pass against an
+     * implementation that never rounds at all. Design section 3's rule is
+     * round(list_price × (100 − percentage) ÷ 100) in integer dirham, half-up:
+     * 216.350 @ 1.00% is 214.1865, which has to land on 214.187 and cannot be
+     * reached by truncation. MoneyTest proves the rule; this proves the ACTION
+     * writes its output rather than a figure of its own.
+     */
+    $batch = ($this->batchPriced)('216.350');
+    $student = Student::factory()->create();
+    $discount = Discount::factory()->create(['percentage' => '1.00', 'is_active' => true]);
+
+    $enrollment = $this->enrollAndBill->execute($this->admin, new EnrollAndBillData(
+        studentId: (int) $student->getKey(),
+        batchId: (int) $batch->getKey(),
+        discountId: (int) $discount->getKey(),
+    ));
+
+    $charge = Charge::query()->where('enrollment_id', $enrollment->getKey())->firstOrFail();
+
+    expect($charge->amount)->toBe('214.187')
+        ->and($charge->list_price)->toBe('216.350')
+        ->and($charge->discount_percentage)->toBe('1.00');
+});
+
+it('dates the bill on the centre calendar, not on UTC', function () {
+    /*
+     * 22:30 UTC on 31 December is 00:30 on 1 January in Tripoli. Letting the
+     * `date` cast truncate the stored UTC value put the due date a day early
+     * and minted CHG- in the previous year while ENR- said the next one — two
+     * references for one act disagreeing about which year it happened in.
+     * Found by the independent review of this task.
+     */
+    $this->travelTo('2025-12-31 22:30:00');
+
+    $batch = ($this->batchPriced)('500.000');
+    $student = Student::factory()->create();
+
+    $enrollment = $this->enrollAndBill->execute($this->staff, new EnrollAndBillData(
+        studentId: (int) $student->getKey(),
+        batchId: (int) $batch->getKey(),
+    ));
+
+    $charge = Charge::query()->where('enrollment_id', $enrollment->getKey())->firstOrFail();
+
+    expect($charge->due_date->toDateString())->toBe('2026-01-01')
+        ->and($charge->reference)->toStartWith(Reference::CHARGE_PREFIX.'-2026-')
+        // The two series agree, which is the property that was broken.
+        ->and($enrollment->reference)->toStartWith(Reference::ENROLLMENT_PREFIX.'-2026-');
+});
+
+it('refuses a deactivated discount rather than applying it or dropping it', function () {
+    /*
+     * DEACTIVATION MEANS SOMETHING ON THE SERVER.
+     *
+     * This Action is the only application path that applies a discount, so
+     * without the check DeactivateDiscountAction would have no effect on
+     * enrolment at all — a retired definition would stay usable by id forever.
+     *
+     * The other wrong answer is filtering it out and billing full price: that
+     * charges a figure the operator did not choose, silently. Asserted here as
+     * a refusal with nothing written, so neither wrong answer can return
+     * unnoticed.
+     */
+    $batch = ($this->batchPriced)('1000.000');
+    $student = Student::factory()->create();
+    $retired = Discount::factory()->create(['percentage' => '25.00', 'is_active' => false]);
+
+    $thrown = null;
+
+    try {
+        $this->enrollAndBill->execute($this->admin, new EnrollAndBillData(
+            studentId: (int) $student->getKey(),
+            batchId: (int) $batch->getKey(),
+            discountId: (int) $retired->getKey(),
+        ));
+    } catch (DiscountNotApplicableException $exception) {
+        $thrown = $exception;
+    }
+
+    expect($thrown)->toBeInstanceOf(DiscountNotApplicableException::class)
+        ->and($thrown->discountId)->toBe((int) $retired->getKey());
+
+    // Not billed at full price behind the operator's back, and not billed at all.
+    expect(Enrollment::query()->count())->toBe(0)
+        ->and(Charge::query()->count())->toBe(0);
 });
 
 it('refuses a crafted discount from a staff member who does not hold apply_discount', function () {

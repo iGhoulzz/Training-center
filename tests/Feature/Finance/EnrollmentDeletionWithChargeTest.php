@@ -162,7 +162,11 @@ it('refuses to delete an enrolment whose bill has been corrected', function () {
     }
 
     expect($thrown)->toBeInstanceOf(ChargeAlreadyCommittedException::class)
-        ->and($thrown->reason)->toContain('corrected');
+        // The reason is a KEY, so the three cases stay separable in code as
+        // well as in the panel — asserting the English sentence here would
+        // break the moment the copy is reworded, and would say nothing about
+        // WHICH condition refused.
+        ->and($thrown->reason)->toBe(ChargeAlreadyCommittedException::ADJUSTED);
 
     expect(Enrollment::query()->whereKey($enrollment->getKey())->exists())->toBeTrue()
         ->and(Charge::query()->whereKey($charge->getKey())->exists())->toBeTrue();

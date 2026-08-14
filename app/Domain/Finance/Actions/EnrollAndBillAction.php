@@ -7,8 +7,10 @@ namespace App\Domain\Finance\Actions;
 use App\Domain\Enrollment\Actions\EnrollStudentAction;
 use App\Domain\Enrollment\Data\EnrollStudentData;
 use App\Domain\Enrollment\Models\Batch;
+use App\Domain\Enrollment\Models\Course;
 use App\Domain\Enrollment\Models\Enrollment;
 use App\Domain\Finance\Data\EnrollAndBillData;
+use App\Domain\Finance\Exceptions\DiscountNotApplicableException;
 use App\Domain\Finance\Models\Discount;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
@@ -67,7 +69,31 @@ final class EnrollAndBillAction
                 batchId: $data->batchId,
             ));
 
-            $batch = Batch::query()->findOrFail($data->batchId);
+            /*
+             * THE PRICE IS FROZEN FROM ROWS THIS TRANSACTION HOLDS.
+             *
+             * EnrollStudentAction already locked the batch, and a plain re-read
+             * here would return this transaction's snapshot rather than the
+             * locked version — the independent review captured the SQL and found
+             * no `for update` on it, while the docblock above claimed otherwise.
+             * Re-taking the lock on a row we already hold is free and makes the
+             * claim true.
+             *
+             * The course matters just as much and is easy to miss: when
+             * `batches.price` is null the figure billed comes from
+             * `courses.default_price`, and PricingService loads that row through
+             * loadMissing() with no lock at all. Locking it here and attaching it
+             * makes that load a no-op, so the inherited price cannot move between
+             * being read and being frozen.
+             */
+            $batch = Batch::query()->lockForUpdate()->findOrFail($data->batchId);
+
+            if ($batch->price === null) {
+                $batch->setRelation(
+                    'course',
+                    Course::query()->lockForUpdate()->findOrFail($batch->course_id),
+                );
+            }
 
             $this->issueCharge->execute($actor, $enrollment, $batch, $discount);
 
@@ -79,11 +105,18 @@ final class EnrollAndBillAction
      * The chosen discount, once the actor has proved they may choose one.
      *
      * The ability is checked before the definition is loaded, so a refusal
-     * cannot be told apart from a refusal on an id that does not exist. An
-     * inactive definition is NOT filtered out here: `is_active` decides what the
-     * UI offers on new enrolments (design section 3), and a server-side filter
-     * would turn a crafted id into a silent full-price bill rather than a
-     * refusal — the caller asked for something specific and did not get it.
+     * cannot be told apart from a refusal on an id that does not exist.
+     *
+     * A DEACTIVATED DEFINITION IS REFUSED, NOT APPLIED AND NOT IGNORED.
+     * This Action is the only application path that applies a discount, so
+     * without this check `DeactivateDiscountAction` would have no server-side
+     * effect on enrolment whatsoever — a retired definition would stay usable by
+     * id forever, and the button that retires it would be decoration. Silently
+     * dropping it to full price is the other wrong answer: it bills a figure the
+     * operator did not choose, without telling them. The picker offers only
+     * active definitions; this is what makes that a rule rather than a courtesy.
+     *
+     * @throws DiscountNotApplicableException if the definition has been retired.
      */
     private function authorizedDiscount(User $actor, ?int $discountId): ?Discount
     {
@@ -93,6 +126,12 @@ final class EnrollAndBillAction
 
         Gate::forUser($actor)->authorize('apply_discount');
 
-        return Discount::query()->findOrFail($discountId);
+        $discount = Discount::query()->findOrFail($discountId);
+
+        if (! $discount->is_active) {
+            throw new DiscountNotApplicableException((int) $discount->getKey());
+        }
+
+        return $discount;
     }
 }

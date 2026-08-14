@@ -9,7 +9,6 @@ use App\Domain\Enrollment\Models\Enrollment;
 use App\Domain\Finance\Models\Charge;
 use App\Domain\Finance\Models\Discount;
 use App\Domain\Finance\Services\PricingService;
-use App\Domain\Finance\Support\Money;
 use App\Domain\Finance\Support\Reference;
 use App\Models\User;
 use App\Support\CentreCalendar;
@@ -104,16 +103,34 @@ final class IssueChargeAction
                      * centre bills at enrolment and expects payment at or near
                      * it; there is no invoicing term to express, and aging has
                      * to measure from the day the debt was incurred.
+                     *
+                     * ON THE CENTRE'S CALENDAR, NOT UTC. `enrolled_at` is stored
+                     * UTC, and letting the `date` cast truncate it writes the
+                     * wrong DAY for every enrolment taken between midnight and
+                     * 02:00 in Tripoli — the debt would age from the day before
+                     * the one the centre experienced. This is the exact failure
+                     * CentreCalendar's own docblock records under "what went
+                     * wrong before it existed"; the independent review found it
+                     * reintroduced here.
                      */
-                    'due_date' => $enrollment->enrolled_at,
+                    'due_date' => CentreCalendar::localise($enrollment->enrolled_at)->toDateString(),
                 ]);
 
                 $charge->update([
                     'reference' => Reference::format(
                         Reference::CHARGE_PREFIX,
-                        // The centre's calendar, not UTC, and read off the column
-                        // that dates this document — see EnrollStudentAction.
-                        CentreCalendar::yearOf($charge->due_date),
+                        /*
+                         * FROM `enrolled_at`, THE SAME INSTANT `ENR-` IS BUILT
+                         * FROM — not from the already-truncated `due_date`.
+                         *
+                         * Reading the year off a `date` column that had been
+                         * truncated in UTC produced `ENR-2026-…` and
+                         * `CHG-2025-…` for one act, at 00:30 Tripoli on New
+                         * Year's Day. Two references for the same enrolment
+                         * disagreeing about which year it happened in is the
+                         * kind of defect nobody finds until an auditor does.
+                         */
+                        CentreCalendar::yearOf($enrollment->enrolled_at),
                         (int) $charge->getKey(),
                     ),
                 ]);
@@ -121,15 +138,5 @@ final class IssueChargeAction
                 return $charge;
             });
         });
-    }
-
-    /** The full list price, for a caller that wants to preview before committing. */
-    public function previewFor(Batch $batch, ?Discount $discount = null): Money
-    {
-        $listPrice = $this->pricing->priceForBatch($batch);
-
-        return $discount?->percentage === null
-            ? $listPrice
-            : $listPrice->afterDiscount($discount->percentage);
     }
 }

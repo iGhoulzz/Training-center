@@ -74,7 +74,21 @@ final class DeleteUncommittedChargeAction
 
             $chargeId = (int) $charge->getKey();
 
-            if ($charge->allocations()->exists()) {
+            /*
+             * lockForUpdate() ON THE ALLOCATIONS TOO, NOT ONLY ON THE CHARGE.
+             *
+             * A plain exists() is a consistent read: under REPEATABLE READ it
+             * answers from the snapshot established at this transaction's FIRST
+             * read, which — through DeleteEnrollmentAction — is the mutex's
+             * unlocked enrolment lookup, well before the charge row was locked.
+             * A payment committing in that window would be invisible here.
+             *
+             * The foreign key would still protect the data, but the failure
+             * would arrive as a raw 1451 QueryException — a 500 where the
+             * operator should have seen a notification. Locking makes the check
+             * see committed rows and keeps the refusal typed.
+             */
+            if ($charge->allocations()->lockForUpdate()->exists()) {
                 throw ChargeAlreadyCommittedException::allocated($chargeId);
             }
 
@@ -105,6 +119,18 @@ final class DeleteUncommittedChargeAction
             ->where('subject_id', $chargeId)
             ->where('event', ActivityEvent::UPDATED)
             ->whereNotNull('properties->reason')
+            /*
+             * Locking a read of the APPEND-ONLY log, which needs saying.
+             *
+             * It is not protecting the log from this transaction — nothing here
+             * writes it, and nothing may. It is escaping the snapshot: without
+             * it, an AdjustChargeAction that committed after this transaction's
+             * first read is invisible, and a corrected bill deletes silently.
+             * Unlike the allocation check there is no foreign key behind this
+             * one, so the read is the only thing standing between a human's
+             * correction and its subject disappearing.
+             */
+            ->lockForUpdate()
             ->exists();
     }
 }

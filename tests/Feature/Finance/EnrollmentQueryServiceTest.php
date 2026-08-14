@@ -151,6 +151,49 @@ it('gives task 8 each instructor assignment with its hours', function () {
 
     expect($hours[(int) $sara->getKey()])->toBe(30)
         ->and($hours[(int) $omar->getKey()])->toBe(12);
+
+    /*
+     * THE ASSIGNMENT'S OWN ID, WITHOUT WHICH TASK 8 CANNOT WRITE A LINE.
+     * `payroll_lines.batch_instructor_id` is a foreign key to it, and design
+     * section 7's "paid at most once" unique index is keyed on it. The first
+     * version of this service returned only the user and the hours, and this
+     * test asserted only what was implemented — which is how a contract test
+     * passes while the contract is unmet.
+     */
+    $pivotIds = DB::table('batch_instructor')
+        ->where('batch_id', $this->batch->getKey())
+        ->pluck('id')
+        ->map(fn ($id): int => (int) $id)
+        ->all();
+
+    expect($assignments->pluck('id')->all())->toEqualCanonicalizing($pivotIds)
+        ->and($assignments->every(fn (array $row): bool => $row['batch_id'] === (int) $this->batch->getKey()))
+        ->toBeTrue();
+});
+
+it('gives task 8 every assignment in the centre, whatever the batch status', function () {
+    /*
+     * Design section 7: an instructor_batch run lists every assignment not
+     * already paid in a finalized run, WHATEVER THE BATCH'S STATUS. Keyed by
+     * batch, task 8 would have to enumerate batch ids first — walking
+     * Enrolment's tables from Finance, which is the cross-domain query this
+     * boundary exists to prevent.
+     */
+    $system = app(SystemRoleWriter::class);
+
+    $sara = User::factory()->create(['is_active' => true]);
+    $system->assignRoles($sara, 'staff');
+
+    $completed = Batch::factory()->for($this->course)->create(['status' => 'completed']);
+
+    $this->batch->instructors()->attach([$sara->getKey() => ['assigned_hours' => 30]]);
+    $completed->instructors()->attach([$sara->getKey() => ['assigned_hours' => 8]]);
+
+    $all = $this->enrollments->allInstructorAssignments();
+
+    expect($all)->toHaveCount(2)
+        ->and($all->pluck('batch_id')->all())
+        ->toEqualCanonicalizing([(int) $this->batch->getKey(), (int) $completed->getKey()]);
 });
 
 it('gives task 8 an empty list for a batch nobody teaches, rather than failing', function () {

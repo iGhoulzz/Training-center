@@ -88,6 +88,15 @@ it('raises the bill as part of enrolling through the panel', function () {
      */
     $student = Student::factory()->create();
 
+    /*
+     * A REAL PRICE, BECAUSE THE FACTORY DEFAULTS MAKE THE MONEY ASSERTION
+     * VACUOUS. BatchFactory leaves `price` null and CourseFactory sets
+     * `default_price` to 0, so "amount equals list price" would be
+     * '0.000' === '0.000' — true for any implementation, including one that
+     * bills nothing. The independent review caught this.
+     */
+    $this->batch->update(['price' => '850.000']);
+
     ($this->mountPanel)(($this->makeUser)('admin'))
         ->callTableAction('enroll', null, ['student_id' => $student->getKey()]);
 
@@ -98,7 +107,8 @@ it('raises the bill as part of enrolling through the panel', function () {
         ->and($charge->reference)->toStartWith(Reference::CHARGE_PREFIX)
         // Full price: this screen offers no discount, by design section 3.
         ->and($charge->discount_id)->toBeNull()
-        ->and($charge->amount)->toBe($charge->list_price)
+        ->and($charge->list_price)->toBe('850.000')
+        ->and($charge->amount)->toBe('850.000')
         // Design section 4: due on the day the debt was incurred.
         ->and($charge->due_date->toDateString())->toBe($enrollment->enrolled_at->toDateString());
 });

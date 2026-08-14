@@ -23,4 +23,11 @@ return [
     'charge_committed_allocated' => 'This enrolment cannot be deleted: a payment has already been recorded against its bill.',
     'charge_committed_adjusted' => 'This enrolment cannot be deleted: its bill was corrected, and that correction is part of the record.',
     'charge_committed_written_off' => 'This enrolment cannot be deleted: its bill has been written off.',
+
+    /*
+     * Refused rather than quietly billed at full price: the operator chose a
+     * specific discount and is told it is no longer available, instead of
+     * receiving a bill for a figure they did not pick.
+     */
+    'discount_not_active' => 'That discount has been deactivated and can no longer be applied. Choose a current discount, or enrol at full price.',
 ];
