@@ -222,6 +222,52 @@ it('gives task 10 the batch and course an enrolment sits under', function () {
         ]);
 });
 
+it('gives task 10 a join it can group and sum in one query', function () {
+    /*
+     * THE SHAPE T10 ACTUALLY NEEDS, WHICH IS NOT A LOOKUP.
+     *
+     * catalogueContextFor() answers one enrolment per call. A revenue report
+     * grouped by batch could only use that by calling it per row and summing in
+     * PHP — an N+1, and against design section 6's rule that aggregation happens
+     * in SQL where DECIMAL sums are exact. The cross-review of this task caught
+     * that the service satisfied the shape of the four-consumer contract while
+     * leaving task 10 unable to write its query without extending it.
+     *
+     * This asserts the composable path: one grouped aggregate over charges,
+     * joined through the service, in a SINGLE query.
+     */
+    $second = Batch::factory()->for($this->course)->create(['code' => 'ENG-101-B']);
+
+    $first = Charge::factory()->create(['amount' => '100.000']);
+    $first->enrollment->update(['batch_id' => $this->batch->getKey()]);
+
+    $alsoFirst = Charge::factory()->create(['amount' => '250.000']);
+    $alsoFirst->enrollment->update(['batch_id' => $this->batch->getKey()]);
+
+    $other = Charge::factory()->create(['amount' => '400.000']);
+    $other->enrollment->update(['batch_id' => $second->getKey()]);
+
+    $queries = 0;
+    DB::listen(function () use (&$queries): void {
+        $queries++;
+    });
+
+    $revenue = $this->enrollments->joinCatalogueTo(
+        DB::table('charges')->selectRaw('SUM(charges.amount) as billed'),
+        'charges.enrollment_id',
+    )
+        ->groupBy(EnrollmentQueryService::BATCH_ID, EnrollmentQueryService::BATCH_CODE)
+        ->get()
+        ->mapWithKeys(fn (object $row): array => [
+            $row->{EnrollmentQueryService::BATCH_CODE} => (string) $row->billed,
+        ]);
+
+    expect($queries)->toBe(1, 'The grouping path must be one SQL aggregate, not a lookup per row.');
+
+    expect($revenue['ENG-101-A'])->toBe('350.000')
+        ->and($revenue['ENG-101-B'])->toBe('400.000');
+});
+
 /*
 |--------------------------------------------------------------------------
 | The reverse direction, and it reads only

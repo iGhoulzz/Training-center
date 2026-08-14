@@ -222,6 +222,55 @@ final class EnrollmentQueryService
     }
 
     /**
+     * The column aliases {@see joinCatalogueTo()} makes available.
+     *
+     * Named rather than spelled out at both ends, following
+     * ChargeBalance::OUTSTANDING_ALIAS: a typo in a report's `groupBy` against
+     * the alias its join selected produces an empty grouping, not an error.
+     */
+    public const BATCH_ID = 'catalogue_batch_id';
+
+    public const BATCH_CODE = 'catalogue_batch_code';
+
+    public const COURSE_ID = 'catalogue_course_id';
+
+    public const COURSE_CODE = 'catalogue_course_code';
+
+    /**
+     * Add the enrolment → batch → course path to somebody else's query.
+     *
+     * TASK 10 GROUPS AND SUMS IN SQL, SO IT NEEDS A JOIN, NOT LOOKUPS.
+     * `catalogueContextFor()` answers one enrolment per call, which a revenue
+     * report can only use by calling it per row and summing in PHP — an N+1, and
+     * against design §6's rule that aggregation happens in SQL where MySQL's
+     * DECIMAL sums are exact. The cross-review of P2-T03 caught that this
+     * service satisfied the *shape* of the four-consumer contract while leaving
+     * task 10 unable to write its query without extending it.
+     *
+     * The join is contributed by THIS class rather than written in Finance, so
+     * the knowledge of how enrolments reach courses stays on this side of the
+     * boundary and the architecture rule keeps meaning something. Callers get
+     * aliases, not table names.
+     *
+     * @param  Builder  $query  A query already selecting from a table that
+     *                          carries an enrolment id.
+     * @param  string  $enrollmentIdColumn  Qualified, e.g. `charges.enrollment_id`.
+     */
+    public function joinCatalogueTo(Builder $query, string $enrollmentIdColumn): Builder
+    {
+        return $query
+            ->join('enrollments', 'enrollments.id', '=', $enrollmentIdColumn)
+            ->join('batches', 'batches.id', '=', 'enrollments.batch_id')
+            ->join('courses', 'courses.id', '=', 'batches.course_id')
+            ->addSelect([
+                'batches.id as '.self::BATCH_ID,
+                'batches.code as '.self::BATCH_CODE,
+                'courses.id as '.self::COURSE_ID,
+                'courses.code as '.self::COURSE_CODE,
+            ]);
+    }
+
+    /**
      * The batch and course an enrolment sits under.
      *
      * TASK 10 READS THIS. Every revenue grouping in design §8 walks

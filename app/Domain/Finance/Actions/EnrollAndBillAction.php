@@ -62,6 +62,19 @@ final class EnrollAndBillAction
     public function execute(User $actor, EnrollAndBillData $data): Enrollment
     {
         return DB::transaction(function () use ($actor, $data): Enrollment {
+            /*
+             * THE PRIMARY WRITE IS AUTHORIZED AT THIS BOUNDARY, FIRST.
+             *
+             * EnrollStudentAction checks `create` too, and keeps doing so as
+             * defence in depth — but delegating it entirely made this wrapper
+             * not self-authorizing for the write it exists to perform, and it
+             * let an actor holding `apply_discount` without `create_enrollment`
+             * learn whether a discount id was unknown or merely retired before
+             * being refused. Cross-review finding: authorization is the first
+             * answer this Action gives.
+             */
+            Gate::forUser($actor)->authorize('create', Enrollment::class);
+
             $discount = $this->authorizedDiscount($actor, $data->discountId);
 
             $enrollment = $this->enrollStudent->execute($actor, new EnrollStudentData(
@@ -126,7 +139,27 @@ final class EnrollAndBillAction
 
         Gate::forUser($actor)->authorize('apply_discount');
 
-        $discount = Discount::query()->findOrFail($discountId);
+        /*
+         * LOCKED, BECAUSE IT IS A FROZEN PRICING INPUT AND ISSUANCE IS NOT
+         * INSTANT.
+         *
+         * Several reads and two inserts happen between resolving this
+         * definition and writing the charge. A plain read leaves that window
+         * open: DeactivateDiscountAction can commit `is_active = false` and this
+         * transaction would still apply a retired rate — the precise outcome the
+         * refusal below exists to prevent — and DeleteDiscountAction can remove
+         * an as-yet-unused definition, turning a typed refusal into a raw
+         * foreign-key error on insert.
+         *
+         * The lock also fixes the read ordering: taken here, it is the first
+         * statement in this transaction to touch `discounts`, so the row read is
+         * the latest committed one rather than a snapshot taken earlier.
+         *
+         * Lock order is discount → batch → student → course. Nothing else in the
+         * system takes a discount lock alongside another row, so this introduces
+         * no cycle.
+         */
+        $discount = Discount::query()->lockForUpdate()->findOrFail($discountId);
 
         if (! $discount->is_active) {
             throw new DiscountNotApplicableException((int) $discount->getKey());

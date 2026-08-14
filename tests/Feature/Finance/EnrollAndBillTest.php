@@ -20,6 +20,7 @@ use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Spatie\Activitylog\Models\Activity;
+use Spatie\Permission\PermissionRegistrar;
 
 /*
 |--------------------------------------------------------------------------
@@ -190,6 +191,57 @@ it('writes the enrolment and the bill at the same transaction depth', function (
     );
 });
 
+it('rolls the enrolment back when the bill fails after it has been inserted', function () {
+    /*
+     * THE ONLY TEST HERE THAT PROVES ATOMICITY, AND THE DEPTH TEST ABOVE IS NOT
+     * A SUBSTITUTE FOR IT.
+     *
+     * Cross-review finding: comparing depths proves both writes happen inside
+     * *a* transaction at the same depth, not inside the SAME transaction. With
+     * `DB::transaction()` removed from EnrollAndBillAction, EnrollStudentAction
+     * opens and COMMITS its own at baseline + 1, then IssueChargeAction opens a
+     * different one at baseline + 1 — equal depths, green test, and a charge
+     * failure that leaves an unbilled enrolment behind. Which is the single
+     * invariant this task exists to close.
+     *
+     * So the failure is injected where it has to be: after the enrolment row
+     * exists and while the charge is being written. A model event does that
+     * without needing to replace a final class.
+     */
+    $batch = ($this->batchPriced)('1000.000');
+    $student = Student::factory()->create();
+
+    Charge::creating(function (): void {
+        throw new RuntimeException('The bill could not be raised.');
+    });
+
+    $thrown = null;
+
+    try {
+        $this->enrollAndBill->execute($this->staff, new EnrollAndBillData(
+            studentId: (int) $student->getKey(),
+            batchId: (int) $batch->getKey(),
+        ));
+    } catch (Throwable $exception) {
+        $thrown = $exception;
+    } finally {
+        // Model event listeners outlive the test otherwise.
+        Charge::flushEventListeners();
+    }
+
+    expect($thrown)->toBeInstanceOf(RuntimeException::class);
+
+    expect(Enrollment::query()->count())->toBe(
+        0,
+        'An enrolment survived a failed billing, so the two writes are not one transaction.',
+    );
+
+    expect(Charge::query()->count())->toBe(0);
+
+    // Read past Eloquent, in case anything above is answering from memory.
+    expect(DB::table('enrollments')->count())->toBe(0);
+});
+
 it('refuses an unknown discount before it writes anything at all', function () {
     // What the old rollback test actually exercised, kept and named honestly:
     // the discount is resolved first, so a bad id costs nothing.
@@ -293,6 +345,85 @@ it('dates the bill on the centre calendar, not on UTC', function () {
         ->and($charge->reference)->toStartWith(Reference::CHARGE_PREFIX.'-2026-')
         // The two series agree, which is the property that was broken.
         ->and($enrollment->reference)->toStartWith(Reference::ENROLLMENT_PREFIX.'-2026-');
+});
+
+it('authorizes the enrolment before it resolves the discount at all', function () {
+    /*
+     * Cross-review finding: the discount was resolved first, so an actor holding
+     * apply_discount but not create_enrollment learned whether a discount id was
+     * unknown or merely retired before being refused — and the wrapper was not
+     * self-authorizing for its own primary write.
+     *
+     * The id below is invalid, so if resolution ran first the failure would be
+     * ModelNotFoundException. Authorization has to be the first answer.
+     */
+    /*
+     * Granted directly and holding no role, because `create_enrollment` reaches
+     * an admin through their ROLE — revoking it from the user leaves the role
+     * grant intact, which is how the first version of this test asserted a
+     * permission the actor still had.
+     */
+    $noEnrolmentGrant = User::factory()->create(['is_active' => true]);
+    $noEnrolmentGrant->givePermissionTo('apply_discount');
+    app(PermissionRegistrar::class)->forgetCachedPermissions();
+    $noEnrolmentGrant = $noEnrolmentGrant->refresh();
+
+    expect($noEnrolmentGrant->can('apply_discount'))->toBeTrue()
+        ->and($noEnrolmentGrant->can('create_enrollment'))->toBeFalse();
+
+    $batch = ($this->batchPriced)('1000.000');
+    $student = Student::factory()->create();
+
+    $thrown = null;
+
+    try {
+        $this->enrollAndBill->execute($noEnrolmentGrant, new EnrollAndBillData(
+            studentId: (int) $student->getKey(),
+            batchId: (int) $batch->getKey(),
+            discountId: 999_999,
+        ));
+    } catch (Throwable $exception) {
+        $thrown = $exception;
+    }
+
+    expect($thrown)->toBeInstanceOf(AuthorizationException::class);
+
+    expect(Enrollment::query()->count())->toBe(0)
+        ->and(Charge::query()->count())->toBe(0);
+});
+
+it('reads the chosen discount under a lock, so deactivation cannot race issuance', function () {
+    /*
+     * Cross-review finding: a plain read left a window between resolving the
+     * definition and writing the charge, in which DeactivateDiscountAction could
+     * commit and this transaction would still apply a retired rate.
+     *
+     * This asserts the mechanism — the read is a locking one — by capturing the
+     * SQL. It is NOT a two-connection race test; that is stated plainly in the
+     * PR rather than implied by this test's name.
+     */
+    $batch = ($this->batchPriced)('1000.000');
+    $student = Student::factory()->create();
+    $discount = Discount::factory()->create(['percentage' => '10.00', 'is_active' => true]);
+
+    $discountReads = [];
+
+    DB::listen(function ($query) use (&$discountReads): void {
+        if (str_contains($query->sql, 'from `discounts`')) {
+            $discountReads[] = $query->sql;
+        }
+    });
+
+    $this->enrollAndBill->execute($this->admin, new EnrollAndBillData(
+        studentId: (int) $student->getKey(),
+        batchId: (int) $batch->getKey(),
+        discountId: (int) $discount->getKey(),
+    ));
+
+    expect($discountReads)->not->toBeEmpty();
+
+    expect(collect($discountReads)->every(fn (string $sql): bool => str_contains($sql, 'for update')))
+        ->toBeTrue('The discount was read without a lock: '.implode(' | ', $discountReads));
 });
 
 it('refuses a deactivated discount rather than applying it or dropping it', function () {
