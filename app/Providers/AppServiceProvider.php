@@ -14,8 +14,10 @@ use App\Domain\Enrollment\Policies\EnrollmentPolicy;
 use App\Domain\Enrollment\Policies\StudentPolicy;
 use App\Domain\Finance\Models\Charge;
 use App\Domain\Finance\Models\Discount;
+use App\Domain\Finance\Models\StaffCompensation;
 use App\Domain\Finance\Policies\ChargePolicy;
 use App\Domain\Finance\Policies\DiscountPolicy;
+use App\Domain\Finance\Policies\StaffCompensationPolicy;
 use App\Domain\Staff\Console\GuardedBackupCommand;
 use App\Domain\Staff\Console\GuardedCleanupCommand;
 use App\Domain\Staff\Console\GuardedListCommand;
@@ -115,6 +117,7 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(Enrollment::class, EnrollmentPolicy::class);
         Gate::policy(Charge::class, ChargePolicy::class);
         Gate::policy(Discount::class, DiscountPolicy::class);
+        Gate::policy(StaffCompensation::class, StaffCompensationPolicy::class);
         Gate::policy(Activity::class, ActivityPolicy::class);
 
         /*
