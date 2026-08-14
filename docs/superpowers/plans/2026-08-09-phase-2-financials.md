@@ -164,7 +164,7 @@ A seam is a file whose content is an enumeration that grows whenever a task adds
 
 The `Gate::policy()` list is **redundant**, and that is checkable rather than arguable. Laravel's `Gate::guessPolicyName()` maps a class whose namespace contains `\Models\` onto the sibling `\Policies\` namespace — `vendor/laravel/framework/src/Illuminate/Auth/Access/Gate.php:725-727`. Every model here is `App\Domain\{Domain}\Models\{X}` and every policy `App\Domain\{Domain}\Policies\{X}Policy`, so **discovery already resolves all of them**; the nine explicit lines change no behaviour. P2-T05 confirmed the same thing empirically from the other direction — its suite passed before the `ChargePolicy` line was added.
 
-So **T4 and T8 register nothing in `AppServiceProvider`**, join no seam, and stay concurrent. Wave 4 is unchanged.
+So **T4 and T8 register nothing in `AppServiceProvider`**, join no provider-registration seam, and stay concurrent. Wave 4 is unchanged.
 
 The comment above those lines — "These policies live outside app/Policies, so Laravel's convention-based discovery will not find them. Without these lines every check against them silently falls through to false" — **is false**, and it is the reason every task so far has dutifully appended to a list it did not need. Correcting it, and deciding whether the nine existing lines stay as deliberate explicitness or go, belongs to **T12**, which already owns reconciliation. Neither is urgent: the lines are harmless, and the behaviour is identical either way.
 
@@ -504,7 +504,7 @@ A raise produces two rows with contiguous, non-overlapping periods · an overlap
 - `app/Domain/Finance/Services/PayrollCalculator.php`
 - `app/Domain/Finance/Filament/Resources/PayrollRunResource*` and its draft-review page
 - `app/Domain/Finance/Policies/PayrollRunPolicy.php`
-- **Joins no seam.** Same as task 4 and for the same reason: `PayrollRunPolicy` is resolved by discovery, so it is not registered in `AppServiceProvider` while another task shares the wave.
+- **Joins no provider-registration seam and does not edit `AppServiceProvider`.** Same as task 4 and for the same reason: `PayrollRunPolicy` is resolved by discovery while another task shares the wave.
 - **Declared crossing: `tests/Feature/Staff/ActionBoundaryArchTest.php`** — the narrow deletion-allowlist entry for `DeletePayrollRunAction`. T4 does not touch this seam, so Wave 4 isolation remains valid.
 - `lang/en/payroll.php` — **additions only**; the file is created in task 7
 - `tests/Feature/Finance/PayrollSegmentTest.php` — partial previous month plus full current month, mid-period raise, denominators
