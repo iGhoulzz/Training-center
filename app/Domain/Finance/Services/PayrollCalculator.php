@@ -101,7 +101,6 @@ final class PayrollCalculator
     public function instructorLines(array $assignmentIds): Collection
     {
         $selectedIds = collect($assignmentIds)
-            ->map(fn (int $id): int => $id)
             ->unique()
             ->values();
 
@@ -166,10 +165,11 @@ final class PayrollCalculator
         $paidIds = PayrollLine::query()
             ->finalized()
             ->whereNotNull('batch_instructor_id')
-            ->pluck('batch_instructor_id');
+            ->pluck('batch_instructor_id')
+            ->mapWithKeys(fn (int $id): array => [$id => true]);
 
         return $this->enrollments->allInstructorAssignments()
-            ->reject(fn (array $assignment): bool => $paidIds->contains($assignment['id']))
+            ->reject(fn (array $assignment): bool => $paidIds->has($assignment['id']))
             ->values();
     }
 }

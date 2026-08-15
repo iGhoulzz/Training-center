@@ -126,6 +126,28 @@ it('refuses a zero correction and an empty reason', function (string $amount, st
     'blank reason' => ['10.000', '   '],
 ]);
 
+it('returns a field validation error for correction amounts Money cannot parse', function (string $amount) {
+    $actor = ($this->adjustmentActor)();
+    $target = ($this->finalizedMarchLine)($actor);
+    $run = app(CreatePayrollRunAction::class)->execute($actor, PayrollRunType::Adjustment);
+
+    try {
+        app(AdjustPayrollLineAction::class)->execute(
+            $actor,
+            $run,
+            $target,
+            $amount,
+            'Malformed correction',
+        );
+    } catch (ValidationException $exception) {
+        expect($exception->errors())->toHaveKey('amount');
+
+        return;
+    }
+
+    $this->fail('The malformed amount was not rejected by field validation.');
+})->with(['missing whole part' => '.5', 'bare decimal point' => '5.']);
+
 it('refuses a correction that targets another correction', function () {
     $actor = ($this->adjustmentActor)();
     $original = ($this->finalizedMarchLine)($actor);
@@ -226,6 +248,26 @@ it('refuses a zero draft adjustment and a blank reason', function (string $amoun
     'zero amount' => ['0.000', 'Nothing to apply'],
     'blank reason' => ['10.000', '   '],
 ]);
+
+it('returns a field validation error for draft adjustments Money cannot parse', function (string $amount) {
+    $actor = ($this->adjustmentActor)();
+    $line = PayrollLine::factory()->create();
+
+    try {
+        app(AddPayrollLineAdjustmentAction::class)->execute(
+            $actor,
+            $line,
+            $amount,
+            'Malformed draft adjustment',
+        );
+    } catch (ValidationException $exception) {
+        expect($exception->errors())->toHaveKey('amount');
+
+        return;
+    }
+
+    $this->fail('The malformed amount was not rejected by field validation.');
+})->with(['missing whole part' => '.5', 'bare decimal point' => '5.']);
 
 it('deletes only a draft run and relies on cascades for its lines and adjustments', function () {
     $actor = ($this->adjustmentActor)();

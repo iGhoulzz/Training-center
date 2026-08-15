@@ -39,6 +39,26 @@ final class FinalizePayrollRunAction
                     $this->reject('run', __('payroll.run_already_finalized'));
                 }
 
+                /*
+                 * Read only the ids needed to choose the stable parent locks.
+                 * The locked run keeps application writers from changing its
+                 * draft while finalizers serialize on users in one order. The
+                 * read may open a stale snapshot; the overlap scan below is a
+                 * locking read specifically so it does not inherit that view.
+                 */
+                $userIds = PayrollLine::query()
+                    ->where('payroll_run_id', $lockedRun->getKey())
+                    ->orderBy('id')
+                    ->pluck('user_id')
+                    ->unique()
+                    ->sort()
+                    ->values();
+                User::withTrashed()
+                    ->whereKey($userIds)
+                    ->orderBy('id')
+                    ->lockForUpdate()
+                    ->get();
+
                 /** @var Collection<int, PayrollLine> $lines */
                 $lines = PayrollLine::query()
                     ->where('payroll_run_id', $lockedRun->getKey())
@@ -48,16 +68,17 @@ final class FinalizePayrollRunAction
 
                 $this->assertShapesMatch($lockedRun->type, $lines);
 
-                $userIds = $lines->pluck('user_id')->unique()->sort()->values();
-                User::withTrashed()
-                    ->whereKey($userIds)
-                    ->orderBy('id')
-                    ->lockForUpdate()
-                    ->get();
-
                 if ($lockedRun->type === PayrollRunType::MonthlySalary) {
                     $this->assertSalarySegmentsDoNotOverlap($lockedRun, $lines);
                 }
+
+                $correctionPostingPeriods = $lockedRun->type === PayrollRunType::Adjustment
+                    ? PayrollLine::query()
+                        ->whereKey($lines->pluck('corrects_payroll_line_id')->filter())
+                        ->orderBy('id')
+                        ->lockForUpdate()
+                        ->pluck('posting_period_start', 'id')
+                    : collect();
 
                 $finalizedAt = CarbonImmutable::instance(now());
                 $instructorPeriod = CentreCalendar::localise($finalizedAt)->startOfMonth()->toDateString();
@@ -73,8 +94,8 @@ final class FinalizePayrollRunAction
                             $line->segment_start ?? throw new \LogicException('A salary line requires a segment.'),
                         )->startOfMonth()->toDateString(),
                         PayrollRunType::InstructorBatch => $instructorPeriod,
-                        PayrollRunType::Adjustment => $line->corrects()
-                            ->value('posting_period_start'),
+                        PayrollRunType::Adjustment => $correctionPostingPeriods
+                            ->get($line->corrects_payroll_line_id),
                     };
 
                     if ($postingPeriod === null) {
@@ -89,7 +110,7 @@ final class FinalizePayrollRunAction
                     if ($lockedRun->type === PayrollRunType::InstructorBatch) {
                         $figures = $instructorFigures->get($line->batch_instructor_id);
 
-                        if (! is_array($figures) || $figures['user_id'] !== $line->user_id) {
+                        if (! is_array($figures) || (int) $figures['user_id'] !== (int) $line->user_id) {
                             $this->reject('lines', __('payroll.assignment_unavailable'));
                         }
 
@@ -119,7 +140,7 @@ final class FinalizePayrollRunAction
     private function assertShapesMatch(PayrollRunType $type, Collection $lines): void
     {
         $matches = $lines->every(fn (PayrollLine $line): bool => match ($type) {
-            PayrollRunType::MonthlySalary => $line->isSalaryLine(),
+            PayrollRunType::MonthlySalary => $line->isSalaryLine() && $line->segment_end !== null,
             PayrollRunType::InstructorBatch => $line->isInstructorLine(),
             PayrollRunType::Adjustment => $line->isCorrection(),
         });
@@ -132,15 +153,46 @@ final class FinalizePayrollRunAction
     /** @param Collection<int, PayrollLine> $lines */
     private function assertSalarySegmentsDoNotOverlap(PayrollRun $run, Collection $lines): void
     {
+        foreach ($lines->groupBy(fn (PayrollLine $line): int => (int) $line->user_id) as $segments) {
+            $latestEnd = null;
+
+            foreach ($segments->sortBy('segment_start') as $line) {
+                $segmentStart = $line->segment_start
+                    ?? throw new \LogicException('A salary line requires a segment start.');
+                $segmentEnd = $line->segment_end
+                    ?? throw new \LogicException('A salary line requires a segment end.');
+
+                if ($latestEnd !== null && $segmentStart->lessThanOrEqualTo($latestEnd)) {
+                    $this->reject('lines', __('payroll.salary_segment_overlap'));
+                }
+
+                if ($latestEnd === null || $segmentEnd->greaterThan($latestEnd)) {
+                    $latestEnd = $segmentEnd;
+                }
+            }
+        }
+
         foreach ($lines as $line) {
+            $segmentStart = $line->segment_start
+                ?? throw new \LogicException('A salary line requires a segment start.');
+            $segmentEnd = $line->segment_end
+                ?? throw new \LogicException('A salary line requires a segment end.');
+
+            /*
+             * The users-row lock serializes finalizers, but does not refresh a
+             * REPEATABLE READ snapshot opened before that lock was acquired.
+             * This query must itself be locking so it sees the latest committed
+             * segments and gap-locks the range it is about to rely on.
+             */
             $overlap = PayrollLine::query()
                 ->finalized()
                 ->where('payroll_run_id', '!=', $run->getKey())
                 ->where('user_id', $line->user_id)
                 ->whereNotNull('segment_start')
-                ->whereDate('segment_start', '<=', $line->segment_end?->toDateString())
-                ->whereDate('segment_end', '>=', $line->segment_start?->toDateString())
-                ->exists();
+                ->whereDate('segment_start', '<=', $segmentEnd->toDateString())
+                ->whereDate('segment_end', '>=', $segmentStart->toDateString())
+                ->lockForUpdate()
+                ->first(['id']) !== null;
 
             if ($overlap) {
                 $this->reject('lines', __('payroll.salary_segment_overlap'));

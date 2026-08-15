@@ -71,24 +71,42 @@ function payrollFinalizationWorker(
     string $readyPath,
     string $resultPath,
     ?string $goPath = null,
+    bool $primeSnapshot = false,
 ): Process {
     $script = <<<'PHP'
         require 'vendor/autoload.php';
         $app = require 'bootstrap/app.php';
         $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
-        [$script, $actorId, $runId, $readyPath, $resultPath, $goPath] = $_SERVER['argv'];
-        file_put_contents($readyPath, 'ready');
+        [$script, $actorId, $runId, $readyPath, $resultPath, $goPath, $primeSnapshot] = $_SERVER['argv'];
 
-        while ($goPath !== '' && ! file_exists($goPath)) {
-            usleep(25000);
-        }
-
-        try {
+        $finalize = static function () use ($actorId, $runId): void {
             app(App\Domain\Finance\Actions\FinalizePayrollRunAction::class)->execute(
                 App\Models\User::query()->findOrFail((int) $actorId),
                 App\Domain\Finance\Models\PayrollRun::query()->findOrFail((int) $runId),
             );
+        };
+
+        $invoke = static function () use ($finalize, $readyPath, $goPath, $primeSnapshot): void {
+            if ($primeSnapshot === '1') {
+                App\Domain\Finance\Models\PayrollLine::query()->count();
+            }
+
+            file_put_contents($readyPath, 'ready');
+
+            while ($goPath !== '' && ! file_exists($goPath)) {
+                usleep(25000);
+            }
+
+            $finalize();
+        };
+
+        try {
+            if ($primeSnapshot === '1') {
+                Illuminate\Support\Facades\DB::transaction($invoke);
+            } else {
+                $invoke();
+            }
             $result = ['outcome' => 'finalized'];
         } catch (Illuminate\Validation\ValidationException) {
             $result = ['outcome' => 'refused'];
@@ -100,7 +118,17 @@ function payrollFinalizationWorker(
         PHP;
 
     return new Process(
-        [PHP_BINARY, '-r', $script, (string) $actorId, (string) $runId, $readyPath, $resultPath, $goPath ?? ''],
+        [
+            PHP_BINARY,
+            '-r',
+            $script,
+            (string) $actorId,
+            (string) $runId,
+            $readyPath,
+            $resultPath,
+            $goPath ?? '',
+            $primeSnapshot ? '1' : '0',
+        ],
         base_path(),
         payrollWorkerEnvironment(),
     );
@@ -260,7 +288,7 @@ it('derives paid instructor assignments from finalized lines and refuses them in
     expect(PayrollRun::query()->where('type', PayrollRunType::InstructorBatch->value)->count())->toBe(1);
 });
 
-it('waits on the employee lock before refusing an overlapping salary segment', function () {
+it('uses a locking overlap scan after concurrent finalizers opened stale snapshots', function () {
     $actor = ($this->finalizationActor)();
     $employee = User::factory()->create();
     StaffCompensation::factory()->create([
@@ -273,7 +301,6 @@ it('waits on the employee lock before refusing an overlapping salary segment', f
         '2026-01-01',
         '2026-01-15',
     );
-    app(FinalizePayrollRunAction::class)->execute($actor, $first);
     $overlap = app(CreatePayrollRunAction::class)->execute(
         $actor,
         PayrollRunType::MonthlySalary,
@@ -282,46 +309,113 @@ it('waits on the employee lock before refusing an overlapping salary segment', f
     );
 
     $token = (string) Str::uuid();
-    $ready = storage_path("framework/testing/payroll-{$token}-ready.json");
-    $result = storage_path("framework/testing/payroll-{$token}-result.json");
-    $worker = payrollFinalizationWorker((int) $actor->getKey(), (int) $overlap->getKey(), $ready, $result);
+    $paths = collect(['a-ready', 'a-result', 'b-ready', 'b-result'])
+        ->mapWithKeys(fn (string $name): array => [
+            $name => storage_path("framework/testing/payroll-{$token}-{$name}.json"),
+        ]);
+    $workers = [
+        payrollFinalizationWorker(
+            (int) $actor->getKey(),
+            (int) $first->getKey(),
+            $paths['a-ready'],
+            $paths['a-result'],
+            primeSnapshot: true,
+        ),
+        payrollFinalizationWorker(
+            (int) $actor->getKey(),
+            (int) $overlap->getKey(),
+            $paths['b-ready'],
+            $paths['b-result'],
+            primeSnapshot: true,
+        ),
+    ];
     $connection = DB::connection();
     $connection->beginTransaction();
     $released = false;
 
     try {
         User::query()->whereKey($employee->getKey())->lockForUpdate()->firstOrFail();
-        $worker->start();
+        foreach ($workers as $worker) {
+            $worker->start();
+        }
+
         $deadline = microtime(true) + 10;
 
-        while (! File::exists($ready) && microtime(true) < $deadline) {
+        while ((! File::exists($paths['a-ready']) || ! File::exists($paths['b-ready'])) && microtime(true) < $deadline) {
             usleep(25_000);
         }
 
-        expect(File::exists($ready))->toBeTrue('The finalization worker did not reach the Action.');
+        expect(File::exists($paths['a-ready']))->toBeTrue('The first worker did not prime its snapshot.')
+            ->and(File::exists($paths['b-ready']))->toBeTrue('The second worker did not prime its snapshot.');
         usleep(400_000);
-        expect($worker->isRunning())->toBeTrue('Finalization did not wait on the employee-row lock.')
-            ->and(File::exists($result))->toBeFalse();
+        expect($workers[0]->isRunning())->toBeTrue('The first finalization did not wait on the employee lock.')
+            ->and($workers[1]->isRunning())->toBeTrue('The second finalization did not wait on the employee lock.')
+            ->and(File::exists($paths['a-result']))->toBeFalse()
+            ->and(File::exists($paths['b-result']))->toBeFalse();
 
         $connection->commit();
         $released = true;
-        $worker->wait();
 
-        $outcome = json_decode((string) File::get($result), true, flags: JSON_THROW_ON_ERROR);
-        expect($worker->isSuccessful())->toBeTrue($worker->getErrorOutput())
-            ->and($outcome['outcome'])->toBe('refused')
-            ->and($overlap->fresh()?->finalized_at)->toBeNull();
+        foreach ($workers as $worker) {
+            $worker->wait();
+            expect($worker->isSuccessful())->toBeTrue($worker->getErrorOutput());
+        }
+
+        $outcomes = collect([$paths['a-result'], $paths['b-result']])
+            ->map(fn (string $path): array => json_decode((string) File::get($path), true, flags: JSON_THROW_ON_ERROR))
+            ->pluck('outcome')
+            ->sort()
+            ->values()
+            ->all();
+
+        expect($outcomes)->toBe(['finalized', 'refused'])
+            ->and(PayrollRun::query()->whereNotNull('finalized_at')->count())->toBe(1);
     } finally {
         if (! $released && $connection->transactionLevel() > 0) {
             $connection->rollBack();
         }
 
-        if ($worker->isRunning()) {
-            $worker->stop();
+        foreach ($workers as $worker) {
+            if ($worker->isRunning()) {
+                $worker->stop();
+            }
         }
 
-        File::delete([$ready, $result]);
+        File::delete($paths->all());
     }
+});
+
+it('refuses overlapping salary segments inside the same draft run', function () {
+    $actor = ($this->finalizationActor)();
+    $employee = User::factory()->create();
+    $rate = StaffCompensation::factory()->create([
+        'user_id' => $employee->getKey(),
+        'effective_from' => '2026-01-01',
+    ]);
+    $run = PayrollRun::factory()->create([
+        'period_start' => '2026-01-01',
+        'period_end' => '2026-01-31',
+        'created_by' => $actor->getKey(),
+    ]);
+
+    foreach ([['2026-01-01', '2026-01-15'], ['2026-01-10', '2026-01-31']] as [$start, $end]) {
+        PayrollLine::factory()->create([
+            'payroll_run_id' => $run->getKey(),
+            'user_id' => $employee->getKey(),
+            'staff_compensation_id' => $rate->getKey(),
+            'segment_start' => $start,
+            'segment_end' => $end,
+            'frozen_rate' => '2500.000',
+            'frozen_days' => 15,
+            'frozen_days_in_month' => 31,
+            'computed_amount' => '1209.677',
+        ]);
+    }
+
+    expect(fn () => app(FinalizePayrollRunAction::class)->execute($actor, $run))
+        ->toThrow(ValidationException::class);
+
+    expect($run->lines()->whereNotNull('finalized_at')->count())->toBe(0);
 });
 
 it('authorizes finalization before reloading the run', function () {

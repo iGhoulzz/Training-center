@@ -33,7 +33,14 @@ final class AdjustPayrollLineAction
             'amount' => trim($amount),
             'reason' => trim($reason),
         ], [
-            'amount' => ['required', 'numeric', 'decimal:0,3', 'gte:-999999999.999', 'lte:999999999.999'],
+            'amount' => [
+                'required',
+                'numeric',
+                'decimal:0,3',
+                'regex:/^[+-]?\d{1,9}(?:\.\d{1,3})?$/D',
+                'gte:-999999999.999',
+                'lte:999999999.999',
+            ],
             'reason' => ['required', 'string'],
         ])->validate();
         $correction = Money::fromDecimal((string) $validated['amount']);

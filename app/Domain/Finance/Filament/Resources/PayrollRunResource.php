@@ -96,7 +96,13 @@ final class PayrollRunResource extends Resource
             TextInput::make('correction_amount')
                 ->label(__('payroll.correction_amount'))
                 ->inputMode('decimal')
-                ->rules(['numeric', 'decimal:0,3', 'gte:-999999999.999', 'lte:999999999.999'])
+                ->rules([
+                    'numeric',
+                    'decimal:0,3',
+                    'regex:/^[+-]?\d{1,9}(?:\.\d{1,3})?$/D',
+                    'gte:-999999999.999',
+                    'lte:999999999.999',
+                ])
                 ->visible(fn (Get $get): bool => $get('type') === PayrollRunType::Adjustment->value)
                 ->required(fn (Get $get): bool => $get('type') === PayrollRunType::Adjustment->value)
                 ->suffix(__('payroll.currency')),

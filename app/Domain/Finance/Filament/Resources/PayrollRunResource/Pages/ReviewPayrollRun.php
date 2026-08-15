@@ -45,7 +45,13 @@ final class ReviewPayrollRun extends ViewRecord
                         ->label(__('payroll.amount'))
                         ->inputMode('decimal')
                         ->required()
-                        ->rules(['numeric', 'decimal:0,3', 'gte:-999999999.999', 'lte:999999999.999'])
+                        ->rules([
+                            'numeric',
+                            'decimal:0,3',
+                            'regex:/^[+-]?\d{1,9}(?:\.\d{1,3})?$/D',
+                            'gte:-999999999.999',
+                            'lte:999999999.999',
+                        ])
                         ->suffix(__('payroll.currency')),
                     Textarea::make('reason')->label(__('payroll.reason'))->required(),
                 ])

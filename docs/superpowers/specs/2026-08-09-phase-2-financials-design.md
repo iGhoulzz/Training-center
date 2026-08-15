@@ -355,9 +355,9 @@ Revision 1 keyed uniqueness on `(user_id, period_start, staff_compensation_id)`,
 |---|---|
 | An instructor assignment is paid at most once | **Stored generated column + unique index** on `batch_instructor_id`, carried only while `finalized_at` is set |
 | The identical salary segment is not finalized twice | **Stored generated column + unique index** on `(user_id, segment_start)`, carried only while finalized |
-| **Overlapping** salary segments are not finalized | **Lock + check** — the `users` row is locked and existing finalized segments intersecting the new range are queried inside the finalizing transaction |
+| **Overlapping** salary segments are not finalized | **Stable-parent lock + locking range check** — the `users` row serializes finalizers, then intersecting finalized segments are scanned with `FOR UPDATE` inside the transaction |
 
-The third row is stated separately and honestly. A unique index cannot express range overlap: two runs covering 1–15 January and 10–31 January produce segments with different start dates, and no index refuses them. The database catches exact duplicates; **only the lock catches overlaps**, and it protects the application path alone.
+The third row is stated separately and honestly. A unique index cannot express range overlap: two runs covering 1–15 January and 10–31 January produce segments with different start dates, and no index refuses them. The database catches exact duplicates; **only the lock and check catch overlaps**, and they protect the application path alone. Both parts are load-bearing under MySQL's default `REPEATABLE READ`: locking the stable `users` row serializes finalizers but does not refresh a consistent-read snapshot opened earlier, so the overlap query must itself be a locking read that sees the latest committed segments. Finalization locks the run, reads the employee ids from that stable draft, locks those employees in ascending order, locks the run's lines, and then performs the locking range check. Locking draft lines before employees permits two finalizers to deadlock when each range scan reaches the other's already-locked draft.
 
 `finalized_at` is denormalized onto the line at finalization — frozen data, like every other payroll figure — because a generated column cannot reference another table.
 
@@ -589,7 +589,7 @@ Per `docs/ENGINEERING.md`, any design section touching money must name its write
 | References are unique | **Unique index** |
 | An instructor assignment is paid at most once | **Stored generated column + unique index** |
 | An identical salary segment is not paid twice | **Stored generated column + unique index** |
-| Overlapping salary segments | Lock + check — no index can express range overlap |
+| Overlapping salary segments | Stable `users`-row lock + `FOR UPDATE` range check — no index can express range overlap, and the parent lock alone does not refresh an earlier snapshot |
 | No overlapping compensation periods | Lock on the `users` row + check |
 | Draft-time line adjustments and run deletion only while draft | Action transaction lock + re-check |
 
