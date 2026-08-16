@@ -294,6 +294,10 @@ it('does not delete or deactivate users outside the sanctioned Actions', functio
              * unconditionally, which is a different question (design §4).
              */
             'DeleteUncommittedChargeAction',
+            // Payroll runs own their lines and draft adjustments. This Action
+            // locks and re-authorizes the run, refuses finalized rows through
+            // PayrollRunPolicy, then relies on the two schema cascades.
+            'DeletePayrollRunAction',
             // Staff files (P1-T06b): each removes a record AND owns the durable
             // commit-first/delete-after file lifecycle. The certificate and
             // profile Actions authorize the actor and write a

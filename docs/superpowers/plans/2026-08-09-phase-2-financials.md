@@ -68,6 +68,10 @@ Four questions were carried into that round and answered: nothing else under `ap
 
 **What the remaining questions are for is the implementation PRs, not this document.** Exact SQL locking, queue and file mechanics, and failure handling are reviewed where they are written.
 
+### Implementation correction (2026-08-15)
+
+Task 8 already owned the approved draft-time signed payroll bonuses and deductions, and the design already permitted draft payroll-run deletion, but its Action list omitted the only legal writers. This correction adds those writers without changing a locked business decision: without them the approved UI behavior would either be missing or bypass the Action-only Finance boundary.
+
 ---
 
 ## Waves, ownership and dependencies
@@ -115,7 +119,7 @@ The rule that matters is that **concurrent** scopes do not overlap. Each pair be
 | 5 | T10 reports · T6 receipts | none — `Reports/` and `ReportPeriod` against the receipt job, view, controller and `receipt.php` |
 | 6 | T9 flow · T11 report pages | none — the collect page and `collect.php` against report pages, exporters and `reports.php` |
 
-Three files are touched by more than one task, and every case is **sequential across waves**, never concurrent: `tests/Feature/Staff/ActionBoundaryArchTest.php` (T1 → T3 → T6), `lang/en/payroll.php` (T7 → T8), and `RecordPaymentAction` (T4, then T6 adds its dispatch line).
+Three files are touched by more than one task, and every case is **sequential across waves**, never concurrent: `tests/Feature/Staff/ActionBoundaryArchTest.php` (T1 → T3 → T8 → T6), `lang/en/payroll.php` (T7 → T8), and `RecordPaymentAction` (T4, then T6 adds its dispatch line). T8's narrow architecture-test crossing is valid in Wave 4 because T4 does not touch that seam.
 
 ### Revision 5 — that table is not the whole check, and wave 2 proved it
 
@@ -160,7 +164,7 @@ A seam is a file whose content is an enumeration that grows whenever a task adds
 
 The `Gate::policy()` list is **redundant**, and that is checkable rather than arguable. Laravel's `Gate::guessPolicyName()` maps a class whose namespace contains `\Models\` onto the sibling `\Policies\` namespace — `vendor/laravel/framework/src/Illuminate/Auth/Access/Gate.php:725-727`. Every model here is `App\Domain\{Domain}\Models\{X}` and every policy `App\Domain\{Domain}\Policies\{X}Policy`, so **discovery already resolves all of them**; the nine explicit lines change no behaviour. P2-T05 confirmed the same thing empirically from the other direction — its suite passed before the `ChargePolicy` line was added.
 
-So **T4 and T8 register nothing in `AppServiceProvider`**, join no seam, and stay concurrent. Wave 4 is unchanged.
+So **T4 and T8 register nothing in `AppServiceProvider`**, join no provider-registration seam, and stay concurrent. Wave 4 is unchanged.
 
 The comment above those lines — "These policies live outside app/Policies, so Laravel's convention-based discovery will not find them. Without these lines every check against them silently falls through to false" — **is false**, and it is the reason every task so far has dutifully appended to a list it did not need. Correcting it, and deciding whether the nine existing lines stay as deliberate explicitness or go, belongs to **T12**, which already owns reconciliation. Neither is urgent: the lines are harmless, and the behaviour is identical either way.
 
@@ -496,25 +500,28 @@ A raise produces two rows with contiguous, non-overlapping periods · an overlap
 **Wave 4 · Owner: Codex · `p2/t08-payroll` · depends on 3, 7** — reassigned from Claude; see "Two ownership changes" above
 
 **File scope**
-- `app/Domain/Finance/Actions/` — `CreatePayrollRunAction`, `FinalizePayrollRunAction`, `AdjustPayrollLineAction`
+- `app/Domain/Finance/Actions/` — `CreatePayrollRunAction`, `FinalizePayrollRunAction`, `AdjustPayrollLineAction`, `AddPayrollLineAdjustmentAction`, `DeletePayrollRunAction`
 - `app/Domain/Finance/Services/PayrollCalculator.php`
 - `app/Domain/Finance/Filament/Resources/PayrollRunResource*` and its draft-review page
 - `app/Domain/Finance/Policies/PayrollRunPolicy.php`
-- **Joins no seam.** Same as task 4 and for the same reason: `PayrollRunPolicy` is resolved by discovery, so it is not registered in `AppServiceProvider` while another task shares the wave.
+- **Joins no provider-registration seam and does not edit `AppServiceProvider`.** Same as task 4 and for the same reason: `PayrollRunPolicy` is resolved by discovery while another task shares the wave.
+- **Declared crossing: `tests/Feature/Staff/ActionBoundaryArchTest.php`** — the narrow deletion-allowlist entry for `DeletePayrollRunAction`. T4 does not touch this seam, so Wave 4 isolation remains valid.
 - `lang/en/payroll.php` — **additions only**; the file is created in task 7
 - `tests/Feature/Finance/PayrollSegmentTest.php` — partial previous month plus full current month, mid-period raise, denominators
 - `tests/Feature/Finance/PayrollFinalizationTest.php` — double-pay refused at the database, overlap refused by the lock, shape-versus-type
-- `tests/Feature/Finance/PayrollAdjustmentRunTest.php` — the four invariants and the posting period
+- `tests/Feature/Finance/PayrollAdjustmentRunTest.php` — correction invariants and posting period, draft-time adjustment validation, and draft-only run deletion
 
 **Does**
 All three run types. `monthly_salary` builds **segment lines** by intersecting the run period, each calendar month, and each compensation row's validity, freezing segment bounds, rate, days and denominator. `instructor_batch` is on-demand: the draft lists assignments not already paid in a finalized run, derived by looking at finalized lines with no stored paid flag, and **freezes the assigned hours as well as the rate**. `adjustment` runs correct finalized lines with signed amounts and a mandatory reason.
 
 `AdjustPayrollLineAction` enforces design §7's four rules: the employee is derived from the locked target line, the target must be finalized, the amount must be non-zero, and a correction may not target another correction. A correction carries the **posting period of the line it corrects**.
 
-Finalization copies the frozen figures, `finalized_at` and `posting_period_start` onto each line and is irreversible. **It also verifies that each line's shape matches the run's type** — a row-level `CHECK` cannot see `payroll_runs.type`, so the constraint proves a line is internally coherent and only the Action can prove it belongs where it sits. Overlap between finalized salary segments is refused under a `users`-row lock, and **locks are taken in ascending user id order** so two runs over overlapping staff cannot deadlock. Reads instructor assignments through `EnrollmentQueryService`.
+`AddPayrollLineAdjustmentAction` is actor-first and self-authorizing on `run_payroll`. It accepts a signed, non-zero amount and mandatory reason only while its transaction has locked and re-checked the target draft run and line; it refuses finalized runs. `DeletePayrollRunAction` authorizes `delete_payroll_run`, locks and re-checks the target run, and deletes only a draft run through the schema cascades.
+
+Finalization copies the frozen figures, `finalized_at` and `posting_period_start` onto each line and is irreversible. **It also verifies that each line's shape matches the run's type** — a row-level `CHECK` cannot see `payroll_runs.type`, so the constraint proves a line is internally coherent and only the Action can prove it belongs where it sits. Overlap between finalized salary segments is refused by a stable `users`-row lock followed by a locking range scan of the finalized segments themselves; the second lock is required because a parent-row lock does not refresh an earlier `REPEATABLE READ` snapshot. **User locks are taken in ascending id order before the current run's line locks** so two runs over overlapping staff cannot deadlock. Reads instructor assignments through `EnrollmentQueryService`.
 
 **Done when**
-**A run covering a partial previous month plus a full current month produces the correct segment lines with the correct per-month denominators** · a mid-period raise splits a month into two correctly-priced segments · an assignment already paid in a finalized run cannot appear in another, **proven at the database** by inserting the duplicate directly · **overlapping salary segments across two runs are refused by the lock**, with a test that fails if the lock is removed · **two concurrent finalizations over overlapping staff complete without deadlock** · **a finalized instructor line still explains its amount after `assigned_hours` is changed underneath it** · **a draft line persists with a null posting period, and finalization refuses a line whose shape does not match its run's type** · a finalized run cannot be edited, deleted, or have a draft adjustment added, and is corrected only by an adjustment run · **correcting March in June produces a correction line carrying March's posting period**, asserted on the line, since the wage-cost report belongs to task 10 · a correction targeting a correction is refused · a zero-amount correction is refused · a rate changed after finalization does not move the finalized figure · `composer verify` green.
+**A run covering a partial previous month plus a full current month produces the correct segment lines with the correct per-month denominators** · a mid-period raise splits a month into two correctly-priced segments · an assignment already paid in a finalized run cannot appear in another, **proven at the database** by inserting the duplicate directly · **overlapping salary segments across two runs are refused after both transactions have opened stale snapshots**, with a mutation check proving that removing the locking range scan finalizes both · **two concurrent finalizations over overlapping staff complete without deadlock** · **a finalized instructor line still explains its amount after `assigned_hours` is changed underneath it** · **a draft line persists with a null posting period, and finalization refuses a line whose shape does not match its run's type** · **a draft-time signed bonus or deduction requires a non-zero amount and reason, and is refused after finalization** · **a draft run deletes through `DeletePayrollRunAction` and its schema cascades, while a finalized run is refused even with `delete_payroll_run`** · a finalized run cannot be edited, deleted, or have a draft adjustment added, and is corrected only by an adjustment run · **correcting March in June produces a correction line carrying March's posting period**, asserted on the line, since the wage-cost report belongs to task 10 · a correction targeting a correction is refused · a zero-amount correction is refused · a rate changed after finalization does not move the finalized figure · `composer verify` green.
 
 ---
 

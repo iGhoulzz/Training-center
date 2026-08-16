@@ -1,12 +1,14 @@
 # Phase 2 — Financials: Design
 
 **Date:** 2026-08-09
-**Status:** Revision 5 — **approved**. Incorporates three Codex step-0 rounds, one independent pre-review, and a final bounded cleanup. Authoritative for phase 2 implementation.
+**Status:** Revision 6 — **approved**. Incorporates three Codex step-0 rounds, one independent pre-review, a final bounded cleanup, and the dated implementation correction below. Authoritative for phase 2 implementation.
 **Supersedes:** the phase 2 sections of `2026-07-20-training-center-dashboard-design.md` wherever the two disagree. Those sections were written at architectural detail before a charge model existed; this document is at implementation detail and is authoritative for phase 2.
 
 **Revision 2 changed:** the enrolment write path (§12), salaried payroll segmentation and post-finalization correction (§7), payment idempotency and derived student identity (§5), the pricing write boundary (§3), charge due dates (§4), reporting time zones (§8), compensation locking (§7), and the schema guarantees in §9. Two review findings were **declined** — see §16.
 
 **Revision 5 changed:** the pricing gate, which revision 4 built on `disabled()` and which would have failed an existing phase 1 test and blocked admins from creating courses (§3) · the exact seeded permission set, without which `ChangeCompensationAction` had no ability to authorize on and the seeder test would fail (§10) · an owner for the receipt path columns (§5, §11) · the fingerprint's excluded fields, stated rather than implied (§5) · the adjustment line's undecided column (§9) · `LocalizationTest`'s hardcoded dataset (§12) · aging buckets overlapping at day 90 (§8) · the unpadded backfill format (§2) · and the retraction of revision 4's claim that the phase 1 price tests invert (§12).
+
+**Implementation correction (2026-08-15):** Task 8 had already-approved draft-time signed bonuses and deductions, and draft payroll-run deletion, but omitted the legal Action writers. `AddPayrollLineAdjustmentAction` and `DeletePayrollRunAction` now name those paths. No business decision changes: without them the approved UI behavior would either be absent or bypass the Action-only Finance write boundary.
 
 **Revision 3 changed:** reference generation, which revision 2 left impossible — a non-nullable column written after insert (§2) · the enrolment backfill, split into three recoverable migrations (§2) · frozen instructor hours, dropped by revision 2 in violation of the system design (§7) · adjustment-run invariants, posting period and lock ordering (§7) · idempotency fingerprinting (§5) · the pricing hook, which as revision 2 wrote it would have refused **every ordinary admin edit** (§3) · explicit actor-first authorization on the payment Actions and the cross-domain route to the student (§5) · the `EnrollmentQueryService` contract, widened to four consumers (§12).
 
@@ -353,9 +355,9 @@ Revision 1 keyed uniqueness on `(user_id, period_start, staff_compensation_id)`,
 |---|---|
 | An instructor assignment is paid at most once | **Stored generated column + unique index** on `batch_instructor_id`, carried only while `finalized_at` is set |
 | The identical salary segment is not finalized twice | **Stored generated column + unique index** on `(user_id, segment_start)`, carried only while finalized |
-| **Overlapping** salary segments are not finalized | **Lock + check** — the `users` row is locked and existing finalized segments intersecting the new range are queried inside the finalizing transaction |
+| **Overlapping** salary segments are not finalized | **Stable-parent lock + locking range check** — the `users` row serializes finalizers, then intersecting finalized segments are scanned with `FOR UPDATE` inside the transaction |
 
-The third row is stated separately and honestly. A unique index cannot express range overlap: two runs covering 1–15 January and 10–31 January produce segments with different start dates, and no index refuses them. The database catches exact duplicates; **only the lock catches overlaps**, and it protects the application path alone.
+The third row is stated separately and honestly. A unique index cannot express range overlap: two runs covering 1–15 January and 10–31 January produce segments with different start dates, and no index refuses them. The database catches exact duplicates; **only the lock and check catch overlaps**, and they protect the application path alone. Both parts are load-bearing under MySQL's default `REPEATABLE READ`: locking the stable `users` row serializes finalizers but does not refresh a consistent-read snapshot opened earlier, so the overlap query must itself be a locking read that sees the latest committed segments. Finalization locks the run, reads the employee ids from that stable draft, locks those employees in ascending order, locks the run's lines, and then performs the locking range check. Locking draft lines before employees permits two finalizers to deadlock when each range scan reaches the other's already-locked draft.
 
 `finalized_at` is denormalized onto the line at finalization — frozen data, like every other payroll figure — because a generated column cannot reference another table.
 
@@ -374,7 +376,9 @@ A mistake found after finalization is corrected by an **`adjustment` run**: its 
 
 **A correction posts to the period of the line it corrects, not to the period the adjustment run was finalized in.** Correcting March in June makes March's wage cost right. This is the same rule the system design already states for effective-dated compensation — that March's payroll must recompute correctly after a June rate change — and without it the wage-cost and profit reports would disagree with each other while reading the same rows. Instructor corrections post to the period of the original run's finalization date, since an instructor line has no segment of its own.
 
-Draft-time line adjustments remain, for bonuses and deductions known before the run is posted. The two mechanisms differ in *when*, not in kind.
+Draft-time line adjustments remain, for bonuses and deductions known before the run is posted. `AddPayrollLineAdjustmentAction` is actor-first and self-authorizing on `run_payroll`; it accepts only a signed, non-zero amount and a mandatory reason. Inside one transaction it locks and re-checks the target run and line, permits the write only while the run remains draft, and refuses a finalized run. The two adjustment mechanisms differ in *when*, not in kind.
+
+`DeletePayrollRunAction` is the only deletion path. It authorizes `delete_payroll_run`, locks and re-checks the run inside its transaction, and deletes only a draft run; it refuses finalized runs. The schema cascades `payroll_lines` and, through them, their genuine child `payroll_line_adjustments` with the draft run.
 
 ### Lock ordering
 
@@ -509,7 +513,7 @@ Permission names follow Shield's `{action}_{model}`; custom abilities are bare v
 
 `create_payment` and `create_staff_compensation` are easy to omit and both are load-bearing. Admin is granted `create_payment`, and Spatie throws `PermissionDoesNotExist` for an unknown name rather than returning false, so an unseeded grant breaks the seeder itself. `ChangeCompensationAction` and `StaffCompensationPolicy::create()` authorize on `create_staff_compensation` — the only legitimate change to a rate is a new row, so *create* is the write ability for that table and there is no update counterpart.
 
-Discount definitions are created, deactivated and deleted under **`manage_pricing`**, not under `create_discount`; `DiscountPolicy` references `manage_pricing` and no `create_discount` ability is seeded. `PayrollRunPolicy` authorizes creation on `run_payroll` and finalization on `finalize_payroll`; deleting a draft uses `delete_payroll_run`, and a finalized run is refused by the policy regardless of it.
+Discount definitions are created, deactivated and deleted under **`manage_pricing`**, not under `create_discount`; `DiscountPolicy` references `manage_pricing` and no `create_discount` ability is seeded. `PayrollRunPolicy` authorizes creation and draft-time line adjustments on `run_payroll`, and finalization on `finalize_payroll`; `DeletePayrollRunAction` deletes a draft through `delete_payroll_run`, and a finalized run is refused regardless of that permission.
 
 **Write abilities deliberately not seeded**, with policies that refuse unconditionally and tests that grant the permission anyway: `create_charge`, `update_charge`, `delete_charge`, `update_payment`, `delete_payment`, `update_staff_compensation`, `update_payroll_run`, `update_discount`.
 
@@ -556,7 +560,7 @@ Per `docs/ENGINEERING.md`, any design section touching money must name its write
 | Undo a payment | `ReversePaymentAction` |
 | Attach a rendered receipt | `AttachReceiptAction` — internal collaborator (§10), sole caller `GenerateReceiptJob`, set-once |
 | Change a rate | `ChangeCompensationAction` |
-| Payroll | `CreatePayrollRunAction`, `FinalizePayrollRunAction`, `AdjustPayrollLineAction` |
+| Payroll | `CreatePayrollRunAction`, `FinalizePayrollRunAction`, `AdjustPayrollLineAction`, `AddPayrollLineAdjustmentAction`, `DeletePayrollRunAction` |
 | Change a price | `UpdateCoursePriceAction`, `UpdateBatchPriceAction` — the only writers of either price column |
 | Discounts | `CreateDiscountAction`, `DeactivateDiscountAction`, `DeleteDiscountAction` — all gated on `manage_pricing` |
 | **Payment self-consistency** | `PaymentInvariantService` |
@@ -585,9 +589,9 @@ Per `docs/ENGINEERING.md`, any design section touching money must name its write
 | References are unique | **Unique index** |
 | An instructor assignment is paid at most once | **Stored generated column + unique index** |
 | An identical salary segment is not paid twice | **Stored generated column + unique index** |
-| Overlapping salary segments | Lock + check — no index can express range overlap |
+| Overlapping salary segments | Stable `users`-row lock + `FOR UPDATE` range check — no index can express range overlap, and the parent lock alone does not refresh an earlier snapshot |
 | No overlapping compensation periods | Lock on the `users` row + check |
-| Adjustments only while draft | Lock + check |
+| Draft-time line adjustments and run deletion only while draft | Action transaction lock + re-check |
 
 The trust boundary is unchanged from phase 1: locks and Actions protect every write reachable through application code; raw SQL and manual `tinker` are trusted administrative operations. The rows marked **CHECK** and **unique index** hold regardless.
 
