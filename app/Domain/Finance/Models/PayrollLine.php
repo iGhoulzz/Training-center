@@ -178,11 +178,11 @@ class PayrollLine extends Model
     /**
      * Every correction filed against this line.
      *
-     * NOT A WRITE PATH. A correction is written by `AdjustPayrollLineAction`,
-     * which creates it on an `adjustment` run and copies `posting_period_start`
-     * from **this** line — the mechanism that makes a June correction land in
-     * March's wage cost. A bare `$line->corrections()->create()` skips that copy
-     * and posts the money to the wrong month.
+     * NOT A WRITE PATH. `AdjustPayrollLineAction` creates the correction as a
+     * draft on an `adjustment` run with a null `posting_period_start`.
+     * `FinalizePayrollRunAction` copies the posting period from **this** line
+     * when finalizing the correction — the mechanism that makes a June
+     * correction land in March's wage cost.
      *
      * @return HasMany<self, $this>
      */
