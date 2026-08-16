@@ -443,3 +443,104 @@ it('refuses to take a balance from a charge that does not exist', function () {
 it('refuses the same way when asked what was allocated', function () {
     ChargeBalance::allocatedFor(999999);
 })->throws(RuntimeException::class);
+
+/*
+|--------------------------------------------------------------------------
+| The locking twins, which an Action under lock is the only caller of
+|--------------------------------------------------------------------------
+|
+| outstandingForUpdate() and allocatedForUpdate() exist because an ordinary
+| read answers from the transaction's REPEATABLE READ snapshot, taken at its
+| first ordinary read — before the charge lock is acquired. They are the ONLY
+| readers RecordPaymentAction's overpayment guard uses.
+|
+| They were shipped without these tests, and the independent pre-PR review
+| caught it by replacing `payments.reversed_at IS NULL` inside
+| ALLOCATED_LOCKING_SQL with `1 = 1` and watching 68 tests stay green. The
+| non-locking path has three dedicated reversal tests; this path had none, on a
+| hand-assembled SQL constant that is exactly the sort of thing a later cleanup
+| edits.
+|
+| The failure that gap allowed through is worth naming, because it is quiet:
+| lose the filter here and a reversed payment still counts as collected on the
+| locking path alone. outstandingFor() would report a bill fully owed in every
+| report and Filament table, while outstandingForUpdate() reported it settled —
+| so the bill reads unpaid everywhere and can never be paid, refused as an
+| overpayment. Two internally consistent figures disagreeing quietly, on rows
+| nobody has a reason to look at twice, is the precise failure this class's
+| single-definition constants exist to prevent.
+|
+| These run outside an explicit transaction. `FOR UPDATE` under autocommit takes
+| its locks and releases them immediately, so the SQL is exercised without the
+| test having to hold anything; the concurrent behaviour is PaymentConcurrencyTest's
+| job, in subprocesses.
+*/
+
+it('answers the same as the ordinary reader on a bill nobody has paid', function () {
+    $charge = ($this->billFor)('1000.000');
+
+    expect(ChargeBalance::outstandingForUpdate((int) $charge->getKey())->toDecimal())->toBe('1000.000')
+        ->and(ChargeBalance::allocatedForUpdate((int) $charge->getKey())->toDecimal())->toBe('0.000');
+});
+
+it('subtracts a partial payment on the locking path too', function () {
+    $charge = ($this->billFor)('1000.000');
+    ($this->payTowards)($charge, '300.000');
+
+    expect(ChargeBalance::outstandingForUpdate((int) $charge->getKey())->toDecimal())->toBe('700.000')
+        ->and(ChargeBalance::allocatedForUpdate((int) $charge->getKey())->toDecimal())->toBe('300.000');
+});
+
+it('sums several standing payments on the locking path', function () {
+    $charge = ($this->billFor)('1000.000');
+    ($this->payTowards)($charge, '100.500');
+    ($this->payTowards)($charge, '200.250');
+
+    expect(ChargeBalance::allocatedForUpdate((int) $charge->getKey())->toDecimal())->toBe('300.750')
+        ->and(ChargeBalance::outstandingForUpdate((int) $charge->getKey())->toDecimal())->toBe('699.250');
+});
+
+it('drops a reversed payment out of the LOCKING balance as well', function () {
+    /*
+     * THE TEST THE REVIEW FOUND MISSING. Replacing NOT_REVERSED_SQL inside
+     * ALLOCATED_LOCKING_SQL with `1 = 1` must turn this red; nothing else in the
+     * suite reaches that constant.
+     */
+    $charge = ($this->billFor)('1000.000');
+
+    ($this->payTowards)($charge, '300.000');
+    $reversed = ($this->payTowards)($charge, '200.000', reversed: true);
+
+    expect(ChargeBalance::allocatedForUpdate((int) $charge->getKey())->toDecimal())->toBe(
+        '300.000',
+        'The locking reader counted a reversed payment as collected money.',
+    )->and(ChargeBalance::outstandingForUpdate((int) $charge->getKey())->toDecimal())->toBe('700.000');
+
+    // Nothing was deleted to achieve that — reversed_at is the whole mechanism.
+    expect(PaymentAllocation::query()->where('payment_id', $reversed->getKey())->count())->toBe(1);
+});
+
+it('agrees with the ordinary reader when every payment on the bill is reversed', function () {
+    $charge = ($this->billFor)('500.000');
+
+    ($this->payTowards)($charge, '500.000', reversed: true);
+
+    // Both routes, same answer: a bill whose only payment was handed back is
+    // owed in full. The two disagreeing is the quiet failure described above.
+    expect(ChargeBalance::outstandingForUpdate((int) $charge->getKey())->toDecimal())->toBe('500.000')
+        ->and(ChargeBalance::outstandingFor((int) $charge->getKey())->toDecimal())->toBe('500.000');
+});
+
+it('keeps a single dirham through the locking sum', function () {
+    $charge = ($this->billFor)('1.000');
+    ($this->payTowards)($charge, '0.001');
+
+    expect(ChargeBalance::outstandingForUpdate((int) $charge->getKey())->toDecimal())->toBe('0.999')
+        ->and(ChargeBalance::allocatedForUpdate((int) $charge->getKey())->toDecimal())->toBe('0.001');
+});
+
+it('refuses to take a locked balance from a charge that does not exist', function () {
+    // Same reasoning as the ordinary reader's twin above: answering "0.000
+    // outstanding" for a charge that is not there reports a settled bill.
+    ChargeBalance::outstandingForUpdate(999999);
+})->throws(RuntimeException::class);
