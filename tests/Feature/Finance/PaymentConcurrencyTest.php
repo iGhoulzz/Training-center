@@ -78,29 +78,59 @@ function paymentWorker(int $actorId, int $chargeId, string $key, string $readyPa
         $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
         [$script, $actorId, $chargeId, $key, $readyPath, $resultPath] = $_SERVER['argv'];
-        file_put_contents($readyPath, 'ready');
+
+        /*
+         * OPEN THE TRANSACTION AND TAKE A STALE SNAPSHOT BEFORE SIGNALLING READY.
+         *
+         * InnoDB establishes a transaction's consistent-read snapshot at its
+         * first ORDINARY read, not at BEGIN. Without this priming read the
+         * snapshot would be taken by whatever the Action happens to read first,
+         * and whether that lands before or after the competing till commits is
+         * an accident of statement ordering that a later edit can change
+         * silently.
+         *
+         * Priming it here makes the dangerous condition deterministic: both
+         * tills are guaranteed to be holding a view of the world from BEFORE
+         * either of them committed, which is exactly the state the locking
+         * reads in RecordPaymentAction and ChargeBalance exist to survive.
+         *
+         * Borrowed from P2-T08's payroll finalization race, which does the same
+         * thing for the same reason.
+         *
+         * The Action opens its own transaction inside this one, so that becomes
+         * a savepoint — the snapshot belongs to this outer transaction, which is
+         * the point.
+         */
+        $result = null;
 
         try {
-            $payment = app(App\Domain\Finance\Actions\RecordPaymentAction::class)->execute(
-                App\Models\User::query()->findOrFail((int) $actorId),
-                new App\Domain\Finance\Data\RecordPaymentData(
-                    chargeId: (int) $chargeId,
-                    allocation: '1000.000',
-                    tenders: [
-                        new App\Domain\Finance\Data\TenderData(
-                            App\Domain\Finance\Enums\TenderMethod::Card,
-                            '300.000',
-                            'AUTH-1234567890',
-                        ),
-                        new App\Domain\Finance\Data\TenderData(
-                            App\Domain\Finance\Enums\TenderMethod::Cash,
-                            '700.000',
-                        ),
-                    ],
-                    idempotencyKey: $key,
-                ),
-            );
-            $result = ['outcome' => 'recorded', 'id' => (int) $payment->getKey()];
+            $result = Illuminate\Support\Facades\DB::transaction(static function () use ($actorId, $chargeId, $key, $readyPath) {
+                App\Domain\Finance\Models\Payment::query()->count();
+
+                file_put_contents($readyPath, 'ready');
+
+                $payment = app(App\Domain\Finance\Actions\RecordPaymentAction::class)->execute(
+                    App\Models\User::query()->findOrFail((int) $actorId),
+                    new App\Domain\Finance\Data\RecordPaymentData(
+                        chargeId: (int) $chargeId,
+                        allocation: '1000.000',
+                        tenders: [
+                            new App\Domain\Finance\Data\TenderData(
+                                App\Domain\Finance\Enums\TenderMethod::Card,
+                                '300.000',
+                                'AUTH-1234567890',
+                            ),
+                            new App\Domain\Finance\Data\TenderData(
+                                App\Domain\Finance\Enums\TenderMethod::Cash,
+                                '700.000',
+                            ),
+                        ],
+                        idempotencyKey: $key,
+                    ),
+                );
+
+                return ['outcome' => 'recorded', 'id' => (int) $payment->getKey()];
+            });
         } catch (App\Domain\Finance\Exceptions\PaymentExceedsOutstandingException) {
             $result = ['outcome' => 'exceeds_outstanding'];
         } catch (App\Domain\Finance\Exceptions\IdempotencyConflictException) {
