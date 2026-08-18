@@ -110,7 +110,7 @@ beforeEach(function () {
 |
 | Design section 5: card numbers, PINs and CVVs are never stored anywhere in
 | this system. The rule is a targeted guard against one shape — 13 to 19
-| digits once spaces and dashes are stripped — not a general ban on digits,
+| digits once every separator is stripped — not a general ban on digits,
 | so both directions of both boundaries get their own sample below. A
 | dataset where every case fails on the same clause would leave the other
 | clause untested, and this project has shipped exactly that defect before
@@ -118,7 +118,7 @@ beforeEach(function () {
 | fixed").
 */
 
-it('rejects PAN-shaped input, with spaces and dashes ignored, with the translated message', function (string $value) {
+it('rejects PAN-shaped input however its digits are grouped, with the translated message', function (string $value) {
     $validator = Validator::make(
         ['external_reference' => $value],
         ['external_reference' => [new NotACardNumber]],
@@ -138,6 +138,24 @@ it('rejects PAN-shaped input, with spaces and dashes ignored, with the translate
     // eye — the boundary is the whole point of these two cases.
     '13 digits — the short PAN boundary' => [str_repeat('4', 13)],
     '19 digits — the long PAN boundary' => [str_repeat('4', 19)],
+
+    /*
+     * THE SEPARATORS THAT WALKED PAST THE FIRST VERSION OF THIS RULE.
+     *
+     * It stripped `' '` and `'-'` and nothing else, so each of these was
+     * accepted — measured on this branch during cross-review, not imagined.
+     * Every one is what a real paste produces: a tab out of a spreadsheet, a
+     * non-breaking space out of formatted text, and an en dash a word
+     * processor substituted for a typed hyphen.
+     *
+     * Written as escapes and codepoints rather than pasted glyphs, so the
+     * characters under test survive the file being re-encoded and stay legible
+     * to whoever reads this next.
+     */
+    '16 digits, tab-separated' => ["4111\t1111\t1111\t1111"],
+    '16 digits, non-breaking spaces' => ["4111\u{00A0}1111\u{00A0}1111\u{00A0}1111"],
+    '16 digits, en dashes' => ["4111\u{2013}1111\u{2013}1111\u{2013}1111"],
+    '16 digits, mixed separators' => ["4111 1111\u{00A0}1111\t1111"],
 ]);
 
 it('passes ordinary terminal references, including both boundaries just outside the PAN range', function (string $value) {
@@ -229,7 +247,7 @@ it('actually reverses a payment through the table action, setting all three reve
     Livewire::actingAs($this->superAdmin)
         ->test(ListPayments::class)
         ->callTableAction('reverse', $payment, [
-            'reason' => 'The centre agreed to give this payment back.',
+            'reason' => 'Recorded against the wrong bill.',
         ])
         ->assertHasNoTableActionErrors()
         ->assertNotified(__('payments.reversed_successfully'));
@@ -238,7 +256,7 @@ it('actually reverses a payment through the table action, setting all three reve
 
     expect($stored->reversed_at)->not->toBeNull()
         ->and((int) $stored->reversed_by)->toBe((int) $this->superAdmin->getKey())
-        ->and($stored->reversal_reason)->toBe('The centre agreed to give this payment back.');
+        ->and($stored->reversal_reason)->toBe('Recorded against the wrong bill.');
 });
 
 it('hides the reverse action once a payment is already reversed, and the Action itself still refuses a second one', function () {
@@ -348,7 +366,7 @@ it('shows the reversal record on the view page once a payment has been reversed'
 
     // The financial facts survive a reversal untouched, so the page must still
     // show them alongside the reason — a reversed receipt is still a record of
-    // money that was taken and given back, not a blank.
+    // money that was recorded and then voided, not a blank.
     $this->actingAs($this->superAdmin)
         ->get("/admin/payments/{$payment->getKey()}")
         ->assertOk()

@@ -525,7 +525,7 @@ it('agrees with the ordinary reader when every payment on the bill is reversed',
 
     ($this->payTowards)($charge, '500.000', reversed: true);
 
-    // Both routes, same answer: a bill whose only payment was handed back is
+    // Both routes, same answer: a bill whose only payment was voided is
     // owed in full. The two disagreeing is the quiet failure described above.
     expect(ChargeBalance::outstandingForUpdate((int) $charge->getKey())->toDecimal())->toBe('500.000')
         ->and(ChargeBalance::outstandingFor((int) $charge->getKey())->toDecimal())->toBe('500.000');

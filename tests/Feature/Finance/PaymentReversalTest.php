@@ -103,14 +103,14 @@ it('reverses a payment, setting all three reversal columns together', function (
     $result = $this->reverse->execute(
         $this->superAdmin,
         (int) $payment->getKey(),
-        'The centre agreed to give this payment back.',
+        'Recorded against the wrong bill.',
     );
 
     // A literal timestamp, not now() — this is the whole point of travelling
     // to a fixed instant first.
     expect($result->reversed_at->format('Y-m-d H:i:s'))->toBe('2026-08-12 09:00:00')
         ->and((int) $result->reversed_by)->toBe((int) $this->superAdmin->getKey())
-        ->and($result->reversal_reason)->toBe('The centre agreed to give this payment back.');
+        ->and($result->reversal_reason)->toBe('Recorded against the wrong bill.');
 
     // Read back through the query builder, the same discipline
     // WriteOffChargeTest uses for the write-off columns — the model holds
@@ -122,7 +122,7 @@ it('reverses a payment, setting all three reversal columns together', function (
 
     expect($stored->reversed_at)->toBe('2026-08-12 09:00:00')
         ->and((int) $stored->reversed_by)->toBe((int) $this->superAdmin->getKey())
-        ->and($stored->reversal_reason)->toBe('The centre agreed to give this payment back.');
+        ->and($stored->reversal_reason)->toBe('Recorded against the wrong bill.');
 });
 
 /*
@@ -158,7 +158,7 @@ it('leaves every tender and allocation row intact after a reversal', function ()
 
     $allocationId = (int) $allocationBefore->getKey();
 
-    $this->reverse->execute($this->superAdmin, (int) $payment->getKey(), 'Refunded to the student in full.');
+    $this->reverse->execute($this->superAdmin, (int) $payment->getKey(), 'Duplicate of an earlier receipt.');
 
     $tendersAfter = PaymentTender::query()
         ->where('payment_id', $payment->getKey())
@@ -195,7 +195,7 @@ it('removes the payment from the bill balance once reversed, without removing th
 
     expect(ChargeBalance::outstandingFor((int) $charge->getKey())->toDecimal())->toBe('0.000');
 
-    $this->reverse->execute($this->superAdmin, (int) $payment->getKey(), 'The payment is being given back.');
+    $this->reverse->execute($this->superAdmin, (int) $payment->getKey(), 'This payment was never received.');
 
     /*
      * THE SECOND ASSERTION IS WHAT MAKES THE FIRST MEAN ANYTHING, and it was
@@ -310,7 +310,7 @@ it('refuses a second reversal, leaving the original decision untouched', functio
     $first = $this->reverse->execute(
         $this->superAdmin,
         (int) $payment->getKey(),
-        'First decision: give this payment back.',
+        'First decision: recorded against the wrong bill.',
     );
 
     $originalAt = $first->reversed_at;

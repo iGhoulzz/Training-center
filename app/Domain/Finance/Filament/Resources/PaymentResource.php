@@ -279,7 +279,7 @@ class PaymentResource extends Resource
     {
         return Action::make('reverse')
             ->label(__('payments.reverse'))
-            ->icon(Heroicon::OutlinedReceiptRefund)
+            ->icon(Heroicon::OutlinedArrowUturnLeft)
             ->color('danger')
             ->authorize('reverse')
             ->visible(fn (Payment $record): bool => ! $record->isReversed())
@@ -287,6 +287,7 @@ class PaymentResource extends Resource
             ->schema([
                 Textarea::make('reason')
                     ->label(__('payments.reason'))
+                    ->helperText(__('payments.reverse_reason_hint'))
                     ->required()
                     ->maxLength(1000),
             ])

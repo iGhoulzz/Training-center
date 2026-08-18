@@ -12,7 +12,8 @@ use RuntimeException;
  * Design section 5: reversal is a set-once lifecycle transition on an
  * otherwise immutable row. Refusing this outright — rather than silently
  * re-stamping — is not idempotence for its own sake: `reversed_at` and
- * `reversed_by` record WHO decided the money should be given back and WHEN,
+ * `reversed_by` record WHO decided this payment was recorded in error and
+ * WHEN,
  * and a second write over the first would quietly overwrite that decision
  * with a later actor's name and timestamp. Same shape and same reasoning as
  * `ChargeAlreadyWrittenOffException`.

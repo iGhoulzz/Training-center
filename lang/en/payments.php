@@ -104,5 +104,10 @@ return [
     'reverse' => 'Reverse',
     'reverse_modal_heading' => 'Reverse this payment',
     'reason' => 'Reason',
+    // Whole sentences, and load-bearing rather than decorative: design
+    // section 1 rules out refunds entirely, so an operator reaching for this
+    // button to document cash handed back would be recording something the
+    // system cannot represent. The hint says so where the decision is made.
+    'reverse_reason_hint' => 'Use this only for a payment that should never have been recorded — entered against the wrong bill, duplicated, or never actually received. It does not record money being returned to the student, and the centre does not issue refunds.',
     'reversed_successfully' => 'Payment reversed.',
 ];

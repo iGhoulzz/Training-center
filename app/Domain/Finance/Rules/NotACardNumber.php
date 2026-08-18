@@ -18,8 +18,11 @@ use Illuminate\Contracts\Validation\ValidationRule;
  *
  * THE SHAPE, EXACTLY
  * -------------------
- * Strip spaces and dashes. If what remains is entirely digits and its
- * length is 13 to 19 inclusive, refuse it. Anything else passes.
+ * Strip every separator a grouped number is written with — whitespace of any
+ * kind, including the non-breaking space, and every dash, including the en and
+ * em dashes a word processor substitutes. If what remains is entirely digits
+ * and its length is 13 to 19 inclusive, refuse it. Anything else passes.
+ * See SEPARATORS for why "spaces and dashes" was not enough.
  *
  * A LETTER ANYWHERE MAKES THIS NOT PAN-SHAPED, WHATEVER THE DIGITS LOOK LIKE
  * ----------------------------------------------------------------------------
@@ -47,13 +50,49 @@ final class NotACardNumber implements ValidationRule
 
     private const MAX_PAN_LENGTH = 19;
 
+    /**
+     * Every separator a grouped card number is written with, not two of them.
+     *
+     * `\p{Z}` is Unicode separators, which is where the non-breaking space
+     * lives; `\s` and `\p{Cc}` cover the ASCII whitespace a keyboard produces,
+     * tab included; `\p{Pd}` is every dash, so the en and em dashes a word
+     * processor substitutes for a typed hyphen are stripped alongside it.
+     *
+     * THE FIRST VERSION OF THIS RULE REMOVED ONLY `' '` AND `'-'`, AND CODEX'S
+     * CROSS-REVIEW WALKED A PAN STRAIGHT PAST IT. Measured on this branch:
+     * `4111\t1111\t1111\t1111`, the same number joined by non-breaking spaces,
+     * and the same again with en dashes were all accepted, because what
+     * remained after stripping was not `ctype_digit()` and the length check
+     * never ran. Pasting a card number out of formatted text produces exactly
+     * those characters, and the database `CHECK` behind this field only asks
+     * for a non-blank reference — it would have stored the PAN, against design
+     * section 5's categorical rule that card numbers are never stored anywhere
+     * in this system.
+     */
+    private const SEPARATORS = '/[\p{Z}\s\p{Cc}\p{Pd}]+/u';
+
     public function validate(string $attribute, mixed $value, Closure $fail): void
     {
-        // Spaces and dashes ignored, per the class docblock — a terminal
-        // reference is typed by a person, and `4111 1111 1111 1111` is the
-        // same PAN shape as `4111111111111111` with the grouping a human
-        // would naturally type.
-        $stripped = str_replace([' ', '-'], '', (string) $value);
+        /*
+         * Nothing to say about a non-string. The `string` rule owns that
+         * question, and casting here would raise an array-to-string warning
+         * rather than a validation error.
+         */
+        if (! is_string($value)) {
+            return;
+        }
+
+        $stripped = preg_replace(self::SEPARATORS, '', $value);
+
+        /*
+         * preg_replace() returns null on malformed UTF-8. Falling back to the
+         * ASCII strip degrades this to the narrower rule rather than to no rule
+         * at all — a plainly grouped PAN is still caught, which is the
+         * direction to fail in.
+         */
+        if (! is_string($stripped)) {
+            $stripped = str_replace([' ', '-'], '', $value);
+        }
 
         // ctype_digit() is false for a blank string, so an empty reference
         // passes rather than tripping the length check below on zero.

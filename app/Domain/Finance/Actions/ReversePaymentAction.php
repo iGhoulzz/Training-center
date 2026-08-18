@@ -13,8 +13,28 @@ use InvalidArgumentException;
 use Spatie\Activitylog\Support\CauserResolver;
 
 /**
- * Undo a payment: a set-once lifecycle transition on an otherwise immutable
- * row (design section 5).
+ * Void a payment recorded in error: a set-once lifecycle transition on an
+ * otherwise immutable row (design section 5).
+ *
+ * THIS IS NOT A REFUND, AND THE SYSTEM CANNOT EXPRESS ONE
+ * -------------------------------------------------------
+ * Design section 1: "**No refunds.** Money is strictly one-directional.
+ * Courses are face-to-face; a student who did not pay simply owes, and a
+ * student who paid is not paid back." There is no outbound tender anywhere in
+ * this schema — `payment_tenders.amount` carries `CHECK (amount > 0)` — so no
+ * row can record money leaving the centre.
+ *
+ * A reversal therefore says **this payment should not have been recorded**: it
+ * was entered against the wrong bill, duplicated, or never actually received.
+ * It takes the money back out of collected revenue and reopens the student's
+ * balance, which is only truthful if the money was never the centre's to
+ * begin with. Used to document cash genuinely handed back it would be a lie by
+ * omission — revenue removed, a bill reopened, and nothing recording an
+ * outbound movement that the reports would have to explain.
+ *
+ * An earlier version of this file described it as deciding "the money should
+ * be given back", and the cross-review was right to reject that: the wording
+ * invited a use the design forbids and the schema cannot represent.
  *
  * NOTHING IS ERASED, AND NOTHING IS DELETED
  * ------------------------------------------
@@ -64,8 +84,8 @@ use Spatie\Activitylog\Support\CauserResolver;
  * to commit, then sees the reversal that already happened and refuses. A
  * second reversal is refused outright rather than silently re-stamped:
  * re-stamping would destroy exactly the fact these three columns exist to
- * record — who decided the money should be given back, and when. Same shape
- * and same reasoning as `ChargeAlreadyWrittenOffException`.
+ * record — who decided this payment was recorded in error, and when. Same
+ * shape and same reasoning as `ChargeAlreadyWrittenOffException`.
  *
  * ALL THREE COLUMNS, IN ONE update(), OR THE DATABASE REFUSES THE ROW
  * -----------------------------------------------------------------------
