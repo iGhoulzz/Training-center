@@ -7,18 +7,16 @@ namespace App\Domain\Finance\Jobs;
 use App\Domain\Enrollment\Services\EnrollmentQueryService;
 use App\Domain\Finance\Actions\AttachReceiptAction;
 use App\Domain\Finance\Models\Payment;
-use App\Domain\Finance\Support\ChargeBalance;
 use App\Domain\Finance\Support\Money;
-use App\Domain\Staff\Support\ActivityEvent;
+use App\Support\CentreCalendar;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
-use Illuminate\Support\Facades\Storage;
 use Mpdf\Mpdf;
-use RuntimeException;
 
 /** Render one finalized payment's private receipt, safely across queue retries. */
 final class GenerateReceiptJob implements ShouldQueue
@@ -28,6 +26,11 @@ final class GenerateReceiptJob implements ShouldQueue
     use Queueable;
     use SerializesModels;
 
+    public int $tries = 3;
+
+    /** @var array<int, int> */
+    public array $backoff = [5, 30, 120];
+
     public function __construct(public readonly int $paymentId) {}
 
     public function handle(EnrollmentQueryService $enrollments, AttachReceiptAction $receipts): void
@@ -35,10 +38,6 @@ final class GenerateReceiptJob implements ShouldQueue
         $payment = Payment::query()
             ->with(['tenders', 'allocations.charge', 'recordedBy'])
             ->findOrFail($this->paymentId);
-
-        if ($payment->receipt_disk !== null || $payment->receipt_path !== null) {
-            return;
-        }
 
         $allocation = $payment->allocations->sole();
         $charge = $allocation->charge;
@@ -63,23 +62,37 @@ final class GenerateReceiptJob implements ShouldQueue
             'context' => $context,
             'tenders' => $tenders,
             'amountPaid' => $amountPaid->toDecimal(),
-            'remainingBalance' => ChargeBalance::outstandingFor((int) $charge->getKey())->toDecimal(),
+            'remainingBalance' => $this->remainingBalanceAtPayment($payment, $charge->amount),
+            'paymentDate' => CentreCalendar::localise($payment->received_at)->format('Y-m-d H:i'),
         ])->render());
 
         $bytes = $mpdf->OutputBinaryData();
 
-        if (! Storage::disk(AttachReceiptAction::DISK)->put($path, $bytes)) {
-            throw new RuntimeException("Receipt [{$payment->reference}] could not be written to private storage.");
-        }
+        $receipts->execute((int) $payment->getKey(), $path, $bytes);
+    }
 
-        if (! $receipts->execute((int) $payment->getKey(), $path)) {
-            return;
-        }
+    private function remainingBalanceAtPayment(Payment $payment, string $chargeAmount): string
+    {
+        $receivedAt = $payment->received_at;
 
-        activity()
-            ->causedBy($payment->recordedBy)
-            ->performedOn($payment)
-            ->event(ActivityEvent::RECEIPT_GENERATED)
-            ->log(ActivityEvent::RECEIPT_GENERATED);
+        $allocated = DB::table('payment_allocations')
+            ->join('payments', 'payments.id', '=', 'payment_allocations.payment_id')
+            ->where('payment_allocations.charge_id', $payment->allocations->sole()->charge_id)
+            ->where(function ($query) use ($payment, $receivedAt): void {
+                $query->where('payments.received_at', '<', $receivedAt)
+                    ->orWhere(function ($query) use ($payment, $receivedAt): void {
+                        $query->where('payments.received_at', $receivedAt)
+                            ->where('payments.id', '<=', $payment->getKey());
+                    });
+            })
+            ->where(function ($query) use ($receivedAt): void {
+                $query->whereNull('payments.reversed_at')
+                    ->orWhere('payments.reversed_at', '>', $receivedAt);
+            })
+            ->sum('payment_allocations.amount');
+
+        return Money::fromDecimal($chargeAmount)
+            ->subtract(Money::fromDecimal((string) $allocated))
+            ->toDecimal();
     }
 }

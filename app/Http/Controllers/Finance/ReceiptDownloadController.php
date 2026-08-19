@@ -32,7 +32,7 @@ final class ReceiptDownloadController extends Controller
         if (
             $payment->receipt_disk !== self::DISK
             || ! is_string($path)
-            || ! $this->isGeneratedReceiptPath($path)
+            || ! $this->isPaymentReceiptPath($payment, $path)
         ) {
             abort(404);
         }
@@ -49,8 +49,8 @@ final class ReceiptDownloadController extends Controller
         ]);
     }
 
-    private function isGeneratedReceiptPath(string $path): bool
+    private function isPaymentReceiptPath(Payment $payment, string $path): bool
     {
-        return preg_match('#^receipts/RCT-\d{4}-\d{6}\.pdf$#', $path) === 1;
+        return $path === 'receipts/'.$payment->reference.'.pdf';
     }
 }
