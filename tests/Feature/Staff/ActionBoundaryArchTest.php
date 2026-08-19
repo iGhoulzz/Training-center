@@ -679,6 +679,7 @@ it('calls EnrollStudentAction from nowhere but EnrollAndBillAction', function ()
 const INTERNAL_FINANCE_ACTIONS = [
     'IssueChargeAction' => 'EnrollAndBillAction',
     'DeleteUncommittedChargeAction' => 'DeleteEnrollmentAction',
+    'AttachReceiptAction' => 'GenerateReceiptJob',
 ];
 
 it('calls each internal Finance Action from nowhere but its one permitted caller', function () {

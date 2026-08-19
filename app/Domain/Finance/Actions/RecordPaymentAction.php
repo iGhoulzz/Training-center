@@ -7,6 +7,7 @@ namespace App\Domain\Finance\Actions;
 use App\Domain\Enrollment\Services\EnrollmentQueryService;
 use App\Domain\Finance\Data\RecordPaymentData;
 use App\Domain\Finance\Exceptions\IdempotencyConflictException;
+use App\Domain\Finance\Jobs\GenerateReceiptJob;
 use App\Domain\Finance\Models\Payment;
 use App\Domain\Finance\Models\PaymentAllocation;
 use App\Domain\Finance\Models\PaymentTender;
@@ -194,6 +195,8 @@ final class RecordPaymentAction
                         (int) $payment->getKey(),
                     ),
                 ]);
+
+                GenerateReceiptJob::dispatch((int) $payment->getKey())->afterCommit();
 
                 return $payment;
             });

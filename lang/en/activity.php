@@ -40,6 +40,7 @@ return [
         'password_changed' => 'Password changed by the account holder',
         'photo_updated' => 'Photo updated',
         'photo_removed' => 'Photo removed',
+        'receipt_generated' => 'Receipt generated',
         'logged_in' => 'Signed in',
         'logged_out' => 'Signed out',
         'login_failed' => 'Failed sign-in attempt',

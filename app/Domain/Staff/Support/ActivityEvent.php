@@ -64,6 +64,8 @@ final class ActivityEvent
 
     public const PHOTO_REMOVED = 'photo_removed';
 
+    public const RECEIPT_GENERATED = 'receipt_generated';
+
     public const INSTRUCTOR_ASSIGNED = 'instructor_assigned';
 
     public const INSTRUCTOR_HOURS_CHANGED = 'instructor_hours_changed';
