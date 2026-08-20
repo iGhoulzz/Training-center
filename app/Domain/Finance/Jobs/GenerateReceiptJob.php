@@ -71,6 +71,10 @@ final class GenerateReceiptJob implements ShouldQueue
         $receipts->execute((int) $payment->getKey(), $path, $bytes);
     }
 
+    /**
+     * Reversals are stored at second precision, so equality is treated as later:
+     * only a reversal strictly before this receipt excludes its allocation.
+     */
     private function remainingBalanceAtPayment(Payment $payment, string $chargeAmount): string
     {
         $receivedAt = $payment->received_at;
@@ -87,7 +91,7 @@ final class GenerateReceiptJob implements ShouldQueue
             })
             ->where(function ($query) use ($receivedAt): void {
                 $query->whereNull('payments.reversed_at')
-                    ->orWhere('payments.reversed_at', '>', $receivedAt);
+                    ->orWhere('payments.reversed_at', '>=', $receivedAt);
             })
             ->sum('payment_allocations.amount');
 

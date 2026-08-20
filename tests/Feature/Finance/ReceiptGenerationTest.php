@@ -21,6 +21,7 @@ use Illuminate\Foundation\Testing\DatabaseTruncation;
 use Illuminate\Foundation\Testing\RefreshDatabaseState;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Lang;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -51,14 +52,20 @@ function receiptWorkerEnvironment(): array
     ];
 }
 
-function receiptAttachmentWorker(int $paymentId, string $path, string $bytes, string $resultPath): Process
-{
+function receiptAttachmentWorker(
+    int $paymentId,
+    string $path,
+    string $bytes,
+    string $readyPath,
+    string $resultPath,
+): Process {
     $script = <<<'PHP'
         require 'vendor/autoload.php';
         $app = require 'bootstrap/app.php';
         $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
-        [$script, $paymentId, $path, $bytes, $resultPath] = $_SERVER['argv'];
+        [$script, $paymentId, $path, $bytes, $readyPath, $resultPath] = $_SERVER['argv'];
+        file_put_contents($readyPath, 'ready');
         $attached = app(App\Domain\Finance\Actions\AttachReceiptAction::class)->execute(
             (int) $paymentId,
             $path,
@@ -68,7 +75,103 @@ function receiptAttachmentWorker(int $paymentId, string $path, string $bytes, st
         PHP;
 
     return new Process(
-        [PHP_BINARY, '-r', $script, (string) $paymentId, $path, $bytes, $resultPath],
+        [PHP_BINARY, '-r', $script, (string) $paymentId, $path, $bytes, $readyPath, $resultPath],
+        base_path(),
+        receiptWorkerEnvironment(),
+    );
+}
+
+function failingReceiptAttachmentWorker(
+    int $paymentId,
+    string $path,
+    string $bytes,
+    string $readyPath,
+    string $activityPath,
+    string $releasePath,
+    string $successResultPath,
+    string $resultPath,
+): Process {
+    $script = <<<'PHP'
+        require 'vendor/autoload.php';
+        $app = require 'bootstrap/app.php';
+        $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+
+        [
+            $script,
+            $paymentId,
+            $path,
+            $bytes,
+            $readyPath,
+            $activityPath,
+            $releasePath,
+            $successResultPath,
+            $resultPath,
+        ] = $_SERVER['argv'];
+
+        Illuminate\Support\Facades\Event::listen(
+            Illuminate\Database\Events\TransactionRolledBack::class,
+            static function () use ($successResultPath): void {
+                $deadline = microtime(true) + 10;
+
+                while (! file_exists($successResultPath) && microtime(true) < $deadline) {
+                    usleep(25_000);
+                }
+
+                if (! file_exists($successResultPath)) {
+                    throw new RuntimeException('The successor did not finish after rollback.');
+                }
+            },
+        );
+
+        Illuminate\Support\Facades\DB::listen(static function ($query) use ($activityPath, $releasePath): void {
+            if (! str_contains($query->sql, 'activity_log')) {
+                return;
+            }
+
+            file_put_contents($activityPath, 'activity-inserted');
+            $deadline = microtime(true) + 10;
+
+            while (! file_exists($releasePath) && microtime(true) < $deadline) {
+                usleep(25_000);
+            }
+
+            if (! file_exists($releasePath)) {
+                throw new RuntimeException('The failing worker was not released.');
+            }
+
+            throw new RuntimeException('forced concurrent activity failure');
+        });
+
+        file_put_contents($readyPath, 'ready');
+
+        try {
+            $attached = app(App\Domain\Finance\Actions\AttachReceiptAction::class)->execute(
+                (int) $paymentId,
+                $path,
+                $bytes,
+            );
+            $result = ['outcome' => 'attached', 'attached' => $attached];
+        } catch (Throwable $throwable) {
+            $result = ['outcome' => 'failed', 'message' => $throwable->getMessage()];
+        }
+
+        file_put_contents($resultPath, json_encode($result, JSON_THROW_ON_ERROR));
+        PHP;
+
+    return new Process(
+        [
+            PHP_BINARY,
+            '-r',
+            $script,
+            (string) $paymentId,
+            $path,
+            $bytes,
+            $readyPath,
+            $activityPath,
+            $releasePath,
+            $successResultPath,
+            $resultPath,
+        ],
         base_path(),
         receiptWorkerEnvironment(),
     );
@@ -155,6 +258,105 @@ it('prints payment A remaining balance as of payment A despite its later reversa
     $pdf = Storage::disk('private')->get('receipts/'.$paymentA->reference.'.pdf');
 
     expect($pdf)->toContain(mb_convert_encoding('1133.333', 'UTF-16BE', 'UTF-8'));
+});
+
+it('excludes a later payment with the same received-at timestamp from the earlier payment receipt', function (): void {
+    $charge = Charge::factory()->create(['amount' => '2000.000']);
+    $paymentA = $this->recordPayment->execute(
+        $this->admin,
+        ($this->paymentData)((int) $charge->getKey(), Str::uuid()->toString(), '100.000', [new TenderData(TenderMethod::Cash, '100.000')]),
+    );
+    $paymentB = $this->recordPayment->execute(
+        $this->admin,
+        ($this->paymentData)((int) $charge->getKey(), Str::uuid()->toString(), '200.000', [new TenderData(TenderMethod::Cash, '200.000')]),
+    );
+    $receivedAt = CarbonImmutable::parse('2026-06-10 09:30:00', 'UTC');
+    $paymentA->update(['received_at' => $receivedAt]);
+    $paymentB->update(['received_at' => $receivedAt]);
+
+    app()->call([new GenerateReceiptJob((int) $paymentA->getKey()), 'handle']);
+    $pdf = Storage::disk('private')->get('receipts/'.$paymentA->reference.'.pdf');
+
+    expect($pdf)->toContain(mb_convert_encoding('1900.000', 'UTF-16BE', 'UTF-8'))
+        ->not->toContain(mb_convert_encoding('1700.000', 'UTF-16BE', 'UTF-8'));
+});
+
+it('excludes an earlier payment reversed strictly before the target receipt', function (): void {
+    $charge = Charge::factory()->create(['amount' => '2000.000']);
+    $earlier = $this->recordPayment->execute(
+        $this->admin,
+        ($this->paymentData)((int) $charge->getKey(), Str::uuid()->toString(), '100.000', [new TenderData(TenderMethod::Cash, '100.000')]),
+    );
+    $target = $this->recordPayment->execute(
+        $this->admin,
+        ($this->paymentData)((int) $charge->getKey(), Str::uuid()->toString(), '200.000', [new TenderData(TenderMethod::Cash, '200.000')]),
+    );
+    $targetAt = CarbonImmutable::parse('2026-06-10 10:00:00', 'UTC');
+    $earlier->update([
+        'received_at' => $targetAt->subHour(),
+        'reversed_at' => $targetAt->subSecond(),
+        'reversed_by' => $this->admin->getKey(),
+        'reversal_reason' => 'Reversed before the target payment.',
+    ]);
+    $target->update(['received_at' => $targetAt]);
+
+    app()->call([new GenerateReceiptJob((int) $target->getKey()), 'handle']);
+    $pdf = Storage::disk('private')->get('receipts/'.$target->reference.'.pdf');
+
+    expect($pdf)->toContain(mb_convert_encoding('1800.000', 'UTF-16BE', 'UTF-8'))
+        ->not->toContain(mb_convert_encoding('1700.000', 'UTF-16BE', 'UTF-8'));
+});
+
+it('includes an earlier payment reversed at the target receipt boundary', function (): void {
+    $charge = Charge::factory()->create(['amount' => '2000.000']);
+    $earlier = $this->recordPayment->execute(
+        $this->admin,
+        ($this->paymentData)((int) $charge->getKey(), Str::uuid()->toString(), '100.000', [new TenderData(TenderMethod::Cash, '100.000')]),
+    );
+    $target = $this->recordPayment->execute(
+        $this->admin,
+        ($this->paymentData)((int) $charge->getKey(), Str::uuid()->toString(), '200.000', [new TenderData(TenderMethod::Cash, '200.000')]),
+    );
+    $targetAt = CarbonImmutable::parse('2026-06-10 10:00:00', 'UTC');
+    $earlier->update([
+        'received_at' => $targetAt->subHour(),
+        'reversed_at' => $targetAt,
+        'reversed_by' => $this->admin->getKey(),
+        'reversal_reason' => 'Reversed at the target payment boundary.',
+    ]);
+    $target->update(['received_at' => $targetAt]);
+
+    app()->call([new GenerateReceiptJob((int) $target->getKey()), 'handle']);
+    $pdf = Storage::disk('private')->get('receipts/'.$target->reference.'.pdf');
+
+    expect($pdf)->toContain(mb_convert_encoding('1700.000', 'UTF-16BE', 'UTF-8'))
+        ->not->toContain(mb_convert_encoding('1800.000', 'UTF-16BE', 'UTF-8'));
+});
+
+it('includes an earlier payment reversed strictly after the target receipt', function (): void {
+    $charge = Charge::factory()->create(['amount' => '2000.000']);
+    $earlier = $this->recordPayment->execute(
+        $this->admin,
+        ($this->paymentData)((int) $charge->getKey(), Str::uuid()->toString(), '100.000', [new TenderData(TenderMethod::Cash, '100.000')]),
+    );
+    $target = $this->recordPayment->execute(
+        $this->admin,
+        ($this->paymentData)((int) $charge->getKey(), Str::uuid()->toString(), '200.000', [new TenderData(TenderMethod::Cash, '200.000')]),
+    );
+    $targetAt = CarbonImmutable::parse('2026-06-10 10:00:00', 'UTC');
+    $earlier->update([
+        'received_at' => $targetAt->subHour(),
+        'reversed_at' => $targetAt->addSecond(),
+        'reversed_by' => $this->admin->getKey(),
+        'reversal_reason' => 'Reversed after the target payment.',
+    ]);
+    $target->update(['received_at' => $targetAt]);
+
+    app()->call([new GenerateReceiptJob((int) $target->getKey()), 'handle']);
+    $pdf = Storage::disk('private')->get('receipts/'.$target->reference.'.pdf');
+
+    expect($pdf)->toContain(mb_convert_encoding('1700.000', 'UTF-16BE', 'UTF-8'))
+        ->not->toContain(mb_convert_encoding('1800.000', 'UTF-16BE', 'UTF-8'));
 });
 
 it('formats the payment date on the centre calendar at the local-year boundary', function (): void {
@@ -255,16 +457,18 @@ it('serializes two concurrent receipt attachments so only the winner writes byte
     $path = 'receipts/'.$payment->reference.'.pdf';
     $storagePath = storage_path('app/secure/'.$path);
     $token = Str::uuid()->toString();
-    $resultA = storage_path("framework/testing/receipt-{$token}-a.json");
-    $resultB = storage_path("framework/testing/receipt-{$token}-b.json");
+    $readyA = storage_path("framework/testing/receipt-{$token}-a-ready.json");
+    $resultA = storage_path("framework/testing/receipt-{$token}-a-result.json");
+    $readyB = storage_path("framework/testing/receipt-{$token}-b-ready.json");
+    $resultB = storage_path("framework/testing/receipt-{$token}-b-result.json");
     $workers = [
-        receiptAttachmentWorker((int) $payment->getKey(), $path, 'receipt-bytes-a', $resultA),
-        receiptAttachmentWorker((int) $payment->getKey(), $path, 'receipt-bytes-b', $resultB),
+        receiptAttachmentWorker((int) $payment->getKey(), $path, 'receipt-bytes-a', $readyA, $resultA),
+        receiptAttachmentWorker((int) $payment->getKey(), $path, 'receipt-bytes-b', $readyB, $resultB),
     ];
     $connection = DB::connection();
 
     try {
-        File::delete($storagePath, $resultA, $resultB);
+        File::delete($storagePath, $readyA, $resultA, $readyB, $resultB);
         $connection->beginTransaction();
         Payment::query()->whereKey($payment->getKey())->lockForUpdate()->firstOrFail();
 
@@ -272,9 +476,21 @@ it('serializes two concurrent receipt attachments so only the winner writes byte
             $worker->start();
         }
 
-        usleep(500_000);
-        expect($workers[0]->isRunning())->toBeTrue()
-            ->and($workers[1]->isRunning())->toBeTrue();
+        $deadline = microtime(true) + 10;
+
+        while ((! File::exists($readyA) || ! File::exists($readyB)) && microtime(true) < $deadline) {
+            usleep(25_000);
+        }
+
+        expect(File::exists($readyA))->toBeTrue('Worker A did not reach the Action.')
+            ->and(File::exists($readyB))->toBeTrue('Worker B did not reach the Action.');
+
+        usleep(250_000);
+
+        expect($workers[0]->isRunning())->toBeTrue('Worker A was not blocked by the payment-row lock.')
+            ->and($workers[1]->isRunning())->toBeTrue('Worker B was not blocked by the payment-row lock.')
+            ->and(File::exists($resultA))->toBeFalse()
+            ->and(File::exists($resultB))->toBeFalse();
 
         $connection->commit();
 
@@ -306,7 +522,97 @@ it('serializes two concurrent receipt attachments so only the winner writes byte
             }
         }
 
-        File::delete($storagePath, $resultA, $resultB);
+        File::delete($storagePath, $readyA, $resultA, $readyB, $resultB);
+    }
+});
+
+it('does not let failed receipt cleanup delete a concurrent successor receipt', function (): void {
+    $payment = Payment::factory()->create(['recorded_by' => $this->admin->getKey()]);
+    $path = 'receipts/'.$payment->reference.'.pdf';
+    $storagePath = storage_path('app/secure/'.$path);
+    $token = Str::uuid()->toString();
+    $paths = collect([
+        'failure-ready',
+        'failure-at-activity',
+        'failure-release',
+        'failure-result',
+        'success-ready',
+        'success-result',
+    ])->mapWithKeys(fn (string $name): array => [
+        $name => storage_path("framework/testing/receipt-{$token}-{$name}.json"),
+    ]);
+    $failure = failingReceiptAttachmentWorker(
+        (int) $payment->getKey(),
+        $path,
+        'failed-worker-bytes',
+        $paths['failure-ready'],
+        $paths['failure-at-activity'],
+        $paths['failure-release'],
+        $paths['success-result'],
+        $paths['failure-result'],
+    );
+    $success = receiptAttachmentWorker(
+        (int) $payment->getKey(),
+        $path,
+        'successful-worker-bytes',
+        $paths['success-ready'],
+        $paths['success-result'],
+    );
+
+    try {
+        File::delete($storagePath, ...$paths->values()->all());
+        $failure->start();
+        $deadline = microtime(true) + 10;
+
+        while (! File::exists($paths['failure-at-activity']) && microtime(true) < $deadline) {
+            usleep(25_000);
+        }
+
+        expect(File::exists($paths['failure-ready']))->toBeTrue('The failing worker did not reach the Action.')
+            ->and(File::exists($paths['failure-at-activity']))->toBeTrue('The failing worker did not reach the activity insert.')
+            ->and($failure->isRunning())->toBeTrue('The failing worker did not hold its transaction open.')
+            ->and(File::get($storagePath))->toBe('failed-worker-bytes');
+
+        $success->start();
+        $deadline = microtime(true) + 10;
+
+        while (! File::exists($paths['success-ready']) && microtime(true) < $deadline) {
+            usleep(25_000);
+        }
+
+        expect(File::exists($paths['success-ready']))->toBeTrue('The successor did not reach the Action.');
+
+        usleep(250_000);
+
+        expect($success->isRunning())->toBeTrue('The successor did not wait on the failing worker\'s payment lock.')
+            ->and(File::exists($paths['success-result']))->toBeFalse();
+
+        File::put($paths['failure-release'], 'release');
+        $failure->wait();
+        $success->wait();
+
+        expect($failure->isSuccessful())->toBeTrue($failure->getErrorOutput())
+            ->and($success->isSuccessful())->toBeTrue($success->getErrorOutput());
+
+        $failureResult = json_decode((string) File::get($paths['failure-result']), true, flags: JSON_THROW_ON_ERROR);
+        $successResult = json_decode((string) File::get($paths['success-result']), true, flags: JSON_THROW_ON_ERROR);
+
+        expect($failureResult)->toMatchArray([
+            'outcome' => 'failed',
+            'message' => 'forced concurrent activity failure',
+        ])->and($successResult)->toMatchArray([
+            'attached' => true,
+        ])->and(File::get($storagePath))->toBe('successful-worker-bytes')
+            ->and($payment->refresh()->receipt_path)->toBe($path)
+            ->and(Activity::query()->where('event', 'receipt_generated')->count())->toBe(1);
+    } finally {
+        foreach ([$failure, $success] as $worker) {
+            if ($worker->isRunning()) {
+                $worker->stop();
+            }
+        }
+
+        File::delete($storagePath, ...$paths->values()->all());
     }
 });
 
@@ -377,6 +683,57 @@ it('refuses to replace a payment receipt location that is already attached', fun
     expect($attached)->toBeFalse()
         ->and($payment->refresh()->receipt_path)->toBe('receipts/RCT-2026-000001.pdf')
         ->and(Storage::disk('private')->exists('receipts/RCT-2026-000002.pdf'))->toBeFalse();
+});
+
+it('renders translated student and tender composites with locale-controlled ordering and separators', function (): void {
+    $originalLocale = app()->getLocale();
+    app()->setLocale('en');
+    Lang::get('receipt.title');
+    $originalStudentIdentity = Lang::get('receipt.student_identity', [], 'en');
+    $originalTenderLabel = Lang::get('receipt.tender_label', [], 'en');
+    Lang::addLines([
+        'receipt.student_identity' => 'NAME:nameZCODE:code',
+        'receipt.tender_label' => 'METHOD:methodZTENDER',
+    ], 'en');
+
+    try {
+        $charge = Charge::factory()->create(['amount' => '1000.000']);
+        $charge->enrollment->student->update([
+            'first_name' => 'A',
+            'last_name' => 'B',
+            'student_code' => 'STU-C',
+        ]);
+        $payment = $this->recordPayment->execute(
+            $this->admin,
+            ($this->paymentData)((int) $charge->getKey(), Str::uuid()->toString()),
+        );
+
+        app()->call([new GenerateReceiptJob((int) $payment->getKey()), 'handle']);
+
+        $context = app(EnrollmentQueryService::class)
+            ->receiptContextFor((int) $charge->enrollment_id);
+        $pdf = Storage::disk('private')->get('receipts/'.$payment->reference.'.pdf');
+
+        foreach ([
+            "NAME{$context['student_name']}ZCODE{$context['student_code']}",
+            'METHODCardZTENDER',
+            'METHODCashZTENDER',
+        ] as $translatedComposite) {
+            expect($pdf)->toContain(mb_convert_encoding($translatedComposite, 'UTF-16BE', 'UTF-8'));
+        }
+
+        expect($pdf)->not->toContain(mb_convert_encoding(
+            "{$context['student_code']} — {$context['student_name']}",
+            'UTF-16BE',
+            'UTF-8',
+        ))->not->toContain(mb_convert_encoding('Tender: Card', 'UTF-16BE', 'UTF-8'));
+    } finally {
+        Lang::addLines([
+            'receipt.student_identity' => $originalStudentIdentity,
+            'receipt.tender_label' => $originalTenderLabel,
+        ], 'en');
+        app()->setLocale($originalLocale);
+    }
 });
 
 it('renders every receipt field into a private PDF and is retry-safe', function (): void {

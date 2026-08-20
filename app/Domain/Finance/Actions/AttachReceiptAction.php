@@ -24,10 +24,10 @@ final class AttachReceiptAction
     /** @return bool Whether this invocation attached the receipt. */
     public function execute(int $paymentId, string $path, string $contents): bool
     {
-        $wroteReceipt = false;
+        return DB::transaction(function () use ($paymentId, $path, $contents): bool {
+            $wroteReceipt = false;
 
-        try {
-            return DB::transaction(function () use ($paymentId, $path, $contents, &$wroteReceipt): bool {
+            try {
                 $payment = Payment::query()
                     ->with('recordedBy')
                     ->lockForUpdate()
@@ -59,13 +59,13 @@ final class AttachReceiptAction
                     ->log(ActivityEvent::RECEIPT_GENERATED);
 
                 return true;
-            });
-        } catch (Throwable $throwable) {
-            if ($wroteReceipt) {
-                Storage::disk(self::DISK)->delete($path);
-            }
+            } catch (Throwable $throwable) {
+                if ($wroteReceipt) {
+                    Storage::disk(self::DISK)->delete($path);
+                }
 
-            throw $throwable;
-        }
+                throw $throwable;
+            }
+        });
     }
 }
