@@ -4,8 +4,8 @@
     <meta charset="utf-8">
     <style>
         body { color: #111827; direction: {{ $direction }}; font-family: sans-serif; font-size: 11pt; }
-        h1 { margin: 0 0 16px; }
-        table { border-collapse: collapse; margin: 0 0 16px; }
+        h1 { margin: 0; }
+        table { border-collapse: collapse; margin: 16px 0; }
         th, td { border: 1px solid #d1d5db; padding: 6px 8px; }
         th { background: #f3f4f6; font-weight: 700; }
         .ltr { direction: ltr; }
