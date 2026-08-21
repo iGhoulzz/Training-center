@@ -15,9 +15,45 @@ use App\Models\User;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 uses(RefreshDatabase::class);
+
+it('creates typed one-to-one receipt snapshot storage', function () {
+    expect(Schema::hasTable('payment_receipt_snapshots'))->toBeTrue();
+
+    $columns = DB::table('information_schema.columns')
+        ->select([
+            'column_name as receipt_column',
+            'column_type as receipt_column_type',
+        ])
+        ->where('table_schema', DB::connection()->getDatabaseName())
+        ->where('table_name', 'payment_receipt_snapshots')
+        ->whereIn('column_name', [
+            'list_price',
+            'discount_percentage',
+            'final_charge',
+            'amount_paid',
+            'remaining_balance',
+        ])
+        ->pluck('receipt_column_type', 'receipt_column')
+        ->all();
+
+    expect($columns)->toMatchArray([
+        'list_price' => 'decimal(12,3)',
+        'discount_percentage' => 'decimal(5,2)',
+        'final_charge' => 'decimal(12,3)',
+        'amount_paid' => 'decimal(12,3)',
+        'remaining_balance' => 'decimal(12,3)',
+    ]);
+    expect(financeIndexColumns('payment_receipt_snapshots', 'payment_receipt_snapshots_payment_id_unique'))
+        ->toBe(['payment_id'])
+        ->and(financeIndexIsUnique('payment_receipt_snapshots', 'payment_receipt_snapshots_payment_id_unique'))
+        ->toBeTrue()
+        ->and(financeIndexColumns('payments', 'payments_receipt_path_index'))
+        ->toBe(['receipt_path']);
+})->group('finance-schema');
 
 /*
 |--------------------------------------------------------------------------
@@ -295,6 +331,83 @@ function financePaymentRow(int $studentId, int $actorId, array $overrides = []):
         'updated_at' => now(),
     ], $overrides);
 }
+
+/** @param array<string, mixed> $overrides */
+function financeReceiptSnapshotRow(int $paymentId, array $overrides = []): array
+{
+    $payment = DB::table('payments')->where('id', $paymentId)->first();
+
+    return array_merge([
+        'payment_id' => $paymentId,
+        'locale' => 'en',
+        'student_code' => 'STU-000001',
+        'student_name' => 'Snapshot Student',
+        'enrollment_reference' => 'ENR-2026-000001',
+        'course_code' => 'CRS-001',
+        'batch_code' => 'BAT-001',
+        'charge_reference' => 'CHG-2026-000001',
+        'list_price' => '1000.000',
+        'discount_percentage' => null,
+        'final_charge' => '1000.000',
+        'amount_paid' => '300.000',
+        'remaining_balance' => '700.000',
+        'recorded_by_name' => 'Snapshot Operator',
+        'payment_reference' => (string) $payment->reference,
+        'received_at' => $payment->received_at,
+        'last_reconciliation_attempt_at' => null,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ], $overrides);
+}
+
+it('holds one immutable receipt snapshot per payment at the database', function () {
+    $payment = Payment::factory()->create();
+    financeAccepted('payment_receipt_snapshots', financeReceiptSnapshotRow((int) $payment->getKey()));
+
+    financeRefusedBy(
+        'payment_receipt_snapshots_payment_id_unique',
+        'payment_receipt_snapshots',
+        financeReceiptSnapshotRow((int) $payment->getKey(), ['student_name' => 'Second Snapshot']),
+    );
+})->group('finance-schema');
+
+it('refuses invalid receipt snapshot amounts and discounts at the database', function (
+    string $constraint,
+    array $override,
+): void {
+    $payment = Payment::factory()->create();
+
+    financeRefusedBy(
+        $constraint,
+        'payment_receipt_snapshots',
+        financeReceiptSnapshotRow((int) $payment->getKey(), $override),
+    );
+})->with([
+    'negative list price' => [
+        'payment_receipt_snapshots_amounts_non_negative',
+        ['list_price' => '-0.001'],
+    ],
+    'negative final charge' => [
+        'payment_receipt_snapshots_amounts_non_negative',
+        ['final_charge' => '-0.001'],
+    ],
+    'negative paid amount' => [
+        'payment_receipt_snapshots_amounts_non_negative',
+        ['amount_paid' => '-0.001'],
+    ],
+    'negative remaining balance' => [
+        'payment_receipt_snapshots_amounts_non_negative',
+        ['remaining_balance' => '-0.001'],
+    ],
+    'zero discount' => [
+        'payment_receipt_snapshots_discount_percentage_valid',
+        ['discount_percentage' => '0.00'],
+    ],
+    'discount above one hundred' => [
+        'payment_receipt_snapshots_discount_percentage_valid',
+        ['discount_percentage' => '100.01'],
+    ],
+])->group('finance-schema');
 
 /**
  * A valid `payment_tenders` row — cash, which needs no terminal reference.

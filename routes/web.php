@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Http\Controllers\Finance\ReceiptDownloadController;
 use App\Http\Controllers\Staff\StaffCertificateDownloadController;
 use App\Http\Controllers\Staff\StaffProfilePhotoController;
 use App\Http\Middleware\AuthenticatePrivateFileSession;
@@ -42,4 +43,8 @@ Route::middleware(AuthenticatePrivateFileSession::class)->group(function (): voi
     Route::get('staff-profiles/{profile}/photo', StaffProfilePhotoController::class)
         ->middleware('throttle:240,1')
         ->name('staff.profiles.photo');
+
+    Route::get('receipts/{payment}/download', ReceiptDownloadController::class)
+        ->middleware('throttle:60,1')
+        ->name('finance.receipts.download');
 });

@@ -156,6 +156,29 @@ it('records a split payment of 300 card and 700 cash against a 1,000 bill', func
     expect(ChargeBalance::outstandingFor((int) $charge->getKey())->equals(Money::zero()))->toBeTrue();
 });
 
+it('derives the post-payment balance with one locking allocation read', function () {
+    $charge = Charge::factory()->create(['amount' => '1000.000']);
+
+    $statements = captureStatements();
+
+    $this->recordPayment->execute($this->admin, new RecordPaymentData(
+        chargeId: (int) $charge->getKey(),
+        allocation: '400.000',
+        tenders: [new TenderData(TenderMethod::Cash, '400.000')],
+        idempotencyKey: Str::uuid()->toString(),
+    ));
+
+    $allocationLocks = collect($statements)
+        ->pluck('sql')
+        ->filter(fn (string $statement): bool => str_contains($statement, 'sum(payment_allocations.amount)')
+            && str_contains($statement, ' for update'));
+
+    expect($allocationLocks)->toHaveCount(
+        1,
+        'Recording one payment repeated the locking allocation read used to derive its remaining balance.',
+    );
+});
+
 /*
 |--------------------------------------------------------------------------
 | A tender/allocation mismatch is refused, and leaves no partial row

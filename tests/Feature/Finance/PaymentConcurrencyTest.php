@@ -275,7 +275,8 @@ it('records one payment when two tills submit the same key simultaneously', func
 
     expect(DB::table('payments')->count())->toBe(1)
         ->and(DB::table('payment_tenders')->count())->toBe(2)
-        ->and(DB::table('payment_allocations')->count())->toBe(1);
+        ->and(DB::table('payment_allocations')->count())->toBe(1)
+        ->and(DB::table('payment_receipt_snapshots')->count())->toBe(1);
 })->group('finance');
 
 /*
