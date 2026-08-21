@@ -63,9 +63,14 @@ final class TenderBreakdownReport
     /**
      * Standing tender totals for the period, one row per method present.
      *
+     * @param  list<TenderMethod>|null  $onlyMethods  null reports every method
+     *                                                present, which is what this
+     *                                                report does for itself; only
+     *                                                DailyTenderReport narrows,
+     *                                                and it says why
      * @return Collection<int, array{method: TenderMethod, total: Money}>
      */
-    public function forPeriod(ReportPeriod $period): Collection
+    public function forPeriod(ReportPeriod $period, ?array $onlyMethods = null): Collection
     {
         $query = DB::table('payment_tenders')
             ->join('payments', 'payments.id', '=', 'payment_tenders.payment_id')
@@ -73,6 +78,23 @@ final class TenderBreakdownReport
             ->groupBy('payment_tenders.method')
             ->orderBy('payment_tenders.method')
             ->selectRaw('payment_tenders.method as method, SUM(payment_tenders.amount) as total_amount');
+
+        if ($onlyMethods !== null) {
+            /*
+             * Narrowing is opt-in, and the caller names what it wants.
+             *
+             * This report itself never narrows: design section 8 puts no
+             * restriction on the payment-method breakdown, and TenderMethod's
+             * docblock warns that a report filtering to the methods it happens
+             * to know about drops money from a total without saying so.
+             * DailyTenderReport is the single caller that narrows, and its own
+             * docblock carries the reason.
+             */
+            $query->whereIn('payment_tenders.method', array_map(
+                static fn (TenderMethod $method): string => $method->value,
+                $onlyMethods,
+            ));
+        }
 
         $period->applyTo($query, 'payments.received_at');
 

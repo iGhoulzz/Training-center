@@ -255,3 +255,30 @@ it('refuses a malformed local date', function () {
 it('refuses an impossible month', function () {
     expect(fn () => ReportPeriod::month(2026, 13))->toThrow(InvalidArgumentException::class);
 });
+
+/*
+|--------------------------------------------------------------------------
+| A reversed range is refused, not quietly emptied
+|--------------------------------------------------------------------------
+|
+| between() took its two dates on trust. Transposed, it built a period whose
+| start was after its end, and applyTo() emitted `>= <later> AND < <earlier>`
+| — a contradiction matching no row. The caller got an empty report, which on
+| a financial figure reads as "nothing was collected" rather than "your dates
+| are the wrong way round". Caught by the cross-review.
+*/
+
+it('refuses a period whose end date is before its start', function () {
+    expect(fn () => ReportPeriod::between('2026-03-31', '2026-03-01'))
+        ->toThrow(InvalidArgumentException::class);
+});
+
+it('accepts a single-day range where the two dates are equal', function () {
+    // The boundary the guard must not over-reach: one day is a legal period,
+    // and it is exactly what day() builds.
+    $between = ReportPeriod::between('2026-03-01', '2026-03-01');
+    $day = ReportPeriod::day('2026-03-01');
+
+    expect($between->startsAt->toDateTimeString())->toBe($day->startsAt->toDateTimeString())
+        ->and($between->endsAt->toDateTimeString())->toBe($day->endsAt->toDateTimeString());
+});

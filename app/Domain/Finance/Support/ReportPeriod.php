@@ -159,9 +159,29 @@ final readonly class ReportPeriod
     public static function between(string $localStart, string $localEnd): self
     {
         $start = self::parseLocalDate($localStart);
-        $dayAfterEnd = self::parseLocalDate($localEnd)->addDay();
+        $end = self::parseLocalDate($localEnd);
 
-        return new self($start->utc(), $dayAfterEnd->utc());
+        /*
+         * A REVERSED RANGE IS REFUSED, NOT QUIETLY EMPTIED.
+         *
+         * Without this, between('2026-03-31', '2026-03-01') builds a period
+         * whose start is after its end, and applyTo() then emits
+         * `>= <later> AND < <earlier>` — a contradiction that matches no row.
+         * The caller gets an empty report rather than an error, which on a
+         * financial figure reads as "nothing was collected" instead of "your
+         * dates are the wrong way round". Refusing a transposed pair loudly is
+         * the only answer that cannot be mistaken for a real result.
+         *
+         * Equal dates stay legal: between('2026-03-01', '2026-03-01') is one
+         * day, the same period day() builds.
+         */
+        if ($end->lessThan($start)) {
+            throw new InvalidArgumentException(
+                "A reporting period ends before it starts: [{$localStart}] to [{$localEnd}]."
+            );
+        }
+
+        return new self($start->utc(), $end->addDay()->utc());
     }
 
     /**

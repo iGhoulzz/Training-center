@@ -65,8 +65,37 @@ final class DailyTenderReport
      * @param  string  $localDate  `Y-m-d`.
      * @return Collection<int, array{method: TenderMethod, total: Money}>
      */
+    /**
+     * The tender methods that physically cross the desk.
+     *
+     * Design section 8 defines this report as "non-reversed **cash and card**
+     * tender totals for a date", and that is the whole list. `bank_transfer` is
+     * "money arriving in the centre's account, evidenced outside this system"
+     * (see `TenderMethod`), so it never passes the till and has no place in a
+     * figure someone reconciles a drawer against; `other` is by definition not
+     * one of the two this report names.
+     *
+     * `TenderMethod`'s docblock requires any report that says "cash and card"
+     * to DECIDE what it does with the other two, rather than filter to the ones
+     * it happens to know about. This constant is that decision, made once and
+     * named — and `DailyTenderReportTest` asserts that a `bank_transfer` tender
+     * received on the day is excluded, so the omission is a stated rule with a
+     * test behind it rather than money dropped from a total silently.
+     *
+     * The payment-method breakdown is the report that shows every method; if a
+     * figure looks short here, that is where the remainder is.
+     *
+     * @var list<TenderMethod>
+     */
+    private const TILL_METHODS = [TenderMethod::Cash, TenderMethod::Card];
+
+    /**
+     * The day's standing cash and card totals, on the centre's calendar.
+     *
+     * @return Collection<int, array{method: TenderMethod, total: Money}>
+     */
     public function forDay(string $localDate): Collection
     {
-        return $this->tenderBreakdown->forPeriod(ReportPeriod::day($localDate));
+        return $this->tenderBreakdown->forPeriod(ReportPeriod::day($localDate), self::TILL_METHODS);
     }
 }

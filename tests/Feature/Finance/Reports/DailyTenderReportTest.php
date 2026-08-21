@@ -2,9 +2,12 @@
 
 declare(strict_types=1);
 
+use App\Domain\Finance\Enums\TenderMethod;
 use App\Domain\Finance\Models\Payment;
 use App\Domain\Finance\Models\PaymentTender;
 use App\Domain\Finance\Reports\DailyTenderReport;
+use App\Domain\Finance\Reports\TenderBreakdownReport;
+use App\Domain\Finance\Support\ReportPeriod;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 
 /*
@@ -37,6 +40,20 @@ beforeEach(function () {
         PaymentTender::factory()->create([
             'payment_id' => $payment->getKey(),
             'amount' => $amount,
+        ]);
+
+        return $payment;
+    };
+
+    /** A standing payment with one tender of the given method. */
+    $this->tenderOfMethod = function (string $receivedAtUtc, TenderMethod $method, string $amount): Payment {
+        $payment = Payment::factory()->create(['received_at' => $receivedAtUtc]);
+
+        PaymentTender::factory()->create([
+            'payment_id' => $payment->getKey(),
+            'method' => $method,
+            'amount' => $amount,
+            'external_reference' => $method === TenderMethod::Card ? 'AUTH-0000000001' : null,
         ]);
 
         return $payment;
@@ -136,4 +153,61 @@ it('assigns a tender at 23:30 UTC on the 15th to 16 March locally, not the 15th'
     expect($sixteenth->has('cash'))->toBeTrue()
         ->and($sixteenth['cash']['total']->toDecimal())->toBe('888.000')
         ->and($fifteenth)->toBeEmpty();
+});
+
+/*
+|--------------------------------------------------------------------------
+| Cash and card only — the decision, not an accident
+|--------------------------------------------------------------------------
+|
+| Design §8 defines this report as "non-reversed **cash and card** tender
+| totals for a date". TenderMethod's docblock requires any report saying
+| "cash and card" to DECIDE what it does with `bank_transfer` and `other`,
+| because a report filtering to the methods it happens to know about drops
+| money from a total without saying so.
+|
+| This is the test that turns the omission into a stated rule. It is a till
+| report: a bank transfer is "money arriving in the centre's account,
+| evidenced outside this system", so it never crosses the desk and has no
+| place in a figure someone reconciles a drawer against. The payment-method
+| breakdown is where every method appears, and TenderBreakdownReportTest
+| asserts that it still does — so the money is visible there, not lost.
+|
+| An earlier version of this report delegated without narrowing and returned
+| all four methods, which the cross-review blocked against the locked design.
+*/
+
+it('reports cash and card only, excluding a bank transfer received the same day', function () {
+    ($this->tenderOfMethod)('2026-03-15 09:00:00', TenderMethod::Cash, '222.000');
+    ($this->tenderOfMethod)('2026-03-15 10:00:00', TenderMethod::Card, '333.000');
+    ($this->tenderOfMethod)('2026-03-15 11:00:00', TenderMethod::BankTransfer, '999.000');
+    ($this->tenderOfMethod)('2026-03-15 12:00:00', TenderMethod::Other, '777.000');
+
+    $byMethod = $this->report->forDay('2026-03-15')->keyBy(
+        fn (array $row): string => $row['method']->value,
+    );
+
+    expect($byMethod->keys()->sort()->values()->all())->toBe(
+        ['card', 'cash'],
+        'The till report returned a method that never crosses the desk.',
+    );
+
+    expect($byMethod['cash']['total']->toDecimal())->toBe('222.000')
+        ->and($byMethod['card']['total']->toDecimal())->toBe('333.000');
+});
+
+it('leaves the excluded methods visible in the payment-method breakdown', function () {
+    /*
+     * The other half of the decision above, and the reason it is not money
+     * silently dropped: what the till report omits, the breakdown still shows
+     * for the same day.
+     */
+    ($this->tenderOfMethod)('2026-03-15 11:00:00', TenderMethod::BankTransfer, '999.000');
+
+    $breakdown = app(TenderBreakdownReport::class)
+        ->forPeriod(ReportPeriod::day('2026-03-15'))
+        ->keyBy(fn (array $row): string => $row['method']->value);
+
+    expect($breakdown->has('bank_transfer'))->toBeTrue()
+        ->and($breakdown['bank_transfer']['total']->toDecimal())->toBe('999.000');
 });
