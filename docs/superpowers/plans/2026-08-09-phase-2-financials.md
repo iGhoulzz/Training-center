@@ -96,7 +96,7 @@ Per `docs/WORKFLOW.md`: **at most one Claude task and one Codex task run at a ti
 | 3 | **T3** Enrol & bill | **T7** Compensation | T3 unblocks T4/T8/T10; T7 unblocks T8 |
 | 4 | **T4** Payments & tenders | **T8** Payroll runs | T4 unblocks T6/T9/T10 |
 | 5 | **T10** Report queries | **T6** Receipts | both unblock T11; T6 unblocks T9 |
-| 6 | **T9** Enrol-and-collect | *(reviews T9)* | T9 lands the page-discovery line T11 needs |
+| 6 | **T9** Enrol-and-collect | **T5P** Charge-adjustment locking correction | T9 lands the page-discovery line T11 needs |
 | 7 | *(reviews T11)* | **T11** Report pages & export | |
 | 8 | **T12** Phase reconciliation | *(reviews T12)* | milestone closes |
 
@@ -204,7 +204,7 @@ grep -n "Gate::policy" app/Providers/AppServiceProvider.php                     
 | 3 | **T3** Enrol & bill | **T7** Compensation | unchanged — different seams |
 | 4 | **T4** Payments & tenders | **T8** Payroll runs | unchanged — neither joins the policy seam |
 | 5 | **T10** Report queries | **T6** Receipts | unchanged |
-| 6 | **T9** Enrol-and-collect | *(reviews T9)* | **split** — T9 lands the `discoverPages()` line |
+| 6 | **T9** Enrol-and-collect | **T5P** Charge-adjustment locking correction | **split** — T9 remains the sole `discoverPages()` writer; T5P joins no seam |
 | 7 | *(reviews T11)* | **T11** Report pages & export | **split** — starts after T9 merges |
 | 8 | **T12** Phase reconciliation | *(reviews T12)* | was wave 7 |
 
@@ -460,6 +460,25 @@ Both Actions super-admin-only with a mandatory reason written into the activity 
 
 **Done when**
 An admin holding every charge read permission cannot adjust or write off, asserted through the real component · adjusting below the allocated total is refused · the reason reaches the activity log and is visible in `ActivityResource` · a written-off charge leaves the debt in the student's history and is flagged as written off (the aged-report exclusion is asserted in task 10, which owns the reports) · `ChargePolicy::create/update/delete` refuse even when the permission is granted · `composer verify` green.
+
+---
+
+## Task 5P — Charge-adjustment locking correction
+**Wave 6 follow-up · Owner: Codex · `p2/t05p-adjust-charge-lock` · depends on 4, 5 · runs alongside T9**
+
+Task 4 added `ChargeBalance::allocatedForUpdate()` after its concurrency review proved that a locking parent-row read does not refresh an earlier InnoDB `REPEATABLE READ` snapshot. Task 5 predates that method and still calls the ordinary `allocatedFor()` after locking the charge. If an adjustment transaction opens a snapshot, waits on a payment holding the charge lock, and then continues after that payment commits, the ordinary read can miss the new allocation and permit the bill below money already received.
+
+**File scope**
+- `app/Domain/Finance/Actions/AdjustChargeAction.php`
+- `tests/Feature/Finance/AdjustChargeConcurrencyTest.php`
+- **Declared plan crossing:** this task entry and the wave table above
+- Joins no seam and shares no file with T9.
+
+**Does**
+Use the existing locking allocation read after the charge lock, so the refusal is decided from the latest committed standing allocations rather than the transaction's earlier snapshot. No new abstraction, schema, permission or UI surface.
+
+**Done when**
+A real subprocess primes a stale snapshot, then blocks in `AdjustChargeAction` behind a transaction that commits an allocation against the same charge · after the lock is released, the adjustment is refused with `ChargeAmountBelowAllocatedException` and the charge amount remains unchanged · reverting only the locking allocation read to `allocatedFor()` makes that concurrency case fail by allowing the adjustment · existing charge-adjustment and balance tests remain green · `composer verify` green.
 
 ---
 
