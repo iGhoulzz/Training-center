@@ -46,14 +46,14 @@ use Illuminate\Support\Facades\Gate;
  *
  * THE ALLOCATED-TOTAL REFUSAL IS DERIVED UNDER THE CHARGE'S OWN LOCK
  * ---------------------------------------------------------------------
- * `ChargeBalance::allocatedFor()` is called after `lockForUpdate()` has taken
- * the charge row, inside this transaction — the same shape `EnrollStudentAction`
- * uses for everything its decision reads. A payment recorded between an
- * unlocked read and this write would otherwise let the amount drop below money
- * that, by the time this transaction commits, has already been taken against
- * it. `ChargeBalance` is the single definition of what has been allocated, in
- * SQL and in PHP alike (design sections 4, 6 and 11); this Action does not sum
- * allocations a second way.
+ * `ChargeBalance::allocatedForUpdate()` is called after `lockForUpdate()` has
+ * taken the charge row. The locking allocation read is load-bearing: under
+ * InnoDB REPEATABLE READ, an ordinary read can keep using a snapshot established
+ * before a competing payment committed, even after this transaction waited for
+ * and acquired the charge lock. That stale answer would let the amount drop
+ * below money already taken against it. `ChargeBalance` remains the single
+ * definition of what has been allocated (design sections 4, 6 and 11); this
+ * Action does not sum allocations a second way.
  *
  * THE REASON HAS NOWHERE TO LIVE EXCEPT THE ACTIVITY LOG
  * ----------------------------------------------------------
@@ -97,7 +97,7 @@ final class AdjustChargeAction
 
             $charge = Charge::query()->lockForUpdate()->findOrFail($data->chargeId);
 
-            $allocated = ChargeBalance::allocatedFor((int) $charge->getKey());
+            $allocated = ChargeBalance::allocatedForUpdate((int) $charge->getKey());
 
             if ($data->amount->isLessThan($allocated)) {
                 throw new ChargeAmountBelowAllocatedException(
