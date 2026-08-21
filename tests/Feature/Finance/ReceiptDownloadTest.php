@@ -132,6 +132,23 @@ it('refuses a valid receipt path belonging to a different payment', function ():
     Storage::disk('private')->assertExists($otherPath);
 });
 
+it('refuses a coherently corrupted payment reference and matching receipt path', function (): void {
+    $canary = 'coherently-corrupted-receipt-canary';
+    $corruptReference = 'RCT-1999-999999';
+    $corruptPath = 'receipts/'.$corruptReference.'.pdf';
+    $this->payment->update([
+        'reference' => $corruptReference,
+        'receipt_path' => $corruptPath,
+    ]);
+    Storage::disk('private')->put($corruptPath, $canary);
+
+    $response = $this->actingAs(($this->actorWith)('view_payment'))->get($this->url);
+
+    $response->assertNotFound();
+    expect($response->getContent())->not->toContain($canary);
+    Storage::disk('private')->assertExists($corruptPath);
+});
+
 it('keeps a reversed payment receipt available for authorized re-download', function (): void {
     $reversingActor = User::factory()->create();
 

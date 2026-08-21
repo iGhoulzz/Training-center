@@ -95,7 +95,7 @@ jobs:
           # platform config. That floor exists to pin dependency resolution;
           # pinning CI to it would test an old patch release nobody runs.
           php-version: '8.4'
-          extensions: mbstring, pdo_mysql, zip, intl, bcmath
+          extensions: mbstring, pdo_mysql, zip, intl, bcmath, gd
           coverage: none
           tools: composer:v2
 

@@ -14,6 +14,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 /**
  * One handover of money, and the receipt the student takes away.
@@ -156,6 +157,16 @@ class Payment extends Model
     public function allocations(): HasMany
     {
         return $this->hasMany(PaymentAllocation::class);
+    }
+
+    /**
+     * The immutable document input captured when this payment was recorded.
+     *
+     * @return HasOne<PaymentReceiptSnapshot, $this>
+     */
+    public function receiptSnapshot(): HasOne
+    {
+        return $this->hasOne(PaymentReceiptSnapshot::class);
     }
 
     /**

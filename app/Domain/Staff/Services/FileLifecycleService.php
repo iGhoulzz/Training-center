@@ -68,6 +68,94 @@ final class FileLifecycleService
      */
     public function persistNewFile(string $disk, string $path, Closure $store, Closure $persist): mixed
     {
+        return $this->withNewFileCompensation(
+            $disk,
+            $path,
+            function (Closure $dispatchCompensation, array $surroundingTransactions) use ($store, $persist): mixed {
+                $store();
+
+                return DB::transaction(function () use ($dispatchCompensation, $persist, $surroundingTransactions): mixed {
+                    if ($surroundingTransactions === []) {
+                        DB::afterRollBack($dispatchCompensation);
+                    }
+
+                    return $persist();
+                });
+            },
+        );
+    }
+
+    /**
+     * Persist a file only after its owner has been locked and re-checked.
+     *
+     * The lock, byte write and pointer write share one transaction. This is the
+     * receipt-generation variant of persistNewFile(): two retrying workers
+     * cannot both write the same deterministic path, while the same provisional
+     * compensation still covers rollback and ambiguous root commits.
+     *
+     * @template TOwner
+     * @template TResult
+     *
+     * @param  Closure(): (TOwner|false)  $lockOwner  false when another worker already won
+     * @param  Closure(): void  $store
+     * @param  Closure(TOwner): TResult  $persist
+     * @return TResult|false
+     *
+     * @throws Throwable
+     */
+    public function persistNewFileWithOwnerLock(
+        string $disk,
+        string $path,
+        Closure $lockOwner,
+        Closure $store,
+        Closure $persist,
+    ): mixed {
+        return $this->withNewFileCompensation(
+            $disk,
+            $path,
+            function (Closure $dispatchCompensation, array $surroundingTransactions) use (
+                $lockOwner,
+                $store,
+                $persist,
+            ): mixed {
+                return DB::transaction(function () use (
+                    $dispatchCompensation,
+                    $surroundingTransactions,
+                    $lockOwner,
+                    $store,
+                    $persist,
+                ): mixed {
+                    if ($surroundingTransactions === []) {
+                        DB::afterRollBack($dispatchCompensation);
+                    }
+
+                    $owner = $lockOwner();
+
+                    if ($owner === false) {
+                        return false;
+                    }
+
+                    $store();
+
+                    return $persist($owner);
+                });
+            },
+        );
+    }
+
+    /**
+     * @template TResult
+     *
+     * @param  Closure(Closure(): void, array<int, DatabaseTransactionRecord>): TResult  $operation
+     * @return TResult
+     *
+     * @throws Throwable
+     */
+    private function withNewFileCompensation(
+        string $disk,
+        string $path,
+        Closure $operation,
+    ): mixed {
         $compensationId = $this->recordCompensation($disk, $path);
 
         $dispatchCompensation = function () use ($compensationId): void {
@@ -108,22 +196,7 @@ final class FileLifecycleService
         }
 
         try {
-            /*
-             * Only now do bytes touch storage. If recording the independent
-             * receipt failed above, the store closure never runs and there are
-             * no untracked bytes to compensate.
-             */
-            $store();
-
-            $result = DB::transaction(function () use ($dispatchCompensation, $persist, $surroundingTransactions): mixed {
-                if ($surroundingTransactions === []) {
-                    // No application transaction surrounded us, so this Action's
-                    // own transaction is the rollback boundary.
-                    DB::afterRollBack($dispatchCompensation);
-                }
-
-                return $persist();
-            });
+            $result = $operation($dispatchCompensation, $surroundingTransactions);
         } catch (Throwable $exception) {
             /*
              * Covers a savepoint failure whose parent catches and commits, and

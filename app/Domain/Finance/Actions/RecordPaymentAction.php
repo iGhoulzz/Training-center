@@ -10,8 +10,10 @@ use App\Domain\Finance\Exceptions\IdempotencyConflictException;
 use App\Domain\Finance\Jobs\GenerateReceiptJob;
 use App\Domain\Finance\Models\Payment;
 use App\Domain\Finance\Models\PaymentAllocation;
+use App\Domain\Finance\Models\PaymentReceiptSnapshot;
 use App\Domain\Finance\Models\PaymentTender;
 use App\Domain\Finance\Services\PaymentInvariantService;
+use App\Domain\Finance\Support\ChargeBalance;
 use App\Domain\Finance\Support\Reference;
 use App\Models\User;
 use App\Support\CentreCalendar;
@@ -134,7 +136,7 @@ final class RecordPaymentAction
              * `enrollment_id` is a plain foreign key column on the locked
              * row, so reading it costs nothing extra.
              */
-            $studentId = $this->enrollments->studentIdFor((int) $charge->enrollment_id);
+            $receiptContext = $this->enrollments->receiptContextFor((int) $charge->enrollment_id);
 
             // Generated here, never from the request. See the class docblock.
             $receivedAt = now();
@@ -142,12 +144,13 @@ final class RecordPaymentAction
             return $this->causers->withCauser($actor, function () use (
                 $actor,
                 $data,
-                $studentId,
+                $charge,
+                $receiptContext,
                 $receivedAt,
             ): Payment {
                 try {
                     $payment = Payment::create([
-                        'student_id' => $studentId,
+                        'student_id' => $receiptContext['student_id'],
                         // Replaced below, before this transaction commits.
                         'reference' => Reference::placeholder(),
                         'idempotency_key' => $data->idempotencyKey,
@@ -194,6 +197,25 @@ final class RecordPaymentAction
                         CentreCalendar::yearOf($payment->received_at),
                         (int) $payment->getKey(),
                     ),
+                ]);
+
+                PaymentReceiptSnapshot::create([
+                    'payment_id' => (int) $payment->getKey(),
+                    'locale' => app()->getLocale(),
+                    'student_code' => $receiptContext['student_code'],
+                    'student_name' => $receiptContext['student_name'],
+                    'enrollment_reference' => $receiptContext['enrollment_reference'],
+                    'course_code' => $receiptContext['course_code'],
+                    'batch_code' => $receiptContext['batch_code'],
+                    'charge_reference' => $charge->reference,
+                    'list_price' => $charge->list_price,
+                    'discount_percentage' => $charge->discount_percentage,
+                    'final_charge' => $charge->amount,
+                    'amount_paid' => $data->allocation->toDecimal(),
+                    'remaining_balance' => ChargeBalance::outstandingForUpdate($data->chargeId)->toDecimal(),
+                    'recorded_by_name' => $actor->name,
+                    'payment_reference' => $payment->reference,
+                    'received_at' => $receivedAt,
                 ]);
 
                 GenerateReceiptJob::dispatch((int) $payment->getKey())->afterCommit();

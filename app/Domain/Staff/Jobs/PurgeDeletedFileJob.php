@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Staff\Jobs;
 
+use App\Domain\Finance\Services\ReceiptFileOwnershipService;
 use App\Domain\Staff\Actions\UpdateStaffPhotoAction;
 use App\Domain\Staff\Exceptions\FileStorageException;
 use App\Domain\Staff\Models\PendingFileDeletion;
@@ -78,8 +79,10 @@ class PurgeDeletedFileJob implements ShouldQueue
         return [10, 60, 300, 900];
     }
 
-    public function handle(): void
+    public function handle(?ReceiptFileOwnershipService $receiptFiles = null): void
     {
+        $receiptFiles ??= app(ReceiptFileOwnershipService::class);
+
         $pending = $this->usesCompensationConnection
             ? PendingFileDeletion::on(FileLifecycleService::compensationConnectionName())
                 ->find($this->pendingFileDeletionId)
@@ -97,7 +100,7 @@ class PurgeDeletedFileJob implements ShouldQueue
          * ambiguous commit result. Generated paths are never reassigned, so an
          * existing owner means this receipt is stale and the bytes must stay.
          */
-        if ($this->usesCompensationConnection && $this->isOwned($pending)) {
+        if ($this->usesCompensationConnection && $this->isOwned($pending, $receiptFiles)) {
             $pending->delete();
 
             return;
@@ -123,9 +126,15 @@ class PurgeDeletedFileJob implements ShouldQueue
         $pending->delete();
     }
 
-    private function isOwned(PendingFileDeletion $pending): bool
-    {
+    private function isOwned(
+        PendingFileDeletion $pending,
+        ReceiptFileOwnershipService $receiptFiles,
+    ): bool {
         $connection = FileLifecycleService::compensationConnectionName();
+
+        if ($receiptFiles->owns($connection, $pending->disk, $pending->path)) {
+            return true;
+        }
 
         return DB::connection($connection)->transaction(function () use ($connection, $pending): bool {
             /*

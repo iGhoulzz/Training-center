@@ -1,7 +1,7 @@
 # Phase 2 — Financials: Design
 
 **Date:** 2026-08-09
-**Status:** Revision 6 — **approved**. Incorporates three Codex step-0 rounds, one independent pre-review, a final bounded cleanup, and the dated implementation correction below. Authoritative for phase 2 implementation.
+**Status:** Revision 7 — **approved**. Incorporates three Codex step-0 rounds, one independent pre-review, a final bounded cleanup, and the dated implementation corrections below. Authoritative for phase 2 implementation.
 **Supersedes:** the phase 2 sections of `2026-07-20-training-center-dashboard-design.md` wherever the two disagree. Those sections were written at architectural detail before a charge model existed; this document is at implementation detail and is authoritative for phase 2.
 
 **Revision 2 changed:** the enrolment write path (§12), salaried payroll segmentation and post-finalization correction (§7), payment idempotency and derived student identity (§5), the pricing write boundary (§3), charge due dates (§4), reporting time zones (§8), compensation locking (§7), and the schema guarantees in §9. Two review findings were **declined** — see §16.
@@ -9,6 +9,8 @@
 **Revision 5 changed:** the pricing gate, which revision 4 built on `disabled()` and which would have failed an existing phase 1 test and blocked admins from creating courses (§3) · the exact seeded permission set, without which `ChangeCompensationAction` had no ability to authorize on and the seeder test would fail (§10) · an owner for the receipt path columns (§5, §11) · the fingerprint's excluded fields, stated rather than implied (§5) · the adjustment line's undecided column (§9) · `LocalizationTest`'s hardcoded dataset (§12) · aging buckets overlapping at day 90 (§8) · the unpadded backfill format (§2) · and the retraction of revision 4's claim that the phase 1 price tests invert (§12).
 
 **Implementation correction (2026-08-15):** Task 8 had already-approved draft-time signed bonuses and deductions, and draft payroll-run deletion, but omitted the legal Action writers. `AddPayrollLineAdjustmentAction` and `DeletePayrollRunAction` now name those paths. No business decision changes: without them the approved UI behavior would either be absent or bypass the Action-only Finance write boundary.
+
+**Revision 7 changed (2026-08-21):** Task 6's first implementation tried to reconstruct a receipt when its queued job eventually ran. That cannot produce the document the student was promised if a charge, name or code changes after payment, and `afterCommit()` alone cannot recover a committed payment when the Redis enqueue itself fails. The owner approved an immutable typed receipt snapshot created inside the payment transaction, plus a bounded reconciliation sweep for durable delivery (§5, §9, §11, §14). This revision also replaces mutable-reference path trust with `ReceiptLocation`, reuses the existing file-lifecycle compensation mechanism, captures locale at payment time, and records the actual GD deployment prerequisite (§8). It explicitly rejects making activity-log ids, timestamp precision or a new reversal lock part of receipt correctness: the snapshot makes event ordering irrelevant, and the activity log remains audit evidence rather than a financial source.
 
 **Revision 3 changed:** reference generation, which revision 2 left impossible — a non-nullable column written after insert (§2) · the enrolment backfill, split into three recoverable migrations (§2) · frozen instructor hours, dropped by revision 2 in violation of the system design (§7) · adjustment-run invariants, posting period and lock ordering (§7) · idempotency fingerprinting (§5) · the pricing hook, which as revision 2 wrote it would have refused **every ordinary admin edit** (§3) · explicit actor-first authorization on the payment Actions and the cross-domain route to the student (§5) · the `EnrollmentQueryService` contract, widened to four consumers (§12).
 
@@ -57,7 +59,7 @@ Every finalized payment produces a PDF the student is handed. It shows:
 
 student code and name · enrolment reference · course and batch codes · bill reference · original price · discount · final charge · **amount paid** · cash/card breakdown · **remaining balance** · payment date · recording staff member.
 
-Receipts are generated to the private disk (§6 of the system design) and served only through a policy-authorized download. Every string goes through `__()`.
+Receipts are generated to the private disk (§6 of the system design) and served only through a policy-authorized download. Every string goes through `__()`. The PDF is rendered from the immutable receipt snapshot described in §5, not from whichever mutable student, course, batch or charge values happen to exist when the queue worker runs.
 
 ### Reference series
 
@@ -217,7 +219,7 @@ Withdrawal is **not** a financial event. Withdrawing an enrolment leaves the bil
 
 `RecordPaymentAction` is the **receipt-confirmation boundary**, used only after cash has been physically counted or the card terminal has shown Approved. The application records an event that already happened; it does not authorise one.
 
-`RecordPaymentAction` and `ReversePaymentAction` are ordinary request-path Actions: **actor first, self-authorizing via `Gate::forUser($actor)`**, exactly as `docs/ENGINEERING.md` requires and as every phase 1 Action already does. They are not internal collaborators — that exemption belongs only to `IssueChargeAction` and `DeleteUncommittedChargeAction` (§10). Each is tested by invoking the Action directly with an unauthorized actor and asserting the denial, not merely by checking that a Filament button is hidden.
+`RecordPaymentAction` and `ReversePaymentAction` are ordinary request-path Actions: **actor first, self-authorizing via `Gate::forUser($actor)`**, exactly as `docs/ENGINEERING.md` requires and as every phase 1 Action already does. They are not internal collaborators — the exhaustive exemptions and their sole callers are listed in §10. Each request-path Action is tested by invoking it directly with an unauthorized actor and asserting the denial, not merely by checking that a Filament button is hidden.
 
 ### One receipt, one or more tenders
 
@@ -273,7 +275,7 @@ Tested sequentially (the same key and request twice yields one row), concurrentl
 
 ### Finalization is atomic
 
-There is no draft. Payment, tenders and allocations are written in **one transaction** that checks every invariant under lock, then generates the receipt after commit. A half-finished payment row cannot exist to be misread later.
+There is no draft. Payment, tenders, allocations and the one-to-one receipt snapshot are written in **one transaction** that checks every invariant under lock, then dispatches receipt generation after commit. A half-finished payment row cannot exist to be misread later, and a committed payment always carries enough durable data for a later worker or reconciliation sweep to render the receipt.
 
 Two invariants are checked inside that transaction, with the charge row locked:
 
@@ -282,11 +284,54 @@ Two invariants are checked inside that transaction, with the charge row locked:
 
 Never accept more than is outstanding. For cash, return change and record only the amount accepted. For card, enter the exact amount charged.
 
+### The receipt is a frozen document, not a delayed query
+
+Receipt generation is asynchronous, but **the receipt's meaning is fixed inside `RecordPaymentAction`'s payment transaction**. That transaction creates exactly one typed `payment_receipt_snapshots` row for the payment. The unique `payment_id` makes the relationship one-to-one and an idempotency replay returns the existing payment and snapshot rather than creating either again.
+
+The snapshot freezes every rendered value that could otherwise move before the job runs: locale; student code and display name; enrolment, course, batch and charge references/codes; list/original price; discount percentage; final charge; amount accepted; remaining balance; recording staff display name; and the payment reference and received time shown on the document. Money columns are `decimal(12,3)`, discount precision remains `decimal(5,2)`, and the snapshot is never edited after creation. Tender rows are already immutable financial source rows, so the cash/card breakdown continues to come from `payment_tenders` rather than a second copied tender structure.
+
+This is a deliberate and narrow distinction from the project's **no derived financial values stored** rule. The snapshot is the content of an issued historical document, analogous to a finalized payroll line: it is never read to calculate a live balance, authorize or validate a payment, or build a financial report. Those consumers continue to derive from charges, tenders and allocations. A test changes the live charge and mutable display data after payment, proves the live financial queries see the current source rows, and proves a delayed or repeated receipt render still reproduces the counter-time document.
+
+The alternatives were rejected for concrete reasons:
+
+- Re-querying live models in `GenerateReceiptJob` makes a delayed receipt silently reflect later corrections and renames.
+- A JSON snapshot on `payments` loses database types and constraints for money and required document fields.
+- Reconstructing every historical revision, or adding microsecond event ordering, is substantially more machinery and still does not freeze names and codes.
+- Rendering synchronously holds up the counter and creates a database/filesystem atomicity problem; the queued renderer stays.
+
+The snapshot removes any need to order financial events through the activity log. Activity ids can have gaps because model logging may be disabled or bypassed on trusted paths, so the activity log remains append-only audit evidence and **never becomes a source of financial truth or event order**. No `datetime(6)` migration and no `ReversePaymentAction` change belongs to this correction. If a reversal commits before payment recording, the locked live outstanding calculation sees it; if it commits later, the already-created snapshot is the issued receipt's truth.
+
+### Delivery is recoverable, bounded and fair
+
+`afterCommit()` prevents a rolled-back payment from queuing a receipt, but it does not make delivery durable: the database can commit and the process or Redis enqueue can fail before the job exists. The snapshot plus a null `payments.receipt_path` is therefore the durable pending marker. Immediate dispatch remains the normal path; a scheduled `ReconcilePendingReceiptsCommand` repairs only stale pending rows.
+
+The command runs every five minutes through `routes/console.php`, is protected by `withoutOverlapping(15)`, and delegates Finance writes to `ReconcilePendingReceiptsAction`. The explicit 15-minute mutex expiry prevents a killed sweep from inheriting Laravel's 24-hour default lock while still giving this bounded dispatch-only command ample time to finish. That internal Action is the sole writer of mutable operational metadata `payment_receipt_snapshots.last_reconciliation_attempt_at`. It selects at most 100 snapshots whose payment still has no receipt, whose `created_at` is at least ten minutes old, and whose attempt timestamp is null or at least ten minutes old; it orders **never attempted first**, then oldest attempted, then id, and takes a row lock to re-check both age predicates and receipt absence before committing the attempt stamp and dispatching each job. A new snapshot therefore cannot race its normal queued job at the next five-minute tick, and a manual command racing the scheduler cannot treat the same stale read as two unstamped attempts. An enqueue failure is reported through the existing non-throwing reporting path and stays pending for a later run.
+
+The ordering is load-bearing. A bounded sweep ordered only by immutable payment id can retry the same failing first 100 forever and starve its tail. An age filter alone only postpones the same starvation until those timestamps become eligible again. The test therefore needs two runs and a backlog larger than the batch: after the first batch is stamped and made eligible again, the second run must dispatch the never-attempted tail before retrying old failures.
+
+`routes/console.php` is a declared scheduling seam. Task 6 appends exactly this schedule without disturbing backup or pending-file cleanup schedules; task 12 must re-read and count that seam against `main` during phase reconciliation.
+
+### Receipt file identity and cleanup
+
+`ReceiptLocation` is the only source of the `RCT-{year}-{id}` identity and `receipts/{reference}.pdf` private path. It derives both from immutable payment identity and the centre-local received date, and verifies the stored payment reference and receipt pointer against that result. The generator and download controller do not construct paths independently and never treat mutable stored reference/path text as authority. A crafted coherent change to both fields therefore cannot traverse directories, cross private namespaces or return another payment's receipt.
+
+Receipt persistence reuses `FileLifecycleService` rather than introducing a third near-copy of the already-solved database/filesystem compensation protocol. The receipt-specific entry point creates its provisional cleanup record before writing bytes, attaches the pointer and activity event while holding the payment row lock, and cancels compensation only after the root database transaction commits. Error handling uses the service's non-throwing reporting path; a bare `report()` is forbidden because a full disk may also break the log channel.
+
+`PurgeDeletedFileJob` consults the Finance-published `ReceiptFileOwnershipService` before deleting a receipt candidate. The purge passes `FileLifecycleService::compensationConnectionName()` into that service, and the service performs its payment-locking ownership read on that exact connection rather than the owning/default connection. This preserves the existing rule that cleanup may run while the root transaction is rolling back without re-entering or observing its connection incorrectly. Ownership is recognized only when disk and path exactly match `ReceiptLocation` and the stored pointer. A failed render may therefore be cleaned without deleting a later successful render at the same deterministic path, and a committed receipt cannot be mistaken for an orphan.
+
+### Locale and renderer contract
+
+The effective locale is captured in the snapshot at payment time. `GenerateReceiptJob` renders under that locale with restoration guaranteed after the attempt; the template derives both `<html lang>` and `dir` from it. Codes, references, dates and amounts get explicit LTR isolation inside otherwise direction-neutral markup. mPDF-compatible layout uses a full-width table and symmetric padding and does not introduce physical left/right CSS properties. Rendered tests prove English lacks the PDF RTL direction flag and an Arabic-locale render carries it, with visual inspection in both directions. The Arabic catalogue remains empty until phase 4, so this phase proves structural direction with fallback copy rather than claiming Arabic translation coverage.
+
+The job declares a 60-second timeout, below the queue connection's 90-second `retry_after`, in addition to its bounded retries and backoff. Tests that launch child PHP processes point the private disk at the parent's isolated fake root and assert that root explicitly; no receipt test may write to the real `storage/app/secure`.
+
+The `afterCommit()` test uses a synchronous queue so removing `afterCommit()` is observable: before an outer transaction commits there is no file, pointer or receipt event; rollback leaves none; commit generates all three. A database-backed queue row that rolls back with the payment is not sufficient evidence, because that test would pass even if `afterCommit()` were removed.
+
 ### Reversal
 
 Super admin only, via `reverse_payment`. A **set-once lifecycle transition on an immutable row**: `reversed_at`, `reversed_by` and `reversal_reason` are written once and never unset. The payment's financial facts — student, reference, tenders, allocations — are never rewritten and never deleted.
 
-**Two columns on `payments` are written after creation and are not financial facts:** `receipt_disk` and `receipt_path`. The receipt is generated asynchronously after commit, so its location cannot be known when the payment is written. They are set once, by `AttachReceiptAction` (§11), which is an internal collaborator callable only from `GenerateReceiptJob` and refuses a payment that already has a receipt. The immutability claimed above is about what the payment *says happened*; a pointer to a rendered document is not part of that, and saying so explicitly is better than an architecture test flagging a write nobody scoped.
+**Two columns on `payments` are written after creation and are not financial facts:** `receipt_disk` and `receipt_path`. The receipt is generated asynchronously after commit, so its location cannot be known when the payment is written. They are set once, by `AttachReceiptAction` (§11), which is an internal collaborator callable only from `GenerateReceiptJob` and refuses a payment that already has a receipt. The snapshot's `last_reconciliation_attempt_at` is also mutable, but only as queue-delivery metadata written by `ReconcilePendingReceiptsAction`; it changes neither the payment nor the issued document. The immutability claimed above is about what the payment and snapshot *say happened*, not where the rendered bytes are stored or when delivery was retried.
 
 This reuses the shape the system design blessed for phase 3 certificates rather than inventing a second answer.
 
@@ -422,7 +467,9 @@ Because no overpayment can exist, collected revenue reconciles exactly against t
 
 **Excel costs no new dependency.** Filament v5 ships queued XLSX export — `Filament\Actions\Exports\Jobs\CreateXlsxFile` over `openspout/openspout`, already installed as a Filament dependency. Maatwebsite Excel is **not** added unless a later requirement genuinely needs formulas, charts or multi-sheet workbooks. The `exports` and `failed_import_rows` migrations are not published in this project yet and must be.
 
-**PDF is mPDF.** Native Arabic letter shaping and RTL, pure PHP, no system dependency, works inside a queue worker. Chosen over Chromium via Browsershot, which renders better but adds a runtime dependency whose failure takes every receipt and export with it; and over dompdf, whose Arabic support is effectively broken and which phase 4 would have to replace. Decided now, for phase 4's benefit.
+**PDF is mPDF.** Native Arabic letter shaping and RTL, PHP-native, and suitable for a queue worker without a Node/Chromium service. Chosen over Chromium via Browsershot, which renders better but adds a browser runtime whose failure takes every receipt and export with it; and over dompdf, whose Arabic support is effectively broken and which phase 4 would have to replace. Decided now, for phase 4's benefit.
+
+It is not dependency-free: the locked mPDF release requires **PHP GD**. CI installs `gd` explicitly rather than relying on setup defaults. The VPS must enable GD for both PHP 8.4 CLI (queue workers) and FPM, and queue workers must be restarted after the extension or a new release is installed. Deployment is incomplete until a worker can render a real PDF; Composer installation with `--ignore-platform-req=ext-gd` is not an accepted runtime configuration.
 
 Every export runs as a queued job and notifies in-app when ready. **Export queries are scoped by the requesting user's permissions** — an export is a read path and gets the same authorization as the screen it came from. **Formula-like user input is neutralized**: any exported cell beginning with `=`, `+`, `-`, `@`, tab or carriage return is prefixed so a spreadsheet treats it as text.
 
@@ -430,7 +477,7 @@ Every export runs as a queued job and notifies in-app when ready. **Export queri
 
 ## 9. Data model
 
-Nine new tables, one altered.
+Ten new tables, one altered. The tenth, `payment_receipt_snapshots`, is an additive Task 6 correction discovered after the foundation migrations had merged; it is therefore created by a new migration rather than by editing Task 1's history.
 
 **Altered:** `enrollments` gains `reference` (unique, `ENR-…`), backfilled as described in §2.
 
@@ -446,7 +493,14 @@ Nine new tables, one altered.
 ### `payments`
 `id, student_id (FK restrict, indexed), reference (unique), idempotency_key (unique), request_fingerprint, received_at (indexed), recorded_by (FK restrict), notes, reversed_at, reversed_by (nullable FK restrict), reversal_reason, receipt_disk, receipt_path, timestamps`
 
-`CHECK` that the three reversal columns are all null or all present. **No amount, no method, no status.**
+`CHECK` that the three reversal columns are all null or all present. **No amount, no method, no status.** Task 6 adds an index on nullable `receipt_path`, in its own migration, because the reconciliation sweep selects the small pending set with `receipt_path IS NULL` on every run.
+
+### `payment_receipt_snapshots`
+`id, payment_id (unique FK restrict), locale, student_code, student_name, enrollment_reference, course_code, batch_code, charge_reference, list_price, discount_percentage (nullable), final_charge, amount_paid, remaining_balance, recorded_by_name, payment_reference, received_at, last_reconciliation_attempt_at (nullable, indexed), timestamps (created_at indexed)`
+
+All receipt money is `decimal(12,3)` and `discount_percentage` is `decimal(5,2)`. Non-null document fields remain non-null, amounts are non-negative, and the unique `payment_id` is the database guarantee that a payment has one historical snapshot. The row is inserted by `RecordPaymentAction` in the same transaction as its payment, tenders and allocation. Every document-content column is immutable; only `last_reconciliation_attempt_at` may change, through `ReconcilePendingReceiptsAction`, and it is delivery metadata rather than receipt content.
+
+This table is not a balance cache. `ChargeBalance`, `PaymentInvariantService`, every report query and every authorization decision read the financial source rows and never this snapshot. Its sole consumers are receipt generation, download/file ownership validation and receipt-delivery reconciliation.
 
 ### `payment_tenders`
 `id, payment_id (FK restrict), method (indexed), amount, external_reference (nullable), timestamps`
@@ -517,6 +571,8 @@ Discount definitions are created, deactivated and deleted under **`manage_pricin
 
 **Write abilities deliberately not seeded**, with policies that refuse unconditionally and tests that grant the permission anyway: `create_charge`, `update_charge`, `delete_charge`, `update_payment`, `delete_payment`, `update_staff_compensation`, `update_payroll_run`, `update_discount`.
 
+`PaymentReceiptSnapshot` is internal issued-document storage, not a sixth Finance resource. Its Policy refuses direct view and every write unconditionally, no snapshot permissions are seeded, and receipt download continues to authorize the owning `Payment`. This keeps the global every-model-has-a-Policy rule without inventing a user-facing snapshot surface.
+
 | Role | Holds |
 |---|---|
 | super_admin | everything |
@@ -532,15 +588,16 @@ Staff hold `create_enrollment` but no charge permission. If charge issuance dema
 
 `EnrollAndBillAction` authorizes `create` on `Enrollment`, plus `apply_discount` when a discount was selected, and issues the bill as a system consequence of a permitted act.
 
-**Three Actions are internal collaborators rather than request-path Actions.** Each performs no ability check of its own, each is a system consequence of an act already authorized elsewhere, and an architecture test asserts each has **exactly one caller**:
+**Four Actions are internal collaborators rather than request-path Actions.** Each performs no ability check of its own, each is a system consequence of an act already authorized elsewhere or a scheduled recovery of that consequence, and an architecture test asserts each has **exactly one caller**:
 
 | Action | Sole caller | Authorized by |
 |---|---|---|
 | `IssueChargeAction` | `EnrollAndBillAction` | `create` on `Enrollment` |
 | `DeleteUncommittedChargeAction` | `DeleteEnrollmentAction` | `delete_enrollment` |
 | `AttachReceiptAction` | `GenerateReceiptJob` | the payment it belongs to, already recorded |
+| `ReconcilePendingReceiptsAction` | `ReconcilePendingReceiptsCommand` | scheduled recovery of already-recorded payments |
 
-The list is exhaustive. Anything else that performs no ability check is a defect, not a fourth exception.
+The list is exhaustive. Anything else that performs no ability check is a defect, not a fifth exception.
 
 This is stated at length because it is the one deviation from "every Action authorizes itself", and an unexplained deviation is indistinguishable from a bug.
 
@@ -557,8 +614,10 @@ Per `docs/ENGINEERING.md`, any design section touching money must name its write
 | Correct a charge | `AdjustChargeAction` |
 | Write off a debt | `WriteOffChargeAction` |
 | Record money in | `RecordPaymentAction` — tenders, allocation and finalization in one atomic call |
+| Freeze issued receipt content | `RecordPaymentAction` — creates the typed one-to-one snapshot inside the same payment transaction |
 | Undo a payment | `ReversePaymentAction` |
 | Attach a rendered receipt | `AttachReceiptAction` — internal collaborator (§10), sole caller `GenerateReceiptJob`, set-once |
+| Retry missing receipt delivery | `ReconcilePendingReceiptsAction` — internal collaborator (§10), sole caller `ReconcilePendingReceiptsCommand`; writes only the attempt timestamp and dispatches generation |
 | Change a rate | `ChangeCompensationAction` |
 | Payroll | `CreatePayrollRunAction`, `FinalizePayrollRunAction`, `AdjustPayrollLineAction`, `AddPayrollLineAdjustmentAction`, `DeletePayrollRunAction` |
 | Change a price | `UpdateCoursePriceAction`, `UpdateBatchPriceAction` — the only writers of either price column |
@@ -568,7 +627,7 @@ Per `docs/ENGINEERING.md`, any design section touching money must name its write
 
 `ChargeQueryService` is **read-only** and performs no writes. Deleting a bill alongside its enrolment goes through `DeleteUncommittedChargeAction`, which locks the charge and checks every disqualifying condition — any allocation, any adjustment, any write-off — **inside the transaction that deletes it**. A query service that also deletes is a write path wearing a reader's name.
 
-**Prohibited, and enforced by extending `tests/Feature/Staff/ActionBoundaryArchTest.php`:** any write to a Finance table outside these Actions · `->relationship()` on a Filament field an Action owns · a `paid_amount`-style cached column · any status string column in Finance · float casts on money · `IssueChargeAction`, `DeleteUncommittedChargeAction` or `AttachReceiptAction` called from anything other than its one permitted caller · **`EnrollStudentAction` called from application code outside `EnrollAndBillAction`** (§12) · any write to a price column outside the two pricing Actions.
+**Prohibited, and enforced by extending `tests/Feature/Staff/ActionBoundaryArchTest.php`:** any write to a Finance table outside these Actions · `->relationship()` on a Filament field an Action owns · a `paid_amount`-style cached column · any status string column in Finance · float casts on money · receipt snapshots read by live balance, validation or report code · `IssueChargeAction`, `DeleteUncommittedChargeAction`, `AttachReceiptAction` or `ReconcilePendingReceiptsAction` called from anything other than its one permitted caller · **`EnrollStudentAction` called from application code outside `EnrollAndBillAction`** (§12) · any write to a price column outside the two pricing Actions.
 
 **What those tests are worth is unchanged.** They scan for known-bad code shapes and are a fast early warning, not proof. Where a protection matters, the proof is behavioural: drive the real Filament component and assert the outcome.
 
@@ -580,6 +639,11 @@ Per `docs/ENGINEERING.md`, any design section touching money must name its write
 | A payment never exceeds outstanding | Charge locked, outstanding derived under that lock |
 | A payment is not duplicated by a retry | **Unique index** on `idempotency_key` |
 | A replayed key returns the same request, not a different one | Fingerprint comparison on collision, refusing on mismatch |
+| One immutable receipt snapshot per payment | Snapshot created in the payment transaction + unique `payment_id` |
+| A lost post-commit enqueue does not lose the receipt forever | Durable null receipt pointer + stale bounded reconciliation sweep |
+| A bounded reconciliation batch does not starve its tail | Never-attempted-first, then oldest-attempted ordering; proved across two runs |
+| A receipt render cannot drift after later edits | Job reads immutable snapshot content and immutable tender rows, never live mutable display/charge fields |
+| Receipt files cannot cross payment namespaces | `ReceiptLocation` derives and verifies reference, disk and path from immutable payment identity |
 | A reference is never absent | **`NOT NULL UNIQUE`**, satisfied by a placeholder replaced in the same transaction |
 | Payroll locks do not deadlock | Deterministic ascending user-id lock order |
 | Amounts are positive | **MySQL `CHECK`** |
@@ -644,7 +708,7 @@ Task 2 therefore **adds** super-admin cases to both files rather than rewriting 
 
 From this phase the log records **all financial mutations** (system design §7): charge issuance, adjustment and write-off with their reasons, payment recording with its tender breakdown, reversal with its reason, compensation changes, payroll creation and finalization, line and run adjustments, price changes, and discount creation and deactivation.
 
-The log remains **append-only**.
+The log remains **append-only**. Receipt generation records its semantic event, but neither that event's id nor its timestamp orders financial history; the payment transaction and immutable receipt snapshot own that meaning (§5).
 
 ### Internationalization
 
@@ -689,6 +753,15 @@ Beyond `composer verify`:
 - **A correction posts to the corrected line's period**, asserted by correcting March in June and reading March's wage cost.
 - **A reversed payment is asserted absent from every report individually.**
 - **Report boundaries are tested at local midnight and month edges** in `Africa/Tripoli`.
+- **Receipt snapshots are created atomically with payments** and an idempotency replay leaves exactly one snapshot and one receipt.
+- **A delayed receipt render survives later edits** to the charge and every mutable displayed name/code, while live balances and reports continue to read current source rows rather than the snapshot.
+- **The post-commit boundary is mutation-proved with a synchronous queue:** no file, pointer or event before an outer commit; none after rollback; all three after commit.
+- **Receipt reconciliation is proved across two bounded runs** with more eligible rows than one batch. A newborn snapshot is not dispatched before its ten-minute age threshold, and the lock-time recheck protects the same rule. The second run dispatches never-attempted tail rows before old attempted rows even after the old timestamps become eligible again. The scheduler test proves the five-minute frequency and explicit 15-minute mutex expiry.
+- **A lost enqueue is recoverable:** the committed payment and snapshot stay pending, a later sweep dispatches them, and repeated sweep/job runs still produce one pointer, file and activity event.
+- **Every child-process receipt test uses the parent's isolated private-disk root** and proves it never writes to the real secure disk.
+- **Canonical location tests reject traversal, a second payment's receipt, and coherent reference/path corruption.** Orphan cleanup refuses an exact owned receipt and may delete only an unowned canonical candidate.
+- **Locale is captured at payment time and restored after generation.** Rendered English lacks mPDF's RTL direction marker; rendered Arabic carries it; both are visually checked with direction-neutral markup.
+- **The receipt job's timeout is lower than the queue connection's `retry_after`, and CI explicitly provides GD.**
 - **Rounding is tested on a case that rounds.**
 - **The pricing boundary is tested from both sides** — super admin persists, admin's crafted write does not.
 - **Every security claim in this document has a test named after it.**
@@ -726,6 +799,10 @@ Beyond `composer verify`:
 | "The phase 1 price tests invert" | They do not; task 2 adds cases to both files (revision 5) |
 | An unstated finance permission set | The exact seeded set, enforced by `RolePermissionSeederTest` (revision 5) |
 | Receipt path columns with no write owner | `AttachReceiptAction`, set-once (revision 5) |
+| A delayed receipt reconstructed from live mutable models | A typed immutable document snapshot created inside the payment transaction (revision 7) |
+| `afterCommit()` dispatch as the only receipt-delivery guarantee | A durable pending marker plus bounded scheduled reconciliation (revision 7) |
+| Second-precision/activity-log ordering for historical receipt reconstruction | No event-order dependency; the counter-time snapshot is authoritative for the issued document (revision 7) |
+| Independent receipt file cleanup and path construction | Shared `FileLifecycleService` compensation plus canonical `ReceiptLocation` and ownership validation (revision 7) |
 
 ---
 

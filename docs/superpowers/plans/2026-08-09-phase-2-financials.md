@@ -1,6 +1,6 @@
 # Phase 2 — Financials Implementation Plan
 
-**Status:** Revision 6 — the financial design review is closed. Scheduling is reorganised into waves under the revised `docs/WORKFLOW.md`. **Task 1 may begin after the scheduling pull request is approved and merged.**
+**Status:** Revision 7 — the financial design review is closed. Tasks 1–5, 7, 8 and the two performance/boundary follow-ups have merged; Task 6 is implementing the owner-approved receipt reliability correction recorded below.
 
 **Goal:** A working system where a student is enrolled, billed, and takes a receipt away from the desk; where balances and revenue are always derivable from source rows; where staff compensation is configured and payroll is **approved and posted** without history moving; and where every figure exports to Excel and PDF.
 
@@ -72,6 +72,16 @@ Four questions were carried into that round and answered: nothing else under `ap
 
 Task 8 already owned the approved draft-time signed payroll bonuses and deductions, and the design already permitted draft payroll-run deletion, but its Action list omitted the only legal writers. This correction adds those writers without changing a locked business decision: without them the approved UI behavior would either be missing or bypass the Action-only Finance boundary.
 
+### Task 6 receipt correction (2026-08-21)
+
+The first Task 6 implementation rendered a historical-looking receipt by querying live models when the queued job ran. Whole-branch review proved that this is not historical: a charge correction or a renamed student/course/batch between payment and job execution changes the document. It also proved that `afterCommit()` prevents premature dispatch but cannot recover the opposite failure — a payment commits and the process or Redis enqueue fails before any job exists.
+
+The owner approved the smallest durable design for a single centre: a typed one-to-one immutable receipt snapshot created inside `RecordPaymentAction`'s transaction, immediate generation after commit, and a bounded scheduled reconciliation sweep for stale snapshots whose payment has no receipt. The snapshot is issued-document content only and is prohibited from live balance, validation and report code. This is not a cached financial total.
+
+The correction explicitly rejects three suggested expansions: activity-log ids do not become financial event order; no timestamp-precision migration is needed; and `ReversePaymentAction` is not reopened. The snapshot makes same-second reconstruction irrelevant. Task 6 also adopts the existing file-lifecycle compensation path, canonicalizes receipt location, captures locale, isolates subprocess storage, strengthens the `afterCommit()` proof, states the job timeout, and makes PHP GD explicit in CI and deployment requirements.
+
+This is a declared scope expansion discovered during implementation, not work silently absorbed into the original Task 6 list. `routes/console.php` becomes a scheduling seam, and Task 12 must re-check it against `main`.
+
 ---
 
 ## Waves, ownership and dependencies
@@ -116,10 +126,10 @@ The rule that matters is that **concurrent** scopes do not overlap. Each pair be
 | 2 | T5 charges · T2 pricing | none — `ChargeResource`/`charges.php` against `DiscountResource`/pricing Actions/`pricing.php` and the two Enrollment resource tests |
 | 3 | T3 billing · T7 compensation | none — Finance Actions, the two query services and `billing.php` against the compensation resource and `payroll.php` |
 | 4 | T4 payments · T8 payroll | none — payment Actions and `payments.php` against payroll Actions and `payroll.php` |
-| 5 | T10 reports · T6 receipts | none — `Reports/` and `ReportPeriod` against the receipt job, view, controller and `receipt.php` |
+| 5 | T10 reports · T6 receipts | none — `Reports/` and `ReportPeriod` against receipt snapshot/generation/reconciliation, the view, controller and `receipt.php` |
 | 6 | T9 flow · T11 report pages | none — the collect page and `collect.php` against report pages, exporters and `reports.php` |
 
-Three files are touched by more than one task, and every case is **sequential across waves**, never concurrent: `tests/Feature/Staff/ActionBoundaryArchTest.php` (T1 → T3 → T8 → T6), `lang/en/payroll.php` (T7 → T8), and `RecordPaymentAction` (T4, then T6 adds its dispatch line). T8's narrow architecture-test crossing is valid in Wave 4 because T4 does not touch that seam.
+The files touched by more than one phase task are all **sequential across waves**, never concurrent: `tests/Feature/Staff/ActionBoundaryArchTest.php` (T1 → T3 → T8 → T6), `lang/en/payroll.php` (T7 → T8), `RecordPaymentAction` (T4 → T6), `Payment.php` and `FinanceSchemaTest.php` (T1 → T6), and `.github/workflows/ci.yml` (T00C → T6). T8's narrow architecture-test crossing is valid in Wave 4 because T4 does not touch that seam; T6 begins from the merged tips of every predecessor named here.
 
 ### Revision 5 — that table is not the whole check, and wave 2 proved it
 
@@ -144,6 +154,7 @@ A seam is a file whose content is an enumeration that grows whenever a task adds
 | `RolePermissionSeeder` + `FinancePermissionSeedingTest` | needs a permission | **closed for phase 2** — T1 seeded the whole set from design §10 |
 | `tests/Feature/LocalizationTest.php` | adds a translation catalogue | **closed** — T1 made the Arabic-empty dataset derive from `lang/en` |
 | `tests/Feature/DatabaseIsolationTest.php` — the exempt-file list | adds a test file that declares no database isolation trait | **open**; grows per architecture-style test |
+| `routes/console.php` — scheduled commands | adds or changes a scheduler entry | **joined by T6** for receipt reconciliation; T10 does not touch it, and T12 must re-check every schedule against `main` |
 
 **The last row was added by T3, and it is the most instructive one here.** It was missing when this table was written in T00C, and the very next task — T2P — joined it, correctly and with the owner's approval, but without declaring it, because nothing in the inventory prompted them to. A seam the inventory omits is a seam nobody is asked to declare, so the omission propagates as compliance.
 
@@ -157,7 +168,7 @@ A seam is a file whose content is an enumeration that grows whenever a task adds
 |---|---|---|---|
 | 3 | T3 · T7 | T3 → arch test, the delete allowlist for `DeleteUncommittedChargeAction`, in a file it already declares · T7 → `AppServiceProvider`, for `StaffCompensationPolicy` | **No collision.** Different seams, one writer each. T7's crossing is undeclared and is declared below. |
 | 4 | T4 · T8 | **Both** → `AppServiceProvider`: `PaymentPolicy` and `PayrollRunPolicy` | **Collision — dissolved without sequencing.** See below: neither task needs to touch the file. |
-| 5 | T10 · T6 | T6 → `routes/web.php` and the mPDF dependency, both declared, plus a receipt policy if it introduces one · T10 → none | **No collision**, single writer. |
+| 5 | T10 · T6 | T6 → `routes/web.php`, `routes/console.php`, the mPDF dependency and CI's extension list, all declared; T10 → none | **No collision**, single writer. `routes/console.php` is a scheduling seam and T12 re-checks it. |
 | 6 | T9 · T11 | **Both** → `AdminPanelProvider`, `discoverPages()` for `app/Domain/Finance/Filament/Pages` | **Collision, and the dangerous kind.** Two identical lines: the shape that auto-merges in silence. **Sequenced — see the revised wave table.** |
 
 #### Wave 4 dissolves, because the seam is optional
@@ -237,11 +248,11 @@ At the end: open a PR, get the other agent's review, resolve, merge, then **tag 
 ## Task 1 — Finance foundation
 **Wave 1 · Owner: Claude · `p2/t01-finance-foundation` · depends on nothing**
 
-The whole schema in one task with one owner, because every other task builds on it.
+The original nine-table foundation schema in one task with one owner, because every other task builds on it. Task 6 later adds the tenth receipt-snapshot table through an additive migration; that dated correction is recorded above and does not rewrite this merged task's history.
 
 **File scope**
-- `database/migrations/` — nine new tables, plus **four** single-statement `enrollments.reference` migrations (add nullable · backfill · index · tighten)
-- `app/Domain/Finance/Models/` — all nine models (configuration only)
+- `database/migrations/` — the nine foundation tables, plus **four** single-statement `enrollments.reference` migrations (add nullable · backfill · index · tighten)
+- `app/Domain/Finance/Models/` — all nine foundation models (configuration only)
 - `app/Domain/Finance/Enums/` — `TenderMethod`, `CompensationType`, `PayrollRunType`
 - `app/Domain/Finance/Support/` — `Money`, `Reference`, `ChargeBalance`
 - `database/factories/`, `database/seeders/RolePermissionSeeder.php`
@@ -258,7 +269,7 @@ The whole schema in one task with one owner, because every other task builds on 
 - `tests/Feature/Finance/EnrollmentReferenceBackfillTest.php` — the four migrations, each retried independently
 
 **Does**
-Every table from design §9 with its `CHECK` constraints, foreign keys, indexes and generated columns — including the three-shape `CHECK` on `payroll_lines`, the nullable `frozen_rate`, the nullable-and-indexed `posting_period_start` paired to `finalized_at`, and **`payments.request_fingerprint`**, which task 4 needs and owns no migration to create.
+Every foundation table from design §9 with its `CHECK` constraints, foreign keys, indexes and generated columns — including the three-shape `CHECK` on `payroll_lines`, the nullable `frozen_rate`, the nullable-and-indexed `posting_period_start` paired to `finalized_at`, and **`payments.request_fingerprint`**, which task 4 needs and owns no migration to create. The additive Task 6 snapshot table is the explicit dated exception, introduced only after delayed rendering proved the original receipt design unsound.
 
 `Money` over integer dirham. `Reference` inserting a unique placeholder and replacing it with the real `ENR-`/`CHG-`/`RCT-` value inside the same transaction, with `reference` excluded from every `auditedAttributes()` so the placeholder cannot reach the append-only log. `EnrollStudentAction` updated to produce a reference. `ChargeBalance` as the single definition of outstanding — SQL expression and PHP computation — placed here rather than in task 4 so tasks 4 and 5 can both use it without an ordering dependency.
 
@@ -459,20 +470,43 @@ An admin holding every charge read permission cannot adjust or write off, assert
 
 **File scope**
 - `composer.json`, `composer.lock` — the mPDF dependency change above
-- `app/Domain/Finance/Jobs/GenerateReceiptJob.php`, `app/Domain/Finance/Actions/AttachReceiptAction.php`
-- **Declared crossing: `tests/Feature/Staff/ActionBoundaryArchTest.php`** — registering `AttachReceiptAction` as the third and last internal collaborator, with `GenerateReceiptJob` as its only permitted caller
+- `database/migrations/2026_08_21_000100_create_payment_receipt_snapshots_table.php`, `database/migrations/2026_08_21_000200_add_receipt_pending_index_to_payments_table.php`, `database/factories/PaymentReceiptSnapshotFactory.php`
+- `app/Domain/Finance/Models/PaymentReceiptSnapshot.php`, `app/Domain/Finance/Models/Payment.php`, `app/Domain/Finance/Policies/PaymentReceiptSnapshotPolicy.php` — typed one-to-one relationship/casts and an unconditionally refusing direct-access policy; receipt access authorizes the owning payment. Laravel's existing convention discovery resolves the policy, so Task 6 adds no `AppServiceProvider` line and joins no provider seam
+- `app/Domain/Finance/Jobs/GenerateReceiptJob.php`, `app/Domain/Finance/Actions/AttachReceiptAction.php`, `app/Domain/Finance/Actions/ReconcilePendingReceiptsAction.php`
+- `app/Console/Commands/ReconcilePendingReceiptsCommand.php`
+- `app/Domain/Finance/Support/ReceiptLocation.php`, `app/Domain/Finance/Services/ReceiptFileOwnershipService.php`
+- **Declared crossing: `app/Domain/Staff/Services/FileLifecycleService.php`** — add `persistNewFileWithOwnerLock()`, preserving the existing write-ahead compensation and root-commit handling while allowing the caller to take the payment lock before writing bytes
+- **Declared crossing: `app/Domain/Staff/Jobs/PurgeDeletedFileJob.php`** — consult the published Finance receipt-ownership service through `FileLifecycleService::compensationConnectionName()` before deleting a provisional receipt file
+- **Declared crossing: `tests/Feature/Staff/ActionBoundaryArchTest.php`** — register `AttachReceiptAction` with `GenerateReceiptJob` as sole caller and `ReconcilePendingReceiptsAction` with `ReconcilePendingReceiptsCommand` as sole caller; prohibit snapshot reads by live Finance calculations/reports
 - `resources/views/finance/receipt.blade.php`
 - `app/Http/Controllers/Finance/ReceiptDownloadController.php`, `routes/web.php`
-- **Declared crossing:** one dispatch line in `RecordPaymentAction` — sequential after task 4 merges, so not a parallel edit
+- **Declared scheduling seam: `routes/console.php`** — append `receipts:reconcile-pending` every five minutes with its own `withoutOverlapping(15)` mutex; preserve every existing backup and file-cleanup schedule; Task 12 re-checks this seam against `main`
+- **Declared crossing: `app/Domain/Finance/Actions/RecordPaymentAction.php`** — create the immutable snapshot inside the payment transaction and dispatch the normal generation job after commit; sequential after task 4 merged
+- **Declared crossing: `app/Domain/Staff/Support/ActivityEvent.php`, `lang/en/activity.php`** — add the semantic `receipt_generated` event and label; the activity id/timestamp is audit evidence only, never receipt ordering
 - `lang/en/receipt.php`, `lang/ar/receipt.php` (empty)
-- `tests/Feature/Finance/ReceiptGenerationTest.php` - every required field in a rendered PDF, retry-safety, one receipt after a replayed payment
-- `tests/Feature/Finance/ReceiptDownloadTest.php` - policy-authorized download, unreachable without it, reversed payment's receipt retained
+- `.github/workflows/ci.yml` — install PHP GD explicitly
+- **Declared design/plan crossing:** `docs/superpowers/specs/2026-08-09-phase-2-financials-design.md`, this plan — record the owner-approved receipt correction rather than leaving the implementation to contradict its authority
+- `tests/Feature/Finance/FinanceSchemaTest.php` — snapshot schema, types, constraints and one-to-one guarantee
+- `tests/Feature/Finance/ReceiptGenerationTest.php` — snapshot determinism, real rendered PDF, retry-safety, locale/direction, after-commit timing, isolated subprocess storage and one receipt after a replayed payment
+- **Declared test-only crossing: `tests/Feature/Finance/PaymentConcurrencyTest.php`** — add one assertion to the existing T4 two-till replay harness proving the winner creates exactly one receipt snapshot; duplicating that load-bearing subprocess fixture inside Task 6 would create two concurrency answers that can drift
+- `tests/Feature/Finance/ReceiptDownloadTest.php` — policy-authorized download, canonical path/ref validation, unreachable without authorization, reversed payment's receipt retained
+- `tests/Feature/Finance/ReceiptSnapshotPolicyTest.php` — direct snapshot view and every write refuse for all actors without adding permissions
+- `tests/Feature/Finance/ReceiptReconciliationTest.php` — lost-enqueue recovery, bounded two-run anti-starvation proof and schedule registration
+- `tests/Feature/Finance/ReceiptFileLifecycleTest.php` — root-transaction rollback/commit ambiguity, exact ownership protection and failure/success concurrency at one deterministic path
 
 **Does**
-Queued generation to the private disk, dispatched `afterCommit()`. Every field listed in design §2. Download through a policy-authorized controller reusing the `StaffCertificateDownloadController` and `AuthenticatePrivateFileSession` pattern.
+`RecordPaymentAction` creates one immutable typed receipt snapshot in the same transaction as the payment, tenders and allocation. The snapshot freezes every mutable or computed field shown on the issued document, including the effective locale; immutable tender rows remain the source of the cash/card breakdown. Snapshot data is document-only and may not feed live balances, reports, authorization or payment validation.
+
+Normal generation remains queued after commit. `GenerateReceiptJob` renders only the snapshot plus immutable tender rows, declares a 60-second timeout below the 90-second queue `retry_after`, restores locale after rendering, and attaches one canonical private file through `AttachReceiptAction` and `FileLifecycleService`. `ReceiptLocation` alone derives and validates the RCT reference/path. Download stays policy-authorized and reuses the `StaffCertificateDownloadController` and `AuthenticatePrivateFileSession` pattern.
+
+`ReconcilePendingReceiptsCommand` runs every five minutes with an explicit 15-minute mutex expiry. Its internal Action selects at most 100 snapshots whose payment has no receipt, whose `created_at` is at least ten minutes old, and whose attempt stamp is null or at least ten minutes old; it orders never attempted first, then oldest attempt, then id; takes a row lock to re-check both age predicates and receipt absence before committing `last_reconciliation_attempt_at` and dispatching; and uses non-throwing reporting on enqueue failure. This avoids racing a newborn snapshot's normal queued job and repairs a database commit followed by process/Redis dispatch loss without introducing a general outbox.
+
+Receipt file persistence reuses `FileLifecycleService`'s provisional cleanup receipt and root-commit compensation. `PurgeDeletedFileJob` asks `ReceiptFileOwnershipService`, on the exact compensation connection supplied by `FileLifecycleService`, to take the payment lock and decide whether the canonical disk/path is now owned before unlinking. No Activity-log id ordering, timestamp-precision migration, or `ReversePaymentAction` change is part of this task.
 
 **Done when**
-Every required field appears, verified against a rendered PDF · the file lands on the private disk and is unreachable without authorization · a reversed payment's receipt is not deleted · **generation is retry-safe and idempotent** — a re-run of the job for the same payment leaves exactly one receipt and one stored path, and `AttachReceiptAction` refuses a payment that already has one (the queue mechanics are this task's to choose and prove) · **a replayed payment submission produces exactly one receipt** — the assertion task 4 could not make, because receipts did not exist there · the enrolment reference and course and batch codes are read through `EnrollmentQueryService` · the template renders at `dir="rtl"` without layout breakage, logical CSS properties only · `composer verify` green.
+Every required field appears, verified against a real rendered PDF · changing the charge, student/course/batch display data or recording staff after payment does not change a delayed or repeated receipt, while live balances/reports still read source rows · exactly one snapshot exists after sequential and concurrent payment replay · the file lands on the private disk and is unreachable without authorization · a reversed payment's receipt is not deleted · **generation is retry-safe and idempotent** — repeated and concurrent jobs leave exactly one receipt, one canonical pointer and one activity event · the enrolment reference and course/batch codes used to create the snapshot come through `EnrollmentQueryService` · the download refuses traversal, another payment's file and coherent reference/path corruption · an owned receipt survives orphan cleanup and a failed attempt cannot delete a later winner's bytes.
+
+Removing `afterCommit()` makes the synchronous-queue timing test fail: nothing exists before an outer commit, rollback leaves nothing, and commit creates file/pointer/event · a committed payment whose enqueue is forced to fail is generated by a later sweep · a newborn snapshot is not swept before ten minutes · a backlog larger than 100 proves across **two runs** that never-attempted rows are not starved even after old attempt stamps age back into eligibility · the schedule asserts five-minute frequency and 15-minute mutex expiry · ownership cleanup asserts its payment lock uses the compensation connection · every child process writes only to the parent's fake private root · English and Arabic-locale fallback renders prove their LTR/RTL PDF direction and pass visual inspection with mPDF-compatible direction-neutral markup · the job timeout is asserted below `retry_after` · CI and the documented VPS runtime provide GD for PHP 8.4 CLI/FPM and workers are restarted · `composer verify` green.
 
 ---
 
@@ -594,11 +628,12 @@ An admin can view and export; a staff member can reach neither · **the export q
 - `docs/superpowers/specs/2026-07-20-training-center-dashboard-design.md`, `docs/ENGINEERING.md`, `docs/CHANGELOG.md`, this plan
 - `lang/en/`, `lang/ar/` — gaps found by the i18n sweep
 - `tests/Feature/LocalizationTest.php`, `tests/Feature/ActivityLogTest.php` — coverage extensions only
+- **Read-only scheduling-seam re-check: `routes/console.php`** — compare against current `main` and prove the receipt reconciliation, backup pipeline and pending-file deletion sweep each appear exactly once with their intended mutexes. Task 6 owns the receipt entry; task 12 does not rewrite it merely to claim ownership.
 - **`app/Providers/AppServiceProvider.php` — comment only, and the one exception to "no `app/` changes" below.** The comment above the `Gate::policy()` list says those policies "live outside app/Policies, so Laravel's convention-based discovery will not find them" and that "without these lines every check against them silently falls through to false". **Both claims are false** — `Gate::guessPolicyName()` maps `\Models\` to `\Policies\` (`Gate.php:725-727`), which resolves every policy in this codebase. It is also the claim that made each phase-2 task dutifully append to a list it did not need. Correct the comment; then decide, and record, whether the existing lines stay as deliberate explicitness or go. Either is defensible; the comment asserting a necessity that does not exist is not.
 - No other `app/` changes. If the sweep finds a hardcoded string in application code, that is a fix in the owning task's file, raised rather than absorbed here.
 
 **Does**
-The i18n sweep and its enforcement test extended over every new surface. Activity-log coverage confirmed for every financial mutation in design §12. Then the documentation, in the same pass: the system design corrected wherever phase 2 changed it, `docs/ENGINEERING.md` updated with any convention this phase established — the local-period-to-UTC rule, the never-dehydrate-a-guarded-field rule, and **the money-field rule task 2P enforces** (`->numeric()` installs a float state cast, so a money field uses `->inputMode('decimal')` and validation rules instead) are all candidates. That file is deliberately left to this task rather than edited by each task that learns something, for the reason the seam analysis gives — this plan marked complete with its deviations recorded, and `docs/CHANGELOG.md` written in plain language.
+The i18n sweep and its enforcement test extended over every new surface. Activity-log coverage confirmed for every financial mutation in design §12. Re-read the hand-maintained seam inventory against `main`, including counting every `routes/console.php` schedule after Task 6; a dropped or duplicated scheduler line is a finding, not a documentation edit. Then the documentation, in the same pass: the system design corrected wherever phase 2 changed it, `docs/ENGINEERING.md` updated with any convention this phase established — the local-period-to-UTC rule, the never-dehydrate-a-guarded-field rule, the immutable-issued-document-snapshot distinction, and **the money-field rule task 2P enforces** (`->numeric()` installs a float state cast, so a money field uses `->inputMode('decimal')` and validation rules instead) are all candidates. That file is deliberately left to this task rather than edited by each task that learns something, for the reason the seam analysis gives — this plan marked complete with its deviations recorded, and `docs/CHANGELOG.md` written in plain language.
 
 **Done when**
 No hardcoded user-facing string survives the enforcement test · every financial mutation produces a log entry with the right actor · no document contradicts the code · `composer verify` green on `main`.

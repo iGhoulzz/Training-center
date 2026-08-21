@@ -12,11 +12,17 @@ use App\Domain\Finance\Jobs\GenerateReceiptJob;
 use App\Domain\Finance\Models\Charge;
 use App\Domain\Finance\Models\Discount;
 use App\Domain\Finance\Models\Payment;
+use App\Domain\Finance\Support\ChargeBalance;
+use App\Domain\Finance\Support\ReceiptLocation;
 use App\Domain\Staff\Actions\SystemRoleWriter;
+use App\Domain\Staff\Jobs\PurgeDeletedFileJob;
+use App\Domain\Staff\Models\PendingFileDeletion;
+use App\Domain\Staff\Services\FileLifecycleService;
 use App\Models\User;
 use App\Support\CentreCalendar;
 use Carbon\CarbonImmutable;
 use Database\Seeders\RolePermissionSeeder;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\DatabaseTruncation;
 use Illuminate\Foundation\Testing\RefreshDatabaseState;
 use Illuminate\Support\Facades\DB;
@@ -35,7 +41,7 @@ afterAll(function (): void {
 });
 
 /** @return array<string, string> */
-function receiptWorkerEnvironment(): array
+function receiptWorkerEnvironment(string $privateDiskRoot): array
 {
     $connection = (string) config('database.default');
     $database = config("database.connections.{$connection}");
@@ -49,6 +55,7 @@ function receiptWorkerEnvironment(): array
         'DB_DATABASE' => (string) ($database['database'] ?? ''),
         'DB_USERNAME' => (string) ($database['username'] ?? ''),
         'DB_PASSWORD' => (string) ($database['password'] ?? ''),
+        'PRIVATE_DISK_ROOT' => $privateDiskRoot,
     ];
 }
 
@@ -63,6 +70,8 @@ function receiptAttachmentWorker(
         require 'vendor/autoload.php';
         $app = require 'bootstrap/app.php';
         $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+        config(['filesystems.disks.private.root' => getenv('PRIVATE_DISK_ROOT')]);
+        Illuminate\Support\Facades\Storage::forgetDisk('private');
 
         [$script, $paymentId, $path, $bytes, $readyPath, $resultPath] = $_SERVER['argv'];
         file_put_contents($readyPath, 'ready');
@@ -77,7 +86,7 @@ function receiptAttachmentWorker(
     return new Process(
         [PHP_BINARY, '-r', $script, (string) $paymentId, $path, $bytes, $readyPath, $resultPath],
         base_path(),
-        receiptWorkerEnvironment(),
+        receiptWorkerEnvironment(Storage::disk('private')->path('')),
     );
 }
 
@@ -95,6 +104,8 @@ function failingReceiptAttachmentWorker(
         require 'vendor/autoload.php';
         $app = require 'bootstrap/app.php';
         $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+        config(['filesystems.disks.private.root' => getenv('PRIVATE_DISK_ROOT')]);
+        Illuminate\Support\Facades\Storage::forgetDisk('private');
 
         [
             $script,
@@ -173,7 +184,7 @@ function failingReceiptAttachmentWorker(
             $resultPath,
         ],
         base_path(),
-        receiptWorkerEnvironment(),
+        receiptWorkerEnvironment(Storage::disk('private')->path('')),
     );
 }
 
@@ -198,7 +209,125 @@ beforeEach(function (): void {
     );
 });
 
-it('prints payment A remaining balance as of payment A despite a later installment', function (): void {
+it('creates one immutable receipt snapshot inside the payment transaction', function (): void {
+    Queue::fake();
+    app()->setLocale('en');
+    $charge = Charge::factory()->create([
+        'list_price' => '1250.000',
+        'discount_percentage' => null,
+        'amount' => '1250.000',
+    ]);
+    $context = app(EnrollmentQueryService::class)
+        ->receiptContextFor((int) $charge->enrollment_id);
+
+    $payment = $this->recordPayment->execute(
+        $this->admin,
+        ($this->paymentData)(
+            (int) $charge->getKey(),
+            Str::uuid()->toString(),
+            '400.000',
+            [new TenderData(TenderMethod::Cash, '400.000')],
+        ),
+    );
+
+    $snapshots = DB::table('payment_receipt_snapshots')
+        ->where('payment_id', $payment->getKey())
+        ->get();
+
+    expect($snapshots)->toHaveCount(1);
+    expect((array) $snapshots->sole())->toMatchArray([
+        'payment_id' => (int) $payment->getKey(),
+        'locale' => 'en',
+        'student_code' => $context['student_code'],
+        'student_name' => $context['student_name'],
+        'enrollment_reference' => $context['enrollment_reference'],
+        'course_code' => $context['course_code'],
+        'batch_code' => $context['batch_code'],
+        'charge_reference' => $charge->reference,
+        'list_price' => '1250.000',
+        'discount_percentage' => null,
+        'final_charge' => '1250.000',
+        'amount_paid' => '400.000',
+        'remaining_balance' => '850.000',
+        'recorded_by_name' => $this->admin->name,
+        'payment_reference' => $payment->reference,
+    ]);
+})->group('receipt');
+
+it('rolls the payment back when its required receipt snapshot cannot be created', function (): void {
+    Queue::fake();
+    $charge = Charge::factory()->create(['amount' => '1000.000']);
+    $originalLocale = app()->getLocale();
+    app()->setLocale('locale-is-too-long');
+
+    try {
+        expect(fn () => $this->recordPayment->execute(
+            $this->admin,
+            ($this->paymentData)((int) $charge->getKey(), Str::uuid()->toString()),
+        ))->toThrow(QueryException::class);
+    } finally {
+        app()->setLocale($originalLocale);
+    }
+
+    expect(Payment::query()->count())->toBe(0)
+        ->and(DB::table('payment_tenders')->count())->toBe(0)
+        ->and(DB::table('payment_allocations')->count())->toBe(0)
+        ->and(DB::table('payment_receipt_snapshots')->count())->toBe(0);
+    Queue::assertNothingPushed();
+})->group('receipt');
+
+it('renders delayed receipts from the captured snapshot and restores the worker locale', function (): void {
+    app()->setLocale('en');
+    $charge = Charge::factory()->create([
+        'list_price' => '1400.000',
+        'amount' => '1400.000',
+    ]);
+    $charge->enrollment->student->update([
+        'first_name' => 'Snapshot',
+        'last_name' => 'Student',
+    ]);
+    $this->admin->update(['name' => 'Snapshot Operator']);
+    $payment = $this->recordPayment->execute(
+        $this->admin,
+        ($this->paymentData)(
+            (int) $charge->getKey(),
+            Str::uuid()->toString(),
+            '400.000',
+            [new TenderData(TenderMethod::Cash, '400.000')],
+        ),
+    );
+    $snapshot = $payment->receiptSnapshot()->firstOrFail();
+
+    $charge->update(['amount' => '1200.000']);
+    $charge->enrollment->student->update(['first_name' => 'Changed', 'last_name' => 'Student']);
+    $charge->enrollment->batch->update(['code' => 'CHANGED-BATCH']);
+    $charge->enrollment->batch->course->update(['code' => 'CHANGED-COURSE']);
+    $this->admin->update(['name' => 'Changed Operator']);
+    app()->setLocale('ar');
+
+    app()->call([new GenerateReceiptJob((int) $payment->getKey()), 'handle']);
+
+    expect(app()->getLocale())->toBe('ar')
+        ->and(ChargeBalance::outstandingFor((int) $charge->getKey())->toDecimal())->toBe('800.000');
+    $pdf = Storage::disk('private')->get('receipts/'.$payment->reference.'.pdf');
+
+    foreach ([
+        $snapshot->student_name,
+        $snapshot->batch_code,
+        $snapshot->course_code,
+        $snapshot->recorded_by_name,
+        '1400.000',
+        '1000.000',
+    ] as $capturedValue) {
+        expect($pdf)->toContain(mb_convert_encoding((string) $capturedValue, 'UTF-16BE', 'UTF-8'));
+    }
+
+    foreach (['Changed Student', 'CHANGED-BATCH', 'CHANGED-COURSE', 'Changed Operator', '1200.000'] as $liveValue) {
+        expect($pdf)->not->toContain(mb_convert_encoding($liveValue, 'UTF-16BE', 'UTF-8'));
+    }
+})->group('receipt');
+
+it('keeps payment A captured balance despite a later installment', function (): void {
     $charge = Charge::factory()->create(['amount' => '1834.567']);
     $paymentA = $this->recordPayment->execute(
         $this->admin,
@@ -232,7 +361,7 @@ it('prints payment A remaining balance as of payment A despite a later installme
         ->not->toContain(mb_convert_encoding('933.332', 'UTF-16BE', 'UTF-8'));
 });
 
-it('prints payment A remaining balance as of payment A despite its later reversal', function (): void {
+it('keeps payment A captured balance despite its later reversal', function (): void {
     $charge = Charge::factory()->create(['amount' => '1834.567']);
     $paymentA = $this->recordPayment->execute(
         $this->admin,
@@ -260,7 +389,7 @@ it('prints payment A remaining balance as of payment A despite its later reversa
     expect($pdf)->toContain(mb_convert_encoding('1133.333', 'UTF-16BE', 'UTF-8'));
 });
 
-it('excludes a later payment with the same received-at timestamp from the earlier payment receipt', function (): void {
+it('keeps the earlier captured balance when live payment timestamps later match', function (): void {
     $charge = Charge::factory()->create(['amount' => '2000.000']);
     $paymentA = $this->recordPayment->execute(
         $this->admin,
@@ -281,7 +410,7 @@ it('excludes a later payment with the same received-at timestamp from the earlie
         ->not->toContain(mb_convert_encoding('1700.000', 'UTF-16BE', 'UTF-8'));
 });
 
-it('excludes an earlier payment reversed strictly before the target receipt', function (): void {
+it('keeps the target captured balance when an earlier payment is later backdated as reversed', function (): void {
     $charge = Charge::factory()->create(['amount' => '2000.000']);
     $earlier = $this->recordPayment->execute(
         $this->admin,
@@ -303,11 +432,11 @@ it('excludes an earlier payment reversed strictly before the target receipt', fu
     app()->call([new GenerateReceiptJob((int) $target->getKey()), 'handle']);
     $pdf = Storage::disk('private')->get('receipts/'.$target->reference.'.pdf');
 
-    expect($pdf)->toContain(mb_convert_encoding('1800.000', 'UTF-16BE', 'UTF-8'))
-        ->not->toContain(mb_convert_encoding('1700.000', 'UTF-16BE', 'UTF-8'));
+    expect($pdf)->toContain(mb_convert_encoding('1700.000', 'UTF-16BE', 'UTF-8'))
+        ->not->toContain(mb_convert_encoding('1800.000', 'UTF-16BE', 'UTF-8'));
 });
 
-it('includes an earlier payment reversed at the target receipt boundary', function (): void {
+it('keeps the target captured balance when an earlier reversal is later set at its boundary', function (): void {
     $charge = Charge::factory()->create(['amount' => '2000.000']);
     $earlier = $this->recordPayment->execute(
         $this->admin,
@@ -333,7 +462,7 @@ it('includes an earlier payment reversed at the target receipt boundary', functi
         ->not->toContain(mb_convert_encoding('1800.000', 'UTF-16BE', 'UTF-8'));
 });
 
-it('includes an earlier payment reversed strictly after the target receipt', function (): void {
+it('keeps the target captured balance when an earlier reversal is later set after it', function (): void {
     $charge = Charge::factory()->create(['amount' => '2000.000']);
     $earlier = $this->recordPayment->execute(
         $this->admin,
@@ -360,13 +489,18 @@ it('includes an earlier payment reversed strictly after the target receipt', fun
 });
 
 it('formats the payment date on the centre calendar at the local-year boundary', function (): void {
-    $charge = Charge::factory()->create(['amount' => '1000.000']);
-    $payment = $this->recordPayment->execute(
-        $this->admin,
-        ($this->paymentData)((int) $charge->getKey(), Str::uuid()->toString()),
-    );
     $receivedAt = CarbonImmutable::parse('2026-12-31 22:30:00', 'UTC');
-    $payment->update(['received_at' => $receivedAt]);
+    CarbonImmutable::setTestNow($receivedAt);
+    $charge = Charge::factory()->create(['amount' => '1000.000']);
+
+    try {
+        $payment = $this->recordPayment->execute(
+            $this->admin,
+            ($this->paymentData)((int) $charge->getKey(), Str::uuid()->toString()),
+        );
+    } finally {
+        CarbonImmutable::setTestNow();
+    }
 
     app()->call([new GenerateReceiptJob((int) $payment->getKey()), 'handle']);
     $pdf = Storage::disk('private')->get('receipts/'.$payment->reference.'.pdf');
@@ -380,7 +514,9 @@ it('declares bounded attempts and backoff for transient receipt failures', funct
 
     expect(property_exists($job, 'tries'))->toBeTrue()
         ->and($job->tries)->toBe(3)
-        ->and($job->backoff)->toBe([5, 30, 120]);
+        ->and($job->backoff)->toBe([5, 30, 120])
+        ->and($job->timeout)->toBe(60)
+        ->and($job->timeout)->toBeLessThan((int) config('queue.connections.database.retry_after'));
 });
 
 it('rolls receipt attachment and its semantic activity back together when activity logging fails', function (): void {
@@ -407,8 +543,14 @@ it('rolls receipt attachment and its semantic activity back together when activi
     $payment->refresh();
     expect($payment->receipt_disk)->toBeNull()
         ->and($payment->receipt_path)->toBeNull()
-        ->and(Storage::disk('private')->allFiles('receipts'))->toBe([])
         ->and(Activity::query()->where('event', 'receipt_generated')->count())->toBe(0);
+
+    $pending = PendingFileDeletion::on(FileLifecycleService::compensationConnectionName())
+        ->where('path', 'receipts/'.$payment->reference.'.pdf')
+        ->firstOrFail();
+    app()->call([new PurgeDeletedFileJob((int) $pending->getKey(), true), 'handle']);
+
+    expect(Storage::disk('private')->allFiles('receipts'))->toBe([]);
 
     app()->call([new GenerateReceiptJob((int) $payment->getKey()), 'handle']);
 
@@ -455,7 +597,8 @@ it('retries receipt generation successfully after a transient private-storage fa
 it('serializes two concurrent receipt attachments so only the winner writes bytes', function (): void {
     $payment = Payment::factory()->create(['recorded_by' => $this->admin->getKey()]);
     $path = 'receipts/'.$payment->reference.'.pdf';
-    $storagePath = storage_path('app/secure/'.$path);
+    $storagePath = Storage::disk('private')->path($path);
+    $realStoragePath = storage_path('app/secure/'.$path);
     $token = Str::uuid()->toString();
     $readyA = storage_path("framework/testing/receipt-{$token}-a-ready.json");
     $resultA = storage_path("framework/testing/receipt-{$token}-a-result.json");
@@ -468,7 +611,7 @@ it('serializes two concurrent receipt attachments so only the winner writes byte
     $connection = DB::connection();
 
     try {
-        File::delete($storagePath, $readyA, $resultA, $readyB, $resultB);
+        File::delete($storagePath, $realStoragePath, $readyA, $resultA, $readyB, $resultB);
         $connection->beginTransaction();
         Payment::query()->whereKey($payment->getKey())->lockForUpdate()->firstOrFail();
 
@@ -509,6 +652,7 @@ it('serializes two concurrent receipt attachments so only the winner writes byte
             ->and(collect($results)->where('attached', true)->count())->toBe(1)
             ->and(collect($results)->where('attached', false)->count())->toBe(1)
             ->and(File::get($storagePath))->toBe($winner === 0 ? 'receipt-bytes-a' : 'receipt-bytes-b')
+            ->and(File::exists($realStoragePath))->toBeFalse()
             ->and($payment->refresh()->receipt_path)->toBe($path)
             ->and(Activity::query()->where('event', 'receipt_generated')->count())->toBe(1);
     } finally {
@@ -522,14 +666,15 @@ it('serializes two concurrent receipt attachments so only the winner writes byte
             }
         }
 
-        File::delete($storagePath, $readyA, $resultA, $readyB, $resultB);
+        File::delete($storagePath, $realStoragePath, $readyA, $resultA, $readyB, $resultB);
     }
 });
 
 it('does not let failed receipt cleanup delete a concurrent successor receipt', function (): void {
     $payment = Payment::factory()->create(['recorded_by' => $this->admin->getKey()]);
     $path = 'receipts/'.$payment->reference.'.pdf';
-    $storagePath = storage_path('app/secure/'.$path);
+    $storagePath = Storage::disk('private')->path($path);
+    $realStoragePath = storage_path('app/secure/'.$path);
     $token = Str::uuid()->toString();
     $paths = collect([
         'failure-ready',
@@ -560,7 +705,7 @@ it('does not let failed receipt cleanup delete a concurrent successor receipt', 
     );
 
     try {
-        File::delete($storagePath, ...$paths->values()->all());
+        File::delete($storagePath, $realStoragePath, ...$paths->values()->all());
         $failure->start();
         $deadline = microtime(true) + 10;
 
@@ -603,6 +748,7 @@ it('does not let failed receipt cleanup delete a concurrent successor receipt', 
         ])->and($successResult)->toMatchArray([
             'attached' => true,
         ])->and(File::get($storagePath))->toBe('successful-worker-bytes')
+            ->and(File::exists($realStoragePath))->toBeFalse()
             ->and($payment->refresh()->receipt_path)->toBe($path)
             ->and(Activity::query()->where('event', 'receipt_generated')->count())->toBe(1);
     } finally {
@@ -612,7 +758,7 @@ it('does not let failed receipt cleanup delete a concurrent successor receipt', 
             }
         }
 
-        File::delete($storagePath, ...$paths->values()->all());
+        File::delete($storagePath, $realStoragePath, ...$paths->values()->all());
     }
 });
 
@@ -633,26 +779,35 @@ it('queues exactly one receipt after a finalized payment and its replay', functi
 
     expect((int) $replay->getKey())->toBe((int) $first->getKey());
 
+    expect(DB::table('payment_receipt_snapshots')
+        ->where('payment_id', $first->getKey())
+        ->count())->toBe(1);
+
     Queue::assertPushed(GenerateReceiptJob::class, function (GenerateReceiptJob $job) use ($first): bool {
         return $job->paymentId === (int) $first->getKey();
     });
     Queue::assertPushed(GenerateReceiptJob::class, 1);
 });
 
-it('does not queue receipt generation when the finalized payment transaction rolls back', function (): void {
+it('runs synchronous receipt generation only after the outer payment transaction commits', function (): void {
     $charge = Charge::factory()->create(['amount' => '1000.000']);
     $originalQueueConnection = config('queue.default');
-    config(['queue.default' => 'database']);
-    $jobsBefore = DB::table('jobs')->count();
+    config(['queue.default' => 'sync']);
 
     try {
         DB::beginTransaction();
 
         try {
-            $this->recordPayment->execute(
+            $rolledBack = $this->recordPayment->execute(
                 $this->admin,
                 ($this->paymentData)((int) $charge->getKey(), Str::uuid()->toString()),
             );
+            $rolledBackPath = app(ReceiptLocation::class)->path($rolledBack);
+
+            expect($rolledBack->receiptSnapshot()->count())->toBe(1)
+                ->and($rolledBack->receipt_path)->toBeNull()
+                ->and(Storage::disk('private')->missing($rolledBackPath))->toBeTrue()
+                ->and(Activity::query()->where('event', 'receipt_generated')->count())->toBe(0);
 
             DB::rollBack();
         } finally {
@@ -660,29 +815,68 @@ it('does not queue receipt generation when the finalized payment transaction rol
                 DB::rollBack();
             }
         }
+
+        expect(Payment::query()->count())->toBe(0)
+            ->and(DB::table('payment_receipt_snapshots')->count())->toBe(0)
+            ->and(Storage::disk('private')->missing($rolledBackPath))->toBeTrue()
+            ->and(Activity::query()->where('event', 'receipt_generated')->count())->toBe(0);
+
+        DB::beginTransaction();
+
+        $committed = $this->recordPayment->execute(
+            $this->admin,
+            ($this->paymentData)((int) $charge->getKey(), Str::uuid()->toString()),
+        );
+        $committedPath = app(ReceiptLocation::class)->path($committed);
+
+        expect($committed->receipt_path)->toBeNull()
+            ->and(Storage::disk('private')->missing($committedPath))->toBeTrue()
+            ->and(Activity::query()->where('event', 'receipt_generated')->count())->toBe(0);
+
+        DB::commit();
+
+        expect($committed->refresh()->receipt_path)->toBe($committedPath)
+            ->and(Storage::disk('private')->exists($committedPath))->toBeTrue()
+            ->and(Activity::query()->where('event', 'receipt_generated')->count())->toBe(1);
     } finally {
+        while (DB::transactionLevel() > 0) {
+            DB::rollBack();
+        }
+
         config(['queue.default' => $originalQueueConnection]);
     }
-
-    expect(Payment::query()->count())->toBe(0)
-        ->and(DB::table('jobs')->count())->toBe($jobsBefore);
 });
 
 it('refuses to replace a payment receipt location that is already attached', function (): void {
-    $payment = Payment::factory()->create([
-        'receipt_disk' => 'private',
-        'receipt_path' => 'receipts/RCT-2026-000001.pdf',
-    ]);
+    $payment = Payment::factory()->create();
+    $path = app(ReceiptLocation::class)->path($payment);
+    $payment->update(['receipt_disk' => 'private', 'receipt_path' => $path]);
+    Storage::disk('private')->put($path, 'original-receipt-bytes');
 
     $attached = app(AttachReceiptAction::class)->execute(
         (int) $payment->getKey(),
-        'receipts/RCT-2026-000002.pdf',
+        $path,
         'replacement-receipt-bytes',
     );
 
     expect($attached)->toBeFalse()
-        ->and($payment->refresh()->receipt_path)->toBe('receipts/RCT-2026-000001.pdf')
-        ->and(Storage::disk('private')->exists('receipts/RCT-2026-000002.pdf'))->toBeFalse();
+        ->and($payment->refresh()->receipt_path)->toBe($path)
+        ->and(Storage::disk('private')->get($path))->toBe('original-receipt-bytes');
+});
+
+it('refuses a non-canonical receipt path before writing bytes', function (): void {
+    $payment = Payment::factory()->create();
+    $path = 'receipts/../staff-certificates/canary.pdf';
+
+    expect(fn () => app(AttachReceiptAction::class)->execute(
+        (int) $payment->getKey(),
+        $path,
+        'must-not-be-written',
+    ))->toThrow(RuntimeException::class, 'non-canonical receipt location');
+
+    expect($payment->refresh()->receipt_disk)->toBeNull()
+        ->and($payment->receipt_path)->toBeNull();
+    Storage::disk('private')->assertMissing($path);
 });
 
 it('renders translated student and tender composites with locale-controlled ordering and separators', function (): void {
@@ -736,6 +930,24 @@ it('renders translated student and tender composites with locale-controlled orde
     }
 });
 
+it('renders the Arabic-locale fallback in right-to-left direction and restores English', function (): void {
+    app()->setLocale('ar');
+    $charge = Charge::factory()->create(['amount' => '1000.000']);
+    $payment = $this->recordPayment->execute(
+        $this->admin,
+        ($this->paymentData)((int) $charge->getKey(), Str::uuid()->toString()),
+    );
+    app()->setLocale('en');
+
+    app()->call([new GenerateReceiptJob((int) $payment->getKey()), 'handle']);
+
+    expect(app()->getLocale())->toBe('en');
+    $pdf = Storage::disk('private')->get('receipts/'.$payment->reference.'.pdf');
+
+    expect($pdf)->toContain('/Direction /R2L')
+        ->and($pdf)->toContain(mb_convert_encoding('Payment receipt', 'UTF-16BE', 'UTF-8'));
+});
+
 it('renders every receipt field into a private PDF and is retry-safe', function (): void {
     $discount = Discount::factory()->create(['percentage' => '20.00']);
 
@@ -745,6 +957,11 @@ it('renders every receipt field into a private PDF and is retry-safe', function 
         'discount_percentage' => '17.77',
         'amount' => '1535.538',
     ]);
+    $charge->enrollment->student->update([
+        'first_name' => 'Rendered',
+        'last_name' => 'Student',
+    ]);
+    $this->admin->update(['name' => 'Receipt Operator']);
     $payment = $this->recordPayment->execute(
         $this->admin,
         ($this->paymentData)(
@@ -798,7 +1015,7 @@ it('renders every receipt field into a private PDF and is retry-safe', function 
         expect($pdf)->toContain(mb_convert_encoding((string) $requiredField, 'UTF-16BE', 'UTF-8'));
     }
 
-    expect($pdf)->toContain('/Direction /R2L');
+    expect($pdf)->not->toContain('/Direction /R2L');
 
     expect(Activity::query()
         ->where('subject_type', Payment::class)

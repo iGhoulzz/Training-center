@@ -680,6 +680,7 @@ const INTERNAL_FINANCE_ACTIONS = [
     'IssueChargeAction' => 'EnrollAndBillAction',
     'DeleteUncommittedChargeAction' => 'DeleteEnrollmentAction',
     'AttachReceiptAction' => 'GenerateReceiptJob',
+    'ReconcilePendingReceiptsAction' => 'ReconcilePendingReceiptsCommand',
 ];
 
 it('calls each internal Finance Action from nowhere but its one permitted caller', function () {
@@ -693,6 +694,25 @@ it('calls each internal Finance Action from nowhere but its one permitted caller
             .implode(', ', $offenders),
         );
     }
+});
+
+it('keeps receipt snapshots out of live financial calculations', function () {
+    $offenders = filesMatching(
+        '/\b(PaymentReceiptSnapshot|payment_receipt_snapshots)\b/',
+        [
+            'PaymentReceiptSnapshot',
+            'Payment',
+            'PaymentReceiptSnapshotPolicy',
+            'RecordPaymentAction',
+            'GenerateReceiptJob',
+            'ReconcilePendingReceiptsAction',
+        ],
+    );
+
+    expect($offenders)->toBeEmpty(
+        'Receipt snapshots are immutable document input, never a source for live balances, reports, authorization, or validation: '
+        .implode(', ', $offenders),
+    );
 });
 
 it('never writes the activity log from application code', function () {

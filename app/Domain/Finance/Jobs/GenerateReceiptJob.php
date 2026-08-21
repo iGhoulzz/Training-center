@@ -4,17 +4,16 @@ declare(strict_types=1);
 
 namespace App\Domain\Finance\Jobs;
 
-use App\Domain\Enrollment\Services\EnrollmentQueryService;
 use App\Domain\Finance\Actions\AttachReceiptAction;
-use App\Domain\Finance\Models\Payment;
-use App\Domain\Finance\Support\Money;
+use App\Domain\Finance\Models\PaymentReceiptSnapshot;
+use App\Domain\Finance\Models\PaymentTender;
+use App\Domain\Finance\Support\ReceiptLocation;
 use App\Support\CentreCalendar;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Mpdf\Mpdf;
 
@@ -28,75 +27,57 @@ final class GenerateReceiptJob implements ShouldQueue
 
     public int $tries = 3;
 
+    /** Must remain below the database queue's 90-second retry_after. */
+    public int $timeout = 60;
+
     /** @var array<int, int> */
     public array $backoff = [5, 30, 120];
 
     public function __construct(public readonly int $paymentId) {}
 
-    public function handle(EnrollmentQueryService $enrollments, AttachReceiptAction $receipts): void
-    {
-        $payment = Payment::query()
-            ->with(['tenders', 'allocations.charge', 'recordedBy'])
-            ->findOrFail($this->paymentId);
+    public function handle(
+        ReceiptLocation $locations,
+        AttachReceiptAction $receipts,
+    ): void {
+        $snapshot = PaymentReceiptSnapshot::query()
+            ->where('payment_id', $this->paymentId)
+            ->firstOrFail();
+        $tenderRows = PaymentTender::query()
+            ->where('payment_id', $this->paymentId)
+            ->orderBy('id')
+            ->get();
 
-        $allocation = $payment->allocations->sole();
-        $charge = $allocation->charge;
-        $context = $enrollments->receiptContextFor((int) $charge->enrollment_id);
-        $path = 'receipts/'.$payment->reference.'.pdf';
-        $tenders = $payment->tenders->map(fn ($tender): array => [
-            'label' => $tender->method->label(),
-            'amount' => (string) $tender->amount,
-        ])->all();
-        $amountPaid = $payment->tenders->reduce(
-            fn (Money $total, $tender): Money => $total->add(Money::fromDecimal((string) $tender->amount)),
-            Money::zero(),
+        $originalLocale = app()->getLocale();
+
+        try {
+            app()->setLocale($snapshot->locale);
+            $direction = str_starts_with($snapshot->locale, 'ar') ? 'rtl' : 'ltr';
+            $tenders = $tenderRows->map(fn (PaymentTender $tender): array => [
+                'label' => $tender->method->label(),
+                'amount' => (string) $tender->amount,
+            ])->all();
+
+            File::ensureDirectoryExists(storage_path('app/mpdf'));
+
+            $mpdf = new Mpdf(['tempDir' => storage_path('app/mpdf')]);
+            $mpdf->SetCompression(false);
+            $mpdf->WriteHTML(view('finance.receipt', [
+                'snapshot' => $snapshot,
+                'tenders' => $tenders,
+                'paymentDate' => CentreCalendar::localise($snapshot->received_at)->format('Y-m-d H:i'),
+                'locale' => $snapshot->locale,
+                'direction' => $direction,
+            ])->render());
+
+            $bytes = $mpdf->OutputBinaryData();
+        } finally {
+            app()->setLocale($originalLocale);
+        }
+
+        $receipts->execute(
+            $this->paymentId,
+            $locations->pathForReference($snapshot->payment_reference),
+            $bytes,
         );
-
-        File::ensureDirectoryExists(storage_path('app/mpdf'));
-
-        $mpdf = new Mpdf(['tempDir' => storage_path('app/mpdf')]);
-        $mpdf->SetCompression(false);
-        $mpdf->WriteHTML(view('finance.receipt', [
-            'payment' => $payment,
-            'charge' => $charge,
-            'context' => $context,
-            'tenders' => $tenders,
-            'amountPaid' => $amountPaid->toDecimal(),
-            'remainingBalance' => $this->remainingBalanceAtPayment($payment, $charge->amount),
-            'paymentDate' => CentreCalendar::localise($payment->received_at)->format('Y-m-d H:i'),
-        ])->render());
-
-        $bytes = $mpdf->OutputBinaryData();
-
-        $receipts->execute((int) $payment->getKey(), $path, $bytes);
-    }
-
-    /**
-     * Reversals are stored at second precision, so equality is treated as later:
-     * only a reversal strictly before this receipt excludes its allocation.
-     */
-    private function remainingBalanceAtPayment(Payment $payment, string $chargeAmount): string
-    {
-        $receivedAt = $payment->received_at;
-
-        $allocated = DB::table('payment_allocations')
-            ->join('payments', 'payments.id', '=', 'payment_allocations.payment_id')
-            ->where('payment_allocations.charge_id', $payment->allocations->sole()->charge_id)
-            ->where(function ($query) use ($payment, $receivedAt): void {
-                $query->where('payments.received_at', '<', $receivedAt)
-                    ->orWhere(function ($query) use ($payment, $receivedAt): void {
-                        $query->where('payments.received_at', $receivedAt)
-                            ->where('payments.id', '<=', $payment->getKey());
-                    });
-            })
-            ->where(function ($query) use ($receivedAt): void {
-                $query->whereNull('payments.reversed_at')
-                    ->orWhere('payments.reversed_at', '>=', $receivedAt);
-            })
-            ->sum('payment_allocations.amount');
-
-        return Money::fromDecimal($chargeAmount)
-            ->subtract(Money::fromDecimal((string) $allocated))
-            ->toDecimal();
     }
 }
