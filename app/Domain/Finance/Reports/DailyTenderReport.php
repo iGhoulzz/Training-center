@@ -26,21 +26,36 @@ use Illuminate\Support\Collection;
  * through the timezone database rather than a fixed offset — and hands it
  * straight to `TenderBreakdownReport`.
  *
- * ONE CONSEQUENCE OF REUSE, STATED RATHER THAN LEFT IMPLICIT: EVERY METHOD
- * PRESENT ON THE DAY IS REPORTED, NOT ONLY CASH AND CARD
+ * IT REPORTS CASH AND CARD ONLY, WHICH IS A DECISION AND NOT A SHORTHAND
  * -------------------------------------------------------------------------
- * Design §8's table names this report "cash and card" in passing, the same
- * shorthand its own prose uses for the payment method breakdown. But
- * `TenderMethod`'s docblock is explicit that `bank_transfer` and `other` are
- * real, storable tenders wider than that shorthand, and that "anything that
- * reports 'cash and card' needs to decide what it does with these two — a
- * report that filters to the two it knows about would drop money from a total
- * without saying so." Narrowing this report to only cash and card would mean
- * writing a second, filtered query here — the opposite of the reuse this class
- * exists for, and precisely the silent drop that docblock warns against for a
- * report whose whole job is to tell a till operator what came in today. So
- * `forDay()` returns whatever `forPeriod()` returns for the day: one row per
- * method with a standing tender, all four cases included whenever present.
+ * Design §8 defines this report as "non-reversed **cash and card** tender
+ * totals for a date". `TenderMethod`'s docblock requires anything that says
+ * "cash and card" to DECIDE what it does with `bank_transfer` and `other`,
+ * because "a report that filters to the two it knows about would drop money
+ * from a total without saying so". {@see self::TILL_METHODS} is that decision
+ * and carries the reasoning: this is a till figure, and a bank transfer is
+ * money arriving in the centre's account evidenced outside this system, so it
+ * never crosses the desk.
+ *
+ * The narrowing is passed to `forPeriod()` rather than written as a second
+ * query here, so the reuse above is intact — there is still exactly one
+ * definition of "totalled by tender".
+ *
+ * WHAT THE ENUM'S WARNING ACTUALLY BUYS, AND WHERE THE REST OF THE MONEY IS
+ * -------------------------------------------------------------------------
+ * An earlier version of this class argued the opposite at length: that §8's
+ * wording was passing shorthand and that narrowing would be the silent drop
+ * the enum warns against, so `forDay()` returned all four methods. The
+ * cross-review rejected that against the locked design, and it was right to.
+ *
+ * The paragraph is recorded rather than deleted because the concern behind it
+ * is real and is answered here rather than dismissed: what this report omits,
+ * `TenderBreakdownReport` still shows for the same day, and
+ * `DailyTenderReportTest` asserts both halves — that a `bank_transfer`
+ * received on the day is excluded here, and that it is still visible there.
+ * The omission is a stated rule with a test behind it. Nothing is dropped
+ * without saying so; if a figure looks short here, the breakdown is where the
+ * remainder is.
  *
  * WHAT THIS REPORT DELIBERATELY DOES NOT DO
  * ---------------------------------------------
@@ -58,13 +73,6 @@ final class DailyTenderReport
 {
     public function __construct(private readonly TenderBreakdownReport $tenderBreakdown) {}
 
-    /**
-     * Standing tender totals for one local day on the centre's calendar
-     * ({@see CentreCalendar::TIMEZONE}), one row per method present.
-     *
-     * @param  string  $localDate  `Y-m-d`.
-     * @return Collection<int, array{method: TenderMethod, total: Money}>
-     */
     /**
      * The tender methods that physically cross the desk.
      *
