@@ -9,6 +9,7 @@ use App\Domain\Finance\Exceptions\PaymentExceedsOutstandingException;
 use App\Domain\Finance\Exceptions\TenderAllocationMismatchException;
 use App\Domain\Finance\Models\Charge;
 use App\Domain\Finance\Support\ChargeBalance;
+use App\Domain\Finance\Support\Money;
 
 /**
  * Owns the locked, per-bill payment invariant: a payment is self-consistent
@@ -74,7 +75,7 @@ final class PaymentInvariantService
      * was measured, including the construction that looks like it should work
      * and does not.
      */
-    public function assertRecordable(RecordPaymentData $data): void
+    public function assertRecordable(RecordPaymentData $data): Money
     {
         $tenderTotal = $data->tenderTotal();
 
@@ -104,5 +105,7 @@ final class PaymentInvariantService
                 $outstanding->toDecimal(),
             );
         }
+
+        return $outstanding->subtract($data->allocation);
     }
 }

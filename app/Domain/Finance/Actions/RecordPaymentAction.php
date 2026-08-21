@@ -13,7 +13,6 @@ use App\Domain\Finance\Models\PaymentAllocation;
 use App\Domain\Finance\Models\PaymentReceiptSnapshot;
 use App\Domain\Finance\Models\PaymentTender;
 use App\Domain\Finance\Services\PaymentInvariantService;
-use App\Domain\Finance\Support\ChargeBalance;
 use App\Domain\Finance\Support\Reference;
 use App\Models\User;
 use App\Support\CentreCalendar;
@@ -133,8 +132,9 @@ final class RecordPaymentAction
 
             /*
              * NEVER `$charge->enrollment->student` — see the class docblock.
-             * `enrollment_id` is a plain foreign key column on the locked
-             * row, so reading it costs nothing extra.
+             * The receipt snapshot needs student, enrollment, course and batch
+             * facts, so receiptContextFor() pays for that join once here while
+             * those historical values can still be captured atomically.
              */
             $receiptContext = $this->enrollments->receiptContextFor((int) $charge->enrollment_id);
 
@@ -173,7 +173,7 @@ final class RecordPaymentAction
                  * A refusal here rolls this whole transaction back, insert
                  * included, so no partial row survives it.
                  */
-                $this->invariants->assertRecordable($data);
+                $remainingBalance = $this->invariants->assertRecordable($data);
 
                 foreach ($data->tenders as $tender) {
                     PaymentTender::create([
@@ -212,7 +212,7 @@ final class RecordPaymentAction
                     'discount_percentage' => $charge->discount_percentage,
                     'final_charge' => $charge->amount,
                     'amount_paid' => $data->allocation->toDecimal(),
-                    'remaining_balance' => ChargeBalance::outstandingForUpdate($data->chargeId)->toDecimal(),
+                    'remaining_balance' => $remainingBalance->toDecimal(),
                     'recorded_by_name' => $actor->name,
                     'payment_reference' => $payment->reference,
                     'received_at' => $receivedAt,
