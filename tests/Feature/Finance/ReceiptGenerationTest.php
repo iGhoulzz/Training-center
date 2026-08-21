@@ -879,6 +879,18 @@ it('refuses a non-canonical receipt path before writing bytes', function (): voi
     Storage::disk('private')->assertMissing($path);
 });
 
+it('uses renderer-supported direction-neutral receipt layout primitives', function (): void {
+    $template = File::get(resource_path('views/finance/receipt.blade.php'));
+
+    expect(preg_match(
+        '/(?:inline-size|margin-block-end|padding-block|padding-inline|text-align:\s*(?:start|end))/',
+        $template,
+    ))->toBe(0)
+        ->and($template)->toContain('<table width="100%">')
+        ->and($template)->toContain('padding: 6px 8px;')
+        ->and($template)->toContain('dir="ltr"');
+});
+
 it('renders translated student and tender composites with locale-controlled ordering and separators', function (): void {
     $originalLocale = app()->getLocale();
     app()->setLocale('en');
@@ -908,11 +920,18 @@ it('renders translated student and tender composites with locale-controlled orde
             ->receiptContextFor((int) $charge->enrollment_id);
         $pdf = Storage::disk('private')->get('receipts/'.$payment->reference.'.pdf');
 
-        foreach ([
-            "NAME{$context['student_name']}ZCODE{$context['student_code']}",
-            'METHODCardZTENDER',
-            'METHODCashZTENDER',
-        ] as $translatedComposite) {
+        $translatedStudentPrefix = mb_convert_encoding(
+            "NAME{$context['student_name']}ZCODE",
+            'UTF-16BE',
+            'UTF-8',
+        );
+        $isolatedStudentCode = mb_convert_encoding($context['student_code'], 'UTF-16BE', 'UTF-8');
+
+        expect($pdf)->toContain($translatedStudentPrefix)
+            ->and($pdf)->toContain($isolatedStudentCode)
+            ->and(strpos($pdf, $translatedStudentPrefix))->toBeLessThan(strpos($pdf, $isolatedStudentCode));
+
+        foreach (['METHODCardZTENDER', 'METHODCashZTENDER'] as $translatedComposite) {
             expect($pdf)->toContain(mb_convert_encoding($translatedComposite, 'UTF-16BE', 'UTF-8'));
         }
 
