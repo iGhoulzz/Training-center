@@ -85,7 +85,7 @@ function fakeHookCommands(array $commands): array
 
     foreach ($commands as $name => $body) {
         $path = $bin.'/'.$name;
-        $contents = str_ends_with($name, '.cmd')
+        $contents = PHP_OS_FAMILY === 'Windows' && str_ends_with($name, '.cmd')
             ? "@echo off\r\n{$body}\r\n"
             : "#!/bin/sh\n{$body}\n";
 
