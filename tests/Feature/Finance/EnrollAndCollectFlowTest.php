@@ -26,6 +26,7 @@ use Filament\Notifications\Notification as FilamentNotification;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Livewire\Livewire;
+use Spatie\Permission\PermissionRegistrar;
 
 /*
 |--------------------------------------------------------------------------
@@ -156,6 +157,17 @@ it('finds an existing student by code or name, and not one that does not match',
 });
 
 it('creates a new student inline, as a prospective student', function () {
+    /*
+     * ACTS AS STAFF BECAUSE createStudent() NOW AUTHORIZES.
+     * Written before the `create_student` check existed, this called the
+     * method with no authenticated actor and passed. Adding the check turned
+     * it red — the guard refusing a null actor, which is the guard working.
+     * Staff hold `create_student` outright (RolePermissionSeeder: "Staff
+     * register walk-in students"), so this is the actor the quick-create
+     * form exists for.
+     */
+    $this->actingAs($this->staff);
+
     $id = EnrollAndCollect::createStudent([
         'student_code' => 'STU-300',
         'first_name' => 'New',
@@ -1009,7 +1021,7 @@ it('refuses a second installment typed into the same collection panel, without l
         ], 'collectForm')
         ->call('finalize');
 
-    FilamentNotification::assertNotified(__('collect.reopen_for_next_installment'));
+    FilamentNotification::assertNotified(__('collect.installment_conflict'));
 
     expect(Payment::query()->count())->toBe(
         1,
@@ -1050,3 +1062,167 @@ it('refuses a zero amount as a field error rather than a developer exception', f
     'zero' => ['0.000'],
     'zero, unpadded' => ['0'],
 ]);
+
+/*
+|--------------------------------------------------------------------------
+| create_student is its own ability, and this page respects it
+|--------------------------------------------------------------------------
+|
+| Found by cross-review. canAccess() gates the page on create_enrollment,
+| while StudentPolicy::create() gates student creation on create_student —
+| deliberately independent. An operator granted the first but not the second
+| was able to create students through the quick-create form, because the
+| callback writes `students` directly rather than through an Action that
+| would have authorized for it.
+|
+| Both halves are pinned: the form is not offered, and a crafted call is
+| refused. The seeded roles do not expose the gap — staff and admin both hold
+| both abilities — so this needs a bespoke role, which is exactly why it
+| survived until review.
+*/
+
+it('lets an enroller without create_student enrol an existing student but not create one', function () {
+    $enroller = User::factory()->create(['is_active' => true]);
+    $role = Role::findOrCreate('enroller-without-student-create', 'web');
+    $role->syncPermissions(['access_admin_panel', 'create_enrollment', 'view_any_student', 'view_student']);
+    $enroller->assignRole($role);
+    app(PermissionRegistrar::class)->forgetCachedPermissions();
+    $enroller = $enroller->fresh();
+
+    expect($enroller->can('create_enrollment'))->toBeTrue()
+        ->and($enroller->can('create_student'))->toBeFalse();
+
+    $batch = Batch::factory()->create(['price' => '1000.000']);
+    $student = Student::factory()->create();
+
+    // Enrolling an EXISTING student is still allowed.
+    $livewire = Livewire::actingAs($enroller)
+        ->test(EnrollAndCollect::class)
+        ->fillForm([
+            'student_id' => $student->getKey(),
+            'batch_id' => $batch->getKey(),
+        ])
+        ->call('confirm');
+
+    expect(Enrollment::query()->count())->toBe(1);
+
+    /*
+     * HALF ONE - the quick-create form is not offered.
+     * Read off the REAL mounted schema, the same way the batch-listing test
+     * reads its options, so this is the picker the operator sees rather than
+     * a re-derived copy of it.
+     */
+    $schema = $livewire->instance()->getSchema('form');
+    $studentPicker = $schema->getFlatFields()['student_id'];
+
+    expect($studentPicker->getCreateOptionActionForm($schema))->toBeNull(
+        'The quick-create form was offered to an actor without create_student.',
+    );
+
+    /*
+     * HALF TWO - a crafted call is refused.
+     *
+     * actingAs IS EXPLICIT AND THE ACTOR IS ASSERTED, deliberately. The first
+     * draft relied on Livewire::actingAs above still being in force and
+     * asserted only the throw. Had auth()->user() been null, an
+     * AuthorizationException would have been raised for the WRONG reason and
+     * the test would have agreed with itself - the same null-actor accident
+     * that turned the inline-creation test red one commit ago. Pinning the
+     * identity is what makes the refusal about the missing ability.
+     */
+    $this->actingAs($enroller);
+    expect(auth()->id())->toBe($enroller->getKey());
+
+    $before = Student::query()->count();
+
+    expect(fn () => EnrollAndCollect::createStudent([
+        'student_code' => 'CRAFTED-1',
+        'first_name' => 'Crafted',
+        'last_name' => 'Student',
+        'phone' => '0910000000',
+    ]))->toThrow(AuthorizationException::class);
+
+    expect(Student::query()->count())->toBe(
+        $before,
+        'A crafted quick-create wrote a student for an actor without create_student.',
+    );
+});
+
+it('offers the quick-create form to an actor who does hold create_student', function () {
+    /*
+     * The positive control for the assertion above. Without it, a
+     * createOptionForm() that returned null for EVERYONE would pass - the
+     * quick-create step of the flow silently gone and the test still green.
+     */
+    $livewire = Livewire::actingAs($this->staff)->test(EnrollAndCollect::class);
+
+    $schema = $livewire->instance()->getSchema('form');
+    $studentPicker = $schema->getFlatFields()['student_id'];
+
+    expect($this->staff->can('create_student'))->toBeTrue()
+        ->and($studentPicker->getCreateOptionActionForm($schema))->toBeArray()
+        ->not->toBeEmpty();
+});
+
+/*
+|--------------------------------------------------------------------------
+| Two Done-when items with no test until now
+|--------------------------------------------------------------------------
+|
+| The plan requires that collecting more than outstanding is refused "in the
+| UI AND by the Action", and that the page renders at dir="rtl". Neither had
+| a test — my own omission, not something the reviews raised.
+*/
+
+it('refuses collecting more than outstanding in the UI as well as in the Action', function () {
+    $batch = Batch::factory()->create(['price' => '1000.000']);
+    $student = Student::factory()->create();
+
+    $component = Livewire::actingAs($this->admin)
+        ->test(EnrollAndCollect::class)
+        ->fillForm([
+            'student_id' => $student->getKey(),
+            'batch_id' => $batch->getKey(),
+        ])
+        ->call('confirm');
+
+    $component
+        ->fillForm([
+            'amount' => '1500.000',
+            'tenders' => [
+                ['method' => TenderMethod::Cash->value, 'amount' => '1500.000', 'external_reference' => null],
+            ],
+        ], 'collectForm')
+        ->call('finalize');
+
+    // Nothing was recorded, and the operator was told why rather than
+    // meeting an error page.
+    expect(Payment::query()->count())->toBe(
+        0,
+        'A payment larger than the bill was recorded.',
+    );
+
+    FilamentNotification::assertNotified();
+});
+
+it('renders the page right-to-left for an arabic operator', function () {
+    /*
+     * Arabic ships in phase 4, but the plan requires this page to render at
+     * dir="rtl" from commit one — structure enforced before the catalogue is
+     * filled, which is why lang/ar/collect.php exists and is empty.
+     *
+     * THE LOCALE COMES FROM THE USER ROW, NOT FROM app()->setLocale().
+     * The first draft of this test called app()->setLocale('ar') and then
+     * issued the request, and it failed at dir="ltr" — SetLocale runs on the
+     * request and resets the locale from the actor's `locale` column, so the
+     * test was overwritten by the very middleware it needed. LocalizationTest
+     * already establishes the real chain; this asserts THIS page joins it.
+     */
+    $operator = User::factory()->create(['is_active' => true, 'locale' => 'ar']);
+    $this->system->assignRoles($operator, 'staff');
+
+    $this->actingAs($operator->refresh())
+        ->get(EnrollAndCollect::getUrl())
+        ->assertOk()
+        ->assertSee('dir="rtl"', escape: false);
+});

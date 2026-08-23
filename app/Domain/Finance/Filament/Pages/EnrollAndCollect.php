@@ -43,6 +43,7 @@ use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 
@@ -330,28 +331,42 @@ class EnrollAndCollect extends Page
                     // the search; without this the field renders blank
                     // after a validation failure on the next step.
                     ->getOptionLabelUsing(fn (mixed $value): ?string => self::studentOptionLabel($value))
-                    ->createOptionForm([
-                        TextInput::make('student_code')
-                            ->label(__('collect.student_code'))
-                            ->required()
-                            ->maxLength(30)
-                            ->unique('students', 'student_code'),
+                    /*
+                     * Quick-create is offered only to an actor who may create
+                     * a student. `create_student` and `create_enrollment` are
+                     * independent abilities (`StudentPolicy::create()`), and
+                     * this page is gated on the second alone — so an operator
+                     * granted enrolment but not student creation would
+                     * otherwise be handed a create form they may not use.
+                     *
+                     * Hiding it is the courtesy; `createStudent()`'s own
+                     * `Gate::authorize()` is the refusal, and a bespoke-role
+                     * test drives both halves.
+                     */
+                    ->createOptionForm(fn (): ?array => auth()->user()?->can('create', Student::class)
+                        ? [
+                            TextInput::make('student_code')
+                                ->label(__('collect.student_code'))
+                                ->required()
+                                ->maxLength(30)
+                                ->unique('students', 'student_code'),
 
-                        TextInput::make('first_name')
-                            ->label(__('collect.first_name'))
-                            ->required()
-                            ->maxLength(100),
+                            TextInput::make('first_name')
+                                ->label(__('collect.first_name'))
+                                ->required()
+                                ->maxLength(100),
 
-                        TextInput::make('last_name')
-                            ->label(__('collect.last_name'))
-                            ->required()
-                            ->maxLength(100),
+                            TextInput::make('last_name')
+                                ->label(__('collect.last_name'))
+                                ->required()
+                                ->maxLength(100),
 
-                        TextInput::make('phone')
-                            ->label(__('collect.phone'))
-                            ->tel()
-                            ->maxLength(30),
-                    ])
+                            TextInput::make('phone')
+                                ->label(__('collect.phone'))
+                                ->tel()
+                                ->maxLength(30),
+                        ]
+                        : null)
                     ->createOptionUsing(fn (array $data): int => self::createStudent($data)),
             ]);
     }
@@ -846,11 +861,8 @@ class EnrollAndCollect extends Page
      * Action — see the class docblock for why that shape (not a modal
      * Action with its own schema) is load-bearing here.
      *
-     * `RecordPaymentData` IS BUILT WITH POSITIONAL ARGUMENTS, NOT NAMED ONES
+     * `RecordPaymentData` IS BUILT WITH NAMED ARGUMENTS
      * -----------------------------------------------------------------------------
-     * That DTO's second constructor parameter is `$allocation` — a name
-     * this file cannot spell, for the same reason `collectForm()`'s own
-     * docblock gives for not importing `TenderAllocationMismatchException`.
      * Named arguments are used here. An earlier version avoided them
      * because the copy scan read identifiers as well as literals; it no
      * longer does. Naming them matters on this call in particular:
@@ -908,7 +920,7 @@ class EnrollAndCollect extends Page
              * key exists to close.
              */
             Notification::make()
-                ->title(__('collect.reopen_for_next_installment'))
+                ->title(__('collect.installment_conflict'))
                 ->danger()
                 ->persistent()
                 ->send();
@@ -1148,6 +1160,25 @@ class EnrollAndCollect extends Page
      */
     public static function createStudent(array $data): int
     {
+        /** @var User $actor */
+        $actor = auth()->user();
+
+        /*
+         * `create_student` IS ITS OWN ABILITY AND IS AUTHORIZED HERE.
+         *
+         * `canAccess()` gates this page on `create_enrollment`, and
+         * `StudentPolicy::create()` gates student creation on
+         * `create_student` — deliberately independent abilities. Without this
+         * check an actor holding the first but not the second could create
+         * students through the quick-create form, because this method writes
+         * `students` directly rather than through an Action that would
+         * authorize for it.
+         *
+         * The picker above hides quick-create for such an actor, but that is
+         * a courtesy: this line is the refusal. Found by cross-review.
+         */
+        Gate::forUser($actor)->authorize('create', Student::class);
+
         $student = Student::create([
             ...$data,
             'status' => StudentStatus::Prospective,

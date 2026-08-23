@@ -108,7 +108,7 @@ return [
     // A second installment typed into a collection panel that already
     // recorded one: the shared idempotency key makes it a conflict, not a
     // replay. Whole sentence, and it tells the operator what to do next.
-    'reopen_for_next_installment' => 'This collection panel has already recorded a payment. Open the bill again to record another installment.',
+    'installment_conflict' => 'This collection has already been recorded. Start the flow again from this student to record another installment.',
 
     // The shape rule accepts 0.000; this is what refuses it, before
     // TenderData's developer-facing guard can reach a user in English.
