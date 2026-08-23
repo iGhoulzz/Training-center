@@ -25,6 +25,7 @@ use Database\Seeders\RolePermissionSeeder;
 use Filament\Notifications\Notification as FilamentNotification;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Lang;
 use Livewire\Livewire;
 use Spatie\Permission\PermissionRegistrar;
 
@@ -955,6 +956,11 @@ it('shows a refusal instead of a 500 when the student is already on the batch', 
     $batch = Batch::factory()->create(['price' => '1000.000']);
     $student = Student::factory()->create();
 
+    Lang::addLines(
+        ['enrollment.duplicate_enrollment' => 'SENTINEL-DUPLICATE-ENROLMENT'],
+        app()->getLocale(),
+    );
+
     // Already enrolled: the most ordinary error at the desk.
     Enrollment::factory()->create([
         'student_id' => $student->getKey(),
@@ -969,9 +975,13 @@ it('shows a refusal instead of a 500 when the student is already on the batch', 
         ])
         ->call('confirm');
 
-    // DuplicateEnrollmentException's message, which its own docblock says
-    // reaches the panel as a notification.
-    FilamentNotification::assertNotified();
+    /*
+     * NAMED, not bare. `assertNotified()` with no argument passes on ANY
+     * notification, so it would still be green if the page sent a success
+     * message instead of the refusal. The sentinel proves the notification
+     * carries THIS key rather than merely existing.
+     */
+    FilamentNotification::assertNotified('SENTINEL-DUPLICATE-ENROLMENT');
 
     // The existing enrolment is untouched and no second bill was raised.
     expect(Enrollment::query()->count())->toBe(
@@ -1175,6 +1185,11 @@ it('offers the quick-create form to an actor who does hold create_student', func
 */
 
 it('refuses collecting more than outstanding in the UI as well as in the Action', function () {
+    Lang::addLines(
+        ['payments.exceeds_outstanding' => 'SENTINEL-EXCEEDS-OUTSTANDING'],
+        app()->getLocale(),
+    );
+
     $batch = Batch::factory()->create(['price' => '1000.000']);
     $student = Student::factory()->create();
 
@@ -1202,7 +1217,19 @@ it('refuses collecting more than outstanding in the UI as well as in the Action'
         'A payment larger than the bill was recorded.',
     );
 
-    FilamentNotification::assertNotified();
+    /*
+     * THE BARE assertNotified() THIS REPLACES WAS VACUOUS.
+     * confirm() above succeeds and sends its own success notification, so an
+     * unnamed assertion was already satisfied before finalize() ran - it
+     * would have passed against a page that recorded the overpayment
+     * silently. Found in cross-review.
+     *
+     * A sentinel rather than __('payments.exceeds_outstanding'): reading the
+     * expected text through the same key the code reads means both sides move
+     * together, which proves nothing. This fails unless the refusal is routed
+     * through that exact key.
+     */
+    FilamentNotification::assertNotified('SENTINEL-EXCEEDS-OUTSTANDING');
 });
 
 it('renders the page right-to-left for an arabic operator', function () {
