@@ -25,6 +25,14 @@ composer verify || exit $?
 # The frontend build always runs. It was originally conditional on the diff, but
 # a clean worktree at pre-push has no ordinary diff even when the pushed commits
 # changed Blade or CSS, so the detector would have had to parse the ref tuples
-# above. The build is seconds against a five-minute suite; a detector that
-# enforces less than it claims is not worth those seconds.
-npm run build || exit $?
+# above. The build is seconds against the suite; a detector that enforces less
+# than it claims is not worth those seconds.
+#
+# GitHub Desktop's Git-for-Windows shell can execute npm.cmd directly, but its
+# `npm` resolves to Node's bash wrapper. Desktop bundles `sh` without `bash`, so
+# that wrapper falls through to WSL and fails after the whole suite has passed.
+# Unix installations use the normal npm executable.
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) npm.cmd run build || exit $? ;;
+    *) npm run build || exit $? ;;
+esac
