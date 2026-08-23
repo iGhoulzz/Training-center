@@ -390,7 +390,10 @@ it('keeps payment A captured balance despite its later reversal', function (): v
 });
 
 it('keeps the earlier captured balance when live payment timestamps later match', function (): void {
-    $charge = Charge::factory()->create(['amount' => '2000.000']);
+    $charge = Charge::factory()->create([
+        'list_price' => '2000.000',
+        'amount' => '2000.000',
+    ]);
     $paymentA = $this->recordPayment->execute(
         $this->admin,
         ($this->paymentData)((int) $charge->getKey(), Str::uuid()->toString(), '100.000', [new TenderData(TenderMethod::Cash, '100.000')]),
@@ -406,12 +409,16 @@ it('keeps the earlier captured balance when live payment timestamps later match'
     app()->call([new GenerateReceiptJob((int) $paymentA->getKey()), 'handle']);
     $pdf = Storage::disk('private')->get('receipts/'.$paymentA->reference.'.pdf');
 
-    expect($pdf)->toContain(mb_convert_encoding('1900.000', 'UTF-16BE', 'UTF-8'))
+    expect($paymentA->receiptSnapshot()->firstOrFail()->remaining_balance)->toBe('1900.000')
+        ->and($pdf)->toContain(mb_convert_encoding('1900.000', 'UTF-16BE', 'UTF-8'))
         ->not->toContain(mb_convert_encoding('1700.000', 'UTF-16BE', 'UTF-8'));
 });
 
 it('keeps the target captured balance when an earlier payment is later backdated as reversed', function (): void {
-    $charge = Charge::factory()->create(['amount' => '2000.000']);
+    $charge = Charge::factory()->create([
+        'list_price' => '2000.000',
+        'amount' => '2000.000',
+    ]);
     $earlier = $this->recordPayment->execute(
         $this->admin,
         ($this->paymentData)((int) $charge->getKey(), Str::uuid()->toString(), '100.000', [new TenderData(TenderMethod::Cash, '100.000')]),
@@ -432,12 +439,16 @@ it('keeps the target captured balance when an earlier payment is later backdated
     app()->call([new GenerateReceiptJob((int) $target->getKey()), 'handle']);
     $pdf = Storage::disk('private')->get('receipts/'.$target->reference.'.pdf');
 
-    expect($pdf)->toContain(mb_convert_encoding('1700.000', 'UTF-16BE', 'UTF-8'))
+    expect($target->receiptSnapshot()->firstOrFail()->remaining_balance)->toBe('1700.000')
+        ->and($pdf)->toContain(mb_convert_encoding('1700.000', 'UTF-16BE', 'UTF-8'))
         ->not->toContain(mb_convert_encoding('1800.000', 'UTF-16BE', 'UTF-8'));
 });
 
 it('keeps the target captured balance when an earlier reversal is later set at its boundary', function (): void {
-    $charge = Charge::factory()->create(['amount' => '2000.000']);
+    $charge = Charge::factory()->create([
+        'list_price' => '2000.000',
+        'amount' => '2000.000',
+    ]);
     $earlier = $this->recordPayment->execute(
         $this->admin,
         ($this->paymentData)((int) $charge->getKey(), Str::uuid()->toString(), '100.000', [new TenderData(TenderMethod::Cash, '100.000')]),
@@ -458,12 +469,16 @@ it('keeps the target captured balance when an earlier reversal is later set at i
     app()->call([new GenerateReceiptJob((int) $target->getKey()), 'handle']);
     $pdf = Storage::disk('private')->get('receipts/'.$target->reference.'.pdf');
 
-    expect($pdf)->toContain(mb_convert_encoding('1700.000', 'UTF-16BE', 'UTF-8'))
+    expect($target->receiptSnapshot()->firstOrFail()->remaining_balance)->toBe('1700.000')
+        ->and($pdf)->toContain(mb_convert_encoding('1700.000', 'UTF-16BE', 'UTF-8'))
         ->not->toContain(mb_convert_encoding('1800.000', 'UTF-16BE', 'UTF-8'));
 });
 
 it('keeps the target captured balance when an earlier reversal is later set after it', function (): void {
-    $charge = Charge::factory()->create(['amount' => '2000.000']);
+    $charge = Charge::factory()->create([
+        'list_price' => '2000.000',
+        'amount' => '2000.000',
+    ]);
     $earlier = $this->recordPayment->execute(
         $this->admin,
         ($this->paymentData)((int) $charge->getKey(), Str::uuid()->toString(), '100.000', [new TenderData(TenderMethod::Cash, '100.000')]),
@@ -484,7 +499,8 @@ it('keeps the target captured balance when an earlier reversal is later set afte
     app()->call([new GenerateReceiptJob((int) $target->getKey()), 'handle']);
     $pdf = Storage::disk('private')->get('receipts/'.$target->reference.'.pdf');
 
-    expect($pdf)->toContain(mb_convert_encoding('1700.000', 'UTF-16BE', 'UTF-8'))
+    expect($target->receiptSnapshot()->firstOrFail()->remaining_balance)->toBe('1700.000')
+        ->and($pdf)->toContain(mb_convert_encoding('1700.000', 'UTF-16BE', 'UTF-8'))
         ->not->toContain(mb_convert_encoding('1800.000', 'UTF-16BE', 'UTF-8'));
 });
 
