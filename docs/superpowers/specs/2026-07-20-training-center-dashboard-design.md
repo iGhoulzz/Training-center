@@ -285,7 +285,7 @@ The enumeration is exhaustive, and that matters in the other direction too: **wi
 **`payment_allocations`** — which payment settles which charge
 `id, payment_id (FK), charge_id (FK), amount`
 
-The allocation table is load-bearing. A student paying one lump sum covering three courses is normal, and so is paying one course in four installments. Without it, a `paid_amount` column on `charges` inevitably drifts out of sync with the payment records. With it, every balance is derived by summing allocations — one source of truth, permanently reconcilable.
+The allocation table is load-bearing. A student paying one lump sum covering three courses is normal, and so is paying one course in four installments. **This is a statement about the data model, not a promise of an interface** — collecting a later installment through the UI is out of scope, see section 12. Without it, a `paid_amount` column on `charges` inevitably drifts out of sync with the payment records. With it, every balance is derived by summing allocations — one source of truth, permanently reconcilable.
 
 **`staff_compensation`** — effective-dated
 `id, user_id (FK), type (salary|hourly|per_student), amount, effective_from, effective_to (nullable)`
@@ -422,6 +422,19 @@ Recorded so these do not reappear as assumptions:
 - A mobile application
 - Public student self-registration
 - Student certificate template design, PDF generation, physical printing, or printer integration
+- **Collecting a later installment through the interface.** The data model supports a bill paid
+  over several payments and always has — that is what the allocation table in section 6 is for,
+  and `RecordPaymentAction` will record a second payment against an open charge. What does not
+  exist is a screen to start one: the enrol-and-collect flow takes the payment offered at the
+  desk during enrolment, and there is no other entry point. A student returning a week later to
+  pay the rest cannot be served by the software.
+
+  Scrapped deliberately, not overlooked. Recorded here because it was raised twice in review of
+  P2-T09 as a missing requirement, on the reading that section 6's mention of "four
+  installments" promised an interface for them. It does not — it explains why balances are
+  derived from allocation rows rather than stored on the charge. If this is ever wanted, it is
+  a new feature against `ChargeResource` or `PaymentResource`, not a defect in the enrolment
+  flow.
 
 ---
 
