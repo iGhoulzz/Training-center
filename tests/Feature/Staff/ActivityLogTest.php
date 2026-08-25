@@ -13,6 +13,7 @@ use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\File;
 use Spatie\Activitylog\Models\Activity;
 use Spatie\Activitylog\Support\ActivityBuffer;
 
@@ -351,3 +352,107 @@ it('never records a storage path or uploaded filename', function () {
     expect($everything)->not->toContain('secret-name-scan')
         ->and($everything)->not->toContain('staff-photos/');
 });
+
+/*
+|--------------------------------------------------------------------------
+| No financial write may escape the log (P2-T12)
+|--------------------------------------------------------------------------
+|
+| Nine finance test files already assert `causer_id` on the entry a given
+| mutation produces. That proves the mutations they exercise are logged; it
+| cannot prove a future one will be.
+|
+| `RecordsActivity` logs on Eloquent model events, so the guarantee holds only
+| while every financial write goes through a model instance. One
+| `saveQuietly()`, one `DB::table('payments')->update(...)`, one
+| `withoutEvents()` and that mutation is simply absent from an append-only
+| audit log — with nothing failing, because the test that would have caught it
+| is the one nobody wrote for the new path.
+|
+| This scans instead of enumerating, so it covers writes that do not exist yet.
+| Reads are untouched: the T10 report classes are built on `DB::table()`
+| deliberately, and `select`/aggregate queries are not mutations.
+*/
+
+it('routes every financial mutation through model events, so the log cannot be bypassed', function () {
+    $writeShapes = [
+        // Persist without firing events — the model-level bypass.
+        'saveQuietly' => '/->saveQuietly\s*\(/',
+        'updateQuietly' => '/->updateQuietly\s*\(/',
+        'deleteQuietly' => '/->deleteQuietly\s*\(/',
+        // Suppress events around an otherwise ordinary write.
+        'withoutEvents' => '/::withoutEvents\s*\(/',
+        // Query-builder writes never construct a model at all. Matched only
+        // when the chain starts from DB::table(), so an Eloquent
+        // ->query()->update() on a model class is not swept up here.
+        'DB::table()->insert/update/delete' => '/DB::table\s*\([^)]*\)(?:[^;]*?)->\s*(?:insert|update|delete|upsert|increment|decrement)\s*\(/s',
+    ];
+
+    $offenders = [];
+
+    foreach (File::allFiles(app_path('Domain/Finance')) as $file) {
+        if ($file->getExtension() !== 'php') {
+            continue;
+        }
+
+        $path = (string) $file->getRealPath();
+        $source = appSourceWithoutComments($path);
+
+        foreach ($writeShapes as $name => $pattern) {
+            if (preg_match($pattern, $source) === 1) {
+                $offenders[] = str_replace(base_path().DIRECTORY_SEPARATOR, '', $path).' -> '.$name;
+            }
+        }
+    }
+
+    expect($offenders)->toBeEmpty(
+        'A financial write bypasses Eloquent model events, so RecordsActivity never sees it and the '
+        ."mutation is missing from an append-only audit log:\n".implode("\n", $offenders),
+    );
+});
+
+it('detects each bypass shape it is meant to detect', function (string $sample) {
+    /*
+     * Without this, deleting a pattern above leaves a test that scans for
+     * nothing and passes forever. Same reasoning as the localization
+     * detector's own sample list.
+     */
+    $patterns = [
+        '/->saveQuietly\s*\(/',
+        '/->updateQuietly\s*\(/',
+        '/->deleteQuietly\s*\(/',
+        '/::withoutEvents\s*\(/',
+        '/DB::table\s*\([^)]*\)(?:[^;]*?)->\s*(?:insert|update|delete|upsert|increment|decrement)\s*\(/s',
+    ];
+
+    $matched = false;
+
+    foreach ($patterns as $pattern) {
+        if (preg_match($pattern, $sample) === 1) {
+            $matched = true;
+        }
+    }
+
+    expect($matched)->toBeTrue();
+})->with([
+    '$payment->saveQuietly();',
+    '$charge->updateQuietly([\'amount\' => \'1.000\']);',
+    '$line->deleteQuietly();',
+    'Payment::withoutEvents(fn () => $payment->save());',
+    'DB::table(\'payments\')->where(\'id\', 1)->update([\'reversed_at\' => now()]);',
+    "DB::table('charges')\n    ->whereKey(1)\n    ->increment('amount');",
+]);
+
+it('leaves reads and non-finance code alone', function (string $sample) {
+    // The report classes read through DB::table() on purpose. A select or an
+    // aggregate is not a mutation and must not be reported.
+    $pattern = '/DB::table\s*\([^)]*\)(?:[^;]*?)->\s*(?:insert|update|delete|upsert|increment|decrement)\s*\(/s';
+
+    expect(preg_match($pattern, $sample))->toBe(0);
+})->with([
+    "DB::table('charges')->select(['id', 'amount'])->get();",
+    "DB::table('payment_allocations')->sum('amount');",
+    "DB::table('payments')->where('reversed_at', null)->count();",
+    // An Eloquent write is fine — it fires events and RecordsActivity sees it.
+    "Payment::query()->whereKey(1)->update(['reversed_at' => now()]);",
+]);

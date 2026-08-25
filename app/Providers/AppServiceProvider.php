@@ -104,9 +104,38 @@ class AppServiceProvider extends ServiceProvider
         ]);
 
         /*
-         * These policies live outside app/Policies, so Laravel's
-         * convention-based discovery will not find them. Without these lines
-         * every check against them silently falls through to false.
+         * NINE OF THESE ELEVEN ARE REDUNDANT. TWO ARE NOT. ALL ELEVEN STAY.
+         *
+         * The comment that stood here claimed discovery could not find any of
+         * them because they live outside app/Policies. That is wrong for nine.
+         * `Gate::guessPolicyName()` walks every namespace prefix and tries
+         * `<prefix>\Policies\<Class>Policy`, longest first (Gate.php:721-724),
+         * so a domain model finds its sibling policy unaided:
+         *
+         *   App\Domain\Finance\Models\Charge
+         *     -> App\Domain\Finance\Policies\ChargePolicy
+         *
+         * NOT via the `\Models\` -> `\Policies\` substitution at
+         * Gate.php:725-727. That branch is guarded by a str_contains for
+         * `\Models\` WITH a trailing separator, and these namespaces end in
+         * `Models`, so it never fires. Worth stating because the phase-2 plan
+         * cited that line as the mechanism; it is the prefix walk above.
+         *
+         * The two that genuinely need registering are the two whose model and
+         * policy share no prefix:
+         *
+         *   App\Models\User                    -> App\Domain\Staff\Policies\UserPolicy
+         *   Spatie\Activitylog\Models\Activity -> App\Domain\Staff\Policies\ActivityPolicy
+         *
+         * Measured with `Gate::getPolicyFor()` rather than reasoned: strip this
+         * block and those two return null while the other nine still resolve.
+         * A null policy is a silent false, and these two guard panel account
+         * management and the append-only audit log.
+         *
+         * They stay as deliberate explicitness. The two that matter look
+         * identical to the nine at a glance, so trimming to "only the necessary
+         * ones" invites the next reader to finish the job. Nor can the block rot
+         * unnoticed: removing it fails 45 tests under tests/Feature/Staff alone.
          */
         Gate::policy(User::class, UserPolicy::class);
         Gate::policy(StaffProfile::class, StaffProfilePolicy::class);

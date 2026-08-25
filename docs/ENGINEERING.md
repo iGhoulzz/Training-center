@@ -74,6 +74,15 @@ app/Domain/Enrollment/
 - Index every foreign key, and every column used in `WHERE` or `ORDER BY`. Composite indexes for common query pairs.
 - **Do not index a column only searched with a leading wildcard.** Filament's `searchable()` builds `LIKE %term%`, and a B-tree index is ordered by prefix — a search with no known prefix has nothing to seek on, so MySQL scans whatever you do. Such an index costs writes and disk while never being used. `courses.name_ar` is searched but deliberately unindexed for this reason, while `name_en` is indexed because it is also *sorted* on. If wildcard search ever becomes measurably slow, the answer is a `FULLTEXT` index with `MATCH … AGAINST`, or a search engine — not a B-tree.
 - Money is `decimal(12, 3)`. **Never float, never `decimal(12,2)`.** The currency is LYD, which subdivides into 1000 dirham per ISO 4217. Two decimal places would silently round dirham-precision amounts and break reconciliation. Display precision is a UI concern, not a storage one.
+- **A money field never uses Filament's `->numeric()`** (established in phase 2, task 2P). That
+  method installs a `floatval` state cast, so the value crosses a float on its way in and out of
+  the form — the one thing `decimal(12,3)` exists to prevent, and invisible because the *display*
+  still looks right. Use `->inputMode('decimal')` for the keyboard plus explicit validation rules
+  for the shape. An honest test asserts `getState()`, not the rendered output, because only the
+  state shows the cast.
+- **PHP-side money arithmetic goes through `App\Domain\Finance\Support\Money`**, which works in
+  integer dirham. Rounding is half-up and defined once: 216.350 at 1.00% is 214.187, where float
+  arithmetic yields 214.186.
 - Status columns are `string(30)` with a `default`, an index, and a backed enum cast.
 - Explicit nullability on every column.
 - One migration per logical change. Never edit a migration that has run in production.
@@ -211,6 +220,34 @@ Apply the same reasoning to any future resource whose per-record policy has a pr
 ### One config value that must not change
 
 **`super_admin.define_via_gate` in `config/filament-shield.php` must stay `false`.** Setting it `true` makes `Gate::before` return true for every ability, silently defeating guard 2. A test pins it.
+
+---
+
+## Time, documents and state (phase 2)
+
+Three rules this phase paid for, each in a review round.
+
+**A local reporting period becomes a half-open UTC range, once, in one place.** The centre reads
+its day on Africa/Tripoli; the database stores instants in UTC. Every report converts the local
+period to `[start, end)` in UTC through `ReportPeriod` and nothing re-derives it — a second
+conversion is a second definition, and the two disagree across a DST boundary. Test the
+conversion at an hour where a mistake would show, not at midday when every candidate agrees.
+Libya's 2013 DST change is the anchor case: a fixed offset passes a naive test and a timezone
+database is required to pass an honest one.
+
+**An issued document is a snapshot, not a live query.** A receipt or an exported report captures
+what it said at the moment it was issued — figures, names, codes, and the locale — and reprinting
+it later reproduces that, not today's data. Concretely: the capture happens inside the same
+transaction as the event it documents, and a later correction to a charge, a student's name or a
+reversal timestamp must not change a document already given to somebody. This is the opposite of
+the balance rule below it, and both are deliberate: **balances are always derived, documents are
+always frozen.**
+
+**A guarded field is read from raw state, never from `getState()`.** Filament does not dehydrate a
+hidden component, so `getState()` silently drops a field whose step never rendered — turning an
+Action's refusal of a crafted value into a silent acceptance of the default. Where a field carries
+an authorization consequence, read the schema's raw state so a crafted submission still reaches
+the Action that refuses it.
 
 ---
 
