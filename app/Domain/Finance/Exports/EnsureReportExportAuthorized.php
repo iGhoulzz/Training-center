@@ -17,11 +17,7 @@ final readonly class EnsureReportExportAuthorized
     {
         $requester = User::query()->find($this->requesterId);
 
-        if (! $requester instanceof User
-            || ! $requester->is_active
-            || ! $requester->can('view_financial_report')
-            || ! $requester->can('export_financial_report')
-        ) {
+        if (! ReportExportAuthorization::allows($requester)) {
             throw new AuthorizationException('The report requester is no longer authorized to export financial data.');
         }
 

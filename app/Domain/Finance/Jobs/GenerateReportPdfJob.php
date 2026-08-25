@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Finance\Jobs;
 
+use App\Domain\Finance\Exports\ReportExportAuthorization;
 use App\Domain\Finance\Exports\ReportSnapshot;
 use App\Models\User;
 use Filament\Actions\Action;
@@ -50,9 +51,7 @@ final class GenerateReportPdfJob implements ShouldQueue
     {
         $requester = User::query()->findOrFail($this->requesterId);
 
-        if (! $requester->is_active
-            || ! $requester->can('view_financial_report')
-            || ! $requester->can('export_financial_report')) {
+        if (! ReportExportAuthorization::allows($requester)) {
             return;
         }
 

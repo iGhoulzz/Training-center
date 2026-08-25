@@ -8,6 +8,7 @@ use App\Domain\Enrollment\Models\Student;
 use App\Domain\Finance\Exports\PrepareReportCsvExport;
 use App\Domain\Finance\Exports\ReportDataBuilder;
 use App\Domain\Finance\Exports\ReportDataset;
+use App\Domain\Finance\Exports\ReportExportAuthorization;
 use App\Domain\Finance\Exports\ReportExporter;
 use App\Domain\Finance\Exports\ReportKind;
 use App\Domain\Finance\Exports\ReportSnapshot;
@@ -247,7 +248,7 @@ abstract class ReportPage extends Page
     {
         $requester = $this->requester();
 
-        return $requester->is_active && $requester->can('export_financial_report');
+        return ReportExportAuthorization::allows($requester);
     }
 
     private function captureSnapshot(): ReportSnapshot

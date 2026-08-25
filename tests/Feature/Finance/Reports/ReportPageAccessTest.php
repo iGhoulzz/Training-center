@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Domain\Finance\Exports\PrepareReportCsvExport;
+use App\Domain\Finance\Exports\ReportExportAuthorization;
 use App\Domain\Finance\Filament\Pages\Reports\DailyTenderReportPage;
 use App\Domain\Finance\Filament\Pages\Reports\OutstandingAgedReportPage;
 use App\Domain\Finance\Filament\Pages\Reports\PaymentMethodReportPage;
@@ -66,6 +67,25 @@ it('uses the authorized snapshot preparation job', function () {
 
     expect($export)->not->toBeNull()
         ->and($export->getJob())->toBe(PrepareReportCsvExport::class);
+});
+
+it('requires both report abilities on an active account before exporting', function () {
+    $exporterRole = Role::findOrCreate('financial_report_exporter', 'web');
+    $this->system->syncRolePermissions($exporterRole, [
+        'access_admin_panel',
+        'export_financial_report',
+    ]);
+    $exporterWithoutView = ($this->actorWith)('financial_report_exporter');
+
+    expect(ReportExportAuthorization::allows($this->admin))->toBeTrue()
+        ->and(ReportExportAuthorization::allows($this->viewer))->toBeFalse()
+        ->and(ReportExportAuthorization::allows($exporterWithoutView))->toBeFalse()
+        ->and(ReportExportAuthorization::allows($this->staff))->toBeFalse()
+        ->and(ReportExportAuthorization::allows(null))->toBeFalse();
+
+    $this->admin->update(['is_active' => false]);
+
+    expect(ReportExportAuthorization::allows($this->admin->refresh()))->toBeFalse();
 });
 
 it('lets an admin reach every report page and see both queued export actions', function (string $page) {

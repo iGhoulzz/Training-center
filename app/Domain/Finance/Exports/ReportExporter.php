@@ -54,9 +54,7 @@ abstract class ReportExporter extends Exporter
      */
     public static function scopeToReport(Builder $query, array $options, User $requester): Builder
     {
-        if (! $requester->is_active
-            || ! $requester->can('view_financial_report')
-            || ! $requester->can('export_financial_report')) {
+        if (! ReportExportAuthorization::allows($requester)) {
             return $query->whereRaw('1 = 0');
         }
 
@@ -110,10 +108,7 @@ abstract class ReportExporter extends Exporter
     {
         $requester = User::query()->find($export->getAttribute('user_id'));
 
-        if (! $requester instanceof User
-            || ! $requester->is_active
-            || ! $requester->can('view_financial_report')
-            || ! $requester->can('export_financial_report')
+        if (! ReportExportAuthorization::allows($requester)
             || $export->processed_rows !== $export->total_rows
             || $export->successful_rows !== $export->total_rows) {
             return $notification->danger()->actions([]);
@@ -145,10 +140,7 @@ abstract class ReportExporter extends Exporter
 
         $requester = User::query()->find($this->export->getAttribute('user_id'));
 
-        if (! $requester instanceof User
-            || ! $requester->is_active
-            || ! $requester->can('view_financial_report')
-            || ! $requester->can('export_financial_report')) {
+        if (! ReportExportAuthorization::allows($requester)) {
             throw new LogicException('A report export no longer has an authorized requester.');
         }
 

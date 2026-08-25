@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Finance\Filament\Pages\Reports;
 
+use App\Domain\Finance\Exports\ReportExportAuthorization;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -20,9 +21,7 @@ final class ReportPdfDownload
         abort_unless(
             $user instanceof User
             && $user->getKey() === $requester
-            && $user->is_active
-            && $user->can('view_financial_report')
-            && $user->can('export_financial_report'),
+            && ReportExportAuthorization::allows($user),
             403,
         );
         abort_unless(Str::isUuid($reference), 404);

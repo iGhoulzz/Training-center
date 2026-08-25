@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Finance\Filament\Pages\Reports;
 
+use App\Domain\Finance\Exports\ReportExportAuthorization;
 use App\Domain\Finance\Exports\ReportExporter;
 use App\Models\User;
 use Filament\Actions\Exports\Enums\ExportFormat;
@@ -21,9 +22,7 @@ final class ReportXlsxDownload
         abort_unless(
             $user instanceof User
             && $export->user()->is($user)
-            && $user->is_active
-            && $user->can('view_financial_report')
-            && $user->can('export_financial_report'),
+            && ReportExportAuthorization::allows($user),
             403,
         );
         abort_unless(
