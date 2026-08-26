@@ -385,26 +385,38 @@ it('routes every financial mutation through model events, so the log cannot be b
         // Query-builder writes never construct a model at all.
         'DB::table()->insert/update/delete' => '/DB::table\s*\([^)]*\)(?:[^;]*?)->\s*(?:insert|update|delete|upsert|increment|decrement)\s*\(/s',
         /*
-         * ELOQUENT BUILDER WRITES BYPASS EVENTS TOO. THIS LINE IS HERE BECAUSE
-         * THE FIRST VERSION OF THIS GUARD SAID THE OPPOSITE.
+         * A MUTATING CALL WHOSE RECEIVER ENDS IN `)` IS A BUILDER, NOT A MODEL.
          *
-         * It excluded `Model::query()->...->update()` and carried a negative
-         * sample asserting such a write "fires events and RecordsActivity sees
-         * it". It does not: Eloquent's Builder::update() is
+         * This rule is stated in the negative on purpose. The first two versions
+         * tried to enumerate the ways a builder chain can START — `::query()`,
+         * `->newQuery()`, `::where*()` — and cross-review pointed out that scope,
+         * relationship and connection-builder writes all slip past such a list:
          *
-         *     return $this->toBase()->update($this->addUpdatedAtColumn($values));
+         *     Charge::open()->update([...])                  // local scope
+         *     $charge->payments()->update([...])             // relationship
+         *     DB::connection('x')->table('y')->update([...]) // connection
          *
-         * (Builder.php:1270-1272) — straight to the query builder, no model
-         * instance, no `updating`/`updated`. `delete`, `upsert`, `increment`
-         * and `decrement` are the same. So the guard blessed the exact shape it
-         * exists to catch, and would have failed had anyone fixed it. Found in
-         * cross-review of T12.
+         * Predicting spellings is the wrong shape for this guard. Every mutating
+         * write in this domain today has a `$variable` receiver, which is an
+         * instance write and does fire `updating`/`updated`; a receiver ending in
+         * `)` is the result of a call, which means a builder. Inverting the rule
+         * covers the shapes above and the ones nobody has written yet.
          *
-         * The tempered middle is what keeps an INSTANCE write out of this: a
-         * chain passing through first/find/sole/get returns a model, and
-         * `$model->update()` does fire events. Both directions are sampled.
+         * Eloquent's Builder::update() is `$this->toBase()->update(...)`
+         * (Builder.php:1270-1272) — no model instance, no events. `delete`,
+         * `upsert`, `increment` and `decrement` are the same.
+         *
+         * A method that returns a model and is then written to — `foo()->update()`
+         * — is reported here too. That is deliberate: it is indistinguishable from
+         * a builder at this level, and it is worth an explicit allowlist entry
+         * saying which it is.
          */
-        'Eloquent builder write' => '/(?:::query\s*\(\s*\)|->newQuery\s*\(\s*\)|::where[A-Za-z]*\s*\()(?:(?!->\s*(?:first|firstOrFail|firstOrCreate|firstWhere|find|findOrFail|findOr|sole|get|value|pluck|count|exists|doesntExist|cursor|each|chunk|chunkById|lazy)\s*\()[^;])*->\s*(?:update|delete|upsert|insert|increment|decrement)\s*\(/s',
+        'builder-shaped write (receiver ends in `)`)' => '/\\)\\s*->\\s*(?:update|delete|insert|upsert|increment|decrement|forceDelete|truncate|restore)\\s*\\(/s',
+        /*
+         * Static mutators forward to the query builder without constructing a
+         * model at all: Model::insert(), ::upsert(), ::destroy(), ::truncate().
+         */
+        'static mutator' => '/::\\s*(?:insert|insertOrIgnore|insertGetId|upsert|destroy|truncate)\\s*\\(/s',
     ];
 
     /*
@@ -465,7 +477,8 @@ it('detects each bypass shape it is meant to detect', function (string $sample) 
         '/->deleteQuietly\s*\(/',
         '/::withoutEvents\s*\(/',
         '/DB::table\s*\([^)]*\)(?:[^;]*?)->\s*(?:insert|update|delete|upsert|increment|decrement)\s*\(/s',
-        '/(?:::query\s*\(\s*\)|->newQuery\s*\(\s*\)|::where[A-Za-z]*\s*\()(?:(?!->\s*(?:first|firstOrFail|firstOrCreate|firstWhere|find|findOrFail|findOr|sole|get|value|pluck|count|exists|doesntExist|cursor|each|chunk|chunkById|lazy)\s*\()[^;])*->\s*(?:update|delete|upsert|insert|increment|decrement)\s*\(/s',
+        '/\\)\\s*->\\s*(?:update|delete|insert|upsert|increment|decrement|forceDelete|truncate|restore)\\s*\\(/s',
+        '/::\\s*(?:insert|insertOrIgnore|insertGetId|upsert|destroy|truncate)\\s*\\(/s',
     ];
 
     $matched = false;
@@ -489,6 +502,23 @@ it('detects each bypass shape it is meant to detect', function (string $sample) 
     "Charge::query()->where('id', 1)->delete();",
     "Payment::where('reversed_at', null)->update(['reversed_at' => now()]);",
     "PayrollLine::query()\n    ->whereKey(1)\n    ->increment('amount');",
+    // The four shapes cross-review named, none of which a chain-start list caught.
+    "Charge::open()->update(['amount' => '1.000']);",
+    "\$charge->payments()->update(['reversed_at' => now()]);",
+    "DB::connection('mysql')->table('payments')->update(['reversed_at' => now()]);",
+    "Payment::insert([['amount' => '1.000']]);",
+    'Charge::destroy(1);',
+    'PaymentAllocation::truncate();',
+    /*
+     * REPORTED ON PURPOSE, though both are instance writes that do fire events.
+     * `foo()->update()` cannot be told apart from a builder chain by shape, and
+     * guessing wrong in this direction is the safe way round: an over-report
+     * costs one allowlist entry with a reason, an under-report costs a financial
+     * mutation missing from an append-only log. The earlier version of this
+     * guard tried to exempt these and, in doing so, exempted the real bypasses.
+     */
+    "Payment::query()->whereKey(1)->firstOrFail()->update(['notes' => 'x']);",
+    'Charge::query()->findOrFail(1)->delete();',
 ]);
 
 it('leaves reads and non-finance code alone', function (string $sample) {
@@ -496,7 +526,8 @@ it('leaves reads and non-finance code alone', function (string $sample) {
     // aggregate is not a mutation and must not be reported.
     $patterns = [
         '/DB::table\s*\([^)]*\)(?:[^;]*?)->\s*(?:insert|update|delete|upsert|increment|decrement)\s*\(/s',
-        '/(?:::query\s*\(\s*\)|->newQuery\s*\(\s*\)|::where[A-Za-z]*\s*\()(?:(?!->\s*(?:first|firstOrFail|firstOrCreate|firstWhere|find|findOrFail|findOr|sole|get|value|pluck|count|exists|doesntExist|cursor|each|chunk|chunkById|lazy)\s*\()[^;])*->\s*(?:update|delete|upsert|insert|increment|decrement)\s*\(/s',
+        '/\\)\\s*->\\s*(?:update|delete|insert|upsert|increment|decrement|forceDelete|truncate|restore)\\s*\\(/s',
+        '/::\\s*(?:insert|insertOrIgnore|insertGetId|upsert|destroy|truncate)\\s*\\(/s',
     ];
 
     foreach ($patterns as $pattern) {
@@ -507,14 +538,15 @@ it('leaves reads and non-finance code alone', function (string $sample) {
     "DB::table('payment_allocations')->sum('amount');",
     "DB::table('payments')->where('reversed_at', null)->count();",
     /*
-     * AN INSTANCE WRITE IS NOT A BYPASS and must not be reported. A chain that
-     * passes through first/find/sole returns a model, and $model->update()
-     * fires updating/updated, which is exactly what RecordsActivity listens to.
-     * This is the boundary the tempered middle of the builder pattern draws.
+     * AN INSTANCE WRITE IS NOT A BYPASS and must not be reported: a `$variable`
+     * receiver is a model, and $model->update() fires updating/updated, which is
+     * exactly what RecordsActivity listens to. Every financial write in the
+     * domain today has this shape.
      */
-    "Payment::query()->whereKey(1)->firstOrFail()->update(['notes' => 'x']);",
-    'Charge::query()->findOrFail(1)->delete();',
     "\$payment->update(['notes' => 'x']);",
-    // A builder read is not a write.
+    '\$charge->delete();',
+    "\$this->export->update(['file_name' => 'x']);",
+    "fn (): bool => \$charge->update(['amount' => '1.000']),",
+    // A builder READ is not a write, and the report classes rely on this.
     "Payment::query()->where('reversed_at', null)->get();",
 ]);
