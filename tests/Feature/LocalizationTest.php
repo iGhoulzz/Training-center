@@ -982,7 +982,22 @@ function firstHardcodedLabel(string $source): ?string
         .'|pluralModelLabel|navigationLabel|navigationGroup|navigationParentItem'
         .'|breadcrumb|description)';
 
-    if (preg_match('/static\s+\??(?:string\s+)?\$'.$labellingProperty.'\s*=\s*[\'"][^\'"]/i', $source, $match) === 1) {
+    /*
+     * THE TYPE IS A UNION AS OFTEN AS IT IS A STRING (found in cross-review).
+     *
+     * The first version accepted only untyped, `?string` or `string`, and so
+     * missed the exact declaration Filament ships:
+     *
+     *     protected static string | UnitEnum | null $navigationGroup = null;
+     *
+     * — which is `navigationGroup`, one of the property names this rule exists
+     * to cover. A preventive guard that cannot see the framework's own form of
+     * the thing it names is not preventing anything. The type expression is now
+     * any pipe-separated list of optionally-nullable names, or absent entirely.
+     */
+    $typeExpression = '(?:[?\\\\\\w]+(?:\s*\|\s*[?\\\\\\w]+)*\s+)?';
+
+    if (preg_match('/static\s+'.$typeExpression.'\$'.$labellingProperty.'\s*=\s*[\'"][^\'"]/i', $source, $match) === 1) {
         return trim($match[0]);
     }
 
@@ -1009,6 +1024,11 @@ it('detects the hardcoded labels it is meant to detect', function (string $sampl
     "protected static ?string \$navigationLabel = 'Reports';",
     "protected static ?string \$title = 'Daily tender';",
     'protected static string $navigationGroup = "Finance";',
+    // Filament's own declaration form — Page.php declares navigationGroup as
+    // `static string | UnitEnum | null`, and the first version of this rule
+    // could not see it.
+    "protected static string | UnitEnum | null \$navigationGroup = 'Finance';",
+    "protected static string|UnitEnum|null \$navigationGroup = 'Finance';",
     "->breadcrumb('Edit')",
 ]);
 

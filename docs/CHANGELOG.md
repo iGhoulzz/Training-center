@@ -10,9 +10,11 @@ every balance is added up from the payments themselves, every time it is asked
 for.
 
 **Currency is the Libyan dinar, carried to three decimal places** — a dinar is
-1000 dirham — and it never touches a floating-point number anywhere in the
-system, because a float cannot hold 0.001 exactly and the dirham is precisely
-the digit that would be lost.
+1000 dirham. A float cannot hold 0.001 exactly, and the dirham is precisely the
+digit that would be lost, so no amount that gets stored is ever allowed to pass
+through one: the financial code works in whole dirham as integers, and a
+check in the test suite fails the build if a float conversion appears anywhere
+in it.
 
 ### What works
 

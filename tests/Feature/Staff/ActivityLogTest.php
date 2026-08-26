@@ -382,10 +382,42 @@ it('routes every financial mutation through model events, so the log cannot be b
         'deleteQuietly' => '/->deleteQuietly\s*\(/',
         // Suppress events around an otherwise ordinary write.
         'withoutEvents' => '/::withoutEvents\s*\(/',
-        // Query-builder writes never construct a model at all. Matched only
-        // when the chain starts from DB::table(), so an Eloquent
-        // ->query()->update() on a model class is not swept up here.
+        // Query-builder writes never construct a model at all.
         'DB::table()->insert/update/delete' => '/DB::table\s*\([^)]*\)(?:[^;]*?)->\s*(?:insert|update|delete|upsert|increment|decrement)\s*\(/s',
+        /*
+         * ELOQUENT BUILDER WRITES BYPASS EVENTS TOO. THIS LINE IS HERE BECAUSE
+         * THE FIRST VERSION OF THIS GUARD SAID THE OPPOSITE.
+         *
+         * It excluded `Model::query()->...->update()` and carried a negative
+         * sample asserting such a write "fires events and RecordsActivity sees
+         * it". It does not: Eloquent's Builder::update() is
+         *
+         *     return $this->toBase()->update($this->addUpdatedAtColumn($values));
+         *
+         * (Builder.php:1270-1272) — straight to the query builder, no model
+         * instance, no `updating`/`updated`. `delete`, `upsert`, `increment`
+         * and `decrement` are the same. So the guard blessed the exact shape it
+         * exists to catch, and would have failed had anyone fixed it. Found in
+         * cross-review of T12.
+         *
+         * The tempered middle is what keeps an INSTANCE write out of this: a
+         * chain passing through first/find/sole/get returns a model, and
+         * `$model->update()` does fire events. Both directions are sampled.
+         */
+        'Eloquent builder write' => '/(?:::query\s*\(\s*\)|->newQuery\s*\(\s*\)|::where[A-Za-z]*\s*\()(?:(?!->\s*(?:first|firstOrFail|firstOrCreate|firstWhere|find|findOrFail|findOr|sole|get|value|pluck|count|exists|doesntExist|cursor|each|chunk|chunkById|lazy)\s*\()[^;])*->\s*(?:update|delete|upsert|insert|increment|decrement)\s*\(/s',
+    ];
+
+    /*
+     * Writes that skip model events on purpose, each with its reason.
+     *
+     * An entry here is a claim that the row written is not a financial record
+     * the audit log is meant to carry. Anything else belongs in an Action.
+     */
+    $allowedEventlessWrites = [
+        // Filament's own `exports` progress counters — a vendor bookkeeping
+        // table for a queued job, not a financial record. The report data it
+        // describes is frozen in the snapshot, not in this row.
+        'app/Domain/Finance/Exports/PrepareReportCsvExport.php' => 'export progress counters',
     ];
 
     $offenders = [];
@@ -398,9 +430,19 @@ it('routes every financial mutation through model events, so the log cannot be b
         $path = (string) $file->getRealPath();
         $source = appSourceWithoutComments($path);
 
+        $relative = str_replace(
+            [base_path().DIRECTORY_SEPARATOR, DIRECTORY_SEPARATOR],
+            ['', '/'],
+            $path,
+        );
+
+        if (array_key_exists($relative, $allowedEventlessWrites)) {
+            continue;
+        }
+
         foreach ($writeShapes as $name => $pattern) {
             if (preg_match($pattern, $source) === 1) {
-                $offenders[] = str_replace(base_path().DIRECTORY_SEPARATOR, '', $path).' -> '.$name;
+                $offenders[] = $relative.' -> '.$name;
             }
         }
     }
@@ -423,6 +465,7 @@ it('detects each bypass shape it is meant to detect', function (string $sample) 
         '/->deleteQuietly\s*\(/',
         '/::withoutEvents\s*\(/',
         '/DB::table\s*\([^)]*\)(?:[^;]*?)->\s*(?:insert|update|delete|upsert|increment|decrement)\s*\(/s',
+        '/(?:::query\s*\(\s*\)|->newQuery\s*\(\s*\)|::where[A-Za-z]*\s*\()(?:(?!->\s*(?:first|firstOrFail|firstOrCreate|firstWhere|find|findOrFail|findOr|sole|get|value|pluck|count|exists|doesntExist|cursor|each|chunk|chunkById|lazy)\s*\()[^;])*->\s*(?:update|delete|upsert|insert|increment|decrement)\s*\(/s',
     ];
 
     $matched = false;
@@ -441,18 +484,37 @@ it('detects each bypass shape it is meant to detect', function (string $sample) 
     'Payment::withoutEvents(fn () => $payment->save());',
     'DB::table(\'payments\')->where(\'id\', 1)->update([\'reversed_at\' => now()]);',
     "DB::table('charges')\n    ->whereKey(1)\n    ->increment('amount');",
+    // Eloquent builder writes — the shape this guard used to bless.
+    "Payment::query()->whereKey(1)->update(['reversed_at' => now()]);",
+    "Charge::query()->where('id', 1)->delete();",
+    "Payment::where('reversed_at', null)->update(['reversed_at' => now()]);",
+    "PayrollLine::query()\n    ->whereKey(1)\n    ->increment('amount');",
 ]);
 
 it('leaves reads and non-finance code alone', function (string $sample) {
     // The report classes read through DB::table() on purpose. A select or an
     // aggregate is not a mutation and must not be reported.
-    $pattern = '/DB::table\s*\([^)]*\)(?:[^;]*?)->\s*(?:insert|update|delete|upsert|increment|decrement)\s*\(/s';
+    $patterns = [
+        '/DB::table\s*\([^)]*\)(?:[^;]*?)->\s*(?:insert|update|delete|upsert|increment|decrement)\s*\(/s',
+        '/(?:::query\s*\(\s*\)|->newQuery\s*\(\s*\)|::where[A-Za-z]*\s*\()(?:(?!->\s*(?:first|firstOrFail|firstOrCreate|firstWhere|find|findOrFail|findOr|sole|get|value|pluck|count|exists|doesntExist|cursor|each|chunk|chunkById|lazy)\s*\()[^;])*->\s*(?:update|delete|upsert|insert|increment|decrement)\s*\(/s',
+    ];
 
-    expect(preg_match($pattern, $sample))->toBe(0);
+    foreach ($patterns as $pattern) {
+        expect(preg_match($pattern, $sample))->toBe(0);
+    }
 })->with([
     "DB::table('charges')->select(['id', 'amount'])->get();",
     "DB::table('payment_allocations')->sum('amount');",
     "DB::table('payments')->where('reversed_at', null)->count();",
-    // An Eloquent write is fine — it fires events and RecordsActivity sees it.
-    "Payment::query()->whereKey(1)->update(['reversed_at' => now()]);",
+    /*
+     * AN INSTANCE WRITE IS NOT A BYPASS and must not be reported. A chain that
+     * passes through first/find/sole returns a model, and $model->update()
+     * fires updating/updated, which is exactly what RecordsActivity listens to.
+     * This is the boundary the tempered middle of the builder pattern draws.
+     */
+    "Payment::query()->whereKey(1)->firstOrFail()->update(['notes' => 'x']);",
+    'Charge::query()->findOrFail(1)->delete();',
+    "\$payment->update(['notes' => 'x']);",
+    // A builder read is not a write.
+    "Payment::query()->where('reversed_at', null)->get();",
 ]);
