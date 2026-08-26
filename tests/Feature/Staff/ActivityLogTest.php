@@ -355,26 +355,50 @@ it('never records a storage path or uploaded filename', function () {
 
 /*
 |--------------------------------------------------------------------------
-| No financial write may escape the log (P2-T12)
+| A tripwire for common event-bypassing writes (P2-T12)
 |--------------------------------------------------------------------------
 |
-| Nine finance test files already assert `causer_id` on the entry a given
-| mutation produces. That proves the mutations they exercise are logged; it
-| cannot prove a future one will be.
+| WHAT THIS IS, STATED HONESTLY: partial defence in depth, not a proof.
 |
-| `RecordsActivity` logs on Eloquent model events, so the guarantee holds only
-| while every financial write goes through a model instance. One
-| `saveQuietly()`, one `DB::table('payments')->update(...)`, one
-| `withoutEvents()` and that mutation is simply absent from an append-only
-| audit log — with nothing failing, because the test that would have caught it
-| is the one nobody wrote for the new path.
+| `RecordsActivity` logs on Eloquent model events, so a financial mutation is
+| absent from the append-only log if it never constructs a model — one
+| `saveQuietly()`, one `DB::table('payments')->update(...)`, one builder chain
+| — and nothing fails, because the test that would have caught it is the one
+| nobody wrote for the new path. This scans for the shapes that do that, so it
+| covers writes that do not exist yet, cheaply, at the moment they are added.
 |
-| This scans instead of enumerating, so it covers writes that do not exist yet.
+| WHAT IT CANNOT DO. Source patterns cannot decide whether a receiver is a
+| model or a builder. The shape that defeats it is an assigned builder:
+|
+|     $query = Payment::query();
+|     $query->update([...]);          // receiver is a variable; reads as an
+|                                     // instance write; NOT reported
+|
+| Deciding that needs type inference, not a scan, and chasing it with more
+| pattern complexity buys less than it costs — three revisions of this guard
+| were each defeated by a shape the previous one had not imagined. So the gap
+| is recorded here rather than papered over.
+|
+| WHAT ACTUALLY CARRIES THE GUARANTEE TODAY:
+|
+|   1. The behavioural tests. Nine finance test files assert `causer_id` on the
+|      entry each mutation produces. Those prove the mutations they exercise
+|      are logged, which is the real evidence.
+|   2. A manual audit performed for this task: every `DB::table()` under
+|      `app/Domain/Finance` is a read in the T10 report classes, and every
+|      mutating call has a `$variable` receiver bar one allowlisted
+|      export-progress write.
+|   3. Writes going through Actions at all, which is enforced separately by
+|      `ActionBoundaryArchTest`.
+|
+| This tripwire is a fourth, weaker line. Treat a failure here as a real
+| finding; do not read a pass as proof the log cannot be bypassed.
+|
 | Reads are untouched: the T10 report classes are built on `DB::table()`
 | deliberately, and `select`/aggregate queries are not mutations.
 */
 
-it('routes every financial mutation through model events, so the log cannot be bypassed', function () {
+it('finds no common event-bypassing write shape in the finance domain', function () {
     $writeShapes = [
         // Persist without firing events — the model-level bypass.
         'saveQuietly' => '/->saveQuietly\s*\(/',
@@ -460,12 +484,14 @@ it('routes every financial mutation through model events, so the log cannot be b
     }
 
     expect($offenders)->toBeEmpty(
-        'A financial write bypasses Eloquent model events, so RecordsActivity never sees it and the '
-        ."mutation is missing from an append-only audit log:\n".implode("\n", $offenders),
+        'A financial write matches a shape that bypasses Eloquent model events, so RecordsActivity '
+        .'would never see it and the mutation would be missing from an append-only audit log. '
+        .'Either route it through a model instance or add it to $allowedEventlessWrites with its '
+        ."reason:\n".implode("\n", $offenders),
     );
 });
 
-it('detects each bypass shape it is meant to detect', function (string $sample) {
+it('detects each bypass shape this tripwire covers', function (string $sample) {
     /*
      * Without this, deleting a pattern above leaves a test that scans for
      * nothing and passes forever. Same reasoning as the localization
