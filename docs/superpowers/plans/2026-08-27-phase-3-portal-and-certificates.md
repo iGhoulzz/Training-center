@@ -113,7 +113,55 @@ values, which cannot fail reproducibly; T10 widens
 behaviour so no existing caller is edited; and T13 proves its mutation on a
 disposable database rather than mutating the schema every worktree shares.
 
-**Returned for a narrow re-review of these twelve. Round 2 outcome to follow.**
+**Returned for a narrow re-review of these twelve.**
+
+### Round 2 outcome (2026-08-27) — not approved, revised
+
+Nine of the twelve landed. **Three blockers remained, and all three were places
+where the revision asserted something about existing code without opening it.**
+That is the same defect as round 1's findings 3–8, one layer in: round 1 invented
+paths, round 2 invented *behaviour* at paths that do exist.
+
+1. **T9 prescribed the wrong money conversion.** The revision said `Money` values
+   were rehydrated "from the integer dirham the expression produces". They are
+   not. `OUTSTANDING_SQL` is
+   `(charges.amount - COALESCE(SUM(payment_allocations.amount), 0))` over
+   `decimal(12,3)`, so MySQL returns a DECIMAL that PDO hands back as the string
+   `"123.456"` — which is why `ChargeBalance::money()` calls
+   `Money::fromDecimal((string) $value)` at `ChargeBalance.php:340`.
+   `fromDirham((int) "123.456")` casts to `123` dirham and reports **0.123 LYD
+   against a 123.456 LYD debt**, to a student, with no exception anywhere. A
+   money bug written into a plan.
+2. **T10 named a generation point that is not one, and broke a contract.**
+   `ReportExporter`'s XLSX hook is
+   `configureXlsxWriterAfterOpen(Writer $writer): Writer` (line 82) — it runs
+   while the writer is still being constructed and its body writes header rows.
+   A receipt there fires before the file exists and duplicates
+   `PrepareReportCsvExport`'s. Separately, the revision widened
+   `FileLifecycleService::record()` while claiming it kept its "call me inside the
+   owning-row transaction" contract, and then had export callers call it outside
+   any transaction. Both cannot be true, and that contract is what makes "the
+   record is gone" and "these bytes must go" atomic. Corrected to **two receipts
+   at two real completion points**, and a **separate `scheduleDeletion()` method**
+   so `record()` is not touched at all.
+3. **T11 was wrong about the test for a second time.** Round 1 corrected "fails
+   under a concurrent suite" — a scenario `tests/bootstrap.php` makes impossible.
+   The correction then claimed the test spawns a queue worker and sleeps a fixed
+   10 seconds, and proposed introducing a readiness poll.
+   `AdjustChargeConcurrencyTest.php:133-139` spawns a Symfony `Process` and
+   **already polls**, `usleep(25_000)` against a `microtime(true) + 10` deadline,
+   returning as soon as the readiness file appears. Nothing to introduce, no
+   runtime to reclaim. Reframed to what is genuinely wrong: a **wall-clock**
+   deadline, a **tight ceiling**, and **no detection of a subprocess that died at
+   startup** — which currently reports a timeout message describing the wrong
+   failure.
+
+**The lesson, recorded because it survived one correction and recurred:** naming
+the right file is not the same as knowing what is in it. Round 1 was fixed by
+`ls`; round 2 needed the file opened and the lines read. Both rounds' findings
+were free to check and expensive to miss.
+
+**Returned for final confirmation.**
 
 ---
 
@@ -130,7 +178,7 @@ from updated `main` only after its dependency has merged with green CI.
 | 3 | **T3** Completion marking | **T9** Finance query surface | T3 unblocks T5; T9 unblocks T7 |
 | 4 | **T5** Certificate Actions | **T10** Export retention | |
 | 5 | **T7** Portal pages | **T6** Enrolment deletion and certificates | |
-| 6 | **T8** Public verifier | **T11** Worker-readiness timing | |
+| 6 | **T8** Public verifier | **T11** Subprocess deadline | |
 | 7 | **T13** Finance status arch test | **T12** `failOnNotice` | |
 | 8 | **T14** Phase reconciliation | *(reviews T14)* | milestone closes |
 
@@ -183,7 +231,7 @@ Checked against the file scopes as written below, not assumed.
 | 3 | T3 completion · T9 queries | **none** — `CompleteEnrollmentAction`, `ReverseEnrollmentCompletionAction`, `CompletionRule`, `BatchResource/RelationManagers/EnrollmentsRelationManager.php` and `lang/en/enrollment.php` against `EnrollmentQueryService.php` and the new `StudentBalanceQuery.php`. The enrolment list lives under **`BatchResource`**, the credential button under **`StudentResource`**; different files, and in any case now different waves. |
 | 4 | T5 certificate Actions · T10 export retention | **none** — certificate Actions and resource against `pending_file_deletions`, `PurgeDeletedFileJob`, `SweepPendingFileDeletionsCommand` and `ReportExporter`. |
 | 5 | T7 portal pages · T6 enrolment deletion | **none** — `Filament/Portal` directories, `StudentPanelProvider` and `lang/en/portal.php` against `DeleteEnrollmentAction` and its tests. |
-| 6 | T8 verifier · T11 worker readiness | **none** — `routes/web.php`, `VerifyCertificateController.php`, the verify views and `lang/en/verify.php` against `tests/Feature/Finance/AdjustChargeConcurrencyTest.php` alone. |
+| 6 | T8 verifier · T11 subprocess deadline | **none** — `routes/web.php`, `VerifyCertificateController.php`, the verify views and `lang/en/verify.php` against `tests/Feature/Finance/AdjustChargeConcurrencyTest.php` alone. |
 | 7 | T13 arch test · T12 gate | **none** — a new Finance test plus the `DatabaseIsolationTest` exempt list against `Tooling\Gate` and the PHPUnit configuration. |
 
 Files touched by more than one phase-3 task are **sequential across waves, never
@@ -1198,8 +1246,21 @@ and this is a second *caller* of it, not a second copy.
 
 Restating the subtraction here would be the `paid_amount` mistake wearing a
 third name — two expressions that agree today and diverge the first time a
-write-off or an adjustment changes what counts. `Money` values are rehydrated
-from the integer dirham the expression produces, never from a float.
+write-off or an adjustment changes what counts.
+
+**Hydration is `Money::fromDecimal((string) $value)`, and getting this wrong is a
+money bug.** A step-0 correction: an earlier draft said `Money` was rehydrated
+"from the integer dirham the expression produces". It is not.
+`OUTSTANDING_SQL` is `(charges.amount - COALESCE(SUM(payment_allocations.amount), 0))`
+over `decimal(12,3)` columns, so MySQL returns a **DECIMAL**, which PDO hands
+back as the **string** `"123.456"`. `ChargeBalance::money()` already does the
+right thing at `ChargeBalance.php:340`.
+
+`Money::fromDirham((int) "123.456")` would cast to `123` dirham and report
+**0.123 LYD against a 123.456 LYD debt** — a wrong balance shown to a student,
+silently, with no exception anywhere. `StudentBalanceQuery` applies the same
+type guard `ChargeBalance::money()` applies: a value that is neither string nor
+int is a thrown error, not a cast.
 
 **No derived value is stored** — that non-negotiable is untouched. The total is
 summed in PHP through `Money::add()` over the rows, so it cannot disagree with
@@ -1218,7 +1279,10 @@ by count · a student with no enrolments returns an empty `enrollments` array an
 `chargeId === null` and `Money::zero()`, not a missing row · a written-off charge
 is excluded from the total exactly as `ChargeBalance` excludes it · **every
 returned value is a `Money` instance**, asserted by type, so no float or string
-escapes the service · `composer verify` green.
+escapes the service · **a charge of `123.456` with nothing allocated returns
+`123.456`, not `0.123`** — the explicit regression for the `fromDirham` cast, and
+the reason the equality-with-`outstandingFor()` assertion above is not left to
+carry this on its own · `composer verify` green.
 
 ---
 
@@ -1233,19 +1297,31 @@ The phase-2 deferral, closed as an enhancement to the generic file lifecycle.
 - `app/Console/Commands/SweepPendingFileDeletionsCommand.php`
 - `app/Domain/Staff/Jobs/PurgeDeletedFileJob.php`
 - `app/Domain/Staff/Models/PendingFileDeletion.php`
-- `app/Domain/Staff/Services/FileLifecycleService.php` — the shared API; see below
-- `app/Domain/Finance/Exports/ReportExporter.php` — **generation point**
-- `app/Domain/Finance/Exports/PrepareReportCsvExport.php` — **generation point**
-- `app/Domain/Finance/Jobs/GenerateReportPdfJob.php` — **generation point**
+- `app/Domain/Staff/Services/FileLifecycleService.php` — a **new** narrow method; see below
+- `app/Domain/Finance/Exports/PrepareReportCsvExport.php` — **records the directory receipt**
+- `app/Domain/Finance/Jobs/GenerateReportPdfJob.php` — **records the file receipt**
 - `tests/Feature/Staff/PendingFileDeletionSweepTest.php` — **existing**, extended
 - `tests/Feature/Staff/FileLifecycleTransactionTest.php` — **existing**, re-verified
 - `tests/Feature/Finance/ExportRetentionTest.php` — new
 
-**Three generation points, not one.** The first draft named `ReportExporter.php`
-alone. XLSX and CSV are prepared through `PrepareReportCsvExport.php` and PDFs
-are produced by `GenerateReportPdfJob.php`; a receipt written at only one of them
-leaves the other two accumulating exactly as today, and the task would report
-success having fixed a third of the problem.
+**Two receipts, at two real completion points.** Both earlier drafts got this
+wrong in opposite directions — the first named `ReportExporter.php` alone, the
+second added it to a list of three. **`ReportExporter` is not a generation point
+at all.** Its XLSX hook is
+`configureXlsxWriterAfterOpen(Writer $writer): Writer` (line 82), which runs
+*while the writer is being constructed* and whose whole body writes title and
+filter header rows. A receipt recorded there fires before the file exists, on
+every export open, and duplicates whatever `PrepareReportCsvExport` records for
+the same artefact.
+
+So:
+
+| Point | Records | Covers |
+|---|---|---|
+| `PrepareReportCsvExport` | one **directory** receipt | CSV **and** XLSX — Filament's pipeline writes both into one directory |
+| `GenerateReportPdfJob`, after the successful write | one **file** receipt | PDF |
+
+One artefact, one receipt, recorded once the bytes exist.
 - **Joins no seam.** **`routes/console.php` is deliberately not touched** — a second scheduled command is the wrong shape.
 
 **Produces** nothing consumed elsewhere.
@@ -1265,8 +1341,17 @@ discriminator, because Filament's XLSX pipeline produces a **directory** while
 `delete_after` at +7 days, and **the existing hourly sweep honours it**. One
 schema statement per migration.
 
-**The shared API is `FileLifecycleService::record()`, widened rather than
-duplicated.** It is today:
+**`record()` is left exactly as it is. Scheduled deletion is a new, narrow
+method.** The second draft widened `record()` with optional `kind` and
+`delete_after` keys and then asserted it kept its contract of being called
+"inside the transaction that removes the owning row" — while the export callers
+would call it outside any transaction, because an export owns no row. **Both
+cannot be true.** That contract is not decoration: it is what makes "the record is
+gone" and "these bytes must go" become true together or not at all, and a second
+kind of caller that does not honour it turns the docblock into another sentence
+asserting a property the code no longer has.
+
+`record()` therefore keeps its signature, its contract and its callers untouched:
 
 ```php
 /**
@@ -1276,34 +1361,29 @@ duplicated.** It is today:
 public function record(array $files): array
 ```
 
-It becomes:
+And `FileLifecycleService` gains one new method beside it:
 
 ```php
 /**
- * @param  array<int, array{
- *     disk: string,
- *     path: string,
- *     kind?: 'file'|'directory',
- *     delete_after?: \Carbon\CarbonImmutable|null,
- * }>  $files
- * @return array<int, int>
+ * Commit the intent to destroy a generated artefact at a future time.
+ *
+ * Unlike record(), this does NOT belong inside an owning-row transaction —
+ * an export owns no row. The artefact already exists on disk when this is
+ * called, and the receipt is the only thing that will ever remove it.
  */
-public function record(array $files): array
+public function scheduleDeletion(
+    string $disk,
+    string $path,
+    PathKind $kind,
+    CarbonImmutable $deleteAfter,
+): int
 ```
 
-**Both new keys are optional and default to today's behaviour** — `kind` defaults
-to `'file'`, `delete_after` to `null`, meaning eligible immediately. Every
-existing caller therefore compiles and behaves identically without being edited,
-which is the property that makes this an extension of the file lifecycle rather
-than a second one. `record()` keeps its contract of being called **inside the
-transaction that removes the owning row**; the three export generation points
-call it outside any such transaction because an export owns no row — that is the
-one documented divergence, and it is why they pass `delete_after` rather than
-relying on the immediate path.
+Two methods, two contracts, each stated in its own docblock and each true. The
+purge job branches on the stored `kind` and nothing else.
 
-The purge job branches on `kind` and nothing else. **No caller passes a raw
-`deleteDirectory` anywhere** — the capability exists only behind this API and only
-under the fence below.
+**No caller anywhere passes a raw `deleteDirectory`** — the capability exists only
+behind `scheduleDeletion()` and only under the fence below.
 
 **Recursive directory deletion is a materially more dangerous capability than
 today's unlink, and is fenced accordingly:**
@@ -1323,25 +1403,30 @@ today's unlink, and is fenced accordingly:**
 
 An export receipt with `delete_after` in the future is **not** swept, and the same
 receipt after the window **is** · a receipt with a null `delete_after` is swept
-immediately, exactly as today · **all three generation points write a receipt** —
-XLSX through `PrepareReportCsvExport`, CSV through it likewise, and PDF through
-`GenerateReportPdfJob` — each asserted separately, because one covered path does
-not imply the others · **a directory receipt naming a path outside the
+immediately, exactly as today · **a CSV export, an XLSX export and a PDF export
+each produce exactly one receipt** — one directory receipt from
+`PrepareReportCsvExport` for the first two, one file receipt from
+`GenerateReportPdfJob` for the third — asserted by counting receipts per export,
+so a second receipt for the same artefact fails · **an export that fails mid-write
+leaves no receipt**, because the PDF receipt is recorded only after a successful
+write · `record()`'s existing callers and their tests are **untouched**, and
+`scheduleDeletion()` is the only method the exports call · **a directory receipt
+naming a path outside the
 export prefix is refused**, and one naming the disk root is refused, and one
 containing a traversal segment is refused — three separate assertions · the export
 directory and its contents are gone after a successful sweep · **never-attempted
 rows are still swept first, proven across two consecutive sweep runs**, not one ·
 the existing staff photo and certificate deletion tests pass **unchanged**, and
-so does `FileLifecycleTransactionTest` — **no existing `record()` caller is
-edited**, which is the evidence that the API was widened rather than replaced ·
+so does `FileLifecycleTransactionTest` — **`record()` is not edited at all**,
+which is the evidence that its owning-row contract still means what it says ·
 the ownership check still refuses to unlink owned bytes · **the prefix fence fails
 when removed**, demonstrated against a path outside it, with the failing output
 recorded · `composer verify` green.
 
 ---
 
-## Task 11 — Worker-readiness timing
-**Wave 6 · Owner: Codex · `p3/t11-worker-readiness` · depends on nothing**
+## Task 11 — Subprocess deadline headroom and diagnostics
+**Wave 6 · Owner: Codex · `p3/t11-subprocess-deadline` · depends on nothing**
 
 **File scope**
 - `tests/Feature/Finance/AdjustChargeConcurrencyTest.php`
@@ -1349,48 +1434,60 @@ recorded · `composer verify` green.
 
 **Does**
 
-**The first draft of this task was wrong about the failure, and its acceptance
-criterion was unachievable.** It said the test "fails whenever a second suite runs
-concurrently" and asked for a demonstration of it passing while one did. That
-cannot be demonstrated: `tests/bootstrap.php` takes a machine-wide lock in the
-test process itself and **serialises suites** — a second suite does not run
-concurrently, it queues. `--parallel` is refused outright, deliberately and with
-a message saying why. The scenario the criterion described does not exist.
+**Two earlier drafts of this task were both wrong about what the test does.**
+Recorded because the corrections are what the task is now for.
 
-The real defect is narrower and entirely local to this test. It **manually spawns
-a real queue worker** and then waits a **hard-coded 10 seconds** for it to become
-ready. The single test takes **11.6s** uncontended, so almost all of its runtime
-is that fixed wait. Nothing checks whether the worker actually came up: if the
-machine is loaded — a slow `composer dump-autoload`, a cold opcache, a laptop on
-battery, another worktree's suite holding the database lock right up to the
-moment this one starts — the worker may not be listening at the 10-second mark
-and the test fails for a reason unrelated to the code it exercises. It is a
-sleep pretending to be a synchronisation point.
+The first said the test "fails whenever a second suite runs concurrently" and
+asked for a demonstration of it passing while one did. That cannot be
+demonstrated: `tests/bootstrap.php` takes a machine-wide lock **in the test
+process itself** and serialises suites — a second suite does not run
+concurrently, it queues. `--parallel` is refused outright.
 
-**Replace the fixed wait with a readiness poll**: check for the condition that
-actually means "the worker is up and consuming", on a short interval, up to a
-generous ceiling, and fail with a message naming what it waited for if the
-ceiling is reached. On an unloaded machine this returns as soon as the worker is
-ready, which should take the test well below 11.6s; on a loaded one it waits as
-long as it genuinely needs to.
+The second said the test "manually spawns a real queue worker" and "waits a
+hard-coded 10 seconds", and proposed replacing that wait with a readiness poll.
+**Both halves are wrong.** It spawns a Symfony `Process` running a PHP subprocess,
+not a queue worker; and it **already polls** — `AdjustChargeConcurrencyTest.php:133-139`
+starts the process, sets `$deadline = microtime(true) + 10`, then loops
+`while (! File::exists($readyPath) && microtime(true) < $deadline) { usleep(25_000); }`,
+returning as soon as the readiness file appears. There is nothing to introduce
+and no runtime to reclaim, because on a healthy machine that loop already exits
+in milliseconds.
 
-**A fixed sleep raised from 10s to 20s is the same defect with a larger
-constant**, and is not acceptable here — it makes the suite slower in the common
-case and still fails in the uncommon one.
+**What is actually wrong is the deadline and the diagnostics.** Three narrow
+changes, and nothing else:
+
+1. **The deadline is wall-clock.** `microtime(true)` moves with NTP steps and
+   clock adjustments; a correction during the loop can expire the deadline early
+   or extend it. Use a **monotonic** source — `hrtime(true)` — so the ceiling
+   measures elapsed time.
+2. **The ceiling is tight for a cold machine.** 10 seconds covers a warm run
+   easily and a cold subprocess boot — autoloader, container, database connection
+   — sometimes not. Raise it generously. This costs nothing in the common case
+   **because the loop already returns early**; it only changes how long a genuinely
+   slow start is tolerated.
+3. **A dead subprocess is invisible.** If the process exits immediately — a fatal
+   error, a missing extension, a bad path — nothing notices. The loop spins to the
+   full ceiling and then fails with "The adjustment worker never established its
+   old snapshot", which describes a timeout and not the fatal error that actually
+   happened. Check `$worker->isRunning()` inside the loop, break as soon as it is
+   false, and put `$worker->getErrorOutput()` into the failure message.
+
+**Explicitly not in scope:** the `usleep(400_000)` on line 141. That one is a
+deliberate wait proving the worker stays *blocked* on the charge lock, not a
+readiness wait, and shortening it would weaken what the test proves.
 
 **Done when**
 
-The readiness condition is **named** — what is polled, and why that specific
-signal means the worker is consuming rather than merely started · the poll
-returns early on an unloaded machine, with the uncontended runtime reported
-before and after · **the ceiling path is exercised**: with the worker deliberately
-prevented from starting, the test fails with the readiness message rather than
-with a downstream assertion error, and that output is recorded · **a test proves
-the poll waits for readiness rather than for a duration** — a worker delayed by
-several seconds is still awaited and the test still passes, which a fixed sleep
-tuned below that delay would not do · the concurrency behaviour the test exists
-to prove is unchanged, asserted by the test still failing when the lock under
-test is removed · `composer verify` green.
+The deadline is monotonic and the ceiling is stated with its reasoning · **the
+early-exit path is exercised**: with the subprocess made to fail at startup, the
+test fails within a second or so, and its message contains the subprocess's
+stderr rather than the timeout wording — that output is recorded · a subprocess
+delayed by several seconds is still awaited and the test still passes · **the
+concurrency property the test exists to prove is unchanged**, asserted by the test
+still failing when the lock under test is removed · the uncontended runtime is
+reported before and after, **with no reduction promised** — the poll already exits
+early, so this task is about behaviour under adverse conditions and not about
+speed · `composer verify` green.
 
 ---
 
