@@ -43,6 +43,78 @@ in which case the design is corrected first and this plan follows.
 Record each round's outcome under this heading as phase 2 did, so the reasoning
 survives the merge.
 
+### Round 1 outcome (2026-08-27) — not approved, revised
+
+Eleven findings, none of which re-opened a design decision; every one was a fact
+about this codebase the plan had wrong. A twelfth was found while verifying the
+first. All are applied.
+
+**Two were ordering or scope errors that would have produced fabricated work:**
+
+1. **T4 moved ahead of T3.** T3 was reversing a completion against a certificate
+   table that did not yet exist, via a temporary interface T3 would define and T5
+   would rewire. That interface existed only to paper over the ordering, and a
+   test against it could only ever agree with the fake behind it. Reordering
+   deletes the interface, the fake, and the duplicate test.
+2. **T1 did not own `ForcePasswordChange.php` or `PasswordChange.php`,** which it
+   must. Both hardcode the admin panel — `PAGE_ROUTE`, `LOGOUT_ROUTE`,
+   `redirect()->to('/admin/password-change')` and `$this->redirect('/admin')`.
+   The plan said "ported" and scoped no file, which would have sent a
+   temporary-password student into a panel they cannot enter.
+
+**Six were paths or counts the plan asserted and the repository contradicts:**
+
+3. `tests/Feature/Staff/PermissionSeedingTest.php` and
+   `tests/Feature/Portal/PanelAccessTest.php` do not exist. The real files are
+   `tests/Feature/RolePermissionSeederTest.php` and
+   `tests/Feature/Auth/PanelAccessTest.php` — and the invented one would have been
+   a second file with the same basename testing the same method.
+4. `tests/Feature/Enrollment/EnrollmentQueryServiceTest.php` does not exist; it is
+   under `tests/Feature/Finance/`.
+5. The gate is `scripts/Tooling/Gate.php`, its test
+   `tests/Unit/Tooling/WarningGateTest.php`. The plan wrote `tooling/` and named
+   no test.
+6. Export generation has **three** points — `ReportExporter`,
+   `PrepareReportCsvExport`, `GenerateReportPdfJob`. The plan named one, so T10
+   would have reported success having fixed a third of the problem.
+7. **T1 seeds fourteen abilities, not eleven** — the draft counted Shield's
+   certificate set as a single entry.
+8. **T11's acceptance criterion was unachievable.** It asked for a demonstration
+   of the test passing while a second suite ran concurrently; `tests/bootstrap.php`
+   serialises suites, so that scenario cannot occur. The task is rewritten around
+   the real defect — a hard-coded 10s wait for a manually spawned worker.
+
+**Three were correctness or security:**
+
+9. **T2 identified protected staff accounts by panel accessibility**, which
+   requires `is_active`. A deactivated staff account linked to a student row would
+   have passed and been resettable by a front-desk staffer. It now tests the
+   `access_admin_panel` permission directly.
+10. **T8 asked for a route constraint and a byte-identical rendered 404**, which
+    cannot both hold — a constrained route that does not match returns Laravel's
+    own 404 page, itself a signal separating "wrong shape" from "no such
+    certificate". Validation moved into the controller; the design's §7.1 was
+    corrected to match.
+11. **T9 left the bulk balance query undefined** — no class, signature, return
+    shape or `Money` contract, and no statement that it reuses
+    `ChargeBalance::outstandingExpression()` rather than restating the arithmetic.
+
+**Found while verifying finding 2, and carried as the twelfth:**
+`WithdrawEnrollmentAction:82` refuses a non-active enrolment and its docblock
+promises the exception, but **no test anywhere exercises that branch** — the sole
+`EnrollmentStatus::Completed` in `tests/` asserts the opposite thing. The plan
+said the existing test would be "re-verified". T3 now writes it.
+
+Also applied: exact file paths replace every directory and glob scope; T7 asserts
+a fixed query count for My Enrolments as well as My Balance; T4's reference tests
+run against an injected randomness source rather than looping over 10,000 random
+values, which cannot fail reproducibly; T10 widens
+`FileLifecycleService::record()` with optional keys defaulting to today's
+behaviour so no existing caller is edited; and T13 proves its mutation on a
+disposable database rather than mutating the schema every worktree shares.
+
+**Returned for a narrow re-review of these twelve. Round 2 outcome to follow.**
+
 ---
 
 ## Waves, ownership and dependencies
