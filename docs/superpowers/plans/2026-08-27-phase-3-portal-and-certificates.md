@@ -54,13 +54,22 @@ from updated `main` only after its dependency has merged with green CI.
 | Wave | Claude | Codex | Unblocked by finishing |
 |---|---|---|---|
 | 1 | **T1** Portal foundation | *(reviews T1)* | everything portal- or permission-shaped |
-| 2 | **T3** Completion marking | **T2** Portal credentials | T3 unblocks T5 |
-| 3 | **T4** Certificate foundation | **T9** Finance query surface | T4 unblocks T5, T6, T7, T8; T9 unblocks T7 |
+| 2 | **T4** Certificate foundation | **T2** Portal credentials | T4 unblocks T3, T5, T6, T7, T8 |
+| 3 | **T3** Completion marking | **T9** Finance query surface | T3 unblocks T5; T9 unblocks T7 |
 | 4 | **T5** Certificate Actions | **T10** Export retention | |
 | 5 | **T7** Portal pages | **T6** Enrolment deletion and certificates | |
-| 6 | **T8** Public verifier | **T11** Concurrency-test headroom | |
+| 6 | **T8** Public verifier | **T11** Worker-readiness timing | |
 | 7 | **T13** Finance status arch test | **T12** `failOnNotice` | |
 | 8 | **T14** Phase reconciliation | *(reviews T14)* | milestone closes |
+
+**T4 runs before T3, and this is a step-0 correction.** The first draft had T3 in
+wave 2 and T4 in wave 3, which meant T3's completion-reversal check — "refuse
+while a valid certificate exists" — had no table to consult. The draft answered
+that with a temporary interface T3 would define and T5 would rewire, and that is
+a fabricated seam: an interface invented to paper over an ordering mistake, whose
+only consumer replaces it two waves later. **Reordering removes it.** T3 now
+consumes T4's real model and table, and there is one certificate check with one
+test rather than a fake and a real one that must be kept in agreement.
 
 **Why T1 is a wave on its own.** It creates the guard, the panel, the
 `AuthenticatedStudent` resolver, and **the entire phase-3 permission set**. Four
@@ -77,8 +86,9 @@ Claude's next task without touching it.
 
 - **T2 depends on T1** for `access_student_portal` and the `student` role's
   ability set — it assigns that role and the account must be able to sign in.
-- **T3 depends on T1** for `complete_enrollment` and
-  `complete_assigned_batch_enrollment`.
+- **T3 depends on T1 and T4** — on T1 for `complete_enrollment` and
+  `complete_assigned_batch_enrollment`, and on T4 because reversing a completion
+  must refuse while a valid certificate exists, which needs the real table.
 - **T5 depends on T3 and T4.** Issuance requires an enrolment in `completed`, a
   status nothing could produce before T3.
 - **T7 depends on T1, T4 and T9.** T4 because the enrolments page carries
@@ -97,17 +107,26 @@ Checked against the file scopes as written below, not assumed.
 
 | Wave | Pair | Overlap in declared scopes |
 |---|---|---|
-| 2 | T3 completion · T2 credentials | **none** — `Domain/Enrollment/Actions`, `CompletionRule`, `BatchResource/RelationManagers/EnrollmentsRelationManager` and `lang/en/enrollment.php` against `Domain/Staff/Actions`, `StudentResource`, `lang/en/credentials.php` and `ActionBoundaryArchTest`. The enrolment list lives under **`BatchResource`**, the credential button under **`StudentResource`**; they are different files. |
-| 3 | T4 certificates · T9 queries | **none** — new certificate model, enum, policy, factory and migration against `EnrollmentQueryService` and a new Finance read service. Both sit in `Domain/Enrollment`, in disjoint files. |
+| 2 | T4 certificates · T2 credentials | **none** — new certificate migrations, model, enum, policy, factory and reference generator against `Domain/Staff/Actions`, `StudentResource.php`, `lang/en/credentials.php` and `ActionBoundaryArchTest`. |
+| 3 | T3 completion · T9 queries | **none** — `CompleteEnrollmentAction`, `ReverseEnrollmentCompletionAction`, `CompletionRule`, `BatchResource/RelationManagers/EnrollmentsRelationManager.php` and `lang/en/enrollment.php` against `EnrollmentQueryService.php` and the new `StudentBalanceQuery.php`. The enrolment list lives under **`BatchResource`**, the credential button under **`StudentResource`**; different files, and in any case now different waves. |
 | 4 | T5 certificate Actions · T10 export retention | **none** — certificate Actions and resource against `pending_file_deletions`, `PurgeDeletedFileJob`, `SweepPendingFileDeletionsCommand` and `ReportExporter`. |
 | 5 | T7 portal pages · T6 enrolment deletion | **none** — `Filament/Portal` directories, `StudentPanelProvider` and `lang/en/portal.php` against `DeleteEnrollmentAction` and its tests. |
-| 6 | T8 verifier · T11 concurrency headroom | **none** — `routes/web.php`, a controller, a Blade view and `lang/en/verify.php` against a single Finance test file. |
+| 6 | T8 verifier · T11 worker readiness | **none** — `routes/web.php`, `VerifyCertificateController.php`, the verify views and `lang/en/verify.php` against `tests/Feature/Finance/AdjustChargeConcurrencyTest.php` alone. |
 | 7 | T13 arch test · T12 gate | **none** — a new Finance test plus the `DatabaseIsolationTest` exempt list against `Tooling\Gate` and the PHPUnit configuration. |
 
 Files touched by more than one phase-3 task are **sequential across waves, never
-concurrent**: `RolePermissionSeeder` (T1 only, deliberately), `User.php` (T1 only),
-`StudentPanelProvider` (T1 → T7), `EnrollmentQueryService` (T9 → consumed by T7),
-and the phase documents (T13 for §4, T14 for the other three — see below).
+concurrent**:
+
+| File | Tasks | Waves |
+|---|---|---|
+| `database/seeders/RolePermissionSeeder.php` | T1 only, deliberately | 1 |
+| `app/Models/User.php` | T1 only | 1 |
+| `app/Providers/Filament/StudentPanelProvider.php` | T1 → T7 | 1 → 5 |
+| `lang/en/portal.php` | T1 → T7 | 1 → 5 |
+| `lang/en/enrollment.php` | T3 → T6 | 3 → 5 |
+| `app/Domain/Enrollment/Services/EnrollmentQueryService.php` | T9, then consumed by T7 | 3 → 5 |
+| `app/Domain/Enrollment/Actions/ReverseEnrollmentCompletionAction.php` | T3 only — T5 does **not** touch it | 3 |
+| Phase documents | T13 for phase-2 §4; T14 for the other three | 7 → 8 |
 
 ---
 
@@ -123,7 +142,7 @@ Every row was read against `main` at `0c42be1`:
 
 | Seam | A task joins it when it… | State for phase 3 |
 |---|---|---|
-| `RolePermissionSeeder` + `FinancePermissionSeedingTest` | needs a permission | **closed by T1**, which seeds the whole phase-3 set. No later task appends. |
+| `database/seeders/RolePermissionSeeder.php` + `tests/Feature/RolePermissionSeederTest.php` | needs a permission | **closed by T1**, which seeds the whole phase-3 set. No later task appends. The test is the **existing** file at that path — it is extended, not replaced, and no second seeding test is created. |
 | `AdminPanelProvider` — `discoverResources()` | adds the first resource in a domain namespace | **closed for `Domain/Enrollment`** — the line exists at `AdminPanelProvider.php:40-43`. T5's certificate resource is covered by it and **must not add a second**. |
 | `AdminPanelProvider` — `discoverPages()` | adds a standalone panel page outside `app/Filament/Pages` | **not joined by any phase-3 task.** Portal pages register on the *student* panel. |
 | `StudentPanelProvider` — `discoverPages()` | adds a portal page | **created by T1, joined only by T7.** A new seam this phase introduces; named here so it is declared rather than discovered. |
@@ -235,15 +254,26 @@ permission seeder.
 - `app/Models/User.php` — `protected $guard_name = 'web';` and the panel-aware `canAccessPanel()`
 - `app/Providers/Filament/StudentPanelProvider.php` — **new**
 - `bootstrap/providers.php` — register it
+- `app/Http/Middleware/ForcePasswordChange.php` — **de-hardcode the panel**; see below
+- `app/Filament/Pages/PasswordChange.php` — **de-hardcode the redirect**; see below
 - `app/Domain/Enrollment/Support/AuthenticatedStudent.php` — **new**
 - `database/seeders/RolePermissionSeeder.php` — **the entire phase-3 permission set**
 - `lang/en/portal.php`, `lang/ar/portal.php` (empty)
-- `tests/Feature/Portal/PanelAccessTest.php`
-- `tests/Feature/Portal/GuardResolutionTest.php`
-- `tests/Feature/Portal/PortalLogoutTest.php`
-- `tests/Feature/Portal/AuthenticatedStudentTest.php`
-- `tests/Feature/Staff/PermissionSeedingTest.php` — extended for the phase-3 set
+- `tests/Feature/Auth/PanelAccessTest.php` — **existing**, extended
+- `tests/Feature/Auth/ForcePasswordChangeTest.php` — **existing**, extended to the student panel
+- `tests/Feature/Auth/LivewirePersistentGuardTest.php` — **existing**, extended to the student panel
+- `tests/Feature/RolePermissionSeederTest.php` — **existing**, extended
+- `tests/Feature/Portal/GuardResolutionTest.php` — new
+- `tests/Feature/Portal/PortalLogoutTest.php` — new
+- `tests/Feature/Portal/PortalPasswordChangeTest.php` — new
+- `tests/Feature/Portal/AuthenticatedStudentTest.php` — new
 - **Joins:** `RolePermissionSeeder` (closes it), `config/auth.php`. Creates the `StudentPanelProvider` `discoverPages()` seam without joining it.
+
+**Four of those files are existing tests, named because they exist.** An earlier
+draft of this plan invented `tests/Feature/Portal/PanelAccessTest.php` and
+`tests/Feature/Staff/PermissionSeedingTest.php`; neither path exists, and the
+first would have been a second file with the same basename testing the same
+method. Extend what is there.
 
 **Produces**
 - `AuthenticatedStudent::resolve(): Student` — the single answer to "whose portal is this", consumed by every T7 page.
@@ -276,18 +306,62 @@ no rows exist, and every check returns false silently.
 `is_active`, `access_student_portal`, **and a linked, non-trashed student record**
 (`Student` uses `SoftDeletes`).
 
-`RolePermissionSeeder` seeds, in one place: `access_student_portal`,
-`view_own_student_record`, `view_own_enrollment`, `view_own_balance`,
-`view_own_certificate` on the `student` role — **one portal-access ability and
-four `view_own_*` abilities, five in total**; `complete_enrollment` and
-`complete_assigned_batch_enrollment`; `issue_portal_credential` and
-`reset_portal_credential`; and Shield's `student_certificate` set. Role
-assignment follows design §8.2's table exactly. **The `student` role receives
-none of Shield's generated `{action}_student_certificate` permissions** —
-attaching the generic set to it is a one-line mistake with a register-wide blast
-radius, so a test asserts their absence by name.
+**The forced-password-change gate is admin-hardcoded and must be made
+panel-aware.** This is a step-0 correction; the first draft said only "ported"
+and scoped neither file. `ForcePasswordChange.php` carries
+`private const PAGE_ROUTE = 'filament.admin.pages.password-change'` (line 23),
+`private const LOGOUT_ROUTE = 'filament.admin.auth.logout'` (line 29), and
+`redirect()->to('/admin/password-change')` (line 172). `PasswordChange.php` ends
+its success path with `$this->redirect('/admin')` (line 209). Left alone, a
+student with a temporary password is redirected into a panel they cannot enter,
+and the guard's exemption never matches the portal's own password route — the
+trap the admin panel's version was specifically built to avoid.
 
-The panel ships with login and password change only. Pages arrive in T7.
+Both resolve their route and redirect **from the panel the request is on**, via
+`Filament::getCurrentPanel()`, rather than from a constant. `PasswordChange.php`
+line 194 already reads the guard from `Filament::getAuthGuard()` and its comment
+anticipates exactly this — "if a panel is ever given its own guard" — so the guard
+half needs no change, only the routes.
+
+**The password page is registered on the student panel explicitly.** It lives at
+`app/Filament/Pages/PasswordChange.php`, which the student panel does not
+discover, so it goes in `StudentPanelProvider`'s `->pages([...])` array by class
+name. Discovery is not an option: the page sets
+`protected static string $layout = 'filament-panels::components.layout.simple'`
+and Filament's `discoverPages()` filters on `Page::class`, which is why the admin
+panel registers it the same way.
+
+`RolePermissionSeeder` seeds **fourteen abilities** in one place:
+
+| Group | Abilities | Held by |
+|---|---|---|
+| Portal access | `access_student_portal` | student |
+| Own reads | `view_own_student_record`, `view_own_enrollment`, `view_own_balance`, `view_own_certificate` | student |
+| Completion | `complete_enrollment` | super admin, admin |
+| | `complete_assigned_batch_enrollment` | staff |
+| Credentials | `issue_portal_credential`, `reset_portal_credential` | super admin, admin, staff |
+| Certificates | `view_any_student_certificate`, `view_student_certificate` | super admin, admin, staff |
+| | `issue_student_certificate`, `replace_student_certificate`, `revoke_student_certificate` | super admin, admin |
+
+**One portal-access ability plus four `view_own_*` abilities — five on the student
+role — and fourteen new abilities in total.** The first draft said eleven, having
+counted the certificate set as one entry.
+
+**Generic certificate permissions are never seeded at all.**
+`create_student_certificate`, `update_student_certificate`,
+`delete_student_certificate`, `delete_any_student_certificate` and Shield's
+`force_delete_*`, `restore_*`, `replicate_*` and `reorder_*` variants are absent
+from every role and from the permissions table. This follows the reasoning
+`RolePermissionSeeder` already records for `create_charge` and its siblings:
+seeding an ability nothing honours invites someone to wire it up later. A
+certificate is issued, replaced or revoked — never created, updated or deleted —
+and the policy refuses those three unconditionally (T4).
+
+The `student` role receives **none** of the certificate permissions, generic or
+custom. Attaching Shield's generic set to it is a one-line mistake with a
+register-wide blast radius.
+
+Pages arrive in T7.
 
 **Done when**
 
@@ -300,10 +374,18 @@ student** is refused at `/portal` · an **unknown panel id** is refused · loggi
 out of `/portal` is asserted to also end an `/admin` login in the same session,
 pinning `LogoutController`'s `session()->invalidate()` so nobody later "fixes" it
 into a per-guard logout · `AuthenticatedStudent` resolves the signed-in student
-and **throws rather than returning null** for a user with no student row · the
-seeding test names every one of the eleven new abilities and asserts the student
-role holds exactly five · the seeding test asserts `view_any_student_certificate`
-is **absent** from the student role · `composer verify` green.
+and **throws rather than returning null** for a user with no student row · a
+student holding a temporary password lands on the **portal's** password page, not
+`/admin/password-change`, and on success is redirected to `/portal` — and the
+same containment still holds on the admin panel, proven by
+`ForcePasswordChangeTest` and `LivewirePersistentGuardTest` passing **unchanged**
+for staff while gaining student cases · a flagged student driving any other
+portal Livewire component is still contained, which is what
+`persistentMiddleware` buys · `tests/Feature/RolePermissionSeederTest.php` names
+**all fourteen** new abilities, asserts the student role holds exactly five, and
+asserts `create_student_certificate`, `update_student_certificate`,
+`delete_student_certificate` and `delete_any_student_certificate` **do not exist
+in the permissions table at all** · `composer verify` green.
 
 ---
 
@@ -319,7 +401,10 @@ staff-held ability becoming staff-account creation.
 - `app/Domain/Staff/Support/TemporaryPassword.php` — **new**; extracted from `ResetUserPasswordAction`
 - `app/Domain/Staff/Actions/ResetUserPasswordAction.php` — **declared crossing**, to consume the extracted collaborator
 - `app/Domain/Enrollment/Filament/Resources/StudentResource.php` — the issue and reset actions
-- `app/Domain/Staff/Exceptions/` — the typed refusals
+- `app/Domain/Staff/Exceptions/StudentHasPortalAccountException.php` — **new**
+- `app/Domain/Staff/Exceptions/StudentHasNoEmailException.php` — **new**
+- `app/Domain/Staff/Exceptions/EmailAlreadyRegisteredException.php` — **new**
+- `app/Domain/Staff/Exceptions/ProtectedAccountException.php` — **new**
 - `lang/en/credentials.php`, `lang/ar/credentials.php` (empty)
 - `tests/Feature/Staff/ActionBoundaryArchTest.php` — **seam**; one allowlist entry
 - `tests/Feature/Portal/IssuePortalCredentialTest.php`
@@ -361,8 +446,21 @@ temporary password with `must_change_password` set.
 `ResetPortalCredentialAction(User $actor, Student $student)` — **never an
 arbitrary `User`**; a reset Action that accepts any user is a staff-account reset
 waiting for a caller. It locks the student, derives the linked account from the
-locked row, refuses a missing or trashed account, and **refuses any linked
-account that can reach `/admin`**.
+locked row, and refuses a missing or trashed account.
+
+**It refuses any linked account holding `access_admin_panel`, tested as a
+permission and not as panel accessibility.** This is a step-0 correction. The
+first draft said "refuses any account that can reach `/admin`", which reads as
+`canAccessPanel()` — and that method requires `is_active`. A **deactivated** staff
+account linked to a student row would therefore not "reach `/admin`", would pass
+the check, and could have its password reset by a front-desk staffer holding only
+`reset_portal_credential`. Reactivating it afterwards is an administrative act,
+so the window is real. The permission is the durable fact; panel accessibility is
+a transient one, and a guard must test the durable fact.
+
+The refusal is on the permission alone: `$account->can('access_admin_panel')`,
+evaluated with no regard to `is_active` or the trashed state, and the test builds
+a **deactivated** staff account to prove it.
 
 `TemporaryPassword` is the existing generator extracted verbatim —
 `Str::password(16, symbols: false)`, hash, `must_change_password` — and
@@ -386,8 +484,11 @@ no email, for a student already linked, and for an email held by an **active**
 account, a **soft-deleted** account, and an account holding a **non-student**
 role, each asserted separately · **two connections issuing credentials for two
 different students sharing one email produce one success and one typed refusal,
-not a `QueryException`** · resetting refuses a student with no account, with a
-trashed account, and **with an account that can reach `/admin`** · a signed-in
+not a `QueryException`** · resetting refuses a student with no account and one
+with a trashed account · **resetting refuses a linked account holding
+`access_admin_panel` while that account is deactivated** — the case a
+`canAccessPanel()` check would have let through, and the test builds the account
+deactivated on purpose · a signed-in
 student is rejected on their next Livewire request after a reset, proving
 persistent `AuthenticateSession` does the work · **the arch rule fails when a raw
 `assignRole` is injected into an unlisted file, naming it** · the behavioural test
@@ -398,7 +499,7 @@ persistent `AuthenticateSession` does the work · **the arch rule fails when a r
 ---
 
 ## Task 3 — Completion marking
-**Wave 2 · Owner: Claude · `p3/t03-completion-marking` · depends on 1**
+**Wave 3 · Owner: Claude · `p3/t03-completion-marking` · depends on 1, 4**
 
 The status that makes a certificate possible, and the first task to make
 `EnrollmentStatus::Completed` reachable since phase 1 declared it.
@@ -409,19 +510,20 @@ The status that makes a certificate possible, and the first task to make
 - `app/Domain/Enrollment/Actions/CompleteEnrollmentAction.php` — **new**
 - `app/Domain/Enrollment/Actions/ReverseEnrollmentCompletionAction.php` — **new**
 - `app/Domain/Enrollment/Filament/Resources/BatchResource/RelationManagers/EnrollmentsRelationManager.php` — the bulk action
-- `app/Domain/Enrollment/Exceptions/` — typed refusals
+- `app/Domain/Enrollment/Exceptions/EnrollmentNotCompletableException.php` — **new**
+- `app/Domain/Enrollment/Exceptions/CompletionNotReversibleException.php` — **new**
 - `lang/en/enrollment.php` — completion labels
-- `tests/Feature/Enrollment/CompleteEnrollmentTest.php`
-- `tests/Feature/Enrollment/CompletionAuthorizationTest.php`
-- `tests/Feature/Enrollment/CompletionConcurrencyTest.php`
-- `tests/Feature/Enrollment/EnrollmentsRelationManagerTest.php` — the bulk action
-- **Declared crossing:** `tests/Feature/Enrollment/WithdrawEnrollmentTest.php` — see below
+- `tests/Feature/Enrollment/CompleteEnrollmentTest.php` — new
+- `tests/Feature/Enrollment/CompletionAuthorizationTest.php` — new
+- `tests/Feature/Enrollment/CompletionConcurrencyTest.php` — new
+- `tests/Feature/Enrollment/WithdrawCompletedEnrollmentTest.php` — **new; see below**
+- `tests/Feature/Enrollment/EnrollmentsRelationManagerTest.php` — **existing**; the bulk action, and the crafted-status test at line 146
 - **Joins no seam.**
 
 **Produces** `EnrollmentStatus::Completed` as a reachable state and
 `enrollments.completed_at`, both consumed by T5.
 
-**Consumes** T1's two completion abilities.
+**Consumes** T1's two completion abilities and T4's `StudentCertificate` model.
 
 **Does**
 
@@ -450,22 +552,34 @@ refuses a second completion. Reverse refuses `active` and `withdrawn`, and
 **batch → enrolment** order `EnrollStudentAction` established — refusing while any
 certificate for that enrolment is `valid`.
 
-At this point in the phase `student_certificates` does not exist. The reversal
-Action is written with the certificate check **behind the interface T4 will
-provide**, and T5 wires it. This task asserts the ordering and the refusal
-against a fake, and T5 asserts it against the real table. Neither test claims to
-be the other.
+**The certificate check reads T4's real table.** An earlier draft had this task
+in wave 2, before `student_certificates` existed, and proposed a temporary
+interface T3 would define and T5 would rewire. That interface existed only to
+paper over the ordering, and its test could only ever agree with the fake behind
+it. T4 now runs first and there is one check with one test.
 
 The Filament bulk action ticks rows explicitly and **runs the Action once per
 row** — own lock, own authorization check, own activity-log entry. There is no
 "complete the whole batch" button: the student who dropped out in week three and
 was never withdrawn would be certified by default.
 
-**`WithdrawEnrollmentAction` already refuses `completed` rows**, a branch
-unreachable since phase 1 because nothing could produce a completed enrolment.
-This task makes it reachable for the first time, so its existing test is
-**re-verified against the real path** rather than trusted. That is the declared
-crossing.
+**`WithdrawEnrollmentAction:82` refuses a non-active enrolment, and nothing tests
+that branch.** Its docblock promises
+`@throws EnrollmentNotWithdrawableException if the enrolment is completed`, and a
+repository-wide search for `EnrollmentStatus::Completed` in `tests/` returns
+exactly one hit — the crafted-payload test in `EnrollmentsRelationManagerTest`,
+which asserts the opposite thing. The branch has been unreachable since phase 1
+because nothing could produce a completed enrolment, so **this task writes that
+test for the first time** in `WithdrawCompletedEnrollmentTest.php`. An earlier
+draft said the existing test would be "re-verified", which assumed a test that is
+not there.
+
+**`EnrollmentsRelationManagerTest:146`'s premise changes.** It asserts *"There is
+no status field, and completion is phase 3"* while proving a crafted `status` in
+an enrol payload cannot reach the column. That remains true — the enrol form still
+has no status field, and completion arrives on a separate bulk action — but the
+comment is now wrong about the phase, and the test must be **re-run and its
+comment corrected** rather than left asserting a reason that has expired.
 
 **Done when**
 
@@ -481,13 +595,17 @@ reason · reversal of an `active` and of a `withdrawn` enrolment are both refuse
 refusal** · the bulk action over three selected rows writes **three** activity-log
 entries, not one · **the scoped-permission test fails when the pivot read drops
 `lockForUpdate()`**, demonstrated under concurrency with the failing output
-recorded · `WithdrawEnrollmentTest`'s completed-row refusal now runs against a
-genuinely completed enrolment · `composer verify` green.
+recorded · reversal is refused while a `valid` certificate exists **against the
+real `student_certificates` table**, and permitted once it is revoked ·
+**withdrawing a genuinely completed enrolment raises
+`EnrollmentNotWithdrawableException`** — a branch that has never been executed by
+any test until now · `EnrollmentsRelationManagerTest:146` still passes and its
+comment no longer says completion is a future phase · `composer verify` green.
 
 ---
 
 ## Task 4 — Certificate foundation
-**Wave 3 · Owner: Claude · `p3/t04-certificate-foundation` · depends on 1**
+**Wave 2 · Owner: Claude · `p3/t04-certificate-foundation` · depends on 1**
 
 The register's schema and its three database constraints. No Actions.
 
@@ -583,9 +701,18 @@ direct insert, and the test **fails when that constraint is dropped** · a
 `revoked` row missing any revocation field is refused, and one with
 `revocation_reason = '   '` is refused, both by direct insert · a non-revoked row
 carrying revocation fields is refused · each migration is applied and rolled back
-independently · 10,000 generated references contain no duplicate and no sequential
-pair · a reference generated at `2026-12-31T23:30Z` carries **2027**, because
-Tripoli is already into the new year · `Gate::getPolicyFor(StudentCertificate::class)`
+independently · **the reference tests are deterministic**: the generator takes an
+injected randomness source, and the tests drive it with fixed sequences — one
+asserting the rendered shape `TC-2026-XXXXXXXX` character by character, one
+asserting the suffix alphabet excludes nothing it should not, and one feeding two
+identical draws to prove the caller sees a collision rather than the generator
+silently deduplicating. **A loop over 10,000 random values is not a test**: it
+asserts a property of that run, it cannot fail reproducibly, and a suite that
+rolls the dice 10,000 times per run is exactly the shape phase 2 recorded as
+green locally and red for two hours a day · a reference generated at
+`2026-12-31T23:30Z` carries **2027**, because Tripoli is already into the new
+year, with the clock frozen rather than sampled ·
+`Gate::getPolicyFor(StudentCertificate::class)`
 returns the policy with **no** `AppServiceProvider` entry · the policy refuses
 every action for an actor holding no certificate permission, tested with a bespoke
 role · `composer verify` green.
@@ -601,9 +728,12 @@ The register's three transitions, and the invariant tested from both directions.
 - `app/Domain/Enrollment/Actions/IssueStudentCertificateAction.php` — **new**
 - `app/Domain/Enrollment/Actions/ReplaceStudentCertificateAction.php` — **new**
 - `app/Domain/Enrollment/Actions/RevokeStudentCertificateAction.php` — **new**
-- `app/Domain/Enrollment/Filament/Resources/StudentCertificateResource*` — **new**
-- `app/Domain/Enrollment/Actions/ReverseEnrollmentCompletionAction.php` — **declared crossing**: wires T3's certificate check to the real table
-- `app/Domain/Enrollment/Exceptions/` — typed refusals
+- `app/Domain/Enrollment/Filament/Resources/StudentCertificateResource.php` — **new**
+- `app/Domain/Enrollment/Filament/Resources/StudentCertificateResource/Pages/ListStudentCertificates.php` — **new**
+- `app/Domain/Enrollment/Filament/Resources/StudentCertificateResource/Pages/ViewStudentCertificate.php` — **new**
+- `app/Domain/Enrollment/Exceptions/EnrollmentNotCompletedException.php` — **new**
+- `app/Domain/Enrollment/Exceptions/CertificateAlreadyIssuedException.php` — **new**
+- `app/Domain/Enrollment/Exceptions/NoValidCertificateException.php` — **new**
 - `lang/en/certificates.php`, `lang/ar/certificates.php` (empty)
 - `tests/Feature/Enrollment/IssueCertificateTest.php`
 - `tests/Feature/Enrollment/ReplaceCertificateTest.php`
@@ -668,11 +798,16 @@ collision retries and succeeds; a forced valid-certificate collision refuses
 without retrying** — two distinct tests, because one cannot tell them apart ·
 issuing for an enrolment with an outstanding balance **succeeds**, and the form
 displays the figure · each Action invoked directly with an unauthorized actor is
-denied, tested with bespoke single-ability roles · granting `delete_student_certificate`
-does not make the policy allow it · reversing completion is refused while a
-`valid` certificate exists **against the real table** · **the concurrency test
+denied, tested with bespoke single-ability roles · **`delete_student_certificate`
+is created inside the test** — T1 deliberately never seeds it — granted to an
+actor, and the policy still refuses, proving the refusal is unconditional rather
+than a consequence of the permission's absence · **the concurrency test
 fails when the lock is removed from the issue Action**, with the failing output
 recorded · `composer verify` green.
+
+Reversal-while-valid belongs to **T3**, which owns
+`ReverseEnrollmentCompletionAction` and asserts it against T4's real table. This
+task does not restate it — one claim, one owner, one test.
 
 ---
 
@@ -683,10 +818,10 @@ One Action, made aware of a table that did not exist when it was written.
 
 **File scope**
 - `app/Domain/Enrollment/Actions/DeleteEnrollmentAction.php`
-- `app/Domain/Enrollment/Exceptions/` — the typed refusal
-- `lang/en/enrollment.php` — **conflict-free by wave**: T3 (wave 2) has merged before this starts
-- `tests/Feature/Enrollment/EnrollmentDeletionWithCertificateTest.php`
-- `tests/Feature/Finance/EnrollmentDeletionWithChargeTest.php` — **declared crossing**, re-verified unchanged
+- `app/Domain/Enrollment/Exceptions/EnrollmentHasCertificateException.php` — **new**
+- `lang/en/enrollment.php` — **conflict-free by wave**: T3 (wave 3) has merged before this starts
+- `tests/Feature/Enrollment/EnrollmentDeletionWithCertificateTest.php` — new
+- `tests/Feature/Finance/EnrollmentDeletionWithChargeTest.php` — **existing**; declared crossing, re-verified unchanged
 - **Joins no seam.**
 
 **Produces** nothing consumed elsewhere.
@@ -729,12 +864,15 @@ actually rests on.
 - `app/Domain/Finance/Filament/Portal/Pages/MyBalance.php` — **new**
 - `app/Providers/Filament/StudentPanelProvider.php` — **seam**; two `discoverPages()` lines, sole writer this wave
 - `lang/en/portal.php` — extends T1's catalogue
-- `resources/views/portal/` — any page views
-- `tests/Feature/Portal/OverviewPageTest.php`
-- `tests/Feature/Portal/MyEnrollmentsPageTest.php`
-- `tests/Feature/Portal/MyBalancePageTest.php`
-- `tests/Feature/Portal/PortalRowIsolationTest.php`
-- `tests/Feature/Portal/PortalScopeArchTest.php`
+- `resources/views/portal/overview.blade.php` — **new**
+- `resources/views/portal/my-enrollments.blade.php` — **new**
+- `resources/views/portal/my-balance.blade.php` — **new**
+- `tests/Feature/Portal/OverviewPageTest.php` — new
+- `tests/Feature/Portal/MyEnrollmentsPageTest.php` — new
+- `tests/Feature/Portal/MyBalancePageTest.php` — new
+- `tests/Feature/Portal/PortalRowIsolationTest.php` — new
+- `tests/Feature/Portal/PortalQueryCountTest.php` — new
+- `tests/Feature/Portal/PortalScopeArchTest.php` — new
 - **Joins:** `StudentPanelProvider`'s `discoverPages()`.
 
 **Produces** the portal surface.
@@ -787,7 +925,12 @@ the certificate columns absent**, asserted as absent rather than assumed hidden 
 `PortalRowIsolationTest` proves student B's enrolments, balance figures and
 certificate reference appear on **none** of A's pages · **the balance page issues
 a fixed number of queries for one enrolment and for twenty**, asserted by query
-count, so a reintroduced loop fails the test · a student with a `replaced` or
+count, so a reintroduced loop fails the test · **the enrolments page does the
+same** — its certificate lookup and its course/batch columns are both per-row
+temptations, and a page whose query count grows with the number of enrolments
+fails, exactly as the balance page does. The first draft asserted this for the
+balance page alone, which would have let the N+1 reappear one page over · a
+student with a `replaced` or
 `revoked` certificate and no `valid` one sees no reference · **the arch test fails
 when a page is made to query without the resolver, naming the offending file** ·
 `grep -c "discoverPages" app/Providers/Filament/StudentPanelProvider.php` returns
@@ -806,12 +949,14 @@ The first thing in this system that serves the open internet.
 - `app/Http/Middleware/VerificationResponseHeaders.php` — **new**
 - `app/Domain/Enrollment/Data/CertificateVerificationView.php` — **new**; the six-field projection
 - `app/Providers/AppServiceProvider.php` — **seam**; the `certificate-verification` named limiter
-- `resources/views/verify/` — the standalone Blade page
+- `resources/views/verify/form.blade.php` — **new**
+- `resources/views/verify/show.blade.php` — **new**
+- `resources/views/verify/not-found.blade.php` — **new**; no form, no CSRF token, no echo of input
 - `lang/en/verify.php`, `lang/ar/verify.php` (empty)
-- `tests/Feature/Verification/VerifyCertificateTest.php`
-- `tests/Feature/Verification/VerificationDisclosureTest.php`
-- `tests/Feature/Verification/VerificationHeadersTest.php`
-- `tests/Feature/Verification/VerificationRateLimitTest.php`
+- `tests/Feature/Verification/VerifyCertificateTest.php` — new
+- `tests/Feature/Verification/VerificationDisclosureTest.php` — new
+- `tests/Feature/Verification/VerificationHeadersTest.php` — new
+- `tests/Feature/Verification/VerificationRateLimitTest.php` — new
 - **Joins:** `routes/web.php`, `AppServiceProvider`'s `RateLimiter::for()`.
 
 **Produces** the public surface.
@@ -829,9 +974,28 @@ Three routes:
 | `GET /verify/certificates/{reference}` | exact lookup |
 
 A form taking a **complete** reference is still exact-match lookup, not the
-browsable register, partial search or autocomplete system design §6 forbids. The
-`{reference}` parameter is constrained to the canonical `TC-{year}-{suffix}` shape
-at the route.
+browsable register, partial search or autocomplete system design §6 forbids.
+
+**The reference shape is validated in the controller, not by a route
+constraint.** This is a step-0 correction of a contradiction in the first draft,
+which asked for both a `->where()` regex on the route *and* a byte-identical
+rendered 404 for malformed input. Those cannot both hold: a route constraint that
+rejects a malformed reference means the route never matches, and Laravel returns
+its own `NotFoundHttpException` page — visibly different from the verifier's
+rendered result, and therefore a signal that distinguishes "wrong shape" from "no
+such certificate". The route takes the segment unconstrained; the controller
+normalizes, validates the shape, and renders the same not-found result whatever
+went wrong.
+
+**"Omitted" means an empty POST** — the form submitted with a blank field. It does
+not redirect back with a validation error, because a validation error is itself a
+signal about the input. It renders the same not-found result at 404 as every
+other miss.
+
+**The not-found view carries no form and echoes nothing** — no submitted value, no
+CSRF token, no error bag. That is what makes "byte-identical" an achievable
+assertion rather than an aspiration: a page containing a CSRF token differs
+between any two renders.
 
 **The limiter and the headers apply to both the submission and the lookup, in one
 middleware group** — the reasoning `routes/web.php` already uses for the
@@ -867,9 +1031,13 @@ A valid reference returns the six fields and no others · **a column added to
 the projection is a projection · a revoked certificate states "revoked" and its
 date, and the response contains **neither** the revocation reason nor any
 replacement reference, asserted by absence of the stored strings · a replaced
-certificate states it is superseded and does not name its successor · a
-well-formed unknown reference, a malformed reference and an omitted one produce
-**byte-identical** rendered results at 404 · the three headers are present on the
+certificate states it is superseded and does not name its successor · **four
+cases produce byte-identical rendered bodies at 404** — a well-formed unknown
+reference on GET, a malformed reference on GET, an empty POST, and a malformed
+POST — asserted by comparing the response bodies to each other, which is only
+possible because the not-found view holds no CSRF token · **no request reaches
+Laravel's own 404 page**, asserted by checking the body is the verifier's, which
+is what a route constraint would have broken · the three headers are present on the
 lookup **and** on the POST, and the test **fails when either route is moved out of
 the group** · the eleventh request in a minute from one IP is refused, and the
 limiter is asserted to be reached from the route rather than merely registered ·
@@ -888,13 +1056,49 @@ half of one.
 
 **File scope**
 - `app/Domain/Enrollment/Services/EnrollmentQueryService.php` — add `scopeToStudent()`
-- `app/Domain/Finance/Services/` — the bulk balance query
-- `tests/Feature/Enrollment/EnrollmentQueryServiceTest.php`
-- `tests/Feature/Finance/StudentBalanceQueryTest.php`
+- `app/Domain/Finance/Services/StudentBalanceQuery.php` — **new**
+- `app/Domain/Finance/Data/StudentBalanceSummary.php` — **new**
+- `app/Domain/Finance/Data/EnrollmentBalance.php` — **new**
+- `tests/Feature/Finance/EnrollmentQueryServiceTest.php` — **existing**, extended
+- `tests/Feature/Finance/StudentBalanceQueryTest.php` — new
 - **Joins no seam.**
 
-**Produces** `scopeToStudent(Builder $query, string $enrollmentIdColumn, int $studentId): Builder`
-and the bulk balance query, both consumed by T7.
+The query-service test lives under **`tests/Feature/Finance/`**, not
+`tests/Feature/Enrollment/` — an earlier draft named the latter, which does not
+exist.
+
+**Produces**, both consumed by T7:
+
+```php
+// App\Domain\Enrollment\Services\EnrollmentQueryService
+public function scopeToStudent(Builder $query, string $enrollmentIdColumn, int $studentId): Builder;
+
+// App\Domain\Finance\Services\StudentBalanceQuery
+public function forStudent(int $studentId): StudentBalanceSummary;
+
+// App\Domain\Finance\Data\StudentBalanceSummary
+final readonly class StudentBalanceSummary
+{
+    /** @param array<int, EnrollmentBalance> $enrollments keyed by enrollment id */
+    public function __construct(public array $enrollments, public Money $total) {}
+}
+
+// App\Domain\Finance\Data\EnrollmentBalance
+final readonly class EnrollmentBalance
+{
+    public function __construct(
+        public int $enrollmentId,
+        public ?int $chargeId,       // null when the enrolment has no bill
+        public Money $outstanding,   // Money::zero() when there is no bill
+    ) {}
+}
+```
+
+**Every money value is `App\Domain\Finance\Support\Money`** — never a float,
+never a string, never a `decimal` cast leaking out of the query. `outstanding` is
+`Money::zero()` rather than `null` for an unbilled enrolment, so the caller never
+has to decide what a missing balance means, and `total` is the `Money` sum of the
+rows rather than a separately computed aggregate.
 
 **Consumes** nothing.
 
@@ -913,9 +1117,21 @@ Today the choice is a per-row `studentIdFor()`, which is an N+1, or
 `joinCatalogueTo()`, which throws on empty dimensions and answers a different
 question.
 
-The bulk balance query returns per-enrolment outstanding figures and a total in a
-**fixed number of statements**, using the canonical `ChargeBalance` calculation.
-**No derived value is stored** — that non-negotiable is untouched.
+`StudentBalanceQuery` returns per-enrolment outstanding figures and a total in a
+**fixed number of statements**, and it **reuses `ChargeBalance` rather than
+restating its arithmetic**: the SQL comes from
+`ChargeBalance::outstandingExpression()`, the same expression
+`outstandingFor()` uses, so there is one definition of outstanding in the system
+and this is a second *caller* of it, not a second copy.
+
+Restating the subtraction here would be the `paid_amount` mistake wearing a
+third name — two expressions that agree today and diverge the first time a
+write-off or an adjustment changes what counts. `Money` values are rehydrated
+from the integer dirham the expression produces, never from a float.
+
+**No derived value is stored** — that non-negotiable is untouched. The total is
+summed in PHP through `Money::add()` over the rows, so it cannot disagree with
+the rows it is a total of.
 
 **Done when**
 
@@ -925,9 +1141,12 @@ result**, asserted by inspecting the produced SQL · the bulk query's per-enrolm
 figures are **identical** to `outstandingForEnrollment()` called individually, for
 a student with a paid bill, a partly paid bill, an unpaid bill and a written-off
 bill · the query count is **the same for one enrolment and for twenty**, asserted
-by count · a student with no enrolments returns an empty set and a zero total
-rather than throwing · a written-off charge is excluded from the total exactly as
-`ChargeBalance` excludes it · `composer verify` green.
+by count · a student with no enrolments returns an empty `enrollments` array and
+`Money::zero()` rather than throwing · an enrolment with **no bill** returns
+`chargeId === null` and `Money::zero()`, not a missing row · a written-off charge
+is excluded from the total exactly as `ChargeBalance` excludes it · **every
+returned value is a `Money` instance**, asserted by type, so no float or string
+escapes the service · `composer verify` green.
 
 ---
 
@@ -942,9 +1161,19 @@ The phase-2 deferral, closed as an enhancement to the generic file lifecycle.
 - `app/Console/Commands/SweepPendingFileDeletionsCommand.php`
 - `app/Domain/Staff/Jobs/PurgeDeletedFileJob.php`
 - `app/Domain/Staff/Models/PendingFileDeletion.php`
-- `app/Domain/Finance/Exports/ReportExporter.php` — write the receipt at generation
-- `tests/Feature/Staff/PendingFileDeletionSweepTest.php`
-- `tests/Feature/Finance/ExportRetentionTest.php`
+- `app/Domain/Staff/Services/FileLifecycleService.php` — the shared API; see below
+- `app/Domain/Finance/Exports/ReportExporter.php` — **generation point**
+- `app/Domain/Finance/Exports/PrepareReportCsvExport.php` — **generation point**
+- `app/Domain/Finance/Jobs/GenerateReportPdfJob.php` — **generation point**
+- `tests/Feature/Staff/PendingFileDeletionSweepTest.php` — **existing**, extended
+- `tests/Feature/Staff/FileLifecycleTransactionTest.php` — **existing**, re-verified
+- `tests/Feature/Finance/ExportRetentionTest.php` — new
+
+**Three generation points, not one.** The first draft named `ReportExporter.php`
+alone. XLSX and CSV are prepared through `PrepareReportCsvExport.php` and PDFs
+are produced by `GenerateReportPdfJob.php`; a receipt written at only one of them
+leaves the other two accumulating exactly as today, and the task would report
+success having fixed a third of the problem.
 - **Joins no seam.** **`routes/console.php` is deliberately not touched** — a second scheduled command is the wrong shape.
 
 **Produces** nothing consumed elsewhere.
@@ -964,6 +1193,46 @@ discriminator, because Filament's XLSX pipeline produces a **directory** while
 `delete_after` at +7 days, and **the existing hourly sweep honours it**. One
 schema statement per migration.
 
+**The shared API is `FileLifecycleService::record()`, widened rather than
+duplicated.** It is today:
+
+```php
+/**
+ * @param  array<int, array{disk: string, path: string}>  $files
+ * @return array<int, int>
+ */
+public function record(array $files): array
+```
+
+It becomes:
+
+```php
+/**
+ * @param  array<int, array{
+ *     disk: string,
+ *     path: string,
+ *     kind?: 'file'|'directory',
+ *     delete_after?: \Carbon\CarbonImmutable|null,
+ * }>  $files
+ * @return array<int, int>
+ */
+public function record(array $files): array
+```
+
+**Both new keys are optional and default to today's behaviour** — `kind` defaults
+to `'file'`, `delete_after` to `null`, meaning eligible immediately. Every
+existing caller therefore compiles and behaves identically without being edited,
+which is the property that makes this an extension of the file lifecycle rather
+than a second one. `record()` keeps its contract of being called **inside the
+transaction that removes the owning row**; the three export generation points
+call it outside any such transaction because an export owns no row — that is the
+one documented divergence, and it is why they pass `delete_after` rather than
+relying on the immediate path.
+
+The purge job branches on `kind` and nothing else. **No caller passes a raw
+`deleteDirectory` anywhere** — the capability exists only behind this API and only
+under the fence below.
+
 **Recursive directory deletion is a materially more dangerous capability than
 today's unlink, and is fenced accordingly:**
 
@@ -982,20 +1251,25 @@ today's unlink, and is fenced accordingly:**
 
 An export receipt with `delete_after` in the future is **not** swept, and the same
 receipt after the window **is** · a receipt with a null `delete_after` is swept
-immediately, exactly as today · **a directory receipt naming a path outside the
+immediately, exactly as today · **all three generation points write a receipt** —
+XLSX through `PrepareReportCsvExport`, CSV through it likewise, and PDF through
+`GenerateReportPdfJob` — each asserted separately, because one covered path does
+not imply the others · **a directory receipt naming a path outside the
 export prefix is refused**, and one naming the disk root is refused, and one
 containing a traversal segment is refused — three separate assertions · the export
 directory and its contents are gone after a successful sweep · **never-attempted
 rows are still swept first, proven across two consecutive sweep runs**, not one ·
-the existing staff photo and certificate deletion tests pass **unchanged** · the
-ownership check still refuses to unlink owned bytes · **the prefix fence fails
+the existing staff photo and certificate deletion tests pass **unchanged**, and
+so does `FileLifecycleTransactionTest` — **no existing `record()` caller is
+edited**, which is the evidence that the API was widened rather than replaced ·
+the ownership check still refuses to unlink owned bytes · **the prefix fence fails
 when removed**, demonstrated against a path outside it, with the failing output
 recorded · `composer verify` green.
 
 ---
 
-## Task 11 — Concurrency-test headroom
-**Wave 6 · Owner: Codex · `p3/t11-concurrency-headroom` · depends on nothing**
+## Task 11 — Worker-readiness timing
+**Wave 6 · Owner: Codex · `p3/t11-worker-readiness` · depends on nothing**
 
 **File scope**
 - `tests/Feature/Finance/AdjustChargeConcurrencyTest.php`
@@ -1003,22 +1277,48 @@ recorded · `composer verify` green.
 
 **Does**
 
-The test spawns a real worker and waits a hard-coded **10s** for readiness; the
-single test takes **11.6s** uncontended and fails whenever a second suite runs
-concurrently. All worktrees share one MySQL database and `tests/bootstrap.php`
-takes a machine-wide lock, so contention is the normal case, not the exception.
+**The first draft of this task was wrong about the failure, and its acceptance
+criterion was unachievable.** It said the test "fails whenever a second suite runs
+concurrently" and asked for a demonstration of it passing while one did. That
+cannot be demonstrated: `tests/bootstrap.php` takes a machine-wide lock in the
+test process itself and **serialises suites** — a second suite does not run
+concurrently, it queues. `--parallel` is refused outright, deliberately and with
+a message saying why. The scenario the criterion described does not exist.
 
-Either give it real headroom — a readiness poll with a generous ceiling rather
-than a fixed sleep — or exclude it explicitly from concurrent runs. **Pick one and
-say which**; a fixed sleep raised from 10s to 20s is the same defect with a larger
-constant.
+The real defect is narrower and entirely local to this test. It **manually spawns
+a real queue worker** and then waits a **hard-coded 10 seconds** for it to become
+ready. The single test takes **11.6s** uncontended, so almost all of its runtime
+is that fixed wait. Nothing checks whether the worker actually came up: if the
+machine is loaded — a slow `composer dump-autoload`, a cold opcache, a laptop on
+battery, another worktree's suite holding the database lock right up to the
+moment this one starts — the worker may not be listening at the 10-second mark
+and the test fails for a reason unrelated to the code it exercises. It is a
+sleep pretending to be a synchronisation point.
+
+**Replace the fixed wait with a readiness poll**: check for the condition that
+actually means "the worker is up and consuming", on a short interval, up to a
+generous ceiling, and fail with a message naming what it waited for if the
+ceiling is reached. On an unloaded machine this returns as soon as the worker is
+ready, which should take the test well below 11.6s; on a loaded one it waits as
+long as it genuinely needs to.
+
+**A fixed sleep raised from 10s to 20s is the same defect with a larger
+constant**, and is not acceptable here — it makes the suite slower in the common
+case and still fails in the uncommon one.
 
 **Done when**
 
-The test passes with a second suite running concurrently, demonstrated · its
-uncontended runtime is reported before and after · **whatever mechanism is chosen
-is asserted, not assumed** — if it polls, a test proves it waits for readiness
-rather than for a duration · `composer verify` green.
+The readiness condition is **named** — what is polled, and why that specific
+signal means the worker is consuming rather than merely started · the poll
+returns early on an unloaded machine, with the uncontended runtime reported
+before and after · **the ceiling path is exercised**: with the worker deliberately
+prevented from starting, the test fails with the readiness message rather than
+with a downstream assertion error, and that output is recorded · **a test proves
+the poll waits for readiness rather than for a duration** — a worker delayed by
+several seconds is still awaited and the test still passes, which a fixed sleep
+tuned below that delay would not do · the concurrency behaviour the test exists
+to prove is unchanged, asserted by the test still failing when the lock under
+test is removed · `composer verify` green.
 
 ---
 
@@ -1027,8 +1327,14 @@ rather than for a duration · `composer verify` green.
 
 **File scope**
 - `phpunit.xml`
-- `tooling/` — `Tooling\Gate` if the change reaches it
+- `scripts/Tooling/Gate.php` — the single gate definition
+- `tests/Unit/Tooling/WarningGateTest.php` — **existing**, extended
 - **Joins no seam.**
+
+The gate lives at `scripts/Tooling/Gate.php` and its test at
+`tests/Unit/Tooling/WarningGateTest.php`. An earlier draft wrote `tooling/` and
+named no test, which would have left the existing one to be discovered or, worse,
+duplicated.
 
 **Does**
 
@@ -1046,7 +1352,9 @@ it.
 The current notice and warning count is **measured and reported**, with and
 without `PAO_DISABLE=true` · every notice the change would newly fail on is either
 fixed or explicitly accepted with a reason · the gate fails on an injected notice,
-demonstrated · CI and local agree, since `Tooling\Gate::fastChecks()` is the single
+demonstrated, with the assertion living in `tests/Unit/Tooling/WarningGateTest.php`
+alongside the existing warning cases · CI and local agree, since
+`Tooling\Gate::fastChecks()` in `scripts/Tooling/Gate.php` is the single
 definition both reach · `composer verify` green.
 
 ---
@@ -1090,8 +1398,15 @@ file concurrently — they are in different waves regardless.
 **Done when**
 
 The test passes against `main` as it stands · **it fails when a status string
-column is added to a Finance table in a migration**, demonstrated with the failing
-output · it does **not** fire on `student_certificates.status` · the table
+column is added to a Finance table**, demonstrated with the failing output —
+and the proof runs against a **disposable database**, not the shared one. A
+migration that adds a column to a Finance table, run to prove a guard fires, is a
+schema mutation on the database every worktree shares and `tests/bootstrap.php`
+serialises access to; rolling it back afterwards is a second chance to get it
+wrong, and a failure between the two leaves every other suite on the machine
+running against a mutated schema. Build the probe schema on a throwaway
+connection, or assert the rule against a fixture schema rather than the live one ·
+it does **not** fire on `student_certificates.status` · the table
 enumeration is derived rather than hand-listed, or the docblock states plainly
 that it is hand-maintained and what that costs · phase-2 design §4 no longer
 claims a test that did not exist · `composer verify` green.

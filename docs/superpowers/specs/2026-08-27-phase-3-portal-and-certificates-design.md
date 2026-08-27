@@ -526,13 +526,24 @@ register, partial search or autocomplete §6 forbids. Someone holding a printed
 certificate needs somewhere to type its reference; a QR code encoding the lookup
 URL serves the same purpose without one.
 
-The `{reference}` parameter is **constrained to the canonical
-`TC-{year}-{suffix}` shape** at the route.
+**The reference shape is validated in the controller, not by a route
+constraint.** An earlier revision asked for a `->where()` regex on the route *and*
+for malformed input to render the same page as an unknown reference. Those
+contradict: a route constraint that rejects a malformed reference means the route
+never matches, so Laravel returns its own `NotFoundHttpException` page — visibly
+different from the verifier's, and therefore a signal separating "wrong shape"
+from "no such certificate". The route takes the segment unconstrained; the
+controller normalizes, validates, and renders one result whatever went wrong.
 
-**A malformed reference, an unknown reference and a missing one all render the
-same not-found result.** Nothing distinguishes "you typed it wrong" from "no such
-certificate", and nothing reveals whether a shape-valid reference exists. Returns
-404 with a rendered page — correct semantics, and a page a human can read.
+**Four cases render the same not-found result at 404**: a well-formed unknown
+reference, a malformed reference, an **empty POST** (the form submitted blank),
+and a malformed POST. An invalid POST does **not** redirect back with a validation
+error, because a validation error is itself a signal about the input.
+
+The not-found view **carries no form, no CSRF token and no echo of the submitted
+value**, which is what makes byte-identical responses an achievable property
+rather than an aspiration — a page carrying a CSRF token differs between any two
+renders.
 
 ### 7.2 Limiting and headers
 
