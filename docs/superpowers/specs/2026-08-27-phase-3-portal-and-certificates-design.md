@@ -244,12 +244,19 @@ two mechanisms, neither pretending to be the other.
 Four pages, all read-only. The only write a student can perform anywhere in
 phase 3 is changing their own password.
 
-| Page | Shows |
-|---|---|
-| Overview | Name, student code, status |
-| My enrolments | Course, batch, dates, enrolment status; certificate reference and status when one is `valid` |
-| My balance | Per-enrolment outstanding and a total |
-| Password | Change own password |
+| Page | Shows | Requires |
+|---|---|---|
+| Overview | Name, student code, status | `view_own_student_record` |
+| My enrolments | Course, batch, dates, enrolment status | `view_own_enrollment` |
+| — its certificate fields | Reference and status, when one is `valid` | **additionally** `view_own_certificate` |
+| My balance | Per-enrolment outstanding and a total | `view_own_balance` |
+| Password | Change own password | portal access and the existing own-password rules — **no `view_own_*` ability exists for it** |
+
+The certificate fields are a **separate grant on a shared page**, not a page of
+their own. A student holding `view_own_enrollment` but not `view_own_certificate`
+sees the enrolment list with those columns absent — so the two abilities are
+tested independently, and the certificate columns are asserted missing rather
+than assumed hidden.
 
 ### 4.1 Scoping is two mechanisms, not one
 
@@ -261,8 +268,11 @@ architecture test proves no portal page queries without it.
 isolation — it proves a call was made, not that the resulting query was
 constrained. So, in addition:
 
-1. **Every page authorizes its own `view_own_*` permission.** The resolver
-   answers *who*; the permission answers *whether*.
+1. **Every page authorizes the ability named against it in the table above.** The
+   resolver answers *who*; the permission answers *whether*. The password page is
+   the one that carries no `view_own_*` ability — it is gated by portal access and
+   the existing own-password rules, and stating that here stops a later reader
+   inventing a fifth ability to make the pattern look uniform.
 2. **Two-student behavioural tests.** Log in as student A; create distinctive
    enrolments, balances and certificates for student B; assert none of B's data
    appears anywhere in A's rendered pages. Run for each page.
@@ -382,7 +392,7 @@ No PDF, template, image, disk or path. `student_name`, `course_name` and
 `completed_on` are an **issuance snapshot** matching the physical certificate and
 deliberately do not follow a later correction to the student or course record.
 
-### 6.2 Two database constraints
+### 6.2 Three database constraints
 
 **One valid certificate per enrolment**, as a stored generated column with a
 unique index — verified against this project's MySQL 8.4 during the phase 1
@@ -415,7 +425,24 @@ CONSTRAINT chk_student_certificates_revocation CHECK (
 `CHAR_LENGTH(TRIM(...)) > 0` rather than `NOT NULL`: `NOT NULL` admits `''`,
 which would make "mandatory reason" true in the form and false in the database.
 
-Both constraints exist for the reason `docs/ENGINEERING.md` gives — a lock
+**`status` is constrained to its value set:**
+
+```sql
+CONSTRAINT chk_student_certificates_status CHECK (
+    status IN ('valid', 'revoked', 'replaced')
+)
+```
+
+This one is not decoration. The generated column reads
+`CASE WHEN status = 'valid' THEN …`, so a row inserted with a mistyped status —
+`'Valid'`, `'vaild'` — yields NULL in `valid_enrollment_id` and **slips past the
+unique index entirely**. The register would then hold a certificate that is
+neither counted as valid nor visibly wrong, while Eloquent's enum cast throws on
+hydration and the public verifier fails on a reference that resolves to a real
+row. The two other constraints both assume `status` means something; this is what
+makes that assumption true.
+
+All three constraints exist for the reason `docs/ENGINEERING.md` gives — a lock
 protects the application path and nothing else. A seeder, a console command or a
 repair script writing a second `valid` row would corrupt the register silently,
 and the verifier would then have two answers for one enrolment.
@@ -558,13 +585,17 @@ restyles this page; phase 3 ships it plain.
 
 ### 8.1 The student role gets exactly five abilities
 
+**One portal-access ability and four `view_own_*` abilities.** The counts are
+written out because "five abilities" and "five `view_own_*`" are easy to conflate
+and the seeder is where that mistake would land.
+
 | Ability | Grants |
 |---|---|
 | `access_student_portal` | reach `/portal` at all |
 | `view_own_student_record` | the overview page |
 | `view_own_enrollment` | the enrolments page |
 | `view_own_balance` | the balance page |
-| `view_own_certificate` | their valid certificate's reference and status |
+| `view_own_certificate` | the certificate fields on the enrolments page |
 
 Bare-verb custom abilities, per the project's convention for non-Shield
 abilities. Seeded onto the `student` role by `RolePermissionSeeder`.
@@ -582,7 +613,7 @@ student role would be a one-line mistake with a register-wide blast radius.
 | Ability | Super admin | Admin | Staff | Student |
 |---|---|---|---|---|
 | `access_student_portal` | — | — | — | yes |
-| `view_own_*` (five) | — | — | — | yes |
+| `view_own_*` (four) | — | — | — | yes |
 | `complete_enrollment` | yes | yes | — | — |
 | `complete_assigned_batch_enrollment` | — | — | yes | — |
 | `issue_portal_credential` | yes | yes | yes | — |
