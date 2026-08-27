@@ -74,6 +74,20 @@ app/Domain/Enrollment/
 - Index every foreign key, and every column used in `WHERE` or `ORDER BY`. Composite indexes for common query pairs.
 - **Do not index a column only searched with a leading wildcard.** Filament's `searchable()` builds `LIKE %term%`, and a B-tree index is ordered by prefix — a search with no known prefix has nothing to seek on, so MySQL scans whatever you do. Such an index costs writes and disk while never being used. `courses.name_ar` is searched but deliberately unindexed for this reason, while `name_en` is indexed because it is also *sorted* on. If wildcard search ever becomes measurably slow, the answer is a `FULLTEXT` index with `MATCH … AGAINST`, or a search engine — not a B-tree.
 - Money is `decimal(12, 3)`. **Never float, never `decimal(12,2)`.** The currency is LYD, which subdivides into 1000 dirham per ISO 4217. Two decimal places would silently round dirham-precision amounts and break reconciliation. Display precision is a UI concern, not a storage one.
+- **A money field that is dehydrated never uses Filament's `->numeric()`** (phase 2, task 2P,
+  enforced by `MoneyCastArchTest` across `app/Domain/Finance`). That method installs a `floatval`
+  state cast, so a persisted value would cross a float on its way in and out of the form — the one
+  thing `decimal(12,3)` exists to prevent, and invisible because the *display* still looks right.
+  Use `->inputMode('decimal')` plus explicit validation rules. An honest test asserts `getState()`,
+  not the rendered output, because only the state shows the cast.
+  **The pricing fields on `CourseResource` and `BatchResource` are a deliberate exception** and
+  keep `->numeric()`: they are `dehydrated(false)`, so their state never reaches persistence, and
+  the price is written by `UpdateCoursePriceAction` / `UpdateBatchPriceAction` from raw state. The
+  arch test records that exception rather than pretending it does not exist. Narrow the rule to
+  dehydrated fields, or the standard reads as an instruction to redesign working, reviewed code.
+- **PHP-side money arithmetic goes through `App\Domain\Finance\Support\Money`**, which works in
+  integer dirham. Rounding is half-up and defined once: 216.350 at 1.00% is 214.187, where float
+  arithmetic yields 214.186.
 - Status columns are `string(30)` with a `default`, an index, and a backed enum cast.
 - Explicit nullability on every column.
 - One migration per logical change. Never edit a migration that has run in production.
@@ -211,6 +225,61 @@ Apply the same reasoning to any future resource whose per-record policy has a pr
 ### One config value that must not change
 
 **`super_admin.define_via_gate` in `config/filament-shield.php` must stay `false`.** Setting it `true` makes `Gate::before` return true for every ability, silently defeating guard 2. A test pins it.
+
+---
+
+## Time, documents and state (phase 2)
+
+Three rules this phase paid for, each in a review round.
+
+**A local reporting period becomes a half-open UTC range, once, in one place.** The centre reads
+its day on Africa/Tripoli; the database stores instants in UTC. Every report converts the local
+period to `[start, end)` in UTC through `ReportPeriod` and nothing re-derives it — a second
+conversion is a second definition, and the two disagree across a DST boundary. Test the
+conversion at an hour where a mistake would show, not at midday when every candidate agrees.
+Libya's 2013 DST change is the anchor case: a fixed offset passes a naive test and a timezone
+database is required to pass an honest one.
+
+**An issued document is a snapshot, not a live query.** A receipt or an exported report captures
+what it said at the moment it was issued — figures, names, codes, and the locale — and reprinting
+it later reproduces that, not today's data. A later correction to a charge, a student's name or a
+reversal timestamp must not change a document already given to somebody. This is the opposite of
+the balance rule above, and both are deliberate: **balances are always derived, documents are
+always frozen.**
+
+*When* the capture happens differs by document, and the difference is not incidental:
+
+- **A receipt documents an event, so its snapshot is written inside that event's transaction.**
+  `RecordPaymentAction` creates the receipt snapshot in the same transaction as the payment; there
+  is no window in which a payment exists without the document that describes it.
+- **An export documents a question asked at a moment, so it freezes at request time**, outside any
+  transaction. `ReportPage::captureSnapshot()` reads the report and the requester's locale
+  synchronously when the export is requested, and the queued job renders only what was frozen —
+  which is what stops chunked work from mixing two states of the ledger.
+
+**A guarded field is read from raw state, never from `getState()` — but read the ability first.**
+Filament does not dehydrate a hidden component, so `getState()` silently drops a field whose step
+never rendered, turning an Action's refusal of a crafted value into a silent acceptance of the
+default. Raw state is therefore what a guarded field is read from.
+
+**Which order the check runs in depends on what the field's contract is, and getting this backwards
+has already cost a defect.**
+
+- **Refusal contract — read raw state, let the Action refuse.** `EnrollAndCollect` reads
+  `discount_id` from raw state precisely so an actor without `apply_discount` who crafts one meets
+  `EnrollAndBillAction`'s refusal, rather than having the value pruned and being silently billed at
+  full price. The Action is the boundary and it must see the attempt.
+- **Ignore contract — check the ability *before* reading raw state.** The pricing boundary
+  (finance design §3, rules 1–2) is the opposite: without `manage_pricing` the pricing path is
+  skipped entirely and any injected state is discarded unread. It is never "authorize and refuse";
+  it is "not this actor's field, ignore it". An earlier revision called the Action unconditionally,
+  and because an admin holds no `manage_pricing`, **renaming a course authorized, refused, and
+  rolled the rename back** with an error naming a field the admin never touched. Reading the
+  ability first also makes a crafted injection inert instead of a way to deny an admin their own
+  edits.
+
+The question to ask of a new guarded field is which of those two it is: does the actor's attempt
+need to be refused on the record, or does it simply not belong to them?
 
 ---
 

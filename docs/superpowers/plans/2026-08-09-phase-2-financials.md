@@ -1,6 +1,52 @@
 # Phase 2 — Financials Implementation Plan
 
-**Status:** Revision 7 — the financial design review is closed. Tasks 1–5, 7, 8 and the two performance/boundary follow-ups have merged; Task 6 is implementing the owner-approved receipt reliability correction recorded below.
+**Status: COMPLETE — closed by Task 12 on 2026-08-26.**
+
+All twelve planned tasks merged, plus five corrective follow-ups (T01P, T2P, T05P, T06P, T00D).
+Every task branch is preserved behind a `task/P2-*-end` tag, because each was squash-merged and
+its review history is otherwise unreachable from `main`.
+
+**Deviations from this plan, recorded rather than quietly absorbed:**
+
+1. **Task 9 and Task 11 shared the `discoverPages()` seam.** Revision 5 moved T11 out of wave 6
+   into wave 7 so one task wrote the line and the other inherited it. That sequencing held: the
+   seam count is 1 both before and after T11, asserted by a test in T11's own suite.
+2. **Task 11 published four migrations where this plan declared two.** `exports` and
+   `failed_import_rows` were named; `imports` ships with the latter as a pair, and
+   `notifications` is required because a queued export can only report completion through a
+   database notification. Neither table existed on `main`, so nothing collided.
+3. **Task 11 deferred 48-hour export retention**, with a measured reason rather than silence:
+   `pending_file_deletions` has no not-before column and its `path` is a single file, while the
+   XLSX pipeline produces a directory. Generated exports therefore accumulate. **Unowned — this
+   needs its own task**, and it is an enhancement to the generic file lifecycle, not a second
+   scheduled command.
+4. **Cross-task expansion requested during T11 was declined and proved unnecessary.** Seven
+   corrections were proposed that would have touched T3- and T10-owned files, `routes/console.php`
+   and these documents. Four fitted T11's declared scope and were approved; three were declined.
+   The largest declined item — a Finance-owned carrier id from T10 — was then dissolved entirely
+   by freezing the export data at request time, inside T11's own files.
+5. **Collecting a later instalment through the UI was scrapped**, not deferred. Raised twice in
+   review of T9 as a missing requirement on the reading that the design promised it; it does not.
+   Recorded in system design §12.
+6. **This plan carried two false claims about `Gate::guessPolicyName()`**, corrected in place by
+   Task 12 after measurement. See the T12 entry and the `AppServiceProvider` comment.
+7. **This plan miscited the activity-log requirement to design §12**, which is "Impact on
+   existing code". Corrected in the T12 entry.
+8. **This plan cited `tests/Feature/ActivityLogTest.php`**; that file is at
+   `tests/Feature/Staff/ActivityLogTest.php`, which is where T12's coverage extension went.
+
+**Raised by Task 12 and deliberately not absorbed** (each wants an owner):
+
+- The phase 2 design says float-cast enforcement is added by extending
+  `tests/Feature/Staff/ActionBoundaryArchTest.php`. It is actually a separate file,
+  `tests/Feature/Finance/MoneyCastArchTest.php`. The rule itself exists and is thorough; only the
+  location is misstated. **The phase 2 design is not in Task 12's file scope**, so this is raised
+  rather than edited.
+- `EnrollmentQueryService` still offers a per-row `studentIdFor()` or a `joinCatalogueTo()` that
+  throws on empty dimensions; a `joinStudentTo()` would serve reports needing only
+  `enrollments.student_id`. In PR #26's body.
+- `failOnNotice` in the gate wants its own PR with its own evidence. A gate change never rides on
+  another change's review.
 
 **Goal:** A working system where a student is enrolled, billed, and takes a receipt away from the desk; where balances and revenue are always derivable from source rows; where staff compensation is configured and payroll is **approved and posted** without history moving; and where every figure exports to Excel and PDF.
 
@@ -173,7 +219,9 @@ A seam is a file whose content is an enumeration that grows whenever a task adds
 
 #### Wave 4 dissolves, because the seam is optional
 
-The `Gate::policy()` list is **redundant**, and that is checkable rather than arguable. Laravel's `Gate::guessPolicyName()` maps a class whose namespace contains `\Models\` onto the sibling `\Policies\` namespace — `vendor/laravel/framework/src/Illuminate/Auth/Access/Gate.php:725-727`. Every model here is `App\Domain\{Domain}\Models\{X}` and every policy `App\Domain\{Domain}\Policies\{X}Policy`, so **discovery already resolves all of them**; the nine explicit lines change no behaviour. P2-T05 confirmed the same thing empirically from the other direction — its suite passed before the `ChargePolicy` line was added.
+The `Gate::policy()` list is **mostly redundant — but not entirely, and the exceptions matter.** **Corrected in T12 after measurement; the earlier text here was wrong twice over.** Laravel's `Gate::guessPolicyName()` walks every namespace prefix and tries `<prefix>\Policies\<Class>Policy`, longest first — `vendor/laravel/framework/src/Illuminate/Auth/Access/Gate.php:721-724`. That is what resolves a domain model to its sibling policy. It is **not** the `\Models\` → `\Policies\` substitution at `Gate.php:725-727`, which this plan previously cited: that branch requires `\Models\` with a **trailing** separator, and these namespaces end in `Models`, so it never fires.
+
+Nine of the eleven registrations are therefore redundant. **Two are load-bearing**, because their model and policy share no prefix: `App\Models\User` → `App\Domain\Staff\Policies\UserPolicy`, and `Spatie\Activitylog\Models\Activity` → `App\Domain\Staff\Policies\ActivityPolicy`. Measured with `Gate::getPolicyFor()`: strip the block and those two return `null` — a silent `false` on panel account management and on the append-only audit log — while the other nine still resolve. P2-T05's observation that its suite passed before the `ChargePolicy` line was added is correct **for that domain model** and does not generalise to the list.
 
 So **T4 and T8 register nothing in `AppServiceProvider`**, join no provider-registration seam, and stay concurrent. Wave 4 is unchanged.
 
@@ -648,11 +696,13 @@ An admin can view and export; a staff member can reach neither · **the export q
 - `lang/en/`, `lang/ar/` — gaps found by the i18n sweep
 - `tests/Feature/LocalizationTest.php`, `tests/Feature/ActivityLogTest.php` — coverage extensions only
 - **Read-only scheduling-seam re-check: `routes/console.php`** — compare against current `main` and prove the receipt reconciliation, backup pipeline and pending-file deletion sweep each appear exactly once with their intended mutexes. Task 6 owns the receipt entry; task 12 does not rewrite it merely to claim ownership.
-- **`app/Providers/AppServiceProvider.php` — comment only, and the one exception to "no `app/` changes" below.** The comment above the `Gate::policy()` list says those policies "live outside app/Policies, so Laravel's convention-based discovery will not find them" and that "without these lines every check against them silently falls through to false". **Both claims are false** — `Gate::guessPolicyName()` maps `\Models\` to `\Policies\` (`Gate.php:725-727`), which resolves every policy in this codebase. It is also the claim that made each phase-2 task dutifully append to a list it did not need. Correct the comment; then decide, and record, whether the existing lines stay as deliberate explicitness or go. Either is defensible; the comment asserting a necessity that does not exist is not.
+- **`app/Providers/AppServiceProvider.php` — comment only, and the one exception to "no `app/` changes" below.** The comment above the `Gate::policy()` list says those policies "live outside app/Policies, so Laravel's convention-based discovery will not find them" and that "without these lines every check against them silently falls through to false". **Those claims are false for nine of the eleven registrations and true for two — and this plan's own correction of them was itself wrong, which T12 caught by measurement.** Discovery resolves a domain model to its sibling policy through the prefix walk at `Gate.php:721-724` (not the `\Models\` substitution at `725-727`, which never fires here). But `App\Models\User` and `Spatie\Activitylog\Models\Activity` share no prefix with `App\Domain\Staff\Policies\`, so **their two lines are required**; without them `Gate::getPolicyFor()` returns `null` and every check falls through to false.
+
+**Done in T12:** all eleven lines kept as deliberate explicitness — the two that matter are indistinguishable from the nine at a glance, and trimming the list invites the next reader to finish the job — and the comment rewritten to say which two are load-bearing, how that was measured, and that removing the block fails 45 tests under `tests/Feature/Staff` so it cannot rot unnoticed.
 - No other `app/` changes. If the sweep finds a hardcoded string in application code, that is a fix in the owning task's file, raised rather than absorbed here.
 
 **Does**
-The i18n sweep and its enforcement test extended over every new surface. Activity-log coverage confirmed for every financial mutation in design §12. Re-read the hand-maintained seam inventory against `main`, including counting every `routes/console.php` schedule after Task 6; a dropped or duplicated scheduler line is a finding, not a documentation edit. Then the documentation, in the same pass: the system design corrected wherever phase 2 changed it, `docs/ENGINEERING.md` updated with any convention this phase established — the local-period-to-UTC rule, the never-dehydrate-a-guarded-field rule, the immutable-issued-document-snapshot distinction, and **the money-field rule task 2P enforces** (`->numeric()` installs a float state cast, so a money field uses `->inputMode('decimal')` and validation rules instead) are all candidates. That file is deliberately left to this task rather than edited by each task that learns something, for the reason the seam analysis gives — this plan marked complete with its deviations recorded, and `docs/CHANGELOG.md` written in plain language.
+The i18n sweep and its enforcement test extended over every new surface. Activity-log coverage confirmed for every financial mutation. **The citation here said design §12; that section is "Impact on existing code" and carries no such list** — the requirements are in §4 (a mandatory reason written into the log's properties; "the activity log *is* the audit record") and §5/§14 (no entry anywhere carries a placeholder reference), under the standing rule that the log is append-only and never a source of financial truth or event order. Re-read the hand-maintained seam inventory against `main`, including counting every `routes/console.php` schedule after Task 6; a dropped or duplicated scheduler line is a finding, not a documentation edit. Then the documentation, in the same pass: the system design corrected wherever phase 2 changed it, `docs/ENGINEERING.md` updated with any convention this phase established — the local-period-to-UTC rule, the never-dehydrate-a-guarded-field rule, the immutable-issued-document-snapshot distinction, and **the money-field rule task 2P enforces** (`->numeric()` installs a float state cast, so a money field uses `->inputMode('decimal')` and validation rules instead) are all candidates. That file is deliberately left to this task rather than edited by each task that learns something, for the reason the seam analysis gives — this plan marked complete with its deviations recorded, and `docs/CHANGELOG.md` written in plain language.
 
 **Done when**
 No hardcoded user-facing string survives the enforcement test · every financial mutation produces a log entry with the right actor · no document contradicts the code · `composer verify` green on `main`.

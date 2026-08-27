@@ -13,6 +13,7 @@ use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\File;
 use Spatie\Activitylog\Models\Activity;
 use Spatie\Activitylog\Support\ActivityBuffer;
 
@@ -351,3 +352,227 @@ it('never records a storage path or uploaded filename', function () {
     expect($everything)->not->toContain('secret-name-scan')
         ->and($everything)->not->toContain('staff-photos/');
 });
+
+/*
+|--------------------------------------------------------------------------
+| A tripwire for common event-bypassing writes (P2-T12)
+|--------------------------------------------------------------------------
+|
+| WHAT THIS IS, STATED HONESTLY: partial defence in depth, not a proof.
+|
+| `RecordsActivity` logs on Eloquent model events, so a financial mutation is
+| absent from the append-only log if it never constructs a model — one
+| `saveQuietly()`, one `DB::table('payments')->update(...)`, one builder chain
+| — and nothing fails, because the test that would have caught it is the one
+| nobody wrote for the new path. This scans for the shapes that do that, so it
+| covers writes that do not exist yet, cheaply, at the moment they are added.
+|
+| WHAT IT CANNOT DO. Source patterns cannot decide whether a receiver is a
+| model or a builder. The shape that defeats it is an assigned builder:
+|
+|     $query = Payment::query();
+|     $query->update([...]);          // receiver is a variable; reads as an
+|                                     // instance write; NOT reported
+|
+| Deciding that needs type inference, not a scan, and chasing it with more
+| pattern complexity buys less than it costs — three revisions of this guard
+| were each defeated by a shape the previous one had not imagined. So the gap
+| is recorded here rather than papered over.
+|
+| WHAT ACTUALLY CARRIES THE GUARANTEE TODAY:
+|
+|   1. The behavioural tests. Nine finance test files assert `causer_id` on the
+|      entry each mutation produces. Those prove the mutations they exercise
+|      are logged, which is the real evidence.
+|   2. A manual audit performed for this task: every `DB::table()` under
+|      `app/Domain/Finance` is a read in the T10 report classes, and every
+|      mutating call has a `$variable` receiver bar one allowlisted
+|      export-progress write.
+|   3. Writes going through Actions at all, which is enforced separately by
+|      `ActionBoundaryArchTest`.
+|
+| This tripwire is a fourth, weaker line. Treat a failure here as a real
+| finding; do not read a pass as proof the log cannot be bypassed.
+|
+| Reads are untouched: the T10 report classes are built on `DB::table()`
+| deliberately, and `select`/aggregate queries are not mutations.
+*/
+
+it('finds no common event-bypassing write shape in the finance domain', function () {
+    $writeShapes = [
+        // Persist without firing events — the model-level bypass.
+        'saveQuietly' => '/->saveQuietly\s*\(/',
+        'updateQuietly' => '/->updateQuietly\s*\(/',
+        'deleteQuietly' => '/->deleteQuietly\s*\(/',
+        // Suppress events around an otherwise ordinary write.
+        'withoutEvents' => '/::withoutEvents\s*\(/',
+        // Query-builder writes never construct a model at all.
+        'DB::table()->insert/update/delete' => '/DB::table\s*\([^)]*\)(?:[^;]*?)->\s*(?:insert|update|delete|upsert|increment|decrement)\s*\(/s',
+        /*
+         * A MUTATING CALL WHOSE RECEIVER ENDS IN `)` IS A BUILDER, NOT A MODEL.
+         *
+         * This rule is stated in the negative on purpose. The first two versions
+         * tried to enumerate the ways a builder chain can START — `::query()`,
+         * `->newQuery()`, `::where*()` — and cross-review pointed out that scope,
+         * relationship and connection-builder writes all slip past such a list:
+         *
+         *     Charge::open()->update([...])                  // local scope
+         *     $charge->payments()->update([...])             // relationship
+         *     DB::connection('x')->table('y')->update([...]) // connection
+         *
+         * Predicting spellings is the wrong shape for this guard. Every mutating
+         * write in this domain today has a `$variable` receiver, which is an
+         * instance write and does fire `updating`/`updated`; a receiver ending in
+         * `)` is the result of a call, which means a builder. Inverting the rule
+         * covers the shapes above and the ones nobody has written yet.
+         *
+         * Eloquent's Builder::update() is `$this->toBase()->update(...)`
+         * (Builder.php:1270-1272) — no model instance, no events. `delete`,
+         * `upsert`, `increment` and `decrement` are the same.
+         *
+         * A method that returns a model and is then written to — `foo()->update()`
+         * — is reported here too. That is deliberate: it is indistinguishable from
+         * a builder at this level, and it is worth an explicit allowlist entry
+         * saying which it is.
+         */
+        'builder-shaped write (receiver ends in `)`)' => '/\\)\\s*->\\s*(?:update|delete|insert|upsert|increment|decrement|forceDelete|truncate|restore)\\s*\\(/s',
+        /*
+         * Static mutators forward to the query builder without constructing a
+         * model at all: Model::insert(), ::upsert(), ::destroy(), ::truncate().
+         */
+        'static mutator' => '/::\\s*(?:insert|insertOrIgnore|insertGetId|upsert|destroy|truncate)\\s*\\(/s',
+    ];
+
+    /*
+     * Writes that skip model events on purpose, each with its reason.
+     *
+     * An entry here is a claim that the row written is not a financial record
+     * the audit log is meant to carry. Anything else belongs in an Action.
+     */
+    $allowedEventlessWrites = [
+        // Filament's own `exports` progress counters — a vendor bookkeeping
+        // table for a queued job, not a financial record. The report data it
+        // describes is frozen in the snapshot, not in this row.
+        'app/Domain/Finance/Exports/PrepareReportCsvExport.php' => 'export progress counters',
+    ];
+
+    $offenders = [];
+
+    foreach (File::allFiles(app_path('Domain/Finance')) as $file) {
+        if ($file->getExtension() !== 'php') {
+            continue;
+        }
+
+        $path = (string) $file->getRealPath();
+        $source = appSourceWithoutComments($path);
+
+        $relative = str_replace(
+            [base_path().DIRECTORY_SEPARATOR, DIRECTORY_SEPARATOR],
+            ['', '/'],
+            $path,
+        );
+
+        if (array_key_exists($relative, $allowedEventlessWrites)) {
+            continue;
+        }
+
+        foreach ($writeShapes as $name => $pattern) {
+            if (preg_match($pattern, $source) === 1) {
+                $offenders[] = $relative.' -> '.$name;
+            }
+        }
+    }
+
+    expect($offenders)->toBeEmpty(
+        'A financial write matches a shape that bypasses Eloquent model events, so RecordsActivity '
+        .'would never see it and the mutation would be missing from an append-only audit log. '
+        .'Either route it through a model instance or add it to $allowedEventlessWrites with its '
+        ."reason:\n".implode("\n", $offenders),
+    );
+});
+
+it('detects each bypass shape this tripwire covers', function (string $sample) {
+    /*
+     * Without this, deleting a pattern above leaves a test that scans for
+     * nothing and passes forever. Same reasoning as the localization
+     * detector's own sample list.
+     */
+    $patterns = [
+        '/->saveQuietly\s*\(/',
+        '/->updateQuietly\s*\(/',
+        '/->deleteQuietly\s*\(/',
+        '/::withoutEvents\s*\(/',
+        '/DB::table\s*\([^)]*\)(?:[^;]*?)->\s*(?:insert|update|delete|upsert|increment|decrement)\s*\(/s',
+        '/\\)\\s*->\\s*(?:update|delete|insert|upsert|increment|decrement|forceDelete|truncate|restore)\\s*\\(/s',
+        '/::\\s*(?:insert|insertOrIgnore|insertGetId|upsert|destroy|truncate)\\s*\\(/s',
+    ];
+
+    $matched = false;
+
+    foreach ($patterns as $pattern) {
+        if (preg_match($pattern, $sample) === 1) {
+            $matched = true;
+        }
+    }
+
+    expect($matched)->toBeTrue();
+})->with([
+    '$payment->saveQuietly();',
+    '$charge->updateQuietly([\'amount\' => \'1.000\']);',
+    '$line->deleteQuietly();',
+    'Payment::withoutEvents(fn () => $payment->save());',
+    'DB::table(\'payments\')->where(\'id\', 1)->update([\'reversed_at\' => now()]);',
+    "DB::table('charges')\n    ->whereKey(1)\n    ->increment('amount');",
+    // Eloquent builder writes — the shape this guard used to bless.
+    "Payment::query()->whereKey(1)->update(['reversed_at' => now()]);",
+    "Charge::query()->where('id', 1)->delete();",
+    "Payment::where('reversed_at', null)->update(['reversed_at' => now()]);",
+    "PayrollLine::query()\n    ->whereKey(1)\n    ->increment('amount');",
+    // The four shapes cross-review named, none of which a chain-start list caught.
+    "Charge::open()->update(['amount' => '1.000']);",
+    "\$charge->payments()->update(['reversed_at' => now()]);",
+    "DB::connection('mysql')->table('payments')->update(['reversed_at' => now()]);",
+    "Payment::insert([['amount' => '1.000']]);",
+    'Charge::destroy(1);',
+    'PaymentAllocation::truncate();',
+    /*
+     * REPORTED ON PURPOSE, though both are instance writes that do fire events.
+     * `foo()->update()` cannot be told apart from a builder chain by shape, and
+     * guessing wrong in this direction is the safe way round: an over-report
+     * costs one allowlist entry with a reason, an under-report costs a financial
+     * mutation missing from an append-only log. The earlier version of this
+     * guard tried to exempt these and, in doing so, exempted the real bypasses.
+     */
+    "Payment::query()->whereKey(1)->firstOrFail()->update(['notes' => 'x']);",
+    'Charge::query()->findOrFail(1)->delete();',
+]);
+
+it('leaves reads and non-finance code alone', function (string $sample) {
+    // The report classes read through DB::table() on purpose. A select or an
+    // aggregate is not a mutation and must not be reported.
+    $patterns = [
+        '/DB::table\s*\([^)]*\)(?:[^;]*?)->\s*(?:insert|update|delete|upsert|increment|decrement)\s*\(/s',
+        '/\\)\\s*->\\s*(?:update|delete|insert|upsert|increment|decrement|forceDelete|truncate|restore)\\s*\\(/s',
+        '/::\\s*(?:insert|insertOrIgnore|insertGetId|upsert|destroy|truncate)\\s*\\(/s',
+    ];
+
+    foreach ($patterns as $pattern) {
+        expect(preg_match($pattern, $sample))->toBe(0);
+    }
+})->with([
+    "DB::table('charges')->select(['id', 'amount'])->get();",
+    "DB::table('payment_allocations')->sum('amount');",
+    "DB::table('payments')->where('reversed_at', null)->count();",
+    /*
+     * AN INSTANCE WRITE IS NOT A BYPASS and must not be reported: a `$variable`
+     * receiver is a model, and $model->update() fires updating/updated, which is
+     * exactly what RecordsActivity listens to. Every financial write in the
+     * domain today has this shape.
+     */
+    "\$payment->update(['notes' => 'x']);",
+    '\$charge->delete();',
+    "\$this->export->update(['file_name' => 'x']);",
+    "fn (): bool => \$charge->update(['amount' => '1.000']),",
+    // A builder READ is not a write, and the report classes rely on this.
+    "Payment::query()->where('reversed_at', null)->get();",
+]);

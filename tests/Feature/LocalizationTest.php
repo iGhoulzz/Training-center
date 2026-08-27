@@ -960,6 +960,47 @@ function firstHardcodedLabel(string $source): ?string
         return trim($match[0]);
     }
 
+    /*
+     * COPY ALSO ARRIVES AS A STATIC PROPERTY, AND THE PATTERN ABOVE CANNOT SEE
+     * IT (P2-T12).
+     *
+     * Filament pages and resources carry their navigation and heading text as
+     * class properties rather than fluent calls:
+     *
+     *     protected static ?string $navigationLabel = 'Reports';
+     *
+     * That is the same user-facing string as ->navigationLabel('Reports') and
+     * wants the same __() treatment, but `->method(` never matches it.
+     *
+     * There were none under app/ when this was added — the sweep was run first
+     * and came back empty. It is here so the next page that takes the property
+     * route does not walk past a detector that knows only one of the two forms.
+     * `= null` and `= __('...')` neither start with a quote, so matching the
+     * opening quote is the whole rule.
+     */
+    $labellingProperty = '(title|heading|subheading|label|pluralLabel|modelLabel'
+        .'|pluralModelLabel|navigationLabel|navigationGroup|navigationParentItem'
+        .'|breadcrumb|description)';
+
+    /*
+     * THE TYPE IS A UNION AS OFTEN AS IT IS A STRING (found in cross-review).
+     *
+     * The first version accepted only untyped, `?string` or `string`, and so
+     * missed the exact declaration Filament ships:
+     *
+     *     protected static string | UnitEnum | null $navigationGroup = null;
+     *
+     * — which is `navigationGroup`, one of the property names this rule exists
+     * to cover. A preventive guard that cannot see the framework's own form of
+     * the thing it names is not preventing anything. The type expression is now
+     * any pipe-separated list of optionally-nullable names, or absent entirely.
+     */
+    $typeExpression = '(?:[?\\\\\\w]+(?:\s*\|\s*[?\\\\\\w]+)*\s+)?';
+
+    if (preg_match('/static\s+'.$typeExpression.'\$'.$labellingProperty.'\s*=\s*[\'"][^\'"]/i', $source, $match) === 1) {
+        return trim($match[0]);
+    }
+
     return null;
 }
 
@@ -979,6 +1020,15 @@ it('detects the hardcoded labels it is meant to detect', function (string $sampl
     "->description(\n    'Something explanatory'\n)",
     // Setters added with this detector's own tests.
     "->trueLabel('Active only')",
+    // Copy carried as a static property rather than a fluent call (P2-T12).
+    "protected static ?string \$navigationLabel = 'Reports';",
+    "protected static ?string \$title = 'Daily tender';",
+    'protected static string $navigationGroup = "Finance";',
+    // Filament's own declaration form — Page.php declares navigationGroup as
+    // `static string | UnitEnum | null`, and the first version of this rule
+    // could not see it.
+    "protected static string | UnitEnum | null \$navigationGroup = 'Finance';",
+    "protected static string|UnitEnum|null \$navigationGroup = 'Finance';",
     "->breadcrumb('Edit')",
 ]);
 
