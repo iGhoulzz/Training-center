@@ -736,8 +736,13 @@ responsible for remembering the `WHERE` clause — which is the exact part that 
 never be forgotten on the portal.
 
 It becomes a **security-shaped operation**:
-`scopeToStudent($query, $enrollmentColumn, $studentId)`, which joins *and*
-constrains in one call. A caller cannot take the join without the restriction.
+
+```php
+scopeToStudent(Builder $query, string $enrollmentIdColumn, int $studentId): Builder
+```
+
+which joins *and* constrains in one call. A caller cannot take the join without
+the restriction.
 
 It gives portal-shaped queries a path neither existing method offers: today the
 choice is a per-row `studentIdFor()`, which is an N+1, or `joinCatalogueTo()`,
