@@ -1,6 +1,6 @@
 # Phase 3 — Student Portal and Certificates Implementation Plan
 
-**Status: awaiting step-0 review. No task may begin until step 0 closes.**
+**Status: step 0 closed — awaiting planning PR merge. No task may begin until it merges green.**
 
 **Goal:** A student signs in to `/portal` and sees their own record, enrolments and
 outstanding balance and nothing belonging to anyone else; staff mark a batch's
@@ -162,6 +162,24 @@ the right file is not the same as knowing what is in it. Round 1 was fixed by
 were free to check and expensive to miss.
 
 **Returned for final confirmation.**
+
+### Round 3 outcome (2026-08-28) — approved, step 0 closed
+
+Codex confirmed the three round-2 corrections against the existing code: the
+bulk balance query hydrates MySQL DECIMAL values through
+`Money::fromDecimal((string) $value)`; export retention records one directory
+receipt in `PrepareReportCsvExport` for CSV/XLSX and one file receipt after the
+successful PDF write; and the concurrency test already polls a Symfony PHP
+subprocess, so T11 changes only its deadline source, headroom and early-death
+diagnostics.
+
+One acceptance sentence was narrowed before approval: a **PDF** export that
+fails before its successful write leaves no receipt. CSV/XLSX intentionally
+receive their one directory receipt during `PrepareReportCsvExport`, so the old
+unqualified wording could be read as requiring the opposite.
+
+**The plan is approved. Implementation remains gated on this planning PR merging
+with green CI.**
 
 ---
 
@@ -1407,9 +1425,10 @@ immediately, exactly as today · **a CSV export, an XLSX export and a PDF export
 each produce exactly one receipt** — one directory receipt from
 `PrepareReportCsvExport` for the first two, one file receipt from
 `GenerateReportPdfJob` for the third — asserted by counting receipts per export,
-so a second receipt for the same artefact fails · **an export that fails mid-write
-leaves no receipt**, because the PDF receipt is recorded only after a successful
-write · `record()`'s existing callers and their tests are **untouched**, and
+so a second receipt for the same artefact fails · **a PDF export that fails before
+the successful write leaves no receipt**, because the PDF receipt is recorded only
+after a successful write · `record()`'s existing callers and their tests are
+**untouched**, and
 `scheduleDeletion()` is the only method the exports call · **a directory receipt
 naming a path outside the
 export prefix is refused**, and one naming the disk root is refused, and one
