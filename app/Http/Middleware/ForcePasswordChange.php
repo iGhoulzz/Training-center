@@ -7,6 +7,7 @@ namespace App\Http\Middleware;
 use App\Filament\Pages\PasswordChange;
 use App\Models\User;
 use Closure;
+use Filament\Facades\Filament;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Livewire\Exceptions\ComponentNotFoundException;
@@ -16,17 +17,48 @@ use Symfony\Component\HttpFoundation\Response;
 
 class ForcePasswordChange
 {
-    /**
-     * Route name verified against `php artisan route:list --path=admin`.
-     * If it drifts, the page redirects to itself forever.
+    /*
+     * THE PANEL IS RESOLVED PER REQUEST, NOT HARDCODED (P3-T01).
+     *
+     * These were two constants naming filament.admin.*, and the hold redirected
+     * to a literal '/admin/password-change'. That was correct while one panel
+     * existed and becomes a trap the moment a second does: a student issued a
+     * temporary password would be held, then redirected into a panel
+     * canAccessPanel() refuses them, while this guard's exemption never matched
+     * the portal's own password route — so the page meant to be the way out was
+     * unreachable. Exactly the trap the admin panel's version was built to avoid.
+     *
+     * The names come from Filament's own route APIs rather than a rebuilt
+     * "filament.{id}.pages.{slug}" template, so a change in how Filament names
+     * routes cannot silently desync this guard from the routes it is comparing
+     * against.
+     *
+     * getCurrentOrDefaultPanel() rather than getCurrentPanel(): this middleware
+     * only ever runs inside a panel's auth stack or as persistent middleware for
+     * one of that panel's Livewire components, so a current panel is expected —
+     * and Filament's own fallback is the default panel, which is admin. There is
+     * no case where "no panel" should mean "exempt".
      */
-    private const PAGE_ROUTE = 'filament.admin.pages.password-change';
 
     /**
-     * Also verified against `route:list`. POST only — a GET is refused by
-     * routing before this guard is consulted at all.
+     * The password page's route on the panel this request belongs to.
+     *
+     * If this ever fails to match the page's real route name, the page redirects
+     * to itself forever — which is why it is derived rather than transcribed.
      */
-    private const LOGOUT_ROUTE = 'filament.admin.auth.logout';
+    private function passwordPageRoute(): string
+    {
+        return PasswordChange::getRouteName(Filament::getCurrentOrDefaultPanel());
+    }
+
+    /**
+     * The panel's logout route. POST only — a GET is refused by routing before
+     * this guard is consulted at all.
+     */
+    private function logoutRoute(): string
+    {
+        return Filament::getCurrentOrDefaultPanel()->generateRouteName('auth.logout');
+    }
 
     /*
      * THE ROUTE THIS GUARD SEES IS NOT ALWAYS THE ROUTE THAT WAS REQUESTED
@@ -80,11 +112,11 @@ class ForcePasswordChange
          * reachable. This costs one call and removes the argument entirely: a
          * component update is never a logout.
          */
-        if (! app(HandleRequests::class)->isLivewireRoute() && $request->routeIs(self::LOGOUT_ROUTE)) {
+        if (! app(HandleRequests::class)->isLivewireRoute() && $request->routeIs($this->logoutRoute())) {
             return $next($request);
         }
 
-        if (! $request->routeIs(self::PAGE_ROUTE)) {
+        if (! $request->routeIs($this->passwordPageRoute())) {
             return $this->holdOnThePasswordForm();
         }
 
@@ -169,6 +201,6 @@ class ForcePasswordChange
      */
     private function holdOnThePasswordForm(): RedirectResponse
     {
-        return redirect()->to('/admin/password-change');
+        return redirect()->route($this->passwordPageRoute());
     }
 }

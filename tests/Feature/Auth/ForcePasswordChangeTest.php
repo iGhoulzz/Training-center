@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Domain\Enrollment\Models\Student;
 use App\Filament\Pages\PasswordChange;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
@@ -24,6 +25,26 @@ beforeEach(function () {
             'password' => Hash::make('existing-password-1'),
         ]);
         $user->assignRole('admin');
+
+        return $user;
+    };
+
+    /**
+     * The same account on the other panel (P3-T01).
+     *
+     * A portal student needs a linked, live student record as well as the role,
+     * because canAccessPanel() refuses the account without one — so a missing
+     * record here would look like this guard firing when it is really the panel
+     * gate answering.
+     */
+    $this->makeStudent = function (bool $mustChangePassword): User {
+        $user = User::factory()->create([
+            'is_active' => true,
+            'must_change_password' => $mustChangePassword,
+            'password' => Hash::make('existing-password-1'),
+        ]);
+        $user->assignRole('student');
+        Student::factory()->for($user)->create();
 
         return $user;
     };
@@ -408,4 +429,42 @@ it('rejects a password shorter than twelve characters', function () {
         ->assertHasFormErrors(['password']);
 
     expect($user->refresh()->must_change_password)->toBeTrue();
+});
+
+/*
+|--------------------------------------------------------------------------
+| The same containment on the student panel (P3-T01)
+|--------------------------------------------------------------------------
+|
+| The guard resolves its page and logout routes from
+| Filament::getCurrentOrDefaultPanel() rather than from filament.admin.*
+| constants. These prove the containment moved with it, using the same replayed
+| snapshots as the admin cases above — not a second, weaker mechanism.
+|
+| The notification tray is the co-rendered component here too: PasswordChange
+| uses the simple layout, which still renders it unconditionally, so it is the
+| one thing a contained student could otherwise drive.
+*/
+
+it('refuses to drive a portal component co-rendered on the password change page', function () {
+    $user = ($this->makeStudent)(true);
+    $this->actingAs($user, 'student');
+
+    $payload = ($this->replay)('/portal/password-change', Notifications::class);
+
+    $user->update(['must_change_password' => true]);
+
+    ($this->interact)($payload)->assertRedirect('/portal/password-change');
+});
+
+it('lets a portal livewire interaction through while the account is in good standing', function () {
+    // The control. Without it, a redirect above could mean the endpoint was
+    // never reached rather than the guard firing — the mistake
+    // LivewirePersistentGuardTest records having made twice.
+    $user = ($this->makeStudent)(false);
+    $this->actingAs($user, 'student');
+
+    $payload = ($this->replay)('/portal/password-change', Notifications::class);
+
+    ($this->interact)($payload)->assertSuccessful();
 });
