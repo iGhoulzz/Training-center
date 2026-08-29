@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Domain\Enrollment\Filament\Resources\StudentResource\Pages\ListStudents;
 use App\Domain\Enrollment\Models\Student;
 use App\Domain\Staff\Actions\IssuePortalCredentialAction;
+use App\Domain\Staff\Actions\SystemRoleWriter;
 use App\Domain\Staff\Exceptions\EmailAlreadyRegisteredException;
 use App\Domain\Staff\Exceptions\StudentHasNoEmailException;
 use App\Domain\Staff\Exceptions\StudentHasPortalAccountException;
@@ -101,10 +102,23 @@ it('refuses issuance when a non-student account holds the student email', functi
     $actor->givePermissionTo('issue_portal_credential');
     $student = Student::factory()->create(['email' => 'staff@example.test']);
     $account = User::factory()->create(['email' => $student->email]);
-    $account->givePermissionTo('access_admin_panel');
+    app(SystemRoleWriter::class)->assignRoles($account, 'staff');
+
+    expect($account->roles()->pluck('name')->all())->toBe(['staff']);
 
     expect(fn (): string => app(IssuePortalCredentialAction::class)->execute($actor->fresh(), $student))
         ->toThrow(EmailAlreadyRegisteredException::class);
+});
+
+it('does not let an issue-only actor create a staff account', function (): void {
+    $actor = User::factory()->create(['is_active' => true]);
+    $actor->givePermissionTo('issue_portal_credential');
+
+    $this->actingAs($actor)
+        ->get('/admin/users/create')
+        ->assertForbidden();
+
+    expect(User::query()->where('email', 'unauthorized-staff@example.test')->exists())->toBeFalse();
 });
 
 it('does not translate a duplicate key failure from another unique index', function (): void {

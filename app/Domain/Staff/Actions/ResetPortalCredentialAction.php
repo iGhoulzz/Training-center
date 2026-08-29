@@ -7,6 +7,7 @@ namespace App\Domain\Staff\Actions;
 use App\Domain\Enrollment\Models\Student;
 use App\Domain\Staff\Exceptions\ProtectedAccountException;
 use App\Domain\Staff\Exceptions\StudentHasPortalAccountException;
+use App\Domain\Staff\Support\ActivityEvent;
 use App\Domain\Staff\Support\TemporaryPassword;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
@@ -29,7 +30,7 @@ final class ResetPortalCredentialAction
     {
         Gate::forUser($actor)->authorize('reset_portal_credential');
 
-        return DB::transaction(function () use ($student): string {
+        return DB::transaction(function () use ($actor, $student): string {
             $lockedStudent = Student::query()
                 ->lockForUpdate()
                 ->findOrFail($student->getKey());
@@ -50,7 +51,15 @@ final class ResetPortalCredentialAction
                 throw new ProtectedAccountException;
             }
 
-            return $this->temporaryPassword->issue($account);
+            $plain = $this->temporaryPassword->issue($account);
+
+            activity()
+                ->causedBy($actor)
+                ->performedOn($account)
+                ->event(ActivityEvent::PASSWORD_RESET)
+                ->log(ActivityEvent::PASSWORD_RESET);
+
+            return $plain;
         });
     }
 }

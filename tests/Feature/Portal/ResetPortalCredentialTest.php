@@ -8,6 +8,7 @@ use App\Domain\Staff\Actions\ResetPortalCredentialAction;
 use App\Domain\Staff\Actions\SystemRoleWriter;
 use App\Domain\Staff\Exceptions\ProtectedAccountException;
 use App\Domain\Staff\Exceptions\StudentHasPortalAccountException;
+use App\Domain\Staff\Support\ActivityEvent;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Filament\Livewire\Notifications;
@@ -16,6 +17,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 use Livewire\Livewire;
 use Livewire\Mechanisms\HandleRequests\HandleRequests;
+use Spatie\Activitylog\Models\Activity;
 
 uses(RefreshDatabase::class);
 
@@ -36,6 +38,25 @@ it('resets the linked portal account through a student record', function (): voi
         ->and($account->fresh()->password)->not->toBe($originalPassword)
         ->and($account->fresh()->must_change_password)->toBeTrue()
         ->and(Hash::check($plain, $account->fresh()->password))->toBeTrue();
+});
+
+it('records a portal credential reset when the account was already flagged', function (): void {
+    $actor = User::factory()->create();
+    $actor->givePermissionTo('reset_portal_credential');
+    $student = Student::factory()->withAccount()->create();
+    $account = $student->user()->sole();
+    $account->forceFill(['must_change_password' => true])->save();
+
+    app(ResetPortalCredentialAction::class)->execute($actor->fresh(), $student);
+
+    $entry = Activity::query()
+        ->where('event', ActivityEvent::PASSWORD_RESET)
+        ->where('subject_id', $account->getKey())
+        ->latest('id')
+        ->first();
+
+    expect($entry)->not->toBeNull()
+        ->and((int) $entry->causer_id)->toBe((int) $actor->getKey());
 });
 
 it('authorizes portal credential resets inside the action', function (): void {
