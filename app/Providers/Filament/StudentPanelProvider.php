@@ -120,6 +120,27 @@ class StudentPanelProvider extends PanelProvider
              * only page loads were contained.
              *
              * The portal inherits that reasoning rather than rediscovering it.
+             *
+             * THIS LIST IS REGISTERED GLOBALLY, NOT PER PANEL (P3-T01).
+             * Panel::persistentMiddleware() ends in
+             * Livewire::addPersistentMiddleware() — HasMiddleware.php:126 — which
+             * is one application-wide list. So every class named here that the
+             * admin panel also names is, today, redundant: removing
+             * AuthenticateSession from this list alone changes nothing, and a
+             * mutation probe that removes it from only one panel cannot fail.
+             *
+             * It is still declared, for two reasons. It states what this panel
+             * requires rather than what it happens to inherit, so the admin panel
+             * dropping an entry cannot silently disarm the portal. And Filament
+             * itself globally persists only Authenticate — AuthenticateSession
+             * and ForcePasswordChange are this application's additions, so
+             * nothing outside these two providers keeps them persistent.
+             *
+             * LivewirePersistentGuardTest's portal cases are honest about the
+             * consequence: they prove the guards are persistent and that the
+             * `student` guard's session hash is the one compared. They cannot
+             * prove this particular declaration is load-bearing while the admin
+             * panel names the same classes.
              */
             ->persistentMiddleware([
                 SetLocale::class,

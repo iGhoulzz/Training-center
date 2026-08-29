@@ -54,7 +54,12 @@ const FINANCE_READS = [
  */
 const FINANCE_WRITES = ['create_payment', 'create_staff_compensation', 'delete_payroll_run'];
 
-/** The nine custom abilities — bare verbs, because each names an act, not a row. */
+/**
+ * The ten custom abilities — bare verbs, because each names an act, not a row.
+ *
+ * Nine of them are phase 2's. The tenth, view_own_balance, is phase 3's student
+ * self-read; see its own note below.
+ */
 const FINANCE_CUSTOM = [
     'manage_pricing',
     'apply_discount',
@@ -212,7 +217,7 @@ it('seeds every finance ability design §10 names', function (string $ability) {
 it('seeds twenty-three finance abilities and no more', function () {
     /*
      * The count, so a name QUIETLY ADDED to the seeder shows up here rather than
-     * only in whatever it was added for. Ten reads, three writes, nine custom.
+     * only in whatever it was added for. Ten reads, three writes, ten custom.
      */
     expect(financeAbilities())->toHaveCount(23)
         ->and(array_unique(financeAbilities()))->toHaveCount(23);
