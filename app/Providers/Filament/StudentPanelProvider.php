@@ -65,6 +65,10 @@ class StudentPanelProvider extends PanelProvider
             ->path('portal')
             ->authGuard('student')
             ->login()
+            // A closure, not a bare __() call: the panel is registered at boot,
+            // before SetLocale has read the actor's locale, so resolving the
+            // string eagerly would pin it to the fallback for every request.
+            ->brandName(fn (): string => __('portal.brand'))
             ->colors([
                 'primary' => Color::Amber,
             ])

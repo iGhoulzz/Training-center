@@ -65,6 +65,21 @@ const FINANCE_CUSTOM = [
     'finalize_payroll',
     'view_financial_report',
     'export_financial_report',
+    /*
+     * THE FIRST NON-STAFF FINANCE READ (P3-T01).
+     *
+     * A student reading their own outstanding balance on the portal. It is a
+     * portal ability in phase 3 design §8.2's grant table, and it is financial
+     * HERE, because this file's property is "nothing outside this set is
+     * financial" — and an ability whose entire subject is money would make that
+     * sentence false from the non-finance list, hiding the student from every
+     * finance assertion below.
+     *
+     * The permission is not what scopes it to one student. AuthenticatedStudent
+     * decides whose balance is read, and T7's two-student tests are what prove
+     * the scoping; this grants the capability, nothing more.
+     */
+    'view_own_balance',
 ];
 
 /**
@@ -142,6 +157,20 @@ const NON_FINANCE_CUSTOM = [
     'manage_settings', 'update_assigned_batch_enrollment',
     'delete_any_role', 'force_delete_role', 'force_delete_any_role',
     'restore_role', 'restore_any_role', 'replicate_role', 'reorder_role',
+    /*
+     * Phase 3 (P3-T01). Thirteen of the fourteen new abilities; the fourteenth,
+     * view_own_balance, is financial and sits in FINANCE_CUSTOM above.
+     *
+     * The certificate register is not a financial record: issuance is refused by
+     * nothing financial and warns on an outstanding balance without consulting
+     * it (phase 3 design §5.4).
+     */
+    'access_student_portal',
+    'view_own_student_record', 'view_own_enrollment', 'view_own_certificate',
+    'complete_enrollment', 'complete_assigned_batch_enrollment',
+    'issue_portal_credential', 'reset_portal_credential',
+    'view_any_student_certificate', 'view_student_certificate',
+    'issue_student_certificate', 'replace_student_certificate', 'revoke_student_certificate',
 ];
 
 /** Every permission the seeder creates that has nothing to do with finance. */
@@ -180,13 +209,13 @@ it('seeds every finance ability design §10 names', function (string $ability) {
         ->toBeTrue("{$ability} is not seeded. Its policy now fails closed for everybody, super admin included.");
 })->with(financeAbilities());
 
-it('seeds twenty-two finance abilities and no more', function () {
+it('seeds twenty-three finance abilities and no more', function () {
     /*
      * The count, so a name QUIETLY ADDED to the seeder shows up here rather than
      * only in whatever it was added for. Ten reads, three writes, nine custom.
      */
-    expect(financeAbilities())->toHaveCount(22)
-        ->and(array_unique(financeAbilities()))->toHaveCount(22);
+    expect(financeAbilities())->toHaveCount(23)
+        ->and(array_unique(financeAbilities()))->toHaveCount(23);
 
     /*
      * THE REAL CLOSED-SET CHECK. This used to read
@@ -222,7 +251,7 @@ it('seeds twenty-two finance abilities and no more', function () {
     $expected = financeAbilities();
     sort($expected);
 
-    expect($financeSeeded)->toHaveCount(22)
+    expect($financeSeeded)->toHaveCount(23)
         ->toBe($expected, 'The seeded finance permissions no longer match financeAbilities() exactly.');
 });
 
@@ -398,11 +427,20 @@ it('gives staff nothing financial whatsoever', function () {
 
 /*
 |--------------------------------------------------------------------------
-| Student — nothing, until phase 3
+| Student — five portal abilities, exactly one of them financial (P3-T01)
 |--------------------------------------------------------------------------
+|
+| This section previously asserted the student role held NOTHING, and its heading
+| said "until phase 3". This is phase 3.
+|
+| The student now holds five abilities, and view_own_balance is the first
+| non-staff finance read in the system. The assertion is therefore not relaxed to
+| "some finance abilities" — it is narrowed to exactly which one, so a second
+| finance ability reaching students fails here rather than passing as growth
+| within a vague allowance.
 */
 
-it('gives student nothing at all, financial or otherwise', function () {
+it('gives student exactly one finance ability and nothing else financial', function () {
     $role = Role::findByName('student');
     $user = ($this->actorWith)('student');
 
@@ -411,10 +449,19 @@ it('gives student nothing at all, financial or otherwise', function () {
         fn (string $ability): bool => $user->can($ability),
     ));
 
-    expect($role->permissions)->toHaveCount(0)
-        ->and($held)->toBe([], 'A student can reach finance abilities: '.implode(', ', $held))
-        // Students reach the portal in phase 3, never the admin panel.
-        ->and($user->can('access_admin_panel'))->toBeFalse();
+    expect($role->permissions)->toHaveCount(5)
+        ->and($held)->toBe(
+            ['view_own_balance'],
+            'A student can reach finance abilities beyond their own balance: '.implode(', ', $held),
+        )
+        // Reading your own balance is not reading anyone else's, and it is
+        // certainly not the register: every staff-facing finance read stays shut.
+        ->and($user->can('view_any_charge'))->toBeFalse()
+        ->and($user->can('view_any_payment'))->toBeFalse()
+        ->and($user->can('view_financial_report'))->toBeFalse()
+        // Students reach the portal, never the admin panel.
+        ->and($user->can('access_admin_panel'))->toBeFalse()
+        ->and($user->can('access_student_portal'))->toBeTrue();
 });
 
 /*
