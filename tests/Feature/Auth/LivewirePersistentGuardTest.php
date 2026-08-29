@@ -273,9 +273,14 @@ it('invalidates the session when the password hash changes under it', function (
 | Panel::persistentMiddleware() ends in Livewire::addPersistentMiddleware()
 | (HasMiddleware.php:126), which is ONE application-wide list rather than a list
 | per panel. So these cases prove that AuthenticateSession is persistent for the
-| application, and that a portal session whose password hash changed underneath
-| it is refused on the `student` guard — password_hash_student is the key
-| compared, and a guard-name mismatch there would fail this.
+| application, that a portal session whose password hash changed underneath it is
+| refused on the `student` guard, and — asserted directly below, not inferred from
+| the logout — that password_hash_student is the slot used while password_hash_web
+| stays empty in a student-only session.
+|
+| THE BEHAVIOUR ALONE WOULD NOT HAVE PROVED THE KEY. A consistently wrong slot
+| goes stale and logs out identically, so the redirect is the same either way, and
+| the two guards share one session and need distinct slots. Found in re-review.
 |
 | They do NOT prove StudentPanelProvider's own persistentMiddleware entry is
 | load-bearing. Removing AuthenticateSession from that panel alone changes
@@ -307,6 +312,25 @@ it('invalidates a portal session when the password hash changes under it', funct
     // The first request through AuthenticateSession stores password_hash_student;
     // every later request compares against it.
     $payload = ($this->openPageComponent)($this->portalPage, $this->notifications);
+
+    /*
+     * THE SLOT ITSELF, not merely its consequence.
+     *
+     * AuthenticateSession stores 'password_hash_'.$auth->getDefaultDriver()
+     * (AuthenticateSession.php:97), and inside a portal request Filament has
+     * moved that driver to `student`.
+     *
+     * Without this, the assertion below passes even if the middleware
+     * consistently stored AND read the student's hash under the wrong name —
+     * password_hash_web, say. The database hash changes, the wrongly named value
+     * goes stale, the logout happens anyway, and nothing distinguishes the two.
+     */
+    expect(session()->has('password_hash_student'))->toBeTrue(
+        'AuthenticateSession did not store the student guard session hash.'
+    )->and(session()->has('password_hash_web'))->toBeFalse(
+        'A web-guard session hash appeared in a student-only session, so the two '
+        .'guards are sharing one slot rather than holding distinct ones.'
+    );
 
     /*
      * The credential is replaced from outside this session — a staff member

@@ -137,10 +137,14 @@ class StudentPanelProvider extends PanelProvider
              * nothing outside these two providers keeps them persistent.
              *
              * LivewirePersistentGuardTest's portal cases are honest about the
-             * consequence: they prove the guards are persistent and that the
-             * `student` guard's session hash is the one compared. They cannot
-             * prove this particular declaration is load-bearing while the admin
-             * panel names the same classes.
+             * consequence: they prove the guards are persistent, and they assert
+             * DIRECTLY that this panel's guard gets its own session slot —
+             * password_hash_student present, password_hash_web absent. That
+             * assertion exists because the logout behaviour alone did not prove
+             * it: a consistently wrong slot goes stale and logs out identically.
+             *
+             * They cannot prove this particular declaration is load-bearing while
+             * the admin panel names the same classes.
              */
             ->persistentMiddleware([
                 SetLocale::class,
