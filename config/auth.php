@@ -44,6 +44,31 @@ return [
             'driver' => 'session',
             'provider' => 'users',
         ],
+
+        /*
+         * The student portal's guard (P3-T01).
+         *
+         * SAME PROVIDER, DELIBERATELY. A portal user IS a users row —
+         * students.user_id has pointed at one since phase 1 — so there is one
+         * table, one provider, one set of accounts. What differs is the guard,
+         * which gives the portal its own authentication state, so a student
+         * session is not a `web` session and cannot be replayed against /admin.
+         *
+         * THIS ENTRY IS WHY User CARRIES $guard_name = 'web'.
+         * Filament's Authenticate middleware calls Auth::shouldUse() with the
+         * panel's guard, and that WRITES auth.defaults.guard. Spatie's
+         * Guard::getDefaultName() reads that value and returns it when it matches
+         * one of the model's provider guards — which, once this entry exists,
+         * `student` does. Unpinned, every permission check inside a portal
+         * request would look for guard_name = 'student', find no rows, and return
+         * false silently. See User::$guard_name and GuardResolutionTest.
+         *
+         * Authentication happens on `student`; authorization stays on `web`.
+         */
+        'student' => [
+            'driver' => 'session',
+            'provider' => 'users',
+        ],
     ],
 
     /*

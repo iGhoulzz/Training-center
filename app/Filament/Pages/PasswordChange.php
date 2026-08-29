@@ -206,6 +206,20 @@ class PasswordChange extends Page
 
         Notification::make()->title(__('auth.password_updated'))->success()->send();
 
-        $this->redirect('/admin');
+        /*
+         * BACK TO WHICHEVER PANEL THIS WAS (P3-T01).
+         *
+         * This was a literal '/admin', which sent a student who had just done
+         * the one thing they were held for into a panel canAccessPanel() refuses
+         * them. Panel::getUrl() resolves the panel's home route when it has one
+         * and falls back to its path, so it is safe for the portal, whose pages
+         * arrive in T7.
+         *
+         * The guard read above is untouched and still correct: it uses
+         * Filament::getAuthGuard() because that is the key Filament itself
+         * writes, and the portal's `student` guard is exactly the divergence its
+         * comment anticipated.
+         */
+        $this->redirect(Filament::getCurrentOrDefaultPanel()->getUrl());
     }
 }

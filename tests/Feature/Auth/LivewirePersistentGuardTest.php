@@ -2,9 +2,11 @@
 
 declare(strict_types=1);
 
+use App\Domain\Enrollment\Models\Student;
 use App\Domain\Staff\Actions\SystemRoleWriter;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
+use Filament\Livewire\Notifications;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 use Livewire\Mechanisms\HandleRequests\HandleRequests;
@@ -117,6 +119,36 @@ beforeEach(function () {
         ->postJson(app(HandleRequests::class)->getUpdateUri(), $payload);
 
     $this->listUsers = 'App\Domain\Staff\Filament\Resources\UserResource\Pages\ListUsers';
+
+    /**
+     * The same account on the student panel (P3-T01).
+     *
+     * A linked, live student record is required as well as the role, because
+     * canAccessPanel() refuses the account without one — and openPageComponent()
+     * asserts the page loaded, so a missing record would fail as "no rendered
+     * snapshot" and look like a component problem.
+     */
+    $this->makeStudent = function (array $attributes = []): User {
+        $user = User::factory()->create([
+            'is_active' => true,
+            'must_change_password' => false,
+            'password' => Hash::make('existing-password-1'),
+            ...$attributes,
+        ]);
+        $this->system->assignRoles($user, 'student');
+        Student::factory()->for($user)->create();
+
+        return $user->refresh();
+    };
+
+    /*
+     * The portal's only authenticated page in T1 — its four pages arrive in T7 —
+     * and the notification tray is the component to drive on it. PasswordChange
+     * uses the simple layout, which renders no topbar or sidebar but still
+     * renders the tray unconditionally.
+     */
+    $this->portalPage = '/portal/password-change';
+    $this->notifications = Notifications::class;
 });
 
 /*
@@ -220,4 +252,100 @@ it('invalidates the session when the password hash changes under it', function (
 
     // And the session is genuinely gone, not merely redirected once.
     $this->get('/admin/users')->assertRedirect('/admin/login');
+});
+
+/*
+|--------------------------------------------------------------------------
+| The same two guards on the student panel (P3-T01)
+|--------------------------------------------------------------------------
+|
+| The portal authenticates on the `student` guard, so AuthenticateSession stores
+| and compares password_hash_student — a DIFFERENT session key from the one the
+| admin cases above exercise. The admin test proves the `web` guard and says
+| nothing about this one.
+|
+| Nothing about that is theoretical: PasswordChange reads Filament::getAuthGuard()
+| precisely because it is the key Filament itself writes, and its comment
+| anticipated a panel being given its own guard. This is that panel.
+|
+| WHAT THESE PROVE, AND WHAT THEY CANNOT.
+|
+| Panel::persistentMiddleware() ends in Livewire::addPersistentMiddleware()
+| (HasMiddleware.php:126), which is ONE application-wide list rather than a list
+| per panel. So these cases prove that AuthenticateSession is persistent for the
+| application, that a portal session whose password hash changed underneath it is
+| refused on the `student` guard, and — asserted directly below, not inferred from
+| the logout — that password_hash_student is the slot used while password_hash_web
+| stays empty in a student-only session.
+|
+| THE BEHAVIOUR ALONE WOULD NOT HAVE PROVED THE KEY. A consistently wrong slot
+| goes stale and logs out identically, so the redirect is the same either way, and
+| the two guards share one session and need distinct slots. Found in re-review.
+|
+| They do NOT prove StudentPanelProvider's own persistentMiddleware entry is
+| load-bearing. Removing AuthenticateSession from that panel alone changes
+| nothing while AdminPanelProvider still names it; only removing it from BOTH
+| fails these tests. Measured, not assumed — the single-panel probe was run first
+| and passed, which is what surfaced this.
+*/
+
+it('lets a portal livewire interaction through while the account is in good standing', function () {
+    /*
+     * THE CONTROL, and it is not optional here either. Every assertion below is
+     * "the interaction was refused", and a refusal is indistinguishable from a
+     * broken payload, a wrong URI or the wrong component name. The admin control
+     * at the top of this file establishes nothing about the portal: different
+     * panel, different page, different component.
+     */
+    $user = ($this->makeStudent)();
+    $this->actingAs($user, 'student');
+
+    $payload = ($this->openPageComponent)($this->portalPage, $this->notifications);
+
+    ($this->interact)($payload)->assertSuccessful();
+});
+
+it('invalidates a portal session when the password hash changes under it', function () {
+    $user = ($this->makeStudent)();
+    $this->actingAs($user, 'student');
+
+    // The first request through AuthenticateSession stores password_hash_student;
+    // every later request compares against it.
+    $payload = ($this->openPageComponent)($this->portalPage, $this->notifications);
+
+    /*
+     * THE SLOT ITSELF, not merely its consequence.
+     *
+     * AuthenticateSession stores 'password_hash_'.$auth->getDefaultDriver()
+     * (AuthenticateSession.php:97), and inside a portal request Filament has
+     * moved that driver to `student`.
+     *
+     * Without this, the assertion below passes even if the middleware
+     * consistently stored AND read the student's hash under the wrong name —
+     * password_hash_web, say. The database hash changes, the wrongly named value
+     * goes stale, the logout happens anyway, and nothing distinguishes the two.
+     */
+    expect(session()->has('password_hash_student'))->toBeTrue(
+        'AuthenticateSession did not store the student guard session hash.'
+    )->and(session()->has('password_hash_web'))->toBeFalse(
+        'A web-guard session hash appeared in a student-only session, so the two '
+        .'guards are sharing one slot rather than holding distinct ones.'
+    );
+
+    /*
+     * The credential is replaced from outside this session — a staff member
+     * running ResetPortalCredentialAction in T2, or an administrator containing a
+     * compromise.
+     *
+     * must_change_password stays FALSE deliberately. Setting it too would let
+     * ForcePasswordChange refuse the request first, and this test would pass with
+     * AuthenticateSession absent from the student panel entirely. One guard per
+     * test, or the mutation probes cannot tell them apart.
+     */
+    $user->forceFill(['password' => Hash::make('changed-elsewhere-3')])->save();
+
+    ($this->interact)($payload)->assertRedirect('/portal/login');
+
+    // And the session is genuinely gone, not merely redirected once.
+    $this->get($this->portalPage)->assertRedirect('/portal/login');
 });

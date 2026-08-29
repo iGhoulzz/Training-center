@@ -41,6 +41,24 @@ class RolePermissionSeeder extends Seeder
     private const ACTIVITY_READ = ['view_any_activity', 'view_activity'];
 
     /**
+     * The certificate register gets READ permissions only, for the same reason
+     * the activity log does, and is therefore not in the CRUD list above.
+     *
+     * A certificate is issued, replaced or revoked — three acts, named in CUSTOM
+     * below. It is never created, updated or deleted: create_student_certificate,
+     * update_student_certificate, delete_student_certificate and Shield's
+     * delete_any / force_delete / restore / replicate / reorder variants are
+     * deliberately not created, because StudentCertificatePolicy (T4) refuses
+     * those unconditionally and seeding an ability nothing may honour invites
+     * somebody to wire it up later.
+     *
+     * T4's policy test creates delete_student_certificate inside the test, grants
+     * it, and proves the policy refuses anyway — a stronger statement than "the
+     * permission does not exist".
+     */
+    private const CERTIFICATE_READ = ['view_any_student_certificate', 'view_student_certificate'];
+
+    /**
      * Finance resources, which take READ permissions only.
      *
      * Deliberately absent from the CRUD list above: the standard set would
@@ -119,6 +137,34 @@ class RolePermissionSeeder extends Seeder
         'finalize_payroll',
         'view_financial_report',
         'export_financial_report',
+        // Phase 3. Bare verbs for the same reason the finance ones are: each
+        // names an act rather than a row.
+        //
+        // access_student_portal is the portal's counterpart to
+        // access_admin_panel, and the four view_own_* abilities gate the portal's
+        // pages. ONE portal-access ability plus FOUR own-reads — five on the
+        // student role, not five reads.
+        'access_student_portal',
+        'view_own_student_record',
+        'view_own_enrollment',
+        'view_own_balance',
+        'view_own_certificate',
+        // Completion, split exactly as enrolment editing is. Staff hold only the
+        // scoped grant: holding complete_enrollment would satisfy the
+        // unrestricted branch first and the scoping would never run, while every
+        // scoped test still passed. See P1-T11 and CompletionRule (T3).
+        'complete_enrollment',
+        'complete_assigned_batch_enrollment',
+        // Issuing a student a login is NOT create_user + reset_user_password.
+        // Granting staff those two would hand the front desk staff-account
+        // creation; these two authorize one operation on one kind of subject.
+        'issue_portal_credential',
+        'reset_portal_credential',
+        // The three certificate acts. See CERTIFICATE_READ above for why there
+        // is no create/update/delete counterpart.
+        'issue_student_certificate',
+        'replace_student_certificate',
+        'revoke_student_certificate',
     ];
 
     /**
@@ -164,6 +210,7 @@ class RolePermissionSeeder extends Seeder
 
         $bare = [
             ...self::ACTIVITY_READ,
+            ...self::CERTIFICATE_READ,
             ...self::FINANCE_WRITE,
             ...self::CUSTOM,
             ...self::ROLE_EXTRA,
@@ -220,6 +267,15 @@ class RolePermissionSeeder extends Seeder
             'apply_discount',
             'view_financial_report',
             'export_financial_report',
+            // Phase 3. An admin marks completion unrestricted, issues portal
+            // logins, and runs the certificate register end to end.
+            'complete_enrollment',
+            'issue_portal_credential',
+            'reset_portal_credential',
+            ...self::CERTIFICATE_READ,
+            'issue_student_certificate',
+            'replace_student_certificate',
+            'revoke_student_certificate',
         ]);
 
         $writer->syncRolePermissions(Role::findOrCreate('staff', 'web'), [
@@ -238,6 +294,17 @@ class RolePermissionSeeder extends Seeder
             // EnrollmentPolicy::update() return true before the scoping ran.
             'create_enrollment', 'update_assigned_batch_enrollment',
             'access_admin_panel',
+            // Phase 3. The instructor who taught the batch is the person who
+            // knows who finished, so completion is scoped the same way editing
+            // is. Deliberately NOT complete_enrollment — see CUSTOM above.
+            'complete_assigned_batch_enrollment',
+            // Section 4 of the system design: staff issue portal credentials.
+            // Two narrow abilities rather than create_user + reset_user_password,
+            // which would be staff-account creation.
+            'issue_portal_credential',
+            'reset_portal_credential',
+            // Staff read the certificate register and change nothing in it.
+            ...self::CERTIFICATE_READ,
             // Nothing financial, deliberately — not a reading permission, not
             // apply_discount, nothing. A walk-in enrolment still completes:
             // EnrollAndBillAction raises the bill off create_enrollment above,
@@ -245,8 +312,22 @@ class RolePermissionSeeder extends Seeder
             // full price and the discount selector does not render for them.
         ]);
 
-        // Students reach the portal in phase 3, never the admin panel.
-        $writer->syncRolePermissions(Role::findOrCreate('student', 'web'), []);
+        // Students reach the portal, never the admin panel.
+        //
+        // Exactly five: one portal-access ability and four own-reads. The portal
+        // is read-only — the only write a student can perform anywhere in phase 3
+        // is changing their own password, which needs no ability of its own.
+        //
+        // NONE of the certificate permissions, generic or custom. Shield's
+        // generated set is register-wide, so attaching it here would be a
+        // one-line mistake with a blast radius over every student's record.
+        $writer->syncRolePermissions(Role::findOrCreate('student', 'web'), [
+            'access_student_portal',
+            'view_own_student_record',
+            'view_own_enrollment',
+            'view_own_balance',
+            'view_own_certificate',
+        ]);
     }
 
     /** @return array<int, string> */

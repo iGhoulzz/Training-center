@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
+use App\Domain\Enrollment\Models\Student;
 use App\Domain\Staff\Models\StaffProfile;
 use App\Domain\Staff\Support\RecordsActivity;
 use Database\Factories\UserFactory;
@@ -49,11 +50,70 @@ class User extends Authenticatable implements FilamentUser
     use HasFactory, HasRoles, Notifiable, RecordsActivity, SoftDeletes;
 
     /**
-     * Panel access is permission-based, never role-based.
+     * Pin Spatie's permission lookups to the `web` guard (P3-T01).
+     *
+     * NOT DECORATION. The portal panel authenticates on the `student` guard, and
+     * Filament's Authenticate middleware calls Auth::shouldUse() to select it —
+     * which delegates to AuthManager::setDefaultDriver() and WRITES
+     * config('auth.defaults.guard') (AuthManager.php:206-224).
+     *
+     * Spatie's Guard::getDefaultName() reads that config value and returns it
+     * whenever it is among the guards whose provider matches this model. Both
+     * `web` and `student` use the `users` provider, so `student` qualifies —
+     * and every permission lookup inside a portal request would resolve against
+     * guard_name = 'student', for which no rows exist. Every check would return
+     * false, silently, reading like a permissions bug rather than a guard bug.
+     *
+     * This property short-circuits Guard::getNames() before it consults config
+     * at all. Authentication on `student`, authorization on `web`.
+     *
+     * Pinned by GuardResolutionTest, which drives real panel requests — reading
+     * config/auth.php back proves nothing about what Filament does to it
+     * mid-request, which is the entire defect.
+     */
+    protected string $guard_name = 'web';
+
+    /**
+     * Panel access is permission-based, never role-based — and panel-aware.
+     *
+     * FAILS CLOSED. Until P3-T01 this ignored $panel entirely and answered
+     * access_admin_panel for every panel, which would have admitted every staff
+     * account to /portal the moment that panel existed. `default => false` means
+     * a panel added later is refused until somebody decides otherwise, rather
+     * than inheriting whichever branch happened to be written last.
+     *
+     * The portal additionally requires a linked, live student record. An account
+     * holding the role with no record behind it has nothing a portal page could
+     * show, so it is refused at the gate rather than left for
+     * AuthenticatedStudent to throw on. Student uses SoftDeletes, so the
+     * relationship below excludes a trashed record without saying so.
      */
     public function canAccessPanel(Panel $panel): bool
     {
-        return $this->is_active && $this->can('access_admin_panel');
+        if (! $this->is_active) {
+            return false;
+        }
+
+        return match ($panel->getId()) {
+            'admin' => $this->can('access_admin_panel'),
+            'student' => $this->can('access_student_portal') && $this->student()->exists(),
+            default => false,
+        };
+    }
+
+    /**
+     * The student record this account belongs to, if it is a portal account.
+     *
+     * hasOne rather than hasMany because students.user_id carries a unique
+     * index: one account, at most one student. Most accounts are staff and have
+     * none, and most students have no account — the link is the exception in
+     * both directions, which is why the column is nullable.
+     *
+     * @return HasOne<Student, $this>
+     */
+    public function student(): HasOne
+    {
+        return $this->hasOne(Student::class);
     }
 
     /**
