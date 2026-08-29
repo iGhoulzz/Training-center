@@ -3,7 +3,19 @@
 declare(strict_types=1);
 
 use App\Domain\Enrollment\Support\CertificateReference;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+
+/*
+ * This file writes nothing — it mints strings and freezes a clock — so
+ * DatabaseIsolationTest's READ_ONLY_FEATURE_TESTS list would also satisfy it.
+ * RefreshDatabase is used instead because that list is a claim nothing
+ * verifies: it checks only that the named file still exists. A later test
+ * added here that did touch the database would leak its rows into whichever
+ * file ran next, silently. Isolation costs a transaction per test and cannot
+ * go stale.
+ */
+uses(RefreshDatabase::class);
 
 /*
 |--------------------------------------------------------------------------

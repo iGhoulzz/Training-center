@@ -116,4 +116,72 @@ class StudentCertificatePolicy
     {
         return false;
     }
+
+    /*
+     * EVERY REMAINING FILAMENT ABILITY IS STATED, AND EVERY ONE IS FALSE.
+     * ==================================================================
+     * Not defensive padding. Filament reads an UNSTATED ability as ALLOW, so a
+     * policy that simply omits `forceDelete` offers force-delete on a register
+     * whose entire purpose is that nothing in it can be destroyed.
+     * PolicyAbilitySurfaceTest is what catches the omission, and it caught this
+     * one: the first version of this class stated eight abilities and left these
+     * seven open.
+     *
+     * There is no ability here that a certificate legitimately supports. The
+     * register is append-only and its rows are immutable; the only writes that
+     * ever happen are T5's three lifecycle transitions, which are the `issue`,
+     * `replace` and `revoke` abilities above and are not CRUD.
+     */
+
+    /** Refused — there is no bulk delete on an append-only register. */
+    public function deleteAny(User $user): bool
+    {
+        return false;
+    }
+
+    /** Refused — nothing is soft-deleted here, so nothing is restorable. */
+    public function restore(User $user): bool
+    {
+        return false;
+    }
+
+    /** Refused — see restore(). */
+    public function restoreAny(User $user): bool
+    {
+        return false;
+    }
+
+    /**
+     * Refused — the strongest form of the rule that issued rows survive.
+     *
+     * This is the ability an unstated method would have granted, and the one
+     * that would have let a Filament action erase audit evidence outright.
+     */
+    public function forceDelete(User $user): bool
+    {
+        return false;
+    }
+
+    /** Refused — see forceDelete(). */
+    public function forceDeleteAny(User $user): bool
+    {
+        return false;
+    }
+
+    /**
+     * Refused — a copied certificate is a second document nobody issued.
+     *
+     * Replication would also duplicate a reference the unique index would then
+     * reject, so this is refused on meaning rather than on mechanics.
+     */
+    public function replicate(User $user): bool
+    {
+        return false;
+    }
+
+    /** Refused — the register has no manual ordering to defend. */
+    public function reorder(User $user): bool
+    {
+        return false;
+    }
 }
