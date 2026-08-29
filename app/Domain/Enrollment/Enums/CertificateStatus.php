@@ -44,17 +44,19 @@ enum CertificateStatus: string
     /**
      * The translated label for display.
      *
-     * `lang/en/certificates.php` and its Arabic counterpart are T5's file (see
-     * the phase 3 plan, Task 5's file scope). Until they exist this renders as
-     * the raw case value — the same fallback `BatchStatus::label()` and
-     * `StudentStatus::label()` use, and for the same reason: what matters from
-     * commit one is that no user-facing string is hardcoded here, not that the
-     * translation exists before the screen that needs it does.
+     * `lang/en/certificates.php` is T5's file — the phase 3 plan puts it in that
+     * task's scope, and T4 ships no screen that renders a label. Until it
+     * exists this returns the KEY, `certificates.certificate_status.valid`,
+     * because that is what Laravel's translator does with a missing key. Not the
+     * case value: an earlier version of this docblock claimed otherwise and
+     * wrapped the call in an is_string() fallback that could never fire.
+     *
+     * A visible key is the correct interim behaviour and the same shape every
+     * other enum here uses. What matters from commit one is that no user-facing
+     * string is hardcoded, not that the catalogue precedes the screen.
      */
     public function label(): string
     {
-        $label = __("certificates.certificate_status.{$this->value}");
-
-        return is_string($label) ? $label : $this->value;
+        return __("certificates.certificate_status.{$this->value}");
     }
 }
