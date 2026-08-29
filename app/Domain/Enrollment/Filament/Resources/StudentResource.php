@@ -10,17 +10,27 @@ use App\Domain\Enrollment\Filament\Resources\StudentResource\Pages\EditStudent;
 use App\Domain\Enrollment\Filament\Resources\StudentResource\Pages\ListStudents;
 use App\Domain\Enrollment\Filament\Resources\StudentResource\Pages\ViewStudent;
 use App\Domain\Enrollment\Models\Student;
+use App\Domain\Staff\Actions\IssuePortalCredentialAction;
+use App\Domain\Staff\Actions\ResetPortalCredentialAction;
+use App\Domain\Staff\Exceptions\EmailAlreadyRegisteredException;
+use App\Domain\Staff\Exceptions\ProtectedAccountException;
+use App\Domain\Staff\Exceptions\StudentHasNoEmailException;
+use App\Domain\Staff\Exceptions\StudentHasPortalAccountException;
+use App\Models\User;
 use BackedEnum;
+use Filament\Actions\Action;
 use Filament\Actions\DeleteAction;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
+use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
+use Illuminate\Auth\Access\AuthorizationException;
 
 /**
  * The student register (P1-T07).
@@ -185,6 +195,84 @@ class StudentResource extends Resource
             // that a crafted Livewire mount ignores, whereas authorize() runs
             // StudentPolicy::delete() against this record on the server.
             ->recordActions([
+                Action::make('issuePortalCredential')
+                    ->label(__('credentials.issue'))
+                    ->icon(Heroicon::OutlinedKey)
+                    ->requiresConfirmation()
+                    ->visible(fn (Student $record): bool => $record->user_id === null
+                        && (auth()->user()?->can('issue_portal_credential') ?? false))
+                    // A visible disabled control tells staff why this student
+                    // cannot receive a login without letting a submit fail.
+                    ->disabled(fn (Student $record): bool => blank($record->email))
+                    ->tooltip(fn (Student $record): ?string => blank($record->email)
+                        ? __('credentials.student_has_no_email')
+                        : null)
+                    ->action(function (Student $record): void {
+                        /** @var User $actor */
+                        $actor = auth()->user();
+
+                        try {
+                            $plain = app(IssuePortalCredentialAction::class)->execute($actor, $record);
+                        } catch (AuthorizationException) {
+                            Notification::make()
+                                ->title(__('credentials.unauthorized'))
+                                ->danger()
+                                ->send();
+
+                            return;
+                        } catch (StudentHasPortalAccountException|StudentHasNoEmailException|EmailAlreadyRegisteredException $exception) {
+                            Notification::make()
+                                ->title($exception->getMessage())
+                                ->danger()
+                                ->send();
+
+                            return;
+                        }
+
+                        Notification::make()
+                            ->title(__('credentials.issued'))
+                            ->body($plain)
+                            ->persistent()
+                            ->warning()
+                            ->send();
+                    }),
+
+                Action::make('resetPortalCredential')
+                    ->label(__('credentials.reset'))
+                    ->icon(Heroicon::OutlinedKey)
+                    ->requiresConfirmation()
+                    ->visible(fn (Student $record): bool => $record->user_id !== null
+                        && (auth()->user()?->can('reset_portal_credential') ?? false))
+                    ->action(function (Student $record): void {
+                        /** @var User $actor */
+                        $actor = auth()->user();
+
+                        try {
+                            $plain = app(ResetPortalCredentialAction::class)->execute($actor, $record);
+                        } catch (AuthorizationException) {
+                            Notification::make()
+                                ->title(__('credentials.unauthorized'))
+                                ->danger()
+                                ->send();
+
+                            return;
+                        } catch (StudentHasPortalAccountException|ProtectedAccountException $exception) {
+                            Notification::make()
+                                ->title($exception->getMessage())
+                                ->danger()
+                                ->send();
+
+                            return;
+                        }
+
+                        Notification::make()
+                            ->title(__('credentials.reset_complete'))
+                            ->body($plain)
+                            ->persistent()
+                            ->warning()
+                            ->send();
+                    }),
+
                 DeleteAction::make()
                     ->authorize('delete'),
             ]);

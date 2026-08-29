@@ -5,11 +5,10 @@ declare(strict_types=1);
 namespace App\Domain\Staff\Actions;
 
 use App\Domain\Staff\Support\ActivityEvent;
+use App\Domain\Staff\Support\TemporaryPassword;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
-use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Str;
 
 /**
  * Issues a temporary password for a staff account (P1-T05).
@@ -26,6 +25,10 @@ use Illuminate\Support\Str;
  */
 final class ResetUserPasswordAction
 {
+    public function __construct(
+        private readonly TemporaryPassword $temporaryPassword,
+    ) {}
+
     /**
      * Generate a temporary password, store its hash, and force a change at next
      * login.
@@ -36,17 +39,12 @@ final class ResetUserPasswordAction
     {
         Gate::forUser($actor)->authorize('resetPassword', $target);
 
-        $plain = Str::password(16, symbols: false);
-
         /*
          * The write and its audit entry share one transaction, so a reset that
          * rolls back leaves no record claiming it happened.
          */
-        DB::transaction(function () use ($actor, $target, $plain): void {
-            $target->forceFill([
-                'password' => Hash::make($plain),
-                'must_change_password' => true,
-            ])->save();
+        return DB::transaction(function () use ($actor, $target): string {
+            $plain = $this->temporaryPassword->issue($target);
 
             /*
              * RECORDED EXPLICITLY, BECAUSE THE DIFF CANNOT CARRY IT.
@@ -68,8 +66,8 @@ final class ResetUserPasswordAction
                 ->performedOn($target)
                 ->event(ActivityEvent::PASSWORD_RESET)
                 ->log(ActivityEvent::PASSWORD_RESET);
-        });
 
-        return $plain;
+            return $plain;
+        });
     }
 }

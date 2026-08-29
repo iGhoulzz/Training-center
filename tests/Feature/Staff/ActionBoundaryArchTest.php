@@ -149,7 +149,7 @@ it('does not import the vendor Spatie Role model outside App\\Models\\Role', fun
 it('does not call assignRole/removeRole/syncRoles outside the sanctioned Actions', function () {
     $offenders = filesMatching(
         '/->\s*(assignRole|removeRole|syncRoles)\s*\(/',
-        ['SyncUserRolesAction', 'SystemRoleWriter'],
+        ['IssuePortalCredentialAction', 'SyncUserRolesAction', 'SystemRoleWriter'],
     );
 
     expect($offenders)->toBeEmpty(
