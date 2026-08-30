@@ -321,4 +321,52 @@ final class EnrollmentQueryService
 
         return $query;
     }
+
+    /**
+     * Add "and this row belongs to this student" to somebody else's query — the
+     * operation the portal cannot be allowed to take half of.
+     *
+     * A SECURITY-SHAPED OPERATION, NOT A JOIN HELPER.
+     * ------------------------------------------------
+     * The carried item was recorded as joinStudentTo(). A method that only
+     * joins leaves every caller responsible for remembering the WHERE clause —
+     * the exact part that must never be forgotten on the portal, where every
+     * page renders one student's own data and nothing belonging to anyone
+     * else. scopeToStudent() joins *and* constrains in one call, so there is
+     * no code path here that returns an unconstrained query. Design §11.4.
+     *
+     * THE SIGNATURE MIRRORS joinCatalogueTo() ON PURPOSE, so the two read as
+     * siblings: one attaches the catalogue path, the other attaches and
+     * enforces ownership.
+     *
+     * A RIGHT JOIN, NOT joinCatalogueTo()'S INNER ONE, AND THAT IS THE WHOLE
+     * REASON THIS METHOD EXISTS RATHER THAN REUSING THAT ONE.
+     * ---------------------------------------------------------------------
+     * joinCatalogueTo() drops a row the caller's table has nothing to say
+     * about, which is correct for a revenue report — an unbilled enrolment
+     * contributes nothing to a SUM and is rightly absent. The portal is the
+     * opposite case: an unbilled enrolment must still render on "my balance"
+     * as zero owed, and an uncertified one must still render on "my
+     * enrolments" with no certificate fields — neither is allowed to vanish
+     * because the caller's table (`charges`, `student_certificates`, …) has no
+     * row for it. A RIGHT JOIN keeps `enrollments` in full regardless of
+     * whether the caller's side matches, NULL-padding the caller's columns
+     * exactly where StudentBalanceQuery reads "no bill" from a null charge id.
+     *
+     * @param  Builder  $query  A query already selecting from a table that
+     *                          carries an enrolment id — see joinCatalogueTo()
+     *                          for the same contract. This is never the
+     *                          `enrollments` table itself: joining it to
+     *                          itself under one alias is a MySQL error, and
+     *                          every sanctioned caller reaches `enrollments`
+     *                          through some other table's foreign key, exactly
+     *                          as joinCatalogueTo()'s callers do.
+     * @param  string  $enrollmentIdColumn  Qualified, e.g. `charges.enrollment_id`.
+     */
+    public function scopeToStudent(Builder $query, string $enrollmentIdColumn, int $studentId): Builder
+    {
+        return $query
+            ->rightJoin('enrollments', 'enrollments.id', '=', $enrollmentIdColumn)
+            ->where('enrollments.student_id', $studentId);
+    }
 }

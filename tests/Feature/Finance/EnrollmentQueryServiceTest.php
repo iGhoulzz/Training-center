@@ -304,6 +304,93 @@ it('refuses a catalogue join that names no dimension, or an unknown one', functi
 
 /*
 |--------------------------------------------------------------------------
+| Task 7 — the portal's join it cannot take without the restriction
+|--------------------------------------------------------------------------
+|
+| scopeToStudent() replaces the phase-2 carried item joinStudentTo(). A method
+| that only joins would leave every caller responsible for remembering the
+| WHERE clause — the exact part that must never be forgotten on the portal,
+| where every page renders one student's own rows and nothing belonging to
+| anyone else. scopeToStudent() joins AND constrains in one call, so there is
+| no way to take the join without the restriction.
+|
+| IT PRESERVES THE STUDENT'S OWN ROW EVEN WHEN THE CALLER'S TABLE HAS NONE.
+| joinCatalogueTo() is an INNER join, and rightly so — a revenue report has
+| nothing to show for an enrolment with no charge. The portal is the opposite:
+| an unbilled enrolment must still appear on "my balance" as zero owed, not
+| silently disappear because `charges` has no row for it. scopeToStudent() is
+| therefore a RIGHT JOIN onto `enrollments` — the enrolment side is always
+| kept, and the caller's side is NULL-padded when it has nothing to
+| contribute. StudentBalanceQueryTest is where that property is exercised end
+| to end through a real caller; the tests below pin the join itself.
+*/
+
+it('gives task 7 only the signed-in student\'s own rows', function () {
+    $studentA = Student::factory()->create();
+    $studentB = Student::factory()->create();
+
+    $enrollmentA = Enrollment::factory()->for($studentA)->for($this->batch)->create();
+    $enrollmentB = Enrollment::factory()->for($studentB)->for($this->batch)->create();
+
+    $chargeA = Charge::factory()->create(['enrollment_id' => $enrollmentA->getKey(), 'amount' => '111.000']);
+    Charge::factory()->create(['enrollment_id' => $enrollmentB->getKey(), 'amount' => '222.000']);
+
+    $rows = $this->enrollments->scopeToStudent(
+        DB::table('charges'),
+        'charges.enrollment_id',
+        (int) $studentA->getKey(),
+    )->pluck('charges.id')->map(fn ($id): int => (int) $id)->all();
+
+    expect($rows)->toBe([(int) $chargeA->getKey()]);
+});
+
+it('gives task 7 the row even when the caller\'s table has none for it', function () {
+    /*
+     * THE PROPERTY joinCatalogueTo() DOES NOT HAVE. A revenue report is right
+     * to drop an unbilled enrolment from a SUM; the portal's balance page is
+     * not allowed to — "my balance" must show zero owed, not nothing at all.
+     */
+    $student = Student::factory()->create();
+    $otherBatch = Batch::factory()->for($this->course)->create(['code' => 'ENG-101-B']);
+
+    $billed = Enrollment::factory()->for($student)->for($this->batch)->create();
+    $unbilled = Enrollment::factory()->for($student)->for($otherBatch)->create();
+
+    Charge::factory()->create(['enrollment_id' => $billed->getKey()]);
+
+    $rows = $this->enrollments->scopeToStudent(
+        DB::table('charges'),
+        'charges.enrollment_id',
+        (int) $student->getKey(),
+    )
+        ->select(['enrollments.id as enrollment_id', 'charges.id as charge_id'])
+        ->orderBy('enrollments.id')
+        ->get();
+
+    expect($rows)->toHaveCount(2);
+
+    $byEnrollment = $rows->mapWithKeys(fn (object $row): array => [(int) $row->enrollment_id => $row]);
+
+    expect($byEnrollment[(int) $billed->getKey()]->charge_id)->not->toBeNull()
+        ->and($byEnrollment[(int) $unbilled->getKey()]->charge_id)->toBeNull();
+});
+
+it('gives task 7 no way to call scopeToStudent and get an unconstrained result', function () {
+    // Asserted by inspecting the produced SQL, per design section 11.4 — not by
+    // trusting that the method happens to behave, since the whole point of the
+    // reshape is that there is no code path that skips the WHERE.
+    $sql = $this->enrollments->scopeToStudent(
+        DB::table('charges'),
+        'charges.enrollment_id',
+        42,
+    )->toSql();
+
+    expect(strtolower($sql))->toContain('right join')
+        ->and($sql)->toContain('`enrollments`.`student_id` = ?');
+});
+
+/*
+|--------------------------------------------------------------------------
 | The reverse direction, and it reads only
 |--------------------------------------------------------------------------
 */
