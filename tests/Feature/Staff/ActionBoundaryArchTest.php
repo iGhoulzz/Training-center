@@ -153,7 +153,8 @@ it('does not call assignRole/removeRole/syncRoles outside the sanctioned Actions
     );
 
     expect($offenders)->toBeEmpty(
-        'Role assignment must go through SyncUserRolesAction (request path) or SystemRoleWriter (system setup): '.implode(', ', $offenders),
+        'Role assignment must go through IssuePortalCredentialAction (portal credential issuance), '
+        .'SyncUserRolesAction (request path), or SystemRoleWriter (system setup): '.implode(', ', $offenders),
     );
 });
 

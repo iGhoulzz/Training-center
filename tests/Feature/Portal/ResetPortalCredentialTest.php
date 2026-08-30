@@ -7,7 +7,7 @@ use App\Domain\Enrollment\Models\Student;
 use App\Domain\Staff\Actions\ResetPortalCredentialAction;
 use App\Domain\Staff\Actions\SystemRoleWriter;
 use App\Domain\Staff\Exceptions\ProtectedAccountException;
-use App\Domain\Staff\Exceptions\StudentHasPortalAccountException;
+use App\Domain\Staff\Exceptions\StudentHasNoPortalAccountException;
 use App\Domain\Staff\Support\ActivityEvent;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
@@ -72,7 +72,10 @@ it('refuses a reset for a student without a linked account', function (): void {
     $student = Student::factory()->create(['user_id' => null]);
 
     expect(fn (): string => app(ResetPortalCredentialAction::class)->execute($actor->fresh(), $student))
-        ->toThrow(StudentHasPortalAccountException::class);
+        ->toThrow(
+            StudentHasNoPortalAccountException::class,
+            __('credentials.student_has_no_portal_account'),
+        );
 });
 
 it('refuses a reset for a student whose linked account is trashed', function (): void {
@@ -82,7 +85,10 @@ it('refuses a reset for a student whose linked account is trashed', function ():
     $student->user()->sole()->delete();
 
     expect(fn (): string => app(ResetPortalCredentialAction::class)->execute($actor->fresh(), $student))
-        ->toThrow(StudentHasPortalAccountException::class);
+        ->toThrow(
+            StudentHasNoPortalAccountException::class,
+            __('credentials.student_has_no_portal_account'),
+        );
 });
 
 it('refuses a deactivated linked account with administrative access', function (): void {

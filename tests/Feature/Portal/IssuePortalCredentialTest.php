@@ -16,6 +16,7 @@ use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 use Livewire\Livewire;
+use Spatie\Activitylog\Models\Activity;
 
 uses(RefreshDatabase::class);
 
@@ -44,6 +45,16 @@ it('issues a temporary portal credential with exactly the student role', functio
         ->and($account->must_change_password)->toBeTrue()
         ->and($account->roles()->pluck('name')->all())->toBe(['student'])
         ->and($student->fresh()->user_id)->toBe($account->getKey());
+
+    $entry = Activity::query()
+        ->where('event', 'created')
+        ->where('subject_type', User::class)
+        ->where('subject_id', $account->getKey())
+        ->latest('id')
+        ->first();
+
+    expect($entry)->not->toBeNull()
+        ->and((int) $entry->causer_id)->toBe((int) $actor->getKey());
 });
 
 it('authorizes portal credential issuance inside the action', function (): void {

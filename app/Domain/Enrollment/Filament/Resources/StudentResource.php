@@ -15,6 +15,7 @@ use App\Domain\Staff\Actions\ResetPortalCredentialAction;
 use App\Domain\Staff\Exceptions\EmailAlreadyRegisteredException;
 use App\Domain\Staff\Exceptions\ProtectedAccountException;
 use App\Domain\Staff\Exceptions\StudentHasNoEmailException;
+use App\Domain\Staff\Exceptions\StudentHasNoPortalAccountException;
 use App\Domain\Staff\Exceptions\StudentHasPortalAccountException;
 use App\Models\User;
 use BackedEnum;
@@ -256,7 +257,7 @@ class StudentResource extends Resource
                                 ->send();
 
                             return;
-                        } catch (StudentHasPortalAccountException|ProtectedAccountException $exception) {
+                        } catch (StudentHasNoPortalAccountException|ProtectedAccountException $exception) {
                             Notification::make()
                                 ->title($exception->getMessage())
                                 ->danger()

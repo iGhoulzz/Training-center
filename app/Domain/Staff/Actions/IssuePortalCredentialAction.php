@@ -14,6 +14,7 @@ use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Str;
+use Spatie\Activitylog\Support\CauserResolver;
 
 /**
  * Creates the only kind of account a portal-credential issuer may create.
@@ -28,6 +29,7 @@ final class IssuePortalCredentialAction
 
     public function __construct(
         private readonly TemporaryPassword $temporaryPassword,
+        private readonly CauserResolver $causers,
     ) {}
 
     /**
@@ -40,36 +42,38 @@ final class IssuePortalCredentialAction
         Gate::forUser($actor)->authorize('issue_portal_credential');
 
         try {
-            return DB::transaction(function () use ($student): string {
-                $lockedStudent = Student::query()
-                    ->lockForUpdate()
-                    ->findOrFail($student->getKey());
+            return DB::transaction(function () use ($actor, $student): string {
+                return $this->causers->withCauser($actor, function () use ($student): string {
+                    $lockedStudent = Student::query()
+                        ->lockForUpdate()
+                        ->findOrFail($student->getKey());
 
-                if ($lockedStudent->user_id !== null) {
-                    throw new StudentHasPortalAccountException;
-                }
+                    if ($lockedStudent->user_id !== null) {
+                        throw new StudentHasPortalAccountException;
+                    }
 
-                if (blank($lockedStudent->email)) {
-                    throw new StudentHasNoEmailException;
-                }
+                    if (blank($lockedStudent->email)) {
+                        throw new StudentHasNoEmailException;
+                    }
 
-                if (User::withTrashed()->where('email', $lockedStudent->email)->exists()) {
-                    throw new EmailAlreadyRegisteredException;
-                }
+                    if (User::withTrashed()->where('email', $lockedStudent->email)->exists()) {
+                        throw new EmailAlreadyRegisteredException;
+                    }
 
-                $account = User::query()->create([
-                    'name' => $lockedStudent->full_name,
-                    'email' => $lockedStudent->email,
-                    'password' => Str::password(32),
-                ]);
+                    $account = User::query()->create([
+                        'name' => $lockedStudent->full_name,
+                        'email' => $lockedStudent->email,
+                        'password' => Str::password(32),
+                    ]);
 
-                // This is intentionally literal: callers receive only a student
-                // account, never a way to select a staff-facing role.
-                $account->assignRole('student');
+                    // This is intentionally literal: callers receive only a student
+                    // account, never a way to select a staff-facing role.
+                    $account->assignRole('student');
 
-                $lockedStudent->forceFill(['user_id' => $account->getKey()])->save();
+                    $lockedStudent->forceFill(['user_id' => $account->getKey()])->save();
 
-                return $this->temporaryPassword->issue($account);
+                    return $this->temporaryPassword->issue($account);
+                });
             });
         } catch (UniqueConstraintViolationException $exception) {
             $isEmailCollision = ($exception->errorInfo[1] ?? null) === self::DUPLICATE_ENTRY

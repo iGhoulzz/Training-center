@@ -6,7 +6,7 @@ namespace App\Domain\Staff\Actions;
 
 use App\Domain\Enrollment\Models\Student;
 use App\Domain\Staff\Exceptions\ProtectedAccountException;
-use App\Domain\Staff\Exceptions\StudentHasPortalAccountException;
+use App\Domain\Staff\Exceptions\StudentHasNoPortalAccountException;
 use App\Domain\Staff\Support\ActivityEvent;
 use App\Domain\Staff\Support\TemporaryPassword;
 use App\Models\User;
@@ -24,7 +24,7 @@ final class ResetPortalCredentialAction
 
     /**
      * @throws ProtectedAccountException
-     * @throws StudentHasPortalAccountException
+     * @throws StudentHasNoPortalAccountException
      */
     public function execute(User $actor, Student $student): string
     {
@@ -36,7 +36,7 @@ final class ResetPortalCredentialAction
                 ->findOrFail($student->getKey());
 
             if ($lockedStudent->user_id === null) {
-                throw new StudentHasPortalAccountException;
+                throw new StudentHasNoPortalAccountException;
             }
 
             $account = User::withTrashed()
@@ -44,7 +44,7 @@ final class ResetPortalCredentialAction
                 ->find($lockedStudent->user_id);
 
             if (! $account instanceof User || $account->trashed()) {
-                throw new StudentHasPortalAccountException;
+                throw new StudentHasNoPortalAccountException;
             }
 
             if ($account->can('access_admin_panel')) {
