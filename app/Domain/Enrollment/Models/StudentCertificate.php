@@ -121,6 +121,12 @@ class StudentCertificate extends Model
         return $this->belongsTo(self::class, 'replaces_certificate_id');
     }
 
+    /** See StaffProfile::newFactory() for why this is stated rather than guessed. */
+    protected static function newFactory(): StudentCertificateFactory
+    {
+        return StudentCertificateFactory::new();
+    }
+
     /**
      * The account columns worth an audit diff.
      *

@@ -2,10 +2,14 @@
 
 declare(strict_types=1);
 
+use App\Domain\Enrollment\Enums\CertificateStatus;
 use App\Domain\Enrollment\Models\Enrollment;
+use App\Domain\Enrollment\Models\StudentCertificate;
 use App\Models\User;
+use App\Support\CentreCalendar;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 uses(RefreshDatabase::class);
@@ -272,4 +276,82 @@ it('refuses to delete an enrolment that holds a certificate', function () {
 
     expect(fn () => DB::table('enrollments')->where('id', $enrollment->getKey())->delete())
         ->toThrow(QueryException::class);
+});
+
+/*
+|--------------------------------------------------------------------------
+| The factory, exercised through the model (P3-T04, review round 1)
+|--------------------------------------------------------------------------
+|
+| Every test above inserts through DB::table() on purpose — the constraints must
+| hold against a raw insert. The cost is that NOTHING here went through
+| StudentCertificate::factory(), so a broken factory resolution passed unnoticed:
+| the model used HasFactory without newFactory(), and Laravel looked for
+| Database\Factories\Domain\Enrollment\Models\StudentCertificateFactory, which
+| does not exist. Found in review.
+|
+| These exercise the resolution and all three states, so T5 and T7 inherit a
+| factory that is known to work rather than assumed to.
+*/
+
+it('resolves the factory from the model', function () {
+    $certificate = StudentCertificate::factory()->create();
+
+    expect($certificate->exists)->toBeTrue()
+        ->and($certificate->status)->toBe(CertificateStatus::Valid)
+        ->and($certificate->reference_number)->toStartWith('TC-')
+        ->and($certificate->revoked_at)->toBeNull();
+});
+
+it('builds a replaced certificate carrying no revocation metadata', function () {
+    // The CHECK refuses revocation fields on any non-revoked row, so a state
+    // that set the status alone would fail at the database.
+    $certificate = StudentCertificate::factory()->replaced()->create();
+
+    expect($certificate->status)->toBe(CertificateStatus::Replaced)
+        ->and($certificate->revoked_at)->toBeNull()
+        ->and($certificate->revoked_by)->toBeNull()
+        ->and($certificate->revocation_reason)->toBeNull();
+});
+
+it('builds a revoked certificate with all three revocation fields', function () {
+    $certificate = StudentCertificate::factory()->revoked()->create();
+
+    expect($certificate->status)->toBe(CertificateStatus::Revoked)
+        ->and($certificate->revoked_at)->not->toBeNull()
+        ->and($certificate->revoked_by)->not->toBeNull()
+        ->and(trim((string) $certificate->revocation_reason))->not->toBe('');
+});
+
+it('dates the reference by Tripoli, from its own issuance instant', function () {
+    /*
+     * WHAT THIS PROVES, AND WHAT ENFORCES THE REST.
+     *
+     * Frozen on the boundary: 23:30 UTC on 31 December is already 1 January in
+     * Tripoli. So issued_at stores a 2026 instant while the reference must read
+     * 2027 — the centre's calendar, not the server's.
+     *
+     * It does NOT prove the two came from a single reading. A frozen clock
+     * returns the same instant however many times it is asked, and an unfrozen
+     * one only diverges on a real year boundary, which is not a test that can
+     * fail reproducibly. The single-reading requirement is enforced STRUCTURALLY
+     * instead: mint() takes the instant as a parameter, so a caller cannot mint
+     * without already holding the one it will store. Review round 1 found that
+     * mint() used to sample Carbon::now() internally, which is exactly the
+     * arrangement this signature makes impossible.
+     */
+    Carbon::setTestNow('2026-12-31 23:30:00');
+
+    $certificate = StudentCertificate::factory()->create();
+
+    expect(CentreCalendar::yearOf($certificate->issued_at))->toBe(2027)
+        ->and($certificate->issued_at->year)->toBe(2026)
+        ->and($certificate->reference_number)->toStartWith('TC-2027-');
+});
+
+it('gives two certificates different references', function () {
+    $first = StudentCertificate::factory()->create();
+    $second = StudentCertificate::factory()->create();
+
+    expect($first->reference_number)->not->toBe($second->reference_number);
 });

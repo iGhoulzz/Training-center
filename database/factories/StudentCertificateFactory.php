@@ -9,6 +9,7 @@ use App\Domain\Enrollment\Models\Enrollment;
 use App\Domain\Enrollment\Models\StudentCertificate;
 use App\Domain\Enrollment\Support\CertificateReference;
 use App\Models\User;
+use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Factories\Factory;
 
 /**
@@ -36,9 +37,19 @@ class StudentCertificateFactory extends Factory
      */
     public function definition(): array
     {
+        /*
+         * ONE READING, HANDED TO BOTH.
+         *
+         * The reference's year and issued_at must agree, and sampling now()
+         * twice can straddle Tripoli's new year — a document whose printed
+         * reference disagrees with its own issue date. T5's Actions capture the
+         * instant the same way.
+         */
+        $issuedAt = CarbonImmutable::now();
+
         return [
             'enrollment_id' => Enrollment::factory(),
-            'reference_number' => app(CertificateReference::class)->mint(),
+            'reference_number' => app(CertificateReference::class)->mint($issuedAt),
 
             /*
              * The issuance snapshot, deliberately NOT derived from the enrolment
@@ -54,7 +65,7 @@ class StudentCertificateFactory extends Factory
             'course_name' => $this->faker->words(3, true),
             'completed_on' => now()->subWeek()->toDateString(),
 
-            'issued_at' => now(),
+            'issued_at' => $issuedAt,
             'issued_by' => User::factory(),
             'status' => CertificateStatus::Valid,
             'replaces_certificate_id' => null,

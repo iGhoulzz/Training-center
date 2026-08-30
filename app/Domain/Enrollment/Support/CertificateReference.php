@@ -4,8 +4,9 @@ declare(strict_types=1);
 
 namespace App\Domain\Enrollment\Support;
 
+use App\Support\CentreCalendar;
 use Closure;
-use Illuminate\Support\Carbon;
+use DateTimeInterface;
 
 /**
  * Mints the reference printed on a physical certificate.
@@ -65,16 +66,6 @@ final class CertificateReference
     /** How many random characters follow the year. Design section 6.5: at least eight. */
     private const LENGTH = 8;
 
-    /**
-     * The centre's timezone, stated rather than inherited.
-     *
-     * config/app.php runs the application in UTC. A certificate issued at
-     * 01:30 Tripoli on 1 January would otherwise carry the previous year in its
-     * reference while `issued_at` — read from the same instant — shows January,
-     * so the document would disagree with itself.
-     */
-    private const TIMEZONE = 'Africa/Tripoli';
-
     /** @var Closure(int): int a picker returning an index in [0,] */
     private readonly Closure $pickIndex;
 
@@ -88,22 +79,30 @@ final class CertificateReference
     }
 
     /**
-     * A new reference. Never checks the database — see the class docblock.
-     */
-    public function mint(): string
-    {
-        return sprintf('TC-%s-%s', $this->year(), $this->suffix());
-    }
-
-    /**
-     * The issuing year, in the centre's timezone.
+     * A new reference for a certificate issued at $issuedAt.
      *
-     * Carbon::now() rather than a passed-in clock so that Carbon::setTestNow()
-     * freezes it, which is how the tests pin the new-year boundary.
+     * THE INSTANT IS PASSED IN, NOT SAMPLED HERE, AND THAT IS THE POINT.
+     * =================================================================
+     * The design requires the reference's year and the row's `issued_at` to come
+     * from ONE reading. An earlier version of this class called `Carbon::now()`
+     * internally while its callers sampled `now()` separately for the column —
+     * two readings that can straddle Tripoli's new year, producing a document
+     * whose printed reference disagrees with its own issue date.
+     *
+     * The caller captures the instant once and hands it to both.
+     *
+     * THE TIMEZONE IS CentreCalendar's, NOT THIS CLASS'S.
+     * `CentreCalendar::yearOf()` is the single definition of what year an instant
+     * falls in for this centre, and its docblock records that
+     * `EnrollStudentAction` once held a private `REFERENCE_TIMEZONE` of
+     * `Africa/Tripoli` before being consolidated into it. This class briefly
+     * reintroduced that same private constant; it is gone.
+     *
+     * Never checks the database — see the class docblock.
      */
-    private function year(): string
+    public function mint(DateTimeInterface $issuedAt): string
     {
-        return Carbon::now()->setTimezone(self::TIMEZONE)->format('Y');
+        return sprintf('TC-%d-%s', CentreCalendar::yearOf($issuedAt), $this->suffix());
     }
 
     private function suffix(): string

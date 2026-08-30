@@ -3,8 +3,8 @@
 declare(strict_types=1);
 
 use App\Domain\Enrollment\Support\CertificateReference;
+use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Carbon;
 
 /*
  * This file writes nothing — it mints strings and freezes a clock — so
@@ -39,11 +39,11 @@ uses(RefreshDatabase::class);
 */
 
 it('renders the canonical shape', function () {
-    Carbon::setTestNow('2026-07-01 09:00:00');
+    $issuedAt = CarbonImmutable::parse('2026-07-01 09:00:00');
 
     // A picker that always chooses the first character of the alphabet, so the
     // suffix is knowable without reproducing the generator's arithmetic here.
-    $reference = (new CertificateReference(fn (int $max): int => 0))->mint();
+    $reference = (new CertificateReference(fn (int $max): int => 0))->mint($issuedAt);
 
     $first = CertificateReference::ALPHABET[0];
 
@@ -58,26 +58,39 @@ it('takes its year from Tripoli, not from UTC', function () {
      * Without a Tripoli reading this returns 2026 — a reference whose year
      * disagrees with the issued_at date printed beside it on the same document.
      */
-    Carbon::setTestNow('2026-12-31 23:30:00');
+    $issuedAt = CarbonImmutable::parse('2026-12-31 23:30:00');
 
-    $reference = (new CertificateReference(fn (int $max): int => 0))->mint();
+    $reference = (new CertificateReference(fn (int $max): int => 0))->mint($issuedAt);
 
     expect($reference)->toStartWith('TC-2027-');
 });
 
 it('draws eight characters from the alphabet', function () {
-    Carbon::setTestNow('2026-07-01 09:00:00');
+    $issuedAt = CarbonImmutable::parse('2026-07-01 09:00:00');
 
     // A fixed walk through the alphabet: indexes 0..7.
     $index = 0;
     $reference = (new CertificateReference(function (int $max) use (&$index): int {
         return $index++;
-    }))->mint();
+    }))->mint($issuedAt);
 
     $expected = substr(CertificateReference::ALPHABET, 0, 8);
 
     expect($reference)->toBe('TC-2026-'.$expected)
         ->and(substr($reference, 8))->toHaveLength(8);
+});
+
+it('pins the exact alphabet', function () {
+    /*
+     * SET EQUALITY, not just the absence of the confusable characters.
+     *
+     * Asserting only that 0/O/1/I/L are missing passes just as happily against a
+     * three-character alphabet — an entropy collapse that would make references
+     * guessable while every other test here stayed green.
+     */
+    expect(CertificateReference::ALPHABET)->toBe('23456789ABCDEFGHJKMNPQRSTUVWXYZ')
+        ->and(strlen(CertificateReference::ALPHABET))->toBe(31)
+        ->and(count(array_unique(str_split(CertificateReference::ALPHABET))))->toBe(31);
 });
 
 it('excludes characters people confuse when transcribing', function () {
@@ -100,7 +113,7 @@ it('excludes characters people confuse when transcribing', function () {
 });
 
 it('never returns the same reference for two different draws', function () {
-    Carbon::setTestNow('2026-07-01 09:00:00');
+    $issuedAt = CarbonImmutable::parse('2026-07-01 09:00:00');
 
     $sequence = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
     $position = 0;
@@ -108,7 +121,7 @@ it('never returns the same reference for two different draws', function () {
         return $sequence[$position++];
     });
 
-    expect($mint->mint())->not->toBe($mint->mint());
+    expect($mint->mint($issuedAt))->not->toBe($mint->mint($issuedAt));
 });
 
 it('returns the same reference when the randomness repeats, rather than hiding a collision', function () {
@@ -124,19 +137,19 @@ it('returns the same reference when the randomness repeats, rather than hiding a
      * So identical randomness yields an identical reference, and the database is
      * the only thing that decides whether one is already taken.
      */
-    Carbon::setTestNow('2026-07-01 09:00:00');
+    $issuedAt = CarbonImmutable::parse('2026-07-01 09:00:00');
 
     $mint = new CertificateReference(fn (int $max): int => 3);
 
-    expect($mint->mint())->toBe($mint->mint());
+    expect($mint->mint($issuedAt))->toBe($mint->mint($issuedAt));
 });
 
 it('defaults to real randomness when none is injected', function () {
     // The container resolves it with no arguments, so the default path is the
     // one production uses and must actually work.
-    Carbon::setTestNow('2026-07-01 09:00:00');
+    $issuedAt = CarbonImmutable::parse('2026-07-01 09:00:00');
 
-    $reference = app(CertificateReference::class)->mint();
+    $reference = app(CertificateReference::class)->mint($issuedAt);
 
     expect($reference)->toMatch('/^TC-2026-['.CertificateReference::ALPHABET.']{8}$/');
 });
