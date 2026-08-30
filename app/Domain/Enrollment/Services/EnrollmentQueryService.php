@@ -275,6 +275,31 @@ final class EnrollmentQueryService
      *
      * @param  Builder  $query  A query already selecting from a table that
      *                          carries an enrolment id.
+     *                          THE PRESERVATION IS DEFEATED BY ANY CALLER PREDICATE ON THE JOINED
+     *                          TABLE, AND THAT IS THE TRAP THIS METHOD CARRIES.
+     *                          ---------------------------------------------------------------------
+     *                          An outer join keeps the unmatched rows, but a WHERE on the NON-preserved
+     *                          side then throws them straight back out — a NULL-padded row fails almost
+     *                          any predicate. Measured against this project's MySQL:
+     *
+     *     no extra predicate  → [{enrollment_id: 1, charge_id: 1},
+     *                            {enrollment_id: 2, charge_id: null}]
+     *     AND charges.amount > 0  → [{enrollment_id: 1, charge_id: 1}]
+     *
+     * So a caller that adds `->where('charges.amount', '>', 0)` to hide zero
+     * bills silently loses every UNBILLED enrolment as well — the exact
+     * vanishing this method exists to prevent, on the page where a student is
+     * meant to see all of their enrolments.
+     *
+     * The most likely filter happens to be safe, which makes the trap worse
+     * rather than better: `->whereNull('charges.written_off_at')` KEEPS the
+     * padded rows, because NULL IS NULL. So the first caller to filter may well
+     * get away with it and the second may not.
+     *
+     * RULE FOR CALLERS: put predicates on `enrollments` freely — that is the
+     * preserved side. A predicate on the joined table must be moved into the
+     * join's ON clause, or expressed as `(<predicate> OR <column> IS NULL)`.
+     * `ScopeToStudentPreservationTest` pins both halves.
      * @param  string  $enrollmentIdColumn  Qualified, e.g. `charges.enrollment_id`.
      *                                      `list<string>` rather than `non-empty-list<self::DIMENSION_*>`: this is a
      *                                      boundary that validates caller input, and annotating the argument as
@@ -367,6 +392,9 @@ final class EnrollmentQueryService
     {
         return $query
             ->rightJoin('enrollments', 'enrollments.id', '=', $enrollmentIdColumn)
+            // On `enrollments`, the PRESERVED side. A predicate here filters
+            // which enrolments survive; one on the joined side would discard
+            // the NULL-padded rows entirely. See the trap above.
             ->where('enrollments.student_id', $studentId);
     }
 }

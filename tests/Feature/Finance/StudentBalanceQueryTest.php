@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Domain\Enrollment\Enums\EnrollmentStatus;
 use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Course;
 use App\Domain\Enrollment\Models\Enrollment;
@@ -156,6 +157,18 @@ it('agrees with the individual reader for a written-off bill', function () {
 
     expect($outstanding->toDecimal())->toBe('700.000')
         ->and($charge->fresh()->written_off_at)->not->toBeNull();
+
+    /*
+     * AND THE TOTAL, which the Done-when names explicitly: "a written-off charge
+     * is excluded from the total exactly as ChargeBalance excludes it".
+     *
+     * ChargeBalance excludes it from nothing, so "exactly as" resolves to "not
+     * at all" and the total still carries the 700. Asserting the per-row figure
+     * alone left the stated criterion untouched — found in review.
+     */
+    $summary = $this->query->forStudent((int) $enrollment->student_id);
+
+    expect($summary->total->toDecimal())->toBe('700.000');
 });
 
 /*
@@ -268,7 +281,20 @@ it('runs the same number of queries for one enrolment as for twenty', function (
 |--------------------------------------------------------------------------
 */
 
-it('returns Money instances everywhere, never a float or a bare string', function () {
+it('shapes the summary as one row per enrolment, each carrying a Money', function () {
+    /*
+     * THE NAME IS NARROWER THAN IT WAS, DELIBERATELY.
+     *
+     * This was called "returns Money instances everywhere, never a float or a
+     * bare string", and it could not fail for that reason: $outstanding and
+     * $total are declared `Money` on promoted readonly properties, so PHP
+     * refuses the construction before any assertion runs, and a wrongly
+     * hydrated Money is still a Money.
+     *
+     * What actually polices the money contract is the property types plus the
+     * 123.456 regression below. What THIS test does police is the shape: one
+     * entry per enrolment including the unbilled one, keyed by enrolment id.
+     */
     $student = Student::factory()->create();
     $enrollment = ($this->billFor)($student, '250.000');
     ($this->enrollFor)($student);
@@ -310,4 +336,26 @@ it('reads a charge of 123.456 with nothing allocated as 123.456, never 0.123', f
 
     expect($summary->enrollments[(int) $enrollment->getKey()]->outstanding->toDecimal())->toBe('123.456')
         ->and($summary->total->toDecimal())->toBe('123.456');
+});
+
+it('reports a withdrawn enrolment that still owes money', function () {
+    /*
+     * WITHDRAWAL IS NOT A FINANCIAL EVENT (phase 2 design, section 4): it leaves
+     * the bill exactly as it stands. So a withdrawn enrolment can still be owed
+     * money, and it must appear — hiding it would show a student a total they
+     * cannot account for from the rows above it.
+     *
+     * Pinned because the class applies no status filter at all, and "we simply
+     * never wrote one" and "we decided not to" look identical in the code.
+     */
+    $student = Student::factory()->create();
+    $enrollment = ($this->billFor)($student, '400.000');
+
+    $enrollment->forceFill(['status' => EnrollmentStatus::Withdrawn])->save();
+
+    $summary = $this->query->forStudent((int) $student->getKey());
+
+    expect($summary->enrollments)->toHaveKey((int) $enrollment->getKey())
+        ->and($summary->enrollments[(int) $enrollment->getKey()]->outstanding->toDecimal())->toBe('400.000')
+        ->and($summary->total->toDecimal())->toBe('400.000');
 });

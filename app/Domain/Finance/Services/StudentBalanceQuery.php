@@ -31,15 +31,25 @@ use InvalidArgumentException;
  * `docs/ENGINEERING.md`: "Finance reads enrollment data via
  * EnrollmentQueryService, never by querying `enrollments` directly." A raw
  * `DB::table('enrollments')` is additionally refused by
- * `ActionBoundaryArchTest`'s empty allowlist, in any file. This class only
+ * `ActionBoundaryArchTest`'s empty allowlist, in any file under `app/` —
+ * which is what that test scans (`File::allFiles(app_path())`), so `tests/`,
+ * `database/` and `scripts/` are outside it. This class only
  * ever opens `DB::table('charges')` — a table Finance owns — and reaches
- * `enrollments` exclusively through `EnrollmentQueryService::scopeToStudent()`,
- * which performs the join from the Enrolment domain's own side.
+ * `enrollments` through `EnrollmentQueryService::scopeToStudent()`, which
+ * performs the join from the Enrolment domain's own side.
+ *
+ * It does still NAME two `enrollments` columns — `enrollments.id` in the select
+ * and in the order — which the rule permits (it forbids querying the table, not
+ * referring to a column the service just joined) but which `joinCatalogueTo()`
+ * avoids by publishing BATCH_ID/COURSE_ID aliases. Stated rather than claimed
+ * away: an earlier version of this docblock said the class reaches `enrollments`
+ * EXCLUSIVELY through the service, which those two lines contradict.
  *
  * scopeToStudent() IS A RIGHT JOIN, WHICH IS WHY AN UNBILLED ENROLMENT STILL
  * APPEARS.
  * ---------------------------------------------------------------------------
- * `joinCatalogueTo()` — the Task 10 revenue helper — is an INNER join, and
+ * `joinCatalogueTo()` — PHASE 2's Task 10 revenue helper; phase 3's Task 10 is
+ * export retention, and the numbers collide — is an INNER join, and
  * correctly so: an unbilled enrolment has nothing to contribute to a SUM.
  * `scopeToStudent()` is the opposite case, and is a RIGHT JOIN for exactly
  * that reason: it keeps every one of the student's `enrollments` rows and
@@ -60,13 +70,25 @@ use InvalidArgumentException;
  * this class inherits that by construction, since it never adds a filter
  * `ChargeBalance` itself does not apply.
  *
+ * EVERY ENROLMENT, WHATEVER ITS STATUS — AND THAT IS A DECISION.
+ * ---------------------------------------------------------------------------
+ * No filter on `enrollments.status`, so `withdrawn` and `completed` enrolments
+ * appear beside active ones. Phase 2's design settles why: "Withdrawal is not a
+ * financial event. Withdrawing an enrolment leaves the bill exactly as it
+ * stands." A withdrawn enrolment can therefore still be owed money, and hiding
+ * it would show a student a total they cannot account for from the rows above
+ * it. Completion is the same case with a happier ending.
+ *
+ * Recorded because the class would otherwise be silent about it and T7 renders
+ * whatever comes back; StudentBalanceQueryTest pins it.
+ *
  * MONEY HYDRATION: fromDecimal(), NEVER fromDirham().
  * ---------------------------------------------------------------------------
  * `OUTSTANDING_SQL` is `(charges.amount - COALESCE(SUM(...), 0))` over
  * `decimal(12,3)` columns, so MySQL returns a DECIMAL, and PDO hands that
  * back as the STRING `"123.456"` — not an integer count of dirham. money()
  * below applies the identical type guard `ChargeBalance::money()` applies
- * (`ChargeBalance.php:332`): a value that is neither string nor int is a
+ * (`ChargeBalance::money()`): a value that is neither string nor int is a
  * thrown error rather than a silent cast. `Money::fromDirham((int) "123.456")`
  * would truncate to 123 dirham and report 0.123 LYD against a 123.456 LYD
  * debt — a wrong balance shown to a student, with no exception anywhere.
@@ -139,7 +161,7 @@ final class StudentBalanceQuery
      * parser cannot read exactly.
      *
      * The identical guard `ChargeBalance::money()` applies
-     * (`ChargeBalance.php:332`) — a value that is neither string nor int is a
+     * (`ChargeBalance::money()`) — a value that is neither string nor int is a
      * programming error, not a value to be coerced.
      */
     private static function money(mixed $value, int $enrollmentId): Money
