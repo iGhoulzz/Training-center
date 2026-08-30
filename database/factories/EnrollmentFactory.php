@@ -109,12 +109,16 @@ class EnrollmentFactory extends Factory
     }
 
     /**
-     * A completed enrolment, which PHASE 1 CANNOT PRODUCE.
+     * A completed enrolment, written directly rather than through the Action.
      *
-     * The application has no completion path — spec line 71 puts completion
-     * marking in phase 3 — so this state exists only so tests can construct the
-     * row WithdrawEnrollmentAction has to refuse. It is not a hint that a
-     * completion feature is missing.
+     * This state predates the feature: it existed so phase 1 tests could
+     * construct the row WithdrawEnrollmentAction has to refuse, back when
+     * nothing could produce one. P3-T03 added the real path.
+     *
+     * It is still the right tool for a FIXTURE — a test that needs a completed
+     * enrolment to exist, not one that exercises completing it. A test of the
+     * transition itself must call CompleteEnrollmentAction, or it proves only
+     * that the factory can set a column.
      */
     public function completed(): static
     {

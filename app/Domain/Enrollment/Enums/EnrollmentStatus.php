@@ -7,16 +7,19 @@ namespace App\Domain\Enrollment\Enums;
 /**
  * Where a student stands on one batch.
  *
- * COMPLETED IS UNREACHABLE IN PHASE 1, AND THAT IS DELIBERATE.
- * ------------------------------------------------------------
- * Spec line 71 assigns completion marking to phase 3, alongside the student
- * portal and certificate issuance. Phase 1 ships no path to this case: there is
- * no CompleteEnrollmentAction and no status field in any form. The case is
- * declared now because the column's value set is fixed by the spec (line 231)
- * and because WithdrawEnrollmentAction has to refuse a completed row.
+ * COMPLETED WAS UNREACHABLE UNTIL PHASE 3, AND IS NOW REACHED BY EXACTLY ONE
+ * PATH.
+ * --------------------------------------------------------------------------
+ * The case was declared in phase 1 because the column's value set is fixed by
+ * the spec (line 231) and because WithdrawEnrollmentAction has to refuse a
+ * completed row — but nothing could produce one, and this docblock said so.
  *
- * Do not add a completion path here to "finish" the enum. Phase 3 owns it, and
- * it arrives with the certificate rules that depend on it.
+ * P3-T03 built the path the old text told readers to wait for:
+ * CompleteEnrollmentAction moves Active → Completed under the batch → enrolment
+ * lock, and ReverseEnrollmentCompletionAction moves it back while refusing to
+ * do so beneath a valid certificate. Those two Actions are still the ONLY way
+ * this case is written; no form offers a status field, and an enrolment payload
+ * naming one is refused.
  */
 enum EnrollmentStatus: string
 {

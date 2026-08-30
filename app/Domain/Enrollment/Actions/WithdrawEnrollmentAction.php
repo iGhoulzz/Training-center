@@ -17,12 +17,18 @@ use Illuminate\Support\Facades\DB;
 /**
  * Take a student off a batch.
  *
- * THE ONLY STATUS TRANSITION PHASE 1 HAS.
- * ---------------------------------------
- * Active → Withdrawn, and nothing else. Completion marking belongs to phase 3
- * (spec line 71), so no CompleteEnrollmentAction exists and no form anywhere
- * offers a status field. If a later task appears to need generic status editing,
- * that is a signal to check the spec rather than to add a setter.
+ * ACTIVE → WITHDRAWN, AND NOTHING ELSE.
+ * -------------------------------------
+ * This was phase 1's only status transition. Phase 3 added the second and third
+ * — CompleteEnrollmentAction and ReverseEnrollmentCompletionAction (P3-T03) —
+ * and no form anywhere still offers a generic status field. If a later task
+ * appears to need one, that is a signal to check the spec rather than to add a
+ * setter.
+ *
+ * THE COMPLETED BRANCH BELOW WAS UNREACHABLE UNTIL P3-T03, and untested with it.
+ * Nothing could produce a completed enrolment, so `status !== Active` only ever
+ * saw withdrawn rows; the docblock promised the exception and no test executed
+ * it. WithdrawCompletedEnrollmentTest now does.
  *
  * NOT GATED ON THE BATCH'S STATUS. Spec line 237 names exactly two operations a
  * closed batch refuses: new enrolments and instructor changes. Withdrawal is
