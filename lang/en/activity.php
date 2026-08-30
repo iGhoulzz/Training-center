@@ -71,6 +71,20 @@ return [
         'Enrollment' => 'Enrolment',
 
         /*
+         * Phase 3 (P3-T04). Same rule as the Finance block below: a model
+         * using RecordsActivity needs a label here or the log shows a raw
+         * class name, and LocalizationTest finds them by scanning for the
+         * trait rather than from a list — so this entry was required by a
+         * failing build, not remembered.
+         *
+         * "Student certificate", not "Certificate": StaffCertificate is a
+         * scanned instructor credential and this is a document the centre
+         * issued to a student. An audit line naming the wrong one sends a
+         * reader to the wrong record.
+         */
+        'StudentCertificate' => 'Student certificate',
+
+        /*
          * Phase 2 (P2-T01). Every Finance model using RecordsActivity needs a
          * label here or the log shows a raw class name. LocalizationTest finds
          * them by scanning for the trait rather than from a hardcoded list, so
