@@ -149,11 +149,12 @@ it('does not import the vendor Spatie Role model outside App\\Models\\Role', fun
 it('does not call assignRole/removeRole/syncRoles outside the sanctioned Actions', function () {
     $offenders = filesMatching(
         '/->\s*(assignRole|removeRole|syncRoles)\s*\(/',
-        ['SyncUserRolesAction', 'SystemRoleWriter'],
+        ['IssuePortalCredentialAction', 'SyncUserRolesAction', 'SystemRoleWriter'],
     );
 
     expect($offenders)->toBeEmpty(
-        'Role assignment must go through SyncUserRolesAction (request path) or SystemRoleWriter (system setup): '.implode(', ', $offenders),
+        'Role assignment must go through IssuePortalCredentialAction (portal credential issuance), '
+        .'SyncUserRolesAction (request path), or SystemRoleWriter (system setup): '.implode(', ', $offenders),
     );
 });
 
