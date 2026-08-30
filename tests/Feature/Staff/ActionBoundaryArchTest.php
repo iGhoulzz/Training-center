@@ -505,9 +505,16 @@ const ENROLLMENT_WRITE_RULES = [
     ],
     'update' => [
         /*
-         * TWO WRITERS, AND THE SECOND ONE IS NOT A STATUS TRANSITION.
+         * FOUR WRITERS NOW, AND ONLY ONE OF THE FOUR PREDATES PHASE 3.
          *
-         * WithdrawEnrollmentAction owns the only lifecycle change phase 1 has.
+         * WithdrawEnrollmentAction owned the only lifecycle change phase 1 had.
+         * T3 adds the two completion transitions, which are lifecycle changes
+         * in exactly the same sense — CompleteEnrollmentAction writes `active ->
+         * completed` plus `completed_at`, and ReverseEnrollmentCompletionAction
+         * writes `completed -> active` plus clearing it. Both go through
+         * EnrollmentMutex and CompletionRule the same way WithdrawEnrollmentAction
+         * goes through EnrollmentMutex and EnrollmentUpdateRule, so they belong
+         * beside it rather than being a second, unreviewed hole in this rule.
          *
          * EnrollStudentAction was added by P2-T01 for one specific update, and
          * one only: replacing the `reference` placeholder. `enrollments.reference`
@@ -519,22 +526,29 @@ const ENROLLMENT_WRITE_RULES = [
          * an AUTO_INCREMENT column.
          *
          * ALLOWLISTED RATHER THAN EVADED. The update shape below matches
-         * `$enrollment->update(...)`, and this file's own comments already name
-         * the way out: the variable-name patterns are anchored, so renaming the
-         * variable would have slipped the write past unreported. Taking that
-         * route would have left the rule green while a security boundary quietly
-         * stopped covering a file — the P1-T10a failure exactly. An allowlist
-         * entry is visible in review; a laundered variable name is not.
+         * `$enrollment->update(...)` and `$locked->update(...)`, and this file's
+         * own comments already name the way out: the variable-name patterns are
+         * anchored, so renaming the variable would have slipped the write past
+         * unreported. Taking that route would have left the rule green while a
+         * security boundary quietly stopped covering a file — the P1-T10a
+         * failure exactly. An allowlist entry is visible in review; a laundered
+         * variable name is not.
          *
          * WHAT THIS COSTS, STATED HONESTLY. An allowlist exempts a FILE from the
-         * WHOLE operation, so EnrollStudentAction is no longer bound by any
-         * update shape here — a status write added to it later would not trip
-         * this rule. What still contains it: the Action holds the batch and
-         * student locks, EnrollmentTest asserts those locks and asserts the
-         * enrolment it produces is Active, and EnrollmentPolicy::update() is
-         * scoped to batches the actor teaches while creation deliberately is not.
+         * WHOLE operation, so each of these four Actions is no longer bound by
+         * any update shape here — an unrelated status write added to one of them
+         * later would not trip this rule. What still contains it: every one of
+         * them holds the batch and enrolment locks EnrollmentMutex takes, the
+         * per-Action tests in this suite assert those locks and assert exactly
+         * which status each produces, and CompletionRule / EnrollmentUpdateRule
+         * scope who may call them in the first place.
          */
-        'allowed' => ['WithdrawEnrollmentAction', 'EnrollStudentAction'],
+        'allowed' => [
+            'WithdrawEnrollmentAction',
+            'EnrollStudentAction',
+            'CompleteEnrollmentAction',
+            'ReverseEnrollmentCompletionAction',
+        ],
         'patterns' => [
             '/->\s*enrollments\s*\(\s*\)\s*->\s*(update|updateQuietly|updateOrCreate|increment'
                 .'|decrement|touch|restore)\s*\(/',
