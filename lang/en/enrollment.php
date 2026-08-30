@@ -89,6 +89,9 @@ return [
     'assign_instructor' => 'Assign instructor',
     'remove_instructor' => 'Remove instructor',
     'edit_assigned_hours' => 'Edit assigned hours',
+    'complete_enrollment' => 'Mark complete',
+    'complete_enrollment_success' => 'Marked as complete.',
+    'complete_enrollment_partial_failure' => 'Completed :completed of :selected selected enrolments.',
 
     // Empty-state placeholders. Shown instead of a blank cell, so that "not
     // recorded" stays distinguishable from "the page failed to load it".

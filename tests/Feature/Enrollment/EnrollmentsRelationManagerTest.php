@@ -18,9 +18,11 @@ use App\Domain\Staff\Models\StaffProfile;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Filament\Actions\Action;
+use Filament\Actions\BulkAction;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Lang;
 use Livewire\Livewire;
+use Spatie\Activitylog\Models\Activity;
 
 uses(RefreshDatabase::class);
 
@@ -144,8 +146,10 @@ it('takes the batch from the owner record, not a crafted payload', function () {
 });
 
 it('refuses a crafted status on enrollment', function () {
-    // There is no status field, and completion is phase 3. A payload naming one
-    // must not reach the column — EnrollStudentAction sets Active unconditionally.
+    // The enrol form still has no status field, and completion arrives on its
+    // own bulk action (P3-T03) rather than through this one — a payload naming
+    // a status here must not reach the column either way. EnrollStudentAction
+    // sets Active unconditionally.
     $student = Student::factory()->create();
 
     ($this->mountPanel)(($this->makeUser)('admin'))
@@ -270,6 +274,129 @@ it('hides the withdraw button on an already-withdrawn row', function () {
 
 /*
 |--------------------------------------------------------------------------
+| The bulk completion action (P3-T03)
+|--------------------------------------------------------------------------
+*/
+
+it('shows the complete bulk action to an admin', function () {
+    ($this->mountPanel)(($this->makeUser)('admin'))
+        ->assertTableBulkActionVisible('complete');
+});
+
+it('shows the complete bulk action to a staff actor assigned to the batch', function () {
+    $staff = ($this->makeUser)('staff');
+    StaffProfile::factory()->for($staff)->instructor()->create();
+    $this->batch->instructors()->attach($staff->getKey(), ['assigned_hours' => 30]);
+
+    ($this->mountPanel)($staff)->assertTableBulkActionVisible('complete');
+});
+
+it('hides the complete bulk action from a staff actor who does not teach the batch', function () {
+    ($this->mountPanel)(($this->makeUser)('staff'))
+        ->assertTableBulkActionHidden('complete');
+});
+
+it('runs the Action once per selected row, writing one activity entry per row', function () {
+    /*
+     * THE DONE-WHEN LINE, MADE CONCRETE. "The bulk action over three selected
+     * rows writes three activity entries, not one" — proving there is no
+     * aggregate write anywhere in the path: not a single UPDATE ... WHERE id
+     * IN (...), and not one activity() call describing all three.
+     */
+    $enrollments = Enrollment::factory()->count(3)->for($this->batch)->create();
+
+    $before = Activity::query()
+        ->where('subject_type', Enrollment::class)
+        ->where('event', 'updated')
+        ->count();
+
+    ($this->mountPanel)(($this->makeUser)('admin'))
+        ->callTableBulkAction('complete', $enrollments);
+
+    $after = Activity::query()
+        ->where('subject_type', Enrollment::class)
+        ->where('event', 'updated')
+        ->count();
+
+    expect($after - $before)->toBe(3)
+        ->and($enrollments->fresh()->pluck('status')->unique()->all())
+        ->toBe([EnrollmentStatus::Completed]);
+
+    // Every one of the three rows has its OWN entry naming its own id — not
+    // one entry repeated, and not one entry naming only the first row.
+    $loggedIds = Activity::query()
+        ->where('subject_type', Enrollment::class)
+        ->where('event', 'updated')
+        ->whereIn('subject_id', $enrollments->pluck('id'))
+        ->pluck('subject_id')
+        ->unique()
+        ->sort()
+        ->values();
+
+    expect($loggedIds->all())->toBe($enrollments->pluck('id')->sort()->values()->all());
+});
+
+it('completes the completable rows and leaves an already-withdrawn row alone in a mixed selection', function () {
+    // Partial failure is expected, not exceptional (see completeAction()'s
+    // docblock): one row already withdrawn from another tab must not stop the
+    // other two from completing.
+    //
+    // concat(), NOT push(). Collection::push() mutates the receiver in place
+    // and returns the SAME instance, so $completable->push($withdrawn) would
+    // leave $completable itself holding all three rows — and the assertion
+    // below would then be checking the withdrawn row against its own claim.
+    $completable = Enrollment::factory()->count(2)->for($this->batch)->create();
+    $withdrawn = Enrollment::factory()->for($this->batch)->withdrawn()->create();
+
+    ($this->mountPanel)(($this->makeUser)('admin'))
+        ->callTableBulkAction('complete', $completable->concat([$withdrawn]));
+
+    expect($completable->fresh()->pluck('status')->unique()->all())
+        ->toBe([EnrollmentStatus::Completed])
+        ->and($withdrawn->fresh()->status)->toBe(EnrollmentStatus::Withdrawn);
+});
+
+it('refuses a CRAFTED bulk completion by an unassigned staff actor calling it directly', function () {
+    /*
+     * MOUNTING IS NOT THE ATTACK — CALLING IS, the same control-first shape
+     * EnrollmentsRelationManagerTest already uses for withdraw and delete.
+     *
+     * callTableBulkAction() cannot play that role here: it wraps the SAME
+     * mountAction() test helper the single-record tests deliberately avoid,
+     * which asserts the action is VISIBLE before calling it and fails the test
+     * outright for an unauthorized actor rather than exercising the refusal.
+     * So this selects the row exactly as that helper does (selectTableRecords()
+     * only sets a public Livewire property — no assertion of its own) and then
+     * calls the component's raw `mountAction` method directly, bypassing the
+     * visibility check the way a crafted Livewire payload would.
+     */
+    $bulkContext = ['table' => true, 'bulk' => true];
+
+    $control = Enrollment::factory()->for($this->batch)->create();
+    ($this->mountPanel)(($this->makeUser)('admin'))
+        ->selectTableRecords([$control])
+        ->call('mountAction', 'complete', [], $bulkContext)
+        ->call('callMountedAction');
+
+    expect($control->fresh()->status)->toBe(
+        EnrollmentStatus::Completed,
+        'The authorized control could not complete, so the refusal below proves nothing.',
+    );
+
+    $target = Enrollment::factory()->for($this->batch)->create();
+    ($this->mountPanel)(($this->makeUser)('staff'))
+        ->selectTableRecords([$target])
+        ->call('mountAction', 'complete', [], $bulkContext)
+        ->call('callMountedAction');
+
+    expect($target->fresh()->status)->toBe(
+        EnrollmentStatus::Active,
+        'An unassigned staff actor completed an enrolment through a crafted bulk action call.',
+    );
+});
+
+/*
+|--------------------------------------------------------------------------
 | The action registry, and what may not appear in it
 |--------------------------------------------------------------------------
 */
@@ -289,6 +416,12 @@ it('registers exactly the actions it declares, each of the expected class', func
      * getFlatActions() already includes the header action, so header membership
      * is asserted separately rather than by concatenating the two collections —
      * which would double-count 'enroll'.
+     *
+     * getFlatActions() and getFlatBulkActions() are DISJOINT — Filament sorts a
+     * cached action into the bulk collection purely by `instanceof BulkAction`
+     * (see HasActions::cacheAction()), so 'complete' appears in the bulk
+     * assertion below and never in this one, regardless of which method
+     * registered it.
      */
     $table = ($this->mountPanel)(($this->makeUser)('super_admin'))->instance()->getTable();
 
@@ -307,8 +440,16 @@ it('registers exactly the actions it declares, each of the expected class', func
     expect(collect($table->getHeaderActions())->map(fn (Action $a): string => $a->getName())->all())
         ->toBe(['enroll']);
 
-    expect($table->getToolbarActions())->toBeEmpty()
-        ->and($table->getFlatBulkActions())->toBeEmpty();
+    // toolbarActions() is the current, non-deprecated way to register a bulk
+    // action in this Filament version — see completeAction()'s own docblock.
+    expect(collect($table->getToolbarActions())->map(fn (Action $a): string => $a->getName())->all())
+        ->toBe(['complete']);
+
+    $bulk = collect($table->getFlatBulkActions())
+        ->mapWithKeys(fn (BulkAction $action): array => [$action->getName() => $action::class])
+        ->all();
+
+    expect($bulk)->toBe(['complete' => BulkAction::class]);
 });
 
 /*
@@ -382,6 +523,16 @@ it('asks the assignment question once per panel, not once per row', function () 
      * Comparing total query counts between a cold and a warm render is not a
      * test: totals move for unrelated reasons and an N+1 of three can hide inside
      * that noise in either direction.
+     *
+     * TWO READS, NOT ONE, SINCE P3-T03 — AND STILL NOT ONE PER ROW.
+     * mayAmendThisBatch() (withdraw's visibility) and mayCompleteThisBatch()
+     * (the bulk complete action's visibility) are two INDEPENDENT questions,
+     * asking about two different permission pairs through two different rule
+     * classes — EnrollmentUpdateRule and CompletionRule. Each memoises its own
+     * answer once per panel render, so the render cost is a constant 2 rather
+     * than 1, and — the property this test actually exists to guard — it stays
+     * flat as the row count grows rather than becoming 2 x 8. Reverting either
+     * memoisation would turn this into 16, not 2, and this test would catch it.
      */
     $staff = ($this->makeUser)('staff');
     StaffProfile::factory()->for($staff)->instructor()->create();
@@ -398,9 +549,10 @@ it('asks the assignment question once per panel, not once per row', function () 
         ->count();
 
     expect($pivotReads)->toBe(
-        1,
+        2,
         "Rendering eight enrolments ran {$pivotReads} queries against batch_instructor; the "
-        .'assigned-batch answer should be memoised once per panel. Statements: '
+        .'assigned-batch answer should be memoised once per panel for EACH of the two rules '
+        .'that ask it (withdraw and bulk-complete visibility). Statements: '
         .describeStatements($statements),
     );
 });
