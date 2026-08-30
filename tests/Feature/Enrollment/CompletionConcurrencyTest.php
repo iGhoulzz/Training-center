@@ -331,11 +331,96 @@ it('refuses a scoped completion when the assignment is revoked while the worker 
          * taken before the delete above, sees the (deleted) assignment as
          * still present, and the outcome becomes 'completed' instead —
          * silently authorizing a staff actor no longer assigned to the batch.
-         * See this task's final report for the mutation and its recorded
-         * failing output.
+         *
+         * THE CONTROL BELOW IS WHAT MAKES THIS ASSERTION MEAN ANYTHING.
+         * 'refused_unauthorized' is also this fixture's DEFAULT failure mode —
+         * a mistyped role, a missed attach(), an inactive user all produce it —
+         * so on its own this test could stay green while proving nothing about
+         * the lock. The next test runs the identical worker with the assignment
+         * LEFT IN PLACE and requires 'completed', which separates "the lock
+         * refused it" from "the actor was never authorized at all".
          */
         expect($result)->toBe(['outcome' => 'refused_unauthorized'])
             ->and($enrollment->fresh()->status)->toBe(EnrollmentStatus::Active);
+    } finally {
+        if (! $batchLockReleased && $connection->transactionLevel() > 0) {
+            $connection->rollBack();
+        }
+
+        if ($worker->isRunning()) {
+            $worker->stop();
+        }
+
+        File::delete([$readyPath, $resultPath]);
+    }
+})->group('enrollment');
+
+it('completes the same scoped enrolment when the assignment is left in place', function () {
+    /*
+     * THE POSITIVE CONTROL FOR THE TEST ABOVE, and not optional.
+     *
+     * That test's pass condition is a REFUSAL, and a refusal is exactly what
+     * this fixture produces whenever anything is merely MISCONFIGURED: a
+     * mistyped role name, an attach() that did not land, an inactive user, a
+     * renamed permission. Without a control, a typo would leave it green
+     * forever while the lock it exists to prove had been removed.
+     *
+     * Identical setup, identical worker, identical blocking shape. One
+     * difference: the assignment is not revoked. The outcome must be
+     * 'completed', which a misconfigured actor cannot reach.
+     */
+    $this->seed(RolePermissionSeeder::class);
+
+    $system = app(SystemRoleWriter::class);
+
+    $system->syncRolePermissions(
+        Role::findOrCreate('batch_marker', 'web'),
+        [Permission::findByName('complete_assigned_batch_enrollment', 'web')],
+    );
+
+    $staff = User::factory()->create(['is_active' => true]);
+    $system->assignRoles($staff, 'batch_marker');
+    $staff->refresh();
+    StaffProfile::factory()->for($staff)->instructor()->create();
+
+    $course = Course::factory()->create(['total_hours' => 30]);
+    $batch = Batch::factory()->for($course)->active()->create();
+    $enrollment = Enrollment::factory()->for($batch)->create();
+
+    $batch->instructors()->attach($staff->getKey(), ['assigned_hours' => 20]);
+
+    $token = (string) Str::uuid();
+    $readyPath = storage_path("framework/testing/complete-control-{$token}-ready");
+    $resultPath = storage_path("framework/testing/complete-control-{$token}-result.json");
+
+    $worker = completionWorker((int) $staff->getKey(), (int) $enrollment->getKey(), $readyPath, $resultPath);
+
+    $connection = DB::connection();
+    $connection->beginTransaction();
+    $batchLockReleased = false;
+
+    try {
+        Batch::query()->whereKey($batch->getKey())->lockForUpdate()->firstOrFail();
+
+        $worker->start();
+
+        expect(waitForCompletionSignal($readyPath))->toBeTrue('The completion worker never established its old snapshot.');
+
+        usleep(400_000);
+
+        expect($worker->isRunning())->toBeTrue('The completion worker was not blocked by the batch lock.');
+
+        $connection->commit();
+        $batchLockReleased = true;
+
+        $worker->wait();
+
+        expect($worker->isSuccessful())->toBeTrue($worker->getErrorOutput());
+
+        $result = json_decode((string) File::get($resultPath), true, flags: JSON_THROW_ON_ERROR);
+
+        expect($result)->toBe(['outcome' => 'completed'])
+            ->and($enrollment->fresh()->status)->toBe(EnrollmentStatus::Completed);
     } finally {
         if (! $batchLockReleased && $connection->transactionLevel() > 0) {
             $connection->rollBack();

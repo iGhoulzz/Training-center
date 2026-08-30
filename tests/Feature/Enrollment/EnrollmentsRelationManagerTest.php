@@ -345,11 +345,20 @@ it('completes the completable rows and leaves an already-withdrawn row alone in 
     // and returns the SAME instance, so $completable->push($withdrawn) would
     // leave $completable itself holding all three rows — and the assertion
     // below would then be checking the withdrawn row against its own claim.
-    $completable = Enrollment::factory()->count(2)->for($this->batch)->create();
+    //
+    // THE WITHDRAWN ROW IS CREATED FIRST, AND THAT ORDERING IS THE TEST.
+    // getSelectedTableRecordsQuery() re-queries rather than preserving the order
+    // of the collection passed in, so the loop sees rows in the table's own
+    // order. With the withdrawn row created LAST it was also processed last, and
+    // an implementation that ABORTED on the first refusal would have completed
+    // both other rows and left the withdrawn one alone — passing these exact
+    // assertions while proving nothing. Created first, it is refused first, so
+    // the two completions after it only happen if the loop really continues.
     $withdrawn = Enrollment::factory()->for($this->batch)->withdrawn()->create();
+    $completable = Enrollment::factory()->count(2)->for($this->batch)->create();
 
     ($this->mountPanel)(($this->makeUser)('admin'))
-        ->callTableBulkAction('complete', $completable->concat([$withdrawn]));
+        ->callTableBulkAction('complete', collect([$withdrawn])->concat($completable));
 
     expect($completable->fresh()->pluck('status')->unique()->all())
         ->toBe([EnrollmentStatus::Completed])

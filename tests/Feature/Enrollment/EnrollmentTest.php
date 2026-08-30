@@ -294,9 +294,13 @@ it('treats withdrawing an already-withdrawn enrollment as a no-op', function () 
 });
 
 it('refuses to withdraw a completed enrollment', function () {
-    // Phase 1 cannot produce one — completion marking is phase 3, spec line 71 —
-    // but a phase 3 row can be one, and withdrawing it would invalidate a
-    // certificate already issued against the completion.
+    // The fixture writes the column directly, which is all phase 1 could do.
+    // P3-T03 added the real path, and WithdrawCompletedEnrollmentTest covers the
+    // same refusal against a row completed through CompleteEnrollmentAction —
+    // this one stays as the cheaper fixture-level guard.
+    //
+    // Withdrawing a completed enrolment would invalidate a certificate already
+    // issued against that completion.
     $this->withdraw->execute($this->admin, Enrollment::factory()->completed()->create());
 })->throws(EnrollmentNotWithdrawableException::class);
 

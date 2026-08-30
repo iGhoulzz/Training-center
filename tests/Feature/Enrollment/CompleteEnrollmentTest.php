@@ -255,7 +255,11 @@ it('attributes the completion to the Action actor while a different user holds t
         ->and(completionCauserId($enrollment))->not->toBe((int) $someoneElse->getKey());
 });
 
-it('logs the status and completed_at change on the enrolment', function () {
+it('logs the status change on the enrolment', function () {
+    // NAMED FOR WHAT IT ASSERTS. It read "status and completed_at" and never
+    // touched completed_at on the entry; the completed_at guarantee is the
+    // server-clock test above, and auditedAttributes() is what puts it in the
+    // diff at all.
     $this->travelTo('2026-08-30 10:15:00');
 
     $enrollment = ($this->enrolSomeone)();
