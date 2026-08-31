@@ -4,22 +4,27 @@ declare(strict_types=1);
 
 namespace App\Domain\Enrollment\Filament\Resources\BatchResource\RelationManagers;
 
+use App\Domain\Enrollment\Actions\CompleteEnrollmentAction;
 use App\Domain\Enrollment\Actions\DeleteEnrollmentAction;
 use App\Domain\Enrollment\Actions\WithdrawEnrollmentAction;
 use App\Domain\Enrollment\Enums\EnrollmentStatus;
 use App\Domain\Enrollment\Exceptions\BatchClosedException;
 use App\Domain\Enrollment\Exceptions\DuplicateEnrollmentException;
+use App\Domain\Enrollment\Exceptions\EnrollmentBatchChangedException;
+use App\Domain\Enrollment\Exceptions\EnrollmentNotCompletableException;
 use App\Domain\Enrollment\Exceptions\EnrollmentNotWithdrawableException;
 use App\Domain\Enrollment\Exceptions\StudentNotEnrollableException;
 use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Enrollment;
 use App\Domain\Enrollment\Models\Student;
+use App\Domain\Enrollment\Support\CompletionRule;
 use App\Domain\Enrollment\Support\EnrollmentUpdateRule;
 use App\Domain\Finance\Actions\EnrollAndBillAction;
 use App\Domain\Finance\Data\EnrollAndBillData;
 use App\Domain\Finance\Exceptions\ChargeAlreadyCommittedException;
 use App\Models\User;
 use Filament\Actions\Action;
+use Filament\Actions\BulkAction;
 use Filament\Forms\Components\Select;
 use Filament\Notifications\Notification;
 use Filament\Resources\RelationManagers\RelationManager;
@@ -28,45 +33,27 @@ use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Gate;
 
-/**
- * Who is on this batch (P1-T11).
- *
- * EVERY WRITE ROUTES THROUGH AN ACTION — NONE THROUGH THE RELATION
- * ---------------------------------------------------------------
- * Filament's CreateAction, EditAction, AttachAction, AssociateAction and
- * DeleteAction persist with a bare create()/update()/delete() on the relation,
- * reaching around EnrollStudentAction, WithdrawEnrollmentAction and
- * DeleteEnrollmentAction — and with them the closed-batch refusal, the duplicate
- * refusal, the deleted-student refusal, the row locks and the actor check. None
- * is registered here; the buttons below are plain Actions with their own
- * handlers, so there is no built-in persistence to reach in the first place.
- * EnrollmentsRelationManagerTest asserts the registry is exactly these three,
- * each of the plain Action class.
- *
- * NO STATUS FIELD, ANYWHERE
- * -------------------------
- * The only transition phase 1 has is withdrawal, and it has a button of its own.
- * A status Select would let a crafted submission set `completed` — a state spec
- * line 71 reserves for phase 3, and one phase 3 issues certificates against.
- *
- * THE ASSOCIATION IS NOT EDITABLE
- * -------------------------------
- * No edit form exists, so student_id and batch_id cannot be moved. Re-parenting
- * an enrolment would strand the charges phase 2 hangs off it against a batch the
- * student never attended. The batch always comes from the owner record, never
- * from the payload.
- *
- * NO BULK ACTIONS
- * ---------------
- * Filament authorizes a bulk action once against a *Any policy method and never
- * consults the per-record one, so a bulk withdrawal could not express the
- * assigned-batch rule at all. EnrollmentPolicy::deleteAny() is written out and
- * refuses, which is what keeps it that way — Filament resolves a MISSING policy
- * method to Response::allow(), so the refusal has to be stated, not implied.
- */
+/*
+             * AUTHORIZATION IS RE-CHECKED PER ROW, INSIDE THE ACTION, UNDER THE
+             * LOCK — and ->authorize() below is only a visibility hint.
+             *
+             * Filament 5.7 DOES offer a per-record hook —
+             * CanBeAuthorized::authorizeIndividualRecords() — and an earlier
+             * version of this comment claimed it did not, which review
+             * corrected. The hook is not used because it would still decide
+             * before the row is locked, and the assigned-batch rule has to be
+             * read under the same lock the write takes or it answers from a
+             * stale snapshot. CompletionRule does that inside
+             * CompleteEnrollmentAction; this is the strictly stronger place.
+             *
+             * ->authorize() here is therefore coarse and non-binding: it keeps
+             * the button off a toolbar the actor could never use, and decides
+             * nothing.
+             */
 class EnrollmentsRelationManager extends RelationManager
 {
     protected static string $relationship = 'enrollments';
@@ -82,6 +69,9 @@ class EnrollmentsRelationManager extends RelationManager
 
     /** Memoised answer to "may this actor amend enrolments on this batch". */
     private ?bool $mayAmend = null;
+
+    /** Memoised answer to "may this actor mark completion on this batch". */
+    private ?bool $mayComplete = null;
 
     public static function getTitle(Model $ownerRecord, string $pageClass): string
     {
@@ -194,8 +184,10 @@ class EnrollmentsRelationManager extends RelationManager
                     ->sortable(),
             ])
             ->headerActions([$this->enrollAction()])
-            ->recordActions([$this->withdrawAction(), $this->deleteAction()]);
-        // No bulk actions, deliberately. See the class docblock.
+            ->recordActions([$this->withdrawAction(), $this->deleteAction()])
+            // The one bulk action this table has. See the class docblock for
+            // why this is safe while a bulk withdrawal or delete is not.
+            ->toolbarActions([$this->completeAction()]);
     }
 
     /** Include code and name, so two students with the same name remain distinguishable. */
@@ -224,6 +216,26 @@ class EnrollmentsRelationManager extends RelationManager
         $actor = auth()->user();
 
         return $this->mayAmend ??= app(EnrollmentUpdateRule::class)->allows(
+            $actor,
+            (int) $this->getOwnerRecord()->getKey(),
+        );
+    }
+
+    /**
+     * May the current actor mark completion on the batch being viewed?
+     *
+     * The same one-lookup-for-the-whole-panel shape as mayAmendThisBatch(),
+     * and the same caveat: this is what decides whether the bulk action is
+     * SHOWN, not what decides any one row's write. CompleteEnrollmentAction
+     * re-asks CompletionRule under lock, per row, inside completeAction()
+     * below, and that answer is what binds.
+     */
+    private function mayCompleteThisBatch(): bool
+    {
+        /** @var User $actor */
+        $actor = auth()->user();
+
+        return $this->mayComplete ??= app(CompletionRule::class)->allows(
             $actor,
             (int) $this->getOwnerRecord()->getKey(),
         );
@@ -375,6 +387,93 @@ class EnrollmentsRelationManager extends RelationManager
                     self::refuse($exception);
                 }
             });
+    }
+
+    /**
+     * Tick the students who finished, confirm once — the only bulk action this
+     * table has, and the one place completion is marked (spec section 5.3).
+     *
+     * RUNS THE ACTION ONCE PER SELECTED ROW, DELIBERATELY.
+     * -------------------------------------------------------
+     * There is no "complete the whole batch" button and never will be: the
+     * student who dropped out in week three and was never withdrawn would be
+     * certified by default if completion were decided in aggregate. Each row
+     * gets its own EnrollmentMutex lock, its own CompletionRule check under
+     * that lock, and — because the automatic model-event log fires per
+     * $record->update() call inside CompleteEnrollmentAction — its own
+     * activity-log entry. Three ticked rows produce three log entries, never
+     * one describing all three (see CompletionConcurrencyTest and
+     * EnrollmentsRelationManagerTest for the counted proof).
+     *
+     * ->authorize() HERE IS VISIBILITY, NOT THE BOUNDARY.
+     * -------------------------------------------------------
+     * mayCompleteThisBatch() is a single, cheap, non-locking read that decides
+     * whether the button renders — see its own docblock. A crafted Livewire
+     * payload that skips the button entirely still has to pass CompletionRule's
+     * locking check inside CompleteEnrollmentAction for every single row, so
+     * bypassing the visibility check buys an attacker nothing.
+     *
+     * PARTIAL FAILURE IS EXPECTED, NOT EXCEPTIONAL. A batch of ticked rows can
+     * legitimately mix a genuinely-active enrolment with one somebody already
+     * completed from another tab, or one that just got withdrawn. Each row's
+     * own refusal is reported through reportBulkProcessingFailure() rather than
+     * aborting the whole selection, so the rows that ARE completable still are.
+     */
+    private function completeAction(): BulkAction
+    {
+        return BulkAction::make('complete')
+            ->label(__('enrollment.complete_enrollment'))
+            ->icon(Heroicon::OutlinedCheckCircle)
+            ->color('success')
+            ->requiresConfirmation()
+            ->modalHeading(__('enrollment.complete_enrollment'))
+            ->authorize(fn (): bool => $this->mayCompleteThisBatch())
+            ->action(function (BulkAction $action, Collection $records): void {
+                /** @var User $actor */
+                $actor = auth()->user();
+
+                /** @var Enrollment $record */
+                foreach ($records as $record) {
+                    try {
+                        app(CompleteEnrollmentAction::class)->execute($actor, $record);
+                    } catch (EnrollmentNotCompletableException $exception) {
+                        $action->reportBulkProcessingFailure(
+                            'not_completable',
+                            message: fn (): string => $exception->getMessage(),
+                        );
+                    } catch (AuthorizationException) {
+                        $action->reportBulkProcessingFailure(
+                            'unauthorized',
+                            message: fn (): string => __('enrollment.enrollment_change_denied'),
+                        );
+                    } catch (EnrollmentBatchChangedException $exception) {
+                        /*
+                         * Both Actions declare this, and nothing re-parents an
+                         * enrolment today — so it cannot fire yet. It is caught
+                         * anyway because of what an ESCAPE would do here.
+                         *
+                         * Filament does not wrap a bulk action in a transaction
+                         * (CanUseDatabaseTransactions defaults the flag false and
+                         * this action never opts in), so every row before this
+                         * one has already committed. An uncaught throw mid-loop
+                         * would leave earlier rows completed, later rows
+                         * untouched and a 500 in place of the partial-failure
+                         * report — while this method's docblock promises partial
+                         * failure is expected, not exceptional.
+                         */
+                        $action->reportBulkProcessingFailure(
+                            'batch_changed',
+                            message: fn (): string => $exception->getMessage(),
+                        );
+                    }
+                }
+            })
+            ->successNotificationTitle(__('enrollment.complete_enrollment_success'))
+            ->failureNotificationTitle(fn (int $successCount, int $totalCount): string => __(
+                'enrollment.complete_enrollment_partial_failure',
+                ['completed' => $successCount, 'selected' => $totalCount],
+            ))
+            ->deselectRecordsAfterCompletion();
     }
 
     /**

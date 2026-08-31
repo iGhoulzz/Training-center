@@ -89,6 +89,9 @@ return [
     'assign_instructor' => 'Assign instructor',
     'remove_instructor' => 'Remove instructor',
     'edit_assigned_hours' => 'Edit assigned hours',
+    'complete_enrollment' => 'Mark complete',
+    'complete_enrollment_success' => 'Marked as complete.',
+    'complete_enrollment_partial_failure' => 'Completed :completed of :selected selected enrolments.',
 
     // Empty-state placeholders. Shown instead of a blank cell, so that "not
     // recorded" stays distinguishable from "the page failed to load it".
@@ -133,6 +136,12 @@ return [
     // This is the completed case only.
     'enrollment_not_withdrawable' => 'Only an active enrolment can be withdrawn.',
     'enrollment_batch_changed' => 'This enrolment moved to another batch. Reload and try again.',
+    // Completion (phase 3). enrollment_change_denied above is reused for both
+    // completion and reversal refusals — the same underlying question, "may
+    // this actor amend this enrolment", answered by a sibling rule.
+    'enrollment_not_completable' => 'Only an active enrolment can be completed.',
+    'completion_not_reversible_status' => 'Only a completed enrolment can have its completion reversed.',
+    'completion_not_reversible_certificate' => 'A valid certificate has been issued for this enrolment. Revoke it before reversing completion.',
 
     /*
      * Enum labels, reached by interpolation — BatchStatus::label() builds
