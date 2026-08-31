@@ -25,10 +25,22 @@ use Illuminate\Support\Facades\DB;
  * appears to need one, that is a signal to check the spec rather than to add a
  * setter.
  *
- * THE COMPLETED BRANCH BELOW WAS UNREACHABLE UNTIL P3-T03, and untested with it.
- * Nothing could produce a completed enrolment, so `status !== Active` only ever
- * saw withdrawn rows; the docblock promised the exception and no test executed
- * it. WithdrawCompletedEnrollmentTest now does.
+ * THE COMPLETED BRANCH BELOW WAS UNREACHABLE UNTIL P3-T03, BUT NOT UNTESTED.
+ * Until this phase nothing could produce a completed enrolment through the
+ * application, so `status !== Active` only ever saw withdrawn rows in
+ * production. It has been tested since phase 1 all the same:
+ * EnrollmentTest.php:296 builds the row with the factory's `->completed()`
+ * state and asserts the refusal.
+ *
+ * An earlier version of this paragraph said the branch was untested, and P3-T03
+ * repeated the claim in its plan. Both were wrong, and reached the same way — by
+ * grepping tests/ for `EnrollmentStatus::Completed`, which returns one hit
+ * because the existing test names the factory state rather than the enum. A
+ * SOURCE SCAN CANNOT PROVE AN ABSENCE.
+ *
+ * What P3-T03 genuinely adds is WithdrawCompletedEnrollmentTest, which asserts
+ * the same refusal against a row completed through CompleteEnrollmentAction
+ * rather than through a fixture — the real path, which did not exist before.
  *
  * NOT GATED ON THE BATCH'S STATUS. Spec line 237 names exactly two operations a
  * closed batch refuses: new enrolments and instructor changes. Withdrawal is
