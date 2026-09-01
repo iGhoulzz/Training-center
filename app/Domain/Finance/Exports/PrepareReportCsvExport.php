@@ -37,6 +37,9 @@ final class PrepareReportCsvExport extends PrepareCsvExport
         $snapshot = $this->exporter->capturedSnapshot();
         $disk = $this->export->getFileDisk();
         $directory = $this->export->getFileDirectory();
+        $receiptDisk = (string) $this->export->getAttribute('file_disk');
+        $fileLifecycle ??= app(FileLifecycleService::class);
+        $fileLifecycle->guardExportDirectory($receiptDisk, $directory);
         $delimiter = $this->exporter::getCsvDelimiter();
 
         $headers = Writer::from(new SplTempFileObject);
@@ -74,8 +77,8 @@ final class PrepareReportCsvExport extends PrepareCsvExport
             throw new RuntimeException('The report CSV could not be stored.');
         }
 
-        ($fileLifecycle ?? app(FileLifecycleService::class))->scheduleDeletion(
-            (string) $this->export->getAttribute('file_disk'),
+        $fileLifecycle->scheduleDeletion(
+            $receiptDisk,
             $directory,
             PathKind::Directory,
             CarbonImmutable::now()->addDays(7),

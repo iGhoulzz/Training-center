@@ -12,6 +12,7 @@ use App\Domain\Finance\Jobs\GenerateReportPdfJob;
 use App\Domain\Finance\Models\Charge;
 use App\Domain\Staff\Actions\SystemRoleWriter;
 use App\Domain\Staff\Enums\PathKind;
+use App\Domain\Staff\Jobs\PurgeDeletedFileJob;
 use App\Domain\Staff\Models\PendingFileDeletion;
 use App\Domain\Staff\Services\FileLifecycleService;
 use App\Models\User;
@@ -167,6 +168,29 @@ it('does not schedule a receipt when the CSV row write fails', function (): void
     expect(PendingFileDeletion::query()->count())->toBe(0);
 });
 
+it('refuses an invalid export disk before writing CSV bytes', function (): void {
+    Storage::fake('private');
+
+    [$export, $options] = retentionExport($this->admin);
+    $export->update(['file_disk' => 'private']);
+    $directory = $export->getFileDirectory();
+
+    $job = new PrepareReportCsvExport(
+        $export,
+        EloquentSerializeFacade::serialize(Charge::query()),
+        ['student_name' => 'Student'],
+        $options,
+    );
+
+    expect(fn (): mixed => $job->handle())->toThrow(InvalidArgumentException::class);
+
+    Storage::disk('private')->assertMissing($directory.DIRECTORY_SEPARATOR.'headers.csv');
+    Storage::disk('private')->assertMissing(
+        $directory.DIRECTORY_SEPARATOR.str_pad('1', 16, '0', STR_PAD_LEFT).'.csv',
+    );
+    expect(PendingFileDeletion::query()->count())->toBe(0);
+});
+
 it('refuses to schedule a directory outside the Filament export prefix', function (): void {
     expect(fn (): int => app(FileLifecycleService::class)->scheduleDeletion(
         'local',
@@ -220,6 +244,70 @@ it('refuses to schedule an export directory on another disk', function (): void 
         now()->addDays(7)->toImmutable(),
     ))->toThrow(InvalidArgumentException::class);
 });
+
+it('matches Filament\'s private local fallback when its configured disk is public', function (): void {
+    config(['filament.default_filesystem_disk' => 'public']);
+
+    $receiptId = app(FileLifecycleService::class)->scheduleDeletion(
+        'local',
+        'filament_exports/public-fallback',
+        PathKind::Directory,
+        now()->addDays(7)->toImmutable(),
+    );
+
+    expect(PendingFileDeletion::query()->findOrFail($receiptId)->disk)->toBe('local');
+});
+
+it('revalidates a persisted directory receipt before recursive deletion', function (): void {
+    Storage::fake('local');
+
+    $path = 'unrelated-directory/important.txt';
+    Storage::disk('local')->put($path, 'keep');
+
+    $receipt = PendingFileDeletion::query()->create([
+        'disk' => 'local',
+        'path' => 'unrelated-directory',
+        'path_kind' => PathKind::Directory,
+        'delete_after' => now()->subSecond(),
+        'attempts' => 0,
+        'last_error' => null,
+    ]);
+
+    expect(fn (): mixed => (new PurgeDeletedFileJob((int) $receipt->getKey()))->handle())
+        ->toThrow(InvalidArgumentException::class);
+
+    Storage::disk('local')->assertExists($path);
+    expect($receipt->refresh()->attempts)->toBe(1)
+        ->and($receipt->last_error)->toContain('limited to generated Filament exports');
+});
+
+it('does not purge a directly dispatched receipt before its retention window', function (
+    PathKind $kind,
+    string $receiptPath,
+    string $storedPath,
+): void {
+    Storage::fake('local');
+    Storage::disk('local')->put($storedPath, 'keep');
+
+    $receiptId = app(FileLifecycleService::class)->scheduleDeletion(
+        'local',
+        $receiptPath,
+        $kind,
+        now()->addDays(7)->toImmutable(),
+    );
+
+    (new PurgeDeletedFileJob($receiptId))->handle();
+
+    Storage::disk('local')->assertExists($storedPath);
+    expect(PendingFileDeletion::query()->whereKey($receiptId)->exists())->toBeTrue();
+})->with([
+    'file receipt' => [PathKind::File, 'financial-reports/report.pdf', 'financial-reports/report.pdf'],
+    'directory receipt' => [
+        PathKind::Directory,
+        'filament_exports/future-export',
+        'filament_exports/future-export/headers.csv',
+    ],
+]);
 
 it('removes an expired generated export directory and its contents during the sweep', function (): void {
     Storage::fake('local');

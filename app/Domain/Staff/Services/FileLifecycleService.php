@@ -415,7 +415,7 @@ final class FileLifecycleService
      * The stored path may use Windows separators because Filament builds it
      * with DIRECTORY_SEPARATOR, so validation normalizes only for comparison.
      */
-    private function guardExportDirectory(string $disk, string $path): void
+    public function guardExportDirectory(string $disk, string $path): void
     {
         $normalizedPath = str_replace('\\', '/', $path);
         $segments = explode('/', $normalizedPath);
@@ -432,11 +432,19 @@ final class FileLifecycleService
         }
     }
 
+    /**
+     * Mirror Filament Exporter's private-disk fallback exactly.
+     *
+     * Filament refuses to generate private exports on the public disk when a
+     * local disk exists, and persists `local` on the export row instead. The
+     * deletion fence must authorize the same disk Filament actually selected.
+     */
     private function configuredExportDisk(): string
     {
         $disk = (string) config('filament.default_filesystem_disk');
+        $disks = config('filesystems.disks');
 
-        return $disk === 'public' && is_array(config('filesystems.disks.local'))
+        return $disk === 'public' && is_array($disks) && array_key_exists('local', $disks)
             ? 'local'
             : $disk;
     }
