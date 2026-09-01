@@ -137,6 +137,36 @@ it('does not record a receipt when PDF storage fails', function (): void {
     expect(PendingFileDeletion::query()->count())->toBe(0);
 });
 
+it('does not schedule a receipt when the CSV row write fails', function (): void {
+    [$export, $options] = retentionExport($this->admin);
+    $filesystem = Mockery::mock(Filesystem::class);
+    $directory = $export->getFileDirectory();
+
+    $filesystem->shouldReceive('put')
+        ->once()
+        ->with($directory.DIRECTORY_SEPARATOR.'headers.csv', Mockery::type('string'), Filesystem::VISIBILITY_PRIVATE)
+        ->andReturnTrue();
+    $filesystem->shouldReceive('put')
+        ->once()
+        ->with(
+            $directory.DIRECTORY_SEPARATOR.str_pad('1', 16, '0', STR_PAD_LEFT).'.csv',
+            Mockery::type('string'),
+            Filesystem::VISIBILITY_PRIVATE,
+        )
+        ->andReturnFalse();
+    Storage::shouldReceive('disk')->once()->with('local')->andReturn($filesystem);
+
+    $job = new PrepareReportCsvExport(
+        $export,
+        EloquentSerializeFacade::serialize(Charge::query()),
+        ['student_name' => 'Student'],
+        $options,
+    );
+
+    expect(fn (): mixed => $job->handle())->toThrow(RuntimeException::class, 'The report CSV could not be stored.');
+    expect(PendingFileDeletion::query()->count())->toBe(0);
+});
+
 it('refuses to schedule a directory outside the Filament export prefix', function (): void {
     expect(fn (): int => app(FileLifecycleService::class)->scheduleDeletion(
         'local',

@@ -12,6 +12,7 @@ use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Support\Facades\DB;
 use League\Csv\Writer;
 use LogicException;
+use RuntimeException;
 use SplTempFileObject;
 
 /** Applies the report exporter's run-time authorization before chunk dispatch. */
@@ -41,11 +42,13 @@ final class PrepareReportCsvExport extends PrepareCsvExport
         $headers = Writer::from(new SplTempFileObject);
         $headers->setDelimiter($delimiter);
         $headers->insertOne(array_values($this->columnMap));
-        $disk->put(
+        if (! $disk->put(
             $directory.DIRECTORY_SEPARATOR.'headers.csv',
             $headers->toString(),
             Filesystem::VISIBILITY_PRIVATE,
-        );
+        )) {
+            throw new RuntimeException('The report CSV could not be stored.');
+        }
 
         $rows = Writer::from(new SplTempFileObject);
         $rows->setDelimiter($delimiter);
@@ -63,11 +66,13 @@ final class PrepareReportCsvExport extends PrepareCsvExport
             ));
         }
 
-        $disk->put(
+        if (! $disk->put(
             $directory.DIRECTORY_SEPARATOR.str_pad('1', 16, '0', STR_PAD_LEFT).'.csv',
             $rows->toString(),
             Filesystem::VISIBILITY_PRIVATE,
-        );
+        )) {
+            throw new RuntimeException('The report CSV could not be stored.');
+        }
 
         ($fileLifecycle ?? app(FileLifecycleService::class))->scheduleDeletion(
             (string) $this->export->getAttribute('file_disk'),
