@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\Domain\Finance\Exports;
 
+use App\Domain\Staff\Enums\PathKind;
+use App\Domain\Staff\Services\FileLifecycleService;
+use Carbon\CarbonImmutable;
 use Filament\Actions\Exports\Jobs\PrepareCsvExport;
 use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Support\Facades\DB;
@@ -20,7 +23,7 @@ final class PrepareReportCsvExport extends PrepareCsvExport
         return $this->exporter->getJobMiddleware();
     }
 
-    public function handle(): void
+    public function handle(?FileLifecycleService $fileLifecycle = null): void
     {
         if ($this->batch()?->cancelled()) {
             return;
@@ -64,6 +67,13 @@ final class PrepareReportCsvExport extends PrepareCsvExport
             $directory.DIRECTORY_SEPARATOR.str_pad('1', 16, '0', STR_PAD_LEFT).'.csv',
             $rows->toString(),
             Filesystem::VISIBILITY_PRIVATE,
+        );
+
+        ($fileLifecycle ?? app(FileLifecycleService::class))->scheduleDeletion(
+            (string) $this->export->getAttribute('file_disk'),
+            $directory,
+            PathKind::Directory,
+            CarbonImmutable::now()->addDays(7),
         );
 
         $rowCount = count($snapshot->dataset->rows);

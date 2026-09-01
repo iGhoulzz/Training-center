@@ -102,6 +102,35 @@ it('leaves a fresh receipt to the job that is still retrying it', function () {
     Queue::assertNothingPushed();
 });
 
+it('leaves a stale export receipt alone until its retention window expires', function () {
+    Queue::fake();
+
+    $pending = agedReceipt(90, 'filament_exports/retention-window');
+    DB::table('pending_file_deletions')
+        ->where('id', $pending->getKey())
+        ->update(['delete_after' => now()->addDay()]);
+
+    $this->artisan('files:sweep-pending-deletions')->assertSuccessful();
+
+    Queue::assertNothingPushed();
+});
+
+it('sweeps a stale export receipt after its retention window expires', function () {
+    Queue::fake();
+
+    $pending = agedReceipt(90, 'filament_exports/expired-retention-window');
+    DB::table('pending_file_deletions')
+        ->where('id', $pending->getKey())
+        ->update(['delete_after' => now()->subSecond()]);
+
+    $this->artisan('files:sweep-pending-deletions')->assertSuccessful();
+
+    Queue::assertPushed(
+        PurgeDeletedFileJob::class,
+        fn (PurgeDeletedFileJob $job): bool => $job->pendingFileDeletionId === (int) $pending->getKey(),
+    );
+});
+
 it('waits longer than the purge job\'s own retry ladder before calling a receipt stale', function () {
     /*
      * THE TWO NUMBERS ARE COUPLED, SO THE COUPLING IS ASSERTED.

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Staff\Models;
 
+use App\Domain\Staff\Enums\PathKind;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -23,6 +24,8 @@ use Illuminate\Database\Eloquent\Model;
 #[Fillable([
     'disk',
     'path',
+    'path_kind',
+    'delete_after',
     'attempts',
     'last_error',
     'last_swept_at',
@@ -41,6 +44,9 @@ class PendingFileDeletion extends Model
      *     sweep just re-dispatched is not immediately re-dispatched again. A
      *     re-dispatch gets a fresh job with its own ladder, and the same
      *     threshold governs both waits for the same reason.
+     *   - immediately eligible, or past its scheduled deletion time. Retention
+     *     changes when a receipt may reach a purge job; it does not change the
+     *     sweep's ownership check or starvation-resistant ordering.
      *
      * This is half of the anti-starvation rule. The other half is
      * scopeInSweepOrder(), and NEITHER HALF WORKS ALONE: this one lets a receipt
@@ -59,6 +65,10 @@ class PendingFileDeletion extends Model
             ->where(function (Builder $query) use ($threshold): void {
                 $query->whereNull('last_swept_at')
                     ->orWhere('last_swept_at', '<', $threshold);
+            })
+            ->where(function (Builder $query): void {
+                $query->whereNull('delete_after')
+                    ->orWhere('delete_after', '<=', now());
             });
     }
 
@@ -95,7 +105,9 @@ class PendingFileDeletion extends Model
     {
         return [
             'attempts' => 'integer',
+            'delete_after' => 'immutable_datetime',
             'last_swept_at' => 'datetime',
+            'path_kind' => PathKind::class,
         ];
     }
 }

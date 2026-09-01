@@ -6,7 +6,10 @@ namespace App\Domain\Finance\Jobs;
 
 use App\Domain\Finance\Exports\ReportExportAuthorization;
 use App\Domain\Finance\Exports\ReportSnapshot;
+use App\Domain\Staff\Enums\PathKind;
+use App\Domain\Staff\Services\FileLifecycleService;
 use App\Models\User;
+use Carbon\CarbonImmutable;
 use Filament\Actions\Action;
 use Filament\Facades\Filament;
 use Filament\Notifications\Notification;
@@ -47,7 +50,7 @@ final class GenerateReportPdfJob implements ShouldQueue
         $this->reference = (string) Str::uuid();
     }
 
-    public function handle(): void
+    public function handle(?FileLifecycleService $fileLifecycle = null): void
     {
         $requester = User::query()->findOrFail($this->requesterId);
 
@@ -76,6 +79,13 @@ final class GenerateReportPdfJob implements ShouldQueue
             if (! Storage::disk('private')->put($path, $mpdf->OutputBinaryData())) {
                 throw new RuntimeException('The report PDF could not be stored.');
             }
+
+            ($fileLifecycle ?? app(FileLifecycleService::class))->scheduleDeletion(
+                'private',
+                $path,
+                PathKind::File,
+                CarbonImmutable::now()->addDays(7),
+            );
 
             $routeName = Filament::getPanel('admin')->generateRouteName('pages.reports.pdf.download');
             $downloadUrl = URL::temporarySignedRoute($routeName, now()->addDay(), [
