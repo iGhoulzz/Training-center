@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Domain\Enrollment\Actions;
 
 use App\Domain\Enrollment\Enums\CertificateStatus;
+use App\Domain\Enrollment\Exceptions\CertificateChangedException;
 use App\Domain\Enrollment\Exceptions\NoValidCertificateException;
 use App\Domain\Enrollment\Models\Enrollment;
 use App\Domain\Enrollment\Models\StudentCertificate;
@@ -62,10 +63,11 @@ final class RevokeStudentCertificateAction
 
     /**
      * @throws NoValidCertificateException if no valid certificate stands to revoke.
+     * @throws CertificateChangedException if \$expectedCertificateId is no longer the current valid row.
      * @throws AuthorizationException if the actor may not revoke certificates.
      * @throws InvalidArgumentException if the reason is blank after trimming.
      */
-    public function execute(User $actor, Enrollment $enrollment, string $reason): StudentCertificate
+    public function execute(User $actor, Enrollment $enrollment, string $reason, ?int $expectedCertificateId = null): StudentCertificate
     {
         if (trim($reason) === '') {
             throw new InvalidArgumentException('Revoking a certificate requires a reason.');
@@ -73,7 +75,7 @@ final class RevokeStudentCertificateAction
 
         Gate::forUser($actor)->authorize('revoke', StudentCertificate::class);
 
-        return DB::transaction(function () use ($actor, $enrollment, $reason): StudentCertificate {
+        return DB::transaction(function () use ($actor, $enrollment, $reason, $expectedCertificateId): StudentCertificate {
             $held = $this->mutex->acquire($enrollment);
             $locked = $held->enrollment;
 
@@ -81,6 +83,29 @@ final class RevokeStudentCertificateAction
 
             if ($current === null) {
                 throw new NoValidCertificateException((int) $locked->getKey());
+            }
+
+            /*
+             * THE ROW THE ACTOR CLICKED, RE-CHECKED UNDER THE LOCK.
+             *
+             * $expectedCertificateId is null for callers that genuinely mean
+             * "whatever is current". The panel is not one of them: its row
+             * actions are clicked on a SPECIFIC certificate, and between the
+             * modal opening and the actor submitting it, somebody else can
+             * replace that row — leaving this Action to resolve a DIFFERENT
+             * certificate and act on it under the first actor's intent. See
+             * CertificateChangedException.
+             *
+             * Checked here, inside the transaction and after the locking read,
+             * because anywhere earlier is a snapshot answer to a question that
+             * only the lock can settle.
+             */
+            if ($expectedCertificateId !== null && (int) $current->getKey() !== $expectedCertificateId) {
+                throw new CertificateChangedException(
+                    (int) $locked->getKey(),
+                    $expectedCertificateId,
+                    (int) $current->getKey(),
+                );
             }
 
             $this->causers->withCauser(

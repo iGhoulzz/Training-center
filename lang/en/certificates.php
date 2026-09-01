@@ -34,6 +34,12 @@ return [
 
     // ReplaceStudentCertificateAction's and RevokeStudentCertificateAction's
     // shared refusal — there is no valid certificate to act on.
+    // The clicked row is no longer the current one — see
+    // CertificateChangedException for the race this names.
+    'certificate_changed' => 'This certificate is no longer the current one for its enrolment. Reload the list and try again.',
+    // Every bounded reference draw collided, which means a broken picker rather
+    // than bad luck.
+    'reference_exhausted' => 'A unique certificate reference could not be generated. Please try again.',
     'no_valid_certificate' => 'There is no valid certificate for this enrolment to act on.',
 
     /*

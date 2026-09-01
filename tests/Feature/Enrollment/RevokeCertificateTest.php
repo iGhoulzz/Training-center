@@ -3,8 +3,10 @@
 declare(strict_types=1);
 
 use App\Domain\Enrollment\Actions\IssueStudentCertificateAction;
+use App\Domain\Enrollment\Actions\ReplaceStudentCertificateAction;
 use App\Domain\Enrollment\Actions\RevokeStudentCertificateAction;
 use App\Domain\Enrollment\Enums\CertificateStatus;
+use App\Domain\Enrollment\Exceptions\CertificateChangedException;
 use App\Domain\Enrollment\Exceptions\NoValidCertificateException;
 use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Course;
@@ -244,4 +246,42 @@ it('logs the revocation against the actor, with the status transition in the dif
     expect($changes->get('attributes')['status'] ?? null)->toBe('revoked')
         ->and($changes->get('old')['status'] ?? null)->toBe('valid')
         ->and($changes->get('attributes')['revoked_by'] ?? null)->toBe($actor->getKey());
+});
+
+it('refuses to revoke when the row the actor selected is no longer the current one', function () {
+    /*
+     * The revoke half of the same race — and the more damaging half. A
+     * revocation carries a REASON, so acting on the wrong row attributes one
+     * operator's stated justification to a certificate they never saw.
+     */
+    $original = app(IssueStudentCertificateAction::class)->execute($this->admin, $this->enrollment);
+
+    $successor = app(ReplaceStudentCertificateAction::class)->execute($this->admin, $this->enrollment);
+
+    expect(fn () => app(RevokeStudentCertificateAction::class)->execute(
+        $this->admin,
+        $this->enrollment,
+        'Issued against the wrong student.',
+        (int) $original->getKey(),
+    ))->toThrow(CertificateChangedException::class);
+
+    expect($successor->fresh()->status)->toBe(
+        CertificateStatus::Valid,
+        'The successor was revoked under a reason written about a different certificate.',
+    );
+});
+
+it('revokes normally when the selected row IS still the current one', function () {
+    // The positive control for the test above.
+    $original = app(IssueStudentCertificateAction::class)->execute($this->admin, $this->enrollment);
+
+    $revoked = app(RevokeStudentCertificateAction::class)->execute(
+        $this->admin,
+        $this->enrollment,
+        'Issued against the wrong student.',
+        (int) $original->getKey(),
+    );
+
+    expect($revoked->status)->toBe(CertificateStatus::Revoked)
+        ->and($revoked->getKey())->toBe($original->getKey());
 });

@@ -6,6 +6,7 @@ use App\Domain\Enrollment\Actions\IssueStudentCertificateAction;
 use App\Domain\Enrollment\Actions\ReplaceStudentCertificateAction;
 use App\Domain\Enrollment\Enums\CertificateStatus;
 use App\Domain\Enrollment\Exceptions\CertificateAlreadyIssuedException;
+use App\Domain\Enrollment\Exceptions\CertificateChangedException;
 use App\Domain\Enrollment\Exceptions\NoValidCertificateException;
 use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Course;
@@ -356,4 +357,54 @@ it('logs both halves of a replacement against the actor — the old row updated 
         ->and($created->causer_id === null ? null : (int) $created->causer_id)->toBe($actor->getKey())
         ->and($created->attribute_changes->get('attributes')['replaces_certificate_id'] ?? null)
         ->toBe($original->getKey());
+});
+
+/*
+|--------------------------------------------------------------------------
+| The clicked row is not always the current row
+|--------------------------------------------------------------------------
+|
+| CROSS-REVIEW FINDING. Replace and Revoke resolve "the enrolment's currently
+| valid certificate" under the lock. The panel's row actions are clicked on a
+| SPECIFIC certificate, and between the modal opening and the actor submitting
+| it, another operator can replace that row — leaving the Action to act on a
+| certificate the first actor never saw, under their intent and with their name
+| on the activity entry.
+*/
+
+it('refuses to replace when the row the actor selected is no longer the current one', function () {
+    $original = app(IssueStudentCertificateAction::class)->execute($this->admin, $this->enrollment);
+
+    // Somebody else gets there first. $original is now `replaced`, and a
+    // successor holds the valid slot.
+    $successor = app(ReplaceStudentCertificateAction::class)->execute($this->admin, $this->enrollment);
+
+    // The first actor's still-open modal submits, naming the row they clicked.
+    expect(fn () => app(ReplaceStudentCertificateAction::class)->execute(
+        $this->admin,
+        $this->enrollment,
+        (int) $original->getKey(),
+    ))->toThrow(CertificateChangedException::class);
+
+    expect($successor->fresh()->status)->toBe(
+        CertificateStatus::Valid,
+        'The successor was mutated under an intent that named a different certificate.',
+    );
+});
+
+it('replaces normally when the selected row IS still the current one', function () {
+    // THE POSITIVE CONTROL. Without it the test above passes for a fixture
+    // mistake — a wrong id, a stale model — as readily as for the race, and the
+    // guard could be refusing everything.
+    $original = app(IssueStudentCertificateAction::class)->execute($this->admin, $this->enrollment);
+
+    $replacement = app(ReplaceStudentCertificateAction::class)->execute(
+        $this->admin,
+        $this->enrollment,
+        (int) $original->getKey(),
+    );
+
+    expect($replacement->status)->toBe(CertificateStatus::Valid)
+        ->and($replacement->replaces_certificate_id)->toBe($original->getKey())
+        ->and($original->fresh()->status)->toBe(CertificateStatus::Replaced);
 });

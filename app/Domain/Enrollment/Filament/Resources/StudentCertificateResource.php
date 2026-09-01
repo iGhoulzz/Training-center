@@ -10,6 +10,8 @@ use App\Domain\Enrollment\Actions\RevokeStudentCertificateAction;
 use App\Domain\Enrollment\Enums\CertificateStatus;
 use App\Domain\Enrollment\Enums\EnrollmentStatus;
 use App\Domain\Enrollment\Exceptions\CertificateAlreadyIssuedException;
+use App\Domain\Enrollment\Exceptions\CertificateChangedException;
+use App\Domain\Enrollment\Exceptions\CertificateReferenceExhaustedException;
 use App\Domain\Enrollment\Exceptions\EnrollmentNotCompletedException;
 use App\Domain\Enrollment\Exceptions\NoValidCertificateException;
 use App\Domain\Enrollment\Filament\Resources\StudentCertificateResource\Pages\ListStudentCertificates;
@@ -248,7 +250,11 @@ class StudentCertificateResource extends Resource
 
                 try {
                     app(IssueStudentCertificateAction::class)->execute($actor, $enrollment);
-                } catch (EnrollmentNotCompletedException|CertificateAlreadyIssuedException $exception) {
+                } catch (
+                    EnrollmentNotCompletedException
+                    |CertificateAlreadyIssuedException
+                    |CertificateReferenceExhaustedException $exception
+                ) {
                     self::refuse($exception);
                     $action->halt();
                 }
@@ -279,8 +285,23 @@ class StudentCertificateResource extends Resource
                 $actor = auth()->user();
 
                 try {
-                    app(ReplaceStudentCertificateAction::class)->execute($actor, $record->enrollment);
-                } catch (NoValidCertificateException $exception) {
+                    /*
+                     * $record->getKey() IS THE POINT, not a convenience. Without
+                     * it the Action resolves "whatever is currently valid for
+                     * this enrolment", which stops being this row the moment
+                     * anyone else replaces it while this modal is open.
+                     */
+                    app(ReplaceStudentCertificateAction::class)->execute(
+                        $actor,
+                        $record->enrollment,
+                        (int) $record->getKey(),
+                    );
+                } catch (
+                    NoValidCertificateException
+                    |CertificateAlreadyIssuedException
+                    |CertificateChangedException
+                    |CertificateReferenceExhaustedException $exception
+                ) {
                     self::refuse($exception);
                     $action->halt();
                 }
@@ -313,12 +334,15 @@ class StudentCertificateResource extends Resource
                 $actor = auth()->user();
 
                 try {
+                    // The clicked row's id — see replaceAction() for the race
+                    // this closes.
                     app(RevokeStudentCertificateAction::class)->execute(
                         $actor,
                         $record->enrollment,
                         (string) $data['reason'],
+                        (int) $record->getKey(),
                     );
-                } catch (NoValidCertificateException $exception) {
+                } catch (NoValidCertificateException|CertificateChangedException $exception) {
                     self::refuse($exception);
                     $action->halt();
                 }
@@ -418,8 +442,23 @@ class StudentCertificateResource extends Resource
      * ChargeResource's adjustAction()/writeOffAction(), which catch only their
      * business-rule exceptions and not AuthorizationException either.
      */
+    /**
+     * Turn a typed domain refusal into a notification the operator can read.
+     *
+     * EVERY TYPED REFUSAL THESE ACTIONS DECLARE MUST BE LISTED HERE, and every
+     * caller must catch what it can raise. Cross-review found two gaps at once:
+     * replaceAction() caught only NoValidCertificateException while the Action
+     * also raises CertificateAlreadyIssuedException on a
+     * uniq_valid_certificate_per_enrollment collision, and the bounded retry's
+     * exhaustion path threw a generic RuntimeException nothing caught at all.
+     * Both reached the operator as a 500.
+     */
     private static function refuse(
-        EnrollmentNotCompletedException|CertificateAlreadyIssuedException|NoValidCertificateException $exception,
+        EnrollmentNotCompletedException
+        |CertificateAlreadyIssuedException
+        |CertificateChangedException
+        |CertificateReferenceExhaustedException
+        |NoValidCertificateException $exception,
     ): void {
         Notification::make()
             ->title($exception->getMessage())

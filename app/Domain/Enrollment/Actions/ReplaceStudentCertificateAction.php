@@ -6,6 +6,8 @@ namespace App\Domain\Enrollment\Actions;
 
 use App\Domain\Enrollment\Enums\CertificateStatus;
 use App\Domain\Enrollment\Exceptions\CertificateAlreadyIssuedException;
+use App\Domain\Enrollment\Exceptions\CertificateChangedException;
+use App\Domain\Enrollment\Exceptions\CertificateReferenceExhaustedException;
 use App\Domain\Enrollment\Exceptions\NoValidCertificateException;
 use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Course;
@@ -21,7 +23,6 @@ use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
-use RuntimeException;
 use Spatie\Activitylog\Support\CauserResolver;
 
 /**
@@ -102,22 +103,26 @@ final class ReplaceStudentCertificateAction
 
     /**
      * @throws NoValidCertificateException if no valid certificate stands to replace.
+     * @throws CertificateAlreadyIssuedException if the insert collides on uniq_valid_certificate_per_enrollment.
+     * @throws CertificateChangedException if $expectedCertificateId is no longer the current valid row.
+     * @throws CertificateReferenceExhaustedException if every bounded reference draw collided.
      * @throws AuthorizationException if the actor may not replace certificates.
      */
-    public function execute(User $actor, Enrollment $enrollment): StudentCertificate
+    public function execute(User $actor, Enrollment $enrollment, ?int $expectedCertificateId = null): StudentCertificate
     {
         Gate::forUser($actor)->authorize('replace', StudentCertificate::class);
 
         for ($attempt = 1; $attempt <= self::MAX_ATTEMPTS; $attempt++) {
             try {
-                return $this->attempt($actor, $enrollment);
+                return $this->attempt($actor, $enrollment, $expectedCertificateId);
             } catch (UniqueConstraintViolationException $exception) {
                 $this->rethrowUnlessReferenceCollision($exception, (int) $enrollment->getKey());
             }
         }
 
-        throw new RuntimeException(
-            'Exhausted '.self::MAX_ATTEMPTS." certificate reference draws for enrolment [{$enrollment->getKey()}]."
+        throw new CertificateReferenceExhaustedException(
+            (int) $enrollment->getKey(),
+            self::MAX_ATTEMPTS,
         );
     }
 
@@ -160,9 +165,9 @@ final class ReplaceStudentCertificateAction
         $locked->setRelation('batch', $batch);
     }
 
-    private function attempt(User $actor, Enrollment $enrollment): StudentCertificate
+    private function attempt(User $actor, Enrollment $enrollment, ?int $expectedCertificateId): StudentCertificate
     {
-        return DB::transaction(function () use ($actor, $enrollment): StudentCertificate {
+        return DB::transaction(function () use ($actor, $enrollment, $expectedCertificateId): StudentCertificate {
             $held = $this->mutex->acquire($enrollment);
             $locked = $held->enrollment;
 
@@ -170,6 +175,29 @@ final class ReplaceStudentCertificateAction
 
             if ($current === null) {
                 throw new NoValidCertificateException((int) $locked->getKey());
+            }
+
+            /*
+             * THE ROW THE ACTOR CLICKED, RE-CHECKED UNDER THE LOCK.
+             *
+             * $expectedCertificateId is null for callers that genuinely mean
+             * "whatever is current". The panel is not one of them: its row
+             * actions are clicked on a SPECIFIC certificate, and between the
+             * modal opening and the actor submitting it, somebody else can
+             * replace that row — leaving this Action to resolve a DIFFERENT
+             * certificate and act on it under the first actor's intent. See
+             * CertificateChangedException.
+             *
+             * Checked here, inside the transaction and after the locking read,
+             * because anywhere earlier is a snapshot answer to a question that
+             * only the lock can settle.
+             */
+            if ($expectedCertificateId !== null && (int) $current->getKey() !== $expectedCertificateId) {
+                throw new CertificateChangedException(
+                    (int) $locked->getKey(),
+                    $expectedCertificateId,
+                    (int) $current->getKey(),
+                );
             }
 
             $this->loadSnapshotSources($locked);

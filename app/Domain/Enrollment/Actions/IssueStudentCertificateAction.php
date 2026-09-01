@@ -7,6 +7,7 @@ namespace App\Domain\Enrollment\Actions;
 use App\Domain\Enrollment\Enums\CertificateStatus;
 use App\Domain\Enrollment\Enums\EnrollmentStatus;
 use App\Domain\Enrollment\Exceptions\CertificateAlreadyIssuedException;
+use App\Domain\Enrollment\Exceptions\CertificateReferenceExhaustedException;
 use App\Domain\Enrollment\Exceptions\EnrollmentNotCompletedException;
 use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Course;
@@ -22,7 +23,6 @@ use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
-use RuntimeException;
 use Spatie\Activitylog\Support\CauserResolver;
 
 /**
@@ -120,6 +120,7 @@ final class IssueStudentCertificateAction
     /**
      * @throws EnrollmentNotCompletedException if the enrolment is not completed.
      * @throws CertificateAlreadyIssuedException if a valid certificate already stands.
+     * @throws CertificateReferenceExhaustedException if every bounded reference draw collided.
      * @throws AuthorizationException if the actor may not issue certificates.
      */
     public function execute(User $actor, Enrollment $enrollment): StudentCertificate
@@ -149,13 +150,19 @@ final class IssueStudentCertificateAction
          *
          * The bound now lives in the loop above, where it belongs: the
          * discriminator decides what a collision MEANS, the loop decides how
-         * many times to try. A developer diagnostic rather than a translated
-         * message, matching Money's convention — five consecutive collisions on
-         * a 31^8 alphabet is not a user-facing scenario, but it must not leak
-         * the statement if it ever happens.
+         * many times to try.
+         *
+         * AND THE OUTCOME IS TYPED. An earlier version threw a generic
+         * RuntimeException carrying a developer diagnostic, which cross-review
+         * caught: nothing anywhere catches RuntimeException, so a broken picker
+         * reached the operator as an untranslated 500 — exactly the class of
+         * ending docs/ENGINEERING.md forbids. Five consecutive collisions on a
+         * 31^8 alphabet is not bad luck, it is a fault, and it now says so in a
+         * sentence a human can read.
          */
-        throw new RuntimeException(
-            'Exhausted '.self::MAX_ATTEMPTS." certificate reference draws for enrolment [{$enrollment->getKey()}]."
+        throw new CertificateReferenceExhaustedException(
+            (int) $enrollment->getKey(),
+            self::MAX_ATTEMPTS,
         );
     }
 

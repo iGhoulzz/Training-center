@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Domain\Enrollment\Actions\IssueStudentCertificateAction;
 use App\Domain\Enrollment\Enums\CertificateStatus;
 use App\Domain\Enrollment\Exceptions\CertificateAlreadyIssuedException;
+use App\Domain\Enrollment\Exceptions\CertificateReferenceExhaustedException;
 use App\Domain\Enrollment\Exceptions\EnrollmentNotCompletedException;
 use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Course;
@@ -142,23 +143,33 @@ it('refuses issuing twice against the same completed enrolment', function () {
     expect(StudentCertificate::query()->where('enrollment_id', $enrollment->getKey())->count())->toBe(1);
 });
 
-it('still refuses a second issuance after the first certificate was revoked', function () {
-    // A revoked certificate is not "no certificate" — issuing again is a
-    // REPLACE decision, not an ISSUE one. This is the same invariant
-    // ReplaceCertificateTest and RevokeCertificateTest exercise from their
-    // own side; this is the reverse-direction proof that Issue does not
-    // silently treat a revoked row as room for a fresh issuance.
+it('issues again after the only certificate was revoked, because no valid one remains', function () {
+    /*
+     * NAMED FOR WHAT IT ASSERTS. This read "still refuses a second issuance",
+     * and its opening comment argued that issuing after a revocation is "a
+     * REPLACE decision, not an ISSUE one" — while the body asserted a SUCCESS.
+     * Cross-review caught the contradiction. The body was right and the prose
+     * was wrong: the guard reads `status = valid`, a revoked row is not valid,
+     * so issuance is open again.
+     *
+     * That is also the contract the state machine wants. Replace requires a
+     * VALID certificate to replace; after a revocation there is none, so if
+     * Issue refused here an enrolment could be left permanently uncertifiable
+     * by one revocation.
+     *
+     * This is the CONTROL for the refusal test above it: together they prove
+     * the check reads the STATUS rather than "any row exists for this
+     * enrolment".
+     */
     $enrollment = Enrollment::factory()->for($this->student)->for($this->batch)->completed()->create();
 
     StudentCertificate::factory()->for($enrollment)->revoked()->create();
 
-    // A revoked row is fine — no valid one exists, so this should actually
-    // succeed. This is the CONTROL half of the assertion above: it proves the
-    // check is genuinely reading `status = valid` rather than "any row
-    // exists for this enrolment".
     $certificate = app(IssueStudentCertificateAction::class)->execute($this->admin, $enrollment);
 
-    expect($certificate->status)->toBe(CertificateStatus::Valid);
+    expect($certificate->status)->toBe(CertificateStatus::Valid)
+        ->and(StudentCertificate::query()->where('enrollment_id', $enrollment->getKey())->count())
+        ->toBe(2, 'The revoked row must survive alongside the new one — the register is append-only.');
 });
 
 /*
@@ -423,8 +434,15 @@ it('surfaces a typed diagnostic, never the raw driver exception, when every draw
 
     expect($thrown)->not->toBeNull('The Action succeeded when every reference draw was forced to collide.')
         ->and($thrown)->not->toBeInstanceOf(UniqueConstraintViolationException::class)
-        ->and($thrown)->toBeInstanceOf(RuntimeException::class)
+        // The TYPED outcome, not merely "some RuntimeException". Cross-review:
+        // a generic RuntimeException is caught by nothing, so a broken picker
+        // ended as an untranslated 500. CertificateReferenceExhaustedException
+        // extends RuntimeException, so asserting the parent would have passed
+        // against the very code that was wrong.
+        ->and($thrown)->toBeInstanceOf(CertificateReferenceExhaustedException::class)
         ->and($thrown->getMessage())->not->toContain('insert into')
+        ->and($thrown->getMessage())->toBe(__('certificates.reference_exhausted'))
+        ->and($thrown->attempts)->toBe(5)
         ->and($calls)->toBe(40, 'Expected exactly MAX_ATTEMPTS (5) mint() attempts of 8 draws each.');
 
     expect(StudentCertificate::query()->where('enrollment_id', $enrollment->getKey())->count())
