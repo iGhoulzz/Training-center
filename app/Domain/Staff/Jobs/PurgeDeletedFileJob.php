@@ -6,6 +6,7 @@ namespace App\Domain\Staff\Jobs;
 
 use App\Domain\Finance\Services\ReceiptFileOwnershipService;
 use App\Domain\Staff\Actions\UpdateStaffPhotoAction;
+use App\Domain\Staff\Enums\PathKind;
 use App\Domain\Staff\Exceptions\FileStorageException;
 use App\Domain\Staff\Models\PendingFileDeletion;
 use App\Domain\Staff\Models\StaffCertificate;
@@ -79,8 +80,10 @@ class PurgeDeletedFileJob implements ShouldQueue
         return [10, 60, 300, 900];
     }
 
-    public function handle(?ReceiptFileOwnershipService $receiptFiles = null): void
-    {
+    public function handle(
+        ?ReceiptFileOwnershipService $receiptFiles = null,
+        ?FileLifecycleService $fileLifecycle = null,
+    ): void {
         $receiptFiles ??= app(ReceiptFileOwnershipService::class);
 
         $pending = $this->usesCompensationConnection
@@ -91,6 +94,10 @@ class PurgeDeletedFileJob implements ShouldQueue
         // Already purged — a duplicate dispatch or a retry that raced the
         // successful attempt. Nothing to do, and nothing to report.
         if (! $pending instanceof PendingFileDeletion) {
+            return;
+        }
+
+        if ($pending->delete_after?->isFuture()) {
             return;
         }
 
@@ -107,13 +114,23 @@ class PurgeDeletedFileJob implements ShouldQueue
         }
 
         try {
+            if ($pending->path_kind === PathKind::Directory) {
+                ($fileLifecycle ?? app(FileLifecycleService::class))
+                    ->guardExportDirectory($pending->disk, $pending->path);
+            }
+
             $disk = Storage::disk($pending->disk);
 
-            // The disk is configured with throw => false, so a failed unlink
-            // comes back as `false` rather than an exception. Deleting a file
-            // that is already absent still returns true, so a false here means
-            // a real failure and not a double delete.
-            if (! $disk->delete($pending->path)) {
+            // The disk is configured with throw => false, so a failed removal
+            // comes back as `false` rather than an exception. Flysystem treats
+            // an already absent file or directory as successfully deleted, so
+            // a false here means a real failure and not a duplicate purge.
+            $deleted = match ($pending->path_kind) {
+                PathKind::Directory => $disk->deleteDirectory($pending->path),
+                PathKind::File => $disk->delete($pending->path),
+            };
+
+            if (! $deleted) {
                 throw FileStorageException::deleteFailed($pending->disk, $pending->path);
             }
         } catch (Throwable $exception) {

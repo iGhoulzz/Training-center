@@ -4,12 +4,15 @@ declare(strict_types=1);
 
 namespace App\Domain\Staff\Services;
 
+use App\Domain\Staff\Enums\PathKind;
 use App\Domain\Staff\Jobs\PurgeDeletedFileJob;
 use App\Domain\Staff\Models\PendingFileDeletion;
 use App\Domain\Staff\Support\SafeReporting;
+use Carbon\CarbonImmutable;
 use Closure;
 use Illuminate\Database\DatabaseTransactionRecord;
 use Illuminate\Support\Facades\DB;
+use InvalidArgumentException;
 use Throwable;
 
 /**
@@ -42,6 +45,8 @@ final class FileLifecycleService
     private const COMPENSATION_CONNECTION = 'file_lifecycle_compensation';
 
     private const COMPENSATION_QUEUE_CONNECTION = 'file_lifecycle_compensation_queue';
+
+    private const EXPORT_DIRECTORY = 'filament_exports';
 
     /**
      * Persist a new file and the database state that owns it.
@@ -269,6 +274,37 @@ final class FileLifecycleService
     }
 
     /**
+     * Commit the intent to destroy a generated artefact at a future time.
+     *
+     * Unlike record(), this does NOT belong inside an owning-row transaction —
+     * an export owns no row. The artefact already exists on disk when this is
+     * called, and the receipt is the only thing that will ever remove it.
+     *
+     * @throws InvalidArgumentException when a directory is not an export directory.
+     */
+    public function scheduleDeletion(
+        string $disk,
+        string $path,
+        PathKind $kind,
+        CarbonImmutable $deleteAfter,
+    ): int {
+        if ($kind === PathKind::Directory) {
+            $this->guardExportDirectory($disk, $path);
+        }
+
+        $pending = PendingFileDeletion::query()->create([
+            'disk' => $disk,
+            'path' => $path,
+            'path_kind' => $kind,
+            'delete_after' => $deleteAfter,
+            'attempts' => 0,
+            'last_error' => null,
+        ]);
+
+        return (int) $pending->getKey();
+    }
+
+    /**
      * Queue one purge job per receipt.
      *
      * Call this AFTER the transaction returns. afterCommit() is belt and braces
@@ -371,6 +407,46 @@ final class FileLifecycleService
         ]);
 
         return (int) $pending->getKey();
+    }
+
+    /**
+     * Directory removal is limited to one generated Filament export directory.
+     *
+     * The stored path may use Windows separators because Filament builds it
+     * with DIRECTORY_SEPARATOR, so validation normalizes only for comparison.
+     */
+    public function guardExportDirectory(string $disk, string $path): void
+    {
+        $normalizedPath = str_replace('\\', '/', $path);
+        $segments = explode('/', $normalizedPath);
+
+        if (
+            $disk !== $this->configuredExportDisk()
+            || count($segments) !== 2
+            || $segments[0] !== self::EXPORT_DIRECTORY
+            || $segments[1] === ''
+            || in_array('.', $segments, true)
+            || in_array('..', $segments, true)
+        ) {
+            throw new InvalidArgumentException('Directory deletion is limited to generated Filament exports.');
+        }
+    }
+
+    /**
+     * Mirror Filament Exporter's private-disk fallback exactly.
+     *
+     * Filament refuses to generate private exports on the public disk when a
+     * local disk exists, and persists `local` on the export row instead. The
+     * deletion fence must authorize the same disk Filament actually selected.
+     */
+    private function configuredExportDisk(): string
+    {
+        $disk = (string) config('filament.default_filesystem_disk');
+        $disks = config('filesystems.disks');
+
+        return $disk === 'public' && is_array($disks) && array_key_exists('local', $disks)
+            ? 'local'
+            : $disk;
     }
 
     /**
