@@ -303,7 +303,21 @@ class StudentCertificateResource extends Resource
                     |CertificateReferenceExhaustedException $exception
                 ) {
                     self::refuse($exception);
-                    $action->halt();
+
+                    /*
+                     * cancel(), NOT halt() — and the difference is the operator's.
+                     *
+                     * halt() keeps the modal open so a correctable mistake can be
+                     * corrected. This action's modal is a bare CONFIRMATION: there
+                     * is no field to change, so halting leaves the operator staring
+                     * at a Confirm button that will fail again for the same reason.
+                     * cancel() closes it, and the notification carries the why.
+                     *
+                     * revokeAction() below keeps halt() deliberately: its modal
+                     * holds a typed reason, and losing that on a refusal would make
+                     * the operator write it twice.
+                     */
+                    $action->cancel();
                 }
             });
     }

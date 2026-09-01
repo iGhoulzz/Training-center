@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Domain\Enrollment\Actions\IssueStudentCertificateAction;
+use App\Domain\Enrollment\Enums\CertificateStatus;
 use App\Domain\Enrollment\Filament\Resources\StudentCertificateResource;
 use App\Domain\Enrollment\Filament\Resources\StudentCertificateResource\Pages\ListStudentCertificates;
 use App\Domain\Enrollment\Models\Batch;
@@ -10,9 +11,11 @@ use App\Domain\Enrollment\Models\Course;
 use App\Domain\Enrollment\Models\Enrollment;
 use App\Domain\Enrollment\Models\Student;
 use App\Domain\Enrollment\Models\StudentCertificate;
+use App\Domain\Enrollment\Support\CertificateReference;
 use App\Domain\Finance\Models\Charge;
 use App\Domain\Staff\Actions\SystemRoleWriter;
 use App\Models\User;
+use App\Support\CentreCalendar;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Livewire\Livewire;
@@ -232,7 +235,11 @@ it('refuses a crafted already-issued enrolment through the issue modal, without 
         ->mountAction('issue')
         ->setActionData(['enrollment_id' => $enrollment->getKey()])
         ->callMountedAction()
-        ->assertHasNoActionErrors();
+        ->assertHasNoActionErrors()
+        // THE EXACT NOTIFICATION, not merely "no errors". Without this the test
+        // stays green if self::refuse() is deleted and only halt() remains —
+        // the operator would get a silently closed modal and no explanation.
+        ->assertNotified(__('certificates.certificate_already_issued'));
 
     expect(StudentCertificate::query()->where('enrollment_id', $enrollment->getKey())->count())
         ->toBe(1, 'The refused issuance inserted a second row.');
@@ -248,8 +255,82 @@ it('refuses a crafted incomplete enrolment through the issue modal, without a 50
         ->mountAction('issue')
         ->setActionData(['enrollment_id' => $enrollment->getKey()])
         ->callMountedAction()
-        ->assertHasNoActionErrors();
+        ->assertHasNoActionErrors()
+        ->assertNotified(__('certificates.enrollment_not_completed'));
 
     expect(StudentCertificate::query()->where('enrollment_id', $enrollment->getKey())->count())
         ->toBe(0, 'A certificate was issued against an enrolment that is not completed.');
+});
+
+/*
+|--------------------------------------------------------------------------
+| Reference exhaustion, as the operator meets it
+|--------------------------------------------------------------------------
+|
+| CROSS-REVIEW, SECOND ROUND. The refusal tests above drove only
+| CertificateAlreadyIssuedException and EnrollmentNotCompletedException and
+| asserted "no action errors" — so removing the new exhaustion catch, or
+| removing self::refuse() while still halting, left the whole resource suite
+| green. A catch clause nothing exercises is a catch clause nobody knows is
+| missing.
+|
+| A picker that always draws the same characters makes exhaustion deterministic:
+| every attempt mints the identical reference, every attempt collides on
+| student_certificates_reference_number_unique, and the bounded loop runs out.
+*/
+
+/** Bind a reference generator whose every draw produces the same string. */
+function bindCollidingReference(): void
+{
+    app()->instance(CertificateReference::class, new CertificateReference(fn (int $max): int => 0));
+}
+
+it('notifies the operator when the issue action exhausts every reference draw', function () {
+    $enrollment = Enrollment::factory()->for($this->student)->for($this->batch)->completed()->create();
+
+    // The reference every draw will collide with.
+    $blocker = Enrollment::factory()->completed()->create();
+    StudentCertificate::factory()->for($blocker)->create([
+        'reference_number' => 'TC-'.CentreCalendar::yearOf(now()).'-22222222',
+    ]);
+
+    bindCollidingReference();
+
+    Livewire::actingAs($this->admin)
+        ->test(ListStudentCertificates::class)
+        ->mountAction('issue')
+        ->setActionData(['enrollment_id' => $enrollment->getKey()])
+        ->callMountedAction()
+        ->assertHasNoActionErrors()
+        ->assertNotified(__('certificates.reference_exhausted'));
+
+    expect(StudentCertificate::query()->where('enrollment_id', $enrollment->getKey())->count())
+        ->toBe(0, 'An exhausted issuance still inserted a row.');
+});
+
+it('notifies the operator when the replace row action exhausts every reference draw', function () {
+    $enrollment = Enrollment::factory()->for($this->student)->for($this->batch)->completed()->create();
+
+    $original = app(IssueStudentCertificateAction::class)->execute($this->admin, $enrollment);
+
+    $blocker = Enrollment::factory()->completed()->create();
+    StudentCertificate::factory()->for($blocker)->create([
+        'reference_number' => 'TC-'.CentreCalendar::yearOf(now()).'-22222222',
+    ]);
+
+    bindCollidingReference();
+
+    Livewire::actingAs($this->admin)
+        ->test(ListStudentCertificates::class)
+        ->callTableAction('replace', $original)
+        ->assertHasNoTableActionErrors()
+        ->assertNotified(__('certificates.reference_exhausted'));
+
+    expect($original->fresh()->status)->toBe(
+        CertificateStatus::Valid,
+        'The exhausted replacement left the original certificate in a non-valid state.',
+    );
+
+    expect(StudentCertificate::query()->where('enrollment_id', $enrollment->getKey())->count())
+        ->toBe(1, 'The exhausted replacement inserted a row anyway.');
 });
