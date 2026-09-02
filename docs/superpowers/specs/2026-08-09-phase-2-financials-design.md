@@ -187,7 +187,7 @@ The system design's `charges.status` enum was `unpaid | partial | paid | waived`
 
 **Resolved:** no status column. The table stores the *facts* a human decided — `written_off_at`, `written_off_by`, `written_off_reason` — and unpaid / partial / paid are computed by summing allocations. Filament sorts and filters through a SQL subquery.
 
-The same rule holds throughout Finance: **no status string column exists on any table in this domain.** Lifecycle is nullable fact columns; the label is derived. An architecture test enforces it.
+The same rule holds throughout Finance: **no status string column exists on any table in this domain.** Lifecycle is nullable fact columns; the label is derived.
 
 ### Correcting a charge
 
