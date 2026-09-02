@@ -11,6 +11,7 @@ use App\Domain\Enrollment\Enums\EnrollmentStatus;
 use App\Domain\Enrollment\Exceptions\BatchClosedException;
 use App\Domain\Enrollment\Exceptions\DuplicateEnrollmentException;
 use App\Domain\Enrollment\Exceptions\EnrollmentBatchChangedException;
+use App\Domain\Enrollment\Exceptions\EnrollmentHasCertificateException;
 use App\Domain\Enrollment\Exceptions\EnrollmentNotCompletableException;
 use App\Domain\Enrollment\Exceptions\EnrollmentNotWithdrawableException;
 use App\Domain\Enrollment\Exceptions\StudentNotEnrollableException;
@@ -374,11 +375,15 @@ class EnrollmentsRelationManager extends RelationManager
 
                 try {
                     app(DeleteEnrollmentAction::class)->execute($actor, $record);
-                } catch (ChargeAlreadyCommittedException|AuthorizationException $exception) {
+                } catch (
+                    ChargeAlreadyCommittedException|EnrollmentHasCertificateException
+                    |AuthorizationException $exception
+                ) {
                     /*
-                     * From P2-T03 a deletion can be refused for a reason that is
-                     * not about permission at all: the bill carries a payment, a
-                     * correction or a write-off. Catching it here is what turns
+                     * A deletion can be refused for a reason that is not about
+                     * permission at all: the bill carries a payment, a
+                     * correction or a write-off, or the certificate register
+                     * carries an issued document. Catching it here is what turns
                      * that into a readable notification rather than a 500 —
                      * design section 12 keeps an enrolment recorded in error
                      * deletable, and this is the boundary where "in error" stops
@@ -487,6 +492,7 @@ class EnrollmentsRelationManager extends RelationManager
     private static function refuse(
         BatchClosedException|DuplicateEnrollmentException|StudentNotEnrollableException
         |EnrollmentNotWithdrawableException|ChargeAlreadyCommittedException
+        |EnrollmentHasCertificateException
         |AuthorizationException $exception,
     ): void {
         Notification::make()

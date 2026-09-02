@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace App\Domain\Enrollment\Actions;
 
 use App\Domain\Enrollment\Exceptions\EnrollmentBatchChangedException;
+use App\Domain\Enrollment\Exceptions\EnrollmentHasCertificateException;
 use App\Domain\Enrollment\Models\Enrollment;
+use App\Domain\Enrollment\Models\StudentCertificate;
 use App\Domain\Enrollment\Support\EnrollmentMutex;
 use App\Domain\Finance\Actions\DeleteUncommittedChargeAction;
 use App\Models\User;
@@ -46,6 +48,8 @@ final class DeleteEnrollmentAction
 
     /**
      * @throws EnrollmentBatchChangedException if the enrolment moved batches.
+     * @throws EnrollmentHasCertificateException if a certificate was issued for
+     *                                           the enrolment.
      * @throws AuthorizationException if the actor may not delete enrolments.
      */
     public function execute(User $actor, Enrollment $enrollment): void
@@ -54,6 +58,12 @@ final class DeleteEnrollmentAction
             $held = $this->mutex->acquire($enrollment);
 
             Gate::forUser($actor)->authorize('delete', $held->enrollment);
+
+            if (StudentCertificate::query()
+                ->where('enrollment_id', $held->enrollment->getKey())
+                ->exists()) {
+                throw new EnrollmentHasCertificateException((int) $held->enrollment->getKey());
+            }
 
             /*
              * THE BILL GOES FIRST, IN THIS TRANSACTION (P2-T03, design §12).
