@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 use App\Filament\Pages\PasswordChange;
 use Filament\Facades\Filament;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+
+uses(RefreshDatabase::class);
 
 /*
 |--------------------------------------------------------------------------
