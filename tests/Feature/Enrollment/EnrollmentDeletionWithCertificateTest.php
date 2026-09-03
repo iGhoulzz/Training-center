@@ -14,10 +14,18 @@ use App\Domain\Enrollment\Models\StudentCertificate;
 use App\Domain\Staff\Actions\SystemRoleWriter;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
-use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Foundation\Testing\DatabaseTruncation;
+use Illuminate\Foundation\Testing\RefreshDatabaseState;
+use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Livewire\Livewire;
 
-uses(RefreshDatabase::class);
+uses(DatabaseTruncation::class);
+
+afterAll(function (): void {
+    RefreshDatabaseState::$migrated = false;
+});
 
 beforeEach(function (): void {
     $this->seed(RolePermissionSeeder::class);
@@ -72,6 +80,73 @@ it('refuses to delete an enrolment that holds any certificate', function (Certif
     'revoked certificate' => CertificateStatus::Revoked,
     'replaced certificate' => CertificateStatus::Replaced,
 ]);
+
+it('refuses deletion when a certificate committed after the transaction snapshot became stale', function (): void {
+    // Catches removing lockForUpdate() from DeleteEnrollmentAction's certificate
+    // query: its ordinary snapshot read would miss this row and hit the FK.
+    $enrollment = Enrollment::factory()->for($this->batch)->create();
+
+    // Warm the permission cache before the transaction fixes its snapshot. A
+    // cold permission-cache write would otherwise make a later ordinary read
+    // current for a reason unrelated to the certificate query's own lock.
+    Gate::forUser($this->admin)->authorize('delete', $enrollment);
+
+    Config::set(
+        'database.connections.enrollment_deletion_certificate_probe',
+        Config::get('database.connections.'.config('database.default')),
+    );
+    DB::purge('enrollment_deletion_certificate_probe');
+    $secondary = DB::connection('enrollment_deletion_certificate_probe');
+
+    expect($secondary->selectOne('select connection_id() as id')->id)
+        ->not->toBe(DB::connection()->selectOne('select connection_id() as id')->id);
+
+    DB::beginTransaction();
+    $transactionEnded = false;
+
+    try {
+        // EnrollmentMutex::acquire() starts with the same ordinary read.
+        Enrollment::query()->count();
+
+        $reference = 'TC-'.now()->year.'-DELETE01';
+
+        $secondary->table('student_certificates')->insert([
+            'enrollment_id' => $enrollment->getKey(),
+            'reference_number' => $reference,
+            'student_name' => 'Snapshot Probe',
+            'course_name' => 'Snapshot Probe Course',
+            'completed_on' => now()->toDateString(),
+            'issued_at' => now(),
+            'issued_by' => $this->admin->getKey(),
+            'status' => CertificateStatus::Valid->value,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $thrown = null;
+
+        try {
+            $this->deleteEnrollment->execute($this->admin, $enrollment);
+        } catch (EnrollmentHasCertificateException $exception) {
+            $thrown = $exception;
+        }
+
+        expect($thrown)->toBeInstanceOf(EnrollmentHasCertificateException::class)
+            ->and($thrown?->enrollmentId)->toBe((int) $enrollment->getKey())
+            ->and($thrown?->getMessage())->toBe(__('enrollment.enrollment_has_certificate'));
+
+        DB::rollBack();
+        $transactionEnded = true;
+    } finally {
+        if (! $transactionEnded && DB::transactionLevel() > 0) {
+            DB::rollBack();
+        }
+
+        $secondary->table('student_certificates')
+            ->where('reference_number', $reference ?? '')
+            ->delete();
+    }
+});
 
 it('notifies an administrator when the panel refuses a certified enrolment deletion', function (): void {
     // Catches removing EnrollmentHasCertificateException from the panel action

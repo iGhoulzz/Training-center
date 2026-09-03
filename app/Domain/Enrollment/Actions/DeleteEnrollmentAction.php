@@ -61,6 +61,7 @@ final class DeleteEnrollmentAction
 
             if (StudentCertificate::query()
                 ->where('enrollment_id', $held->enrollment->getKey())
+                ->lockForUpdate()
                 ->exists()) {
                 throw new EnrollmentHasCertificateException((int) $held->enrollment->getKey());
             }
