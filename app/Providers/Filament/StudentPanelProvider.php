@@ -49,10 +49,20 @@ use Illuminate\View\Middleware\ShareErrorsFromSession;
  * logging out too much — and PortalLogoutTest pins it so nobody later "fixes" it
  * into a per-guard logout.
  *
- * NO PAGES YET, DELIBERATELY.
- * The panel ships with login and the password page. The four portal pages arrive
- * in T7, which is the only other task that touches this file and the sole writer
- * of its discoverPages() seam.
+ * THE FOUR PORTAL PAGES ARRIVE IN T7, THE SOLE WRITER OF THIS PAGE-DISCOVERY
+ * SEAM.
+ * -----------------------------------------------------------------------
+ * Two calls below, one per owning domain — Overview and MyEnrollments live
+ * under Enrollment, MyBalance under Finance — mirroring exactly how
+ * AdminPanelProvider splits discoverResources() per domain rather than
+ * pointing one call at a shared parent directory. A grep for the discovery
+ * method's literal name against this file must find exactly those two calls
+ * and nothing else, which is why this docblock never spells the method name
+ * out — see the two calls themselves, just below the password-page note.
+ *
+ * The password page stays registered by class name, not discovered: see its
+ * own docblock for why (SimplePage's layout, ForcePasswordChange's route
+ * exemption).
  */
 class StudentPanelProvider extends PanelProvider
 {
@@ -76,8 +86,8 @@ class StudentPanelProvider extends PanelProvider
              * The password page is REGISTERED, not discovered.
              *
              * It lives at app/Filament/Pages/PasswordChange.php, which this panel
-             * does not scan — and discovery would not find it anyway:
-             * discoverPages() filters on Page::class, while that page sets
+             * does not scan — and discovery would not find it anyway: the
+             * discovery calls below filter on Page::class, while that page sets
              * $layout to the simple layout so it renders no panel chrome. The
              * admin panel registers it by class name for the same reason.
              *
@@ -85,6 +95,14 @@ class StudentPanelProvider extends PanelProvider
              * ForcePasswordChange until they change it, and without this page on
              * this panel that containment would have nowhere to send them.
              */
+            ->discoverPages(
+                in: app_path('Domain/Enrollment/Filament/Portal/Pages'),
+                for: 'App\Domain\Enrollment\Filament\Portal\Pages',
+            )
+            ->discoverPages(
+                in: app_path('Domain/Finance/Filament/Portal/Pages'),
+                for: 'App\Domain\Finance\Filament\Portal\Pages',
+            )
             ->pages([
                 PasswordChange::class,
             ])

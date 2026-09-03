@@ -9,6 +9,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Testing\File;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Testing\TestResponse;
 use Tests\TestCase;
 
 /*
@@ -376,6 +377,40 @@ function recordsActivityModels(): array
     sort($classes);
 
     return $classes;
+}
+
+/**
+ * A response body with Livewire's serialised state payload removed.
+ *
+ * WHY THIS EXISTS, AND IT IS NOT A CONVENIENCE.
+ * ------------------------------------------------
+ * A Livewire page embeds every public property in a `wire:snapshot` attribute
+ * as JSON. `assertSee()` searches the RAW body, so it matches that payload just
+ * as readily as the rendered HTML — which means an assertion that a page
+ * "shows" a value passes even when the page renders nothing at all.
+ *
+ * Measured, not theorised: replacing the whole of `portal/my-enrollments`
+ * with `<div>ENTIRE VIEW REMOVED BY PROBE</div>` left
+ * "renders for a student holding view_own_enrollment" GREEN, because the course
+ * code, batch code, status label and both dates were all still present in the
+ * snapshot.
+ *
+ * Strip the payload and the assertion means what its name says. Note the
+ * inverse does NOT need this: `assertDontSee()` over the raw body is STRICTER,
+ * since it also proves the value never reached the payload — which is exactly
+ * the guarantee PortalRowIsolationTest wants, and why those tests were sound
+ * as written.
+ */
+function renderedWithoutLivewireState(TestResponse $response): string
+{
+    $body = $response->getContent();
+
+    if (! is_string($body)) {
+        return '';
+    }
+
+    // wire:snapshot and wire:effects carry the serialised state.
+    return (string) preg_replace('/\swire:(snapshot|effects)="[^"]*"/i', ' ', $body);
 }
 
 /** The file's PHP source with all comments and docblocks removed. */
