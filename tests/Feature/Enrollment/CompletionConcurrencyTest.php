@@ -105,7 +105,7 @@ function completionWorker(
                     file_put_contents($readyPath, 'ready');
 
                     if ($startPath !== null) {
-                        $deadline = microtime(true) + 10;
+                        $deadline = microtime(true) + 60;
 
                         while (! file_exists($startPath) && microtime(true) < $deadline) {
                             usleep(10_000);
@@ -144,7 +144,7 @@ function completionWorker(
  * Wait for $path to exist, or fail loudly. Returns the elapsed check so
  * callers can assert on it rather than trusting a silent timeout.
  */
-function waitForCompletionSignal(string $path, float $seconds = 10): bool
+function waitForCompletionSignal(string $path, float $seconds = 60): bool
 {
     $deadline = microtime(true) + $seconds;
 

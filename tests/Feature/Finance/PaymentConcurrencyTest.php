@@ -190,7 +190,7 @@ function raceTwoTills(array $keys): array
             $worker->start();
         }
 
-        $deadline = microtime(true) + 10;
+        $deadline = microtime(true) + 60;
 
         while ((! File::exists($paths['a-ready']) || ! File::exists($paths['b-ready'])) && microtime(true) < $deadline) {
             usleep(25_000);

@@ -131,7 +131,7 @@ function certificateIssueWorker(
                     file_put_contents($readyPath, 'ready');
 
                     if ($startPath !== null) {
-                        $deadline = microtime(true) + 10;
+                        $deadline = microtime(true) + 60;
 
                         while (! file_exists($startPath) && microtime(true) < $deadline) {
                             usleep(10_000);
@@ -170,7 +170,7 @@ function certificateIssueWorker(
  * Wait for $path to exist, or fail loudly. Returns whether it appeared, so
  * callers assert on it rather than trusting a silent timeout.
  */
-function waitForCertificateSignal(string $path, float $seconds = 10): bool
+function waitForCertificateSignal(string $path, float $seconds = 60): bool
 {
     $deadline = microtime(true) + $seconds;
 

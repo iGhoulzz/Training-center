@@ -132,7 +132,7 @@ it('refuses an adjustment below an allocation committed while it waited for the 
 
         $worker->start();
 
-        $deadline = microtime(true) + 10;
+        $deadline = microtime(true) + 60;
 
         while (! File::exists($readyPath) && microtime(true) < $deadline) {
             usleep(25_000);

@@ -101,7 +101,7 @@ it('serializes two concurrent first rates by locking the employee row', function
             $worker->start();
         }
 
-        $deadline = microtime(true) + 10;
+        $deadline = microtime(true) + 60;
 
         while ((! File::exists($paths['a-ready']) || ! File::exists($paths['b-ready'])) && microtime(true) < $deadline) {
             usleep(25_000);

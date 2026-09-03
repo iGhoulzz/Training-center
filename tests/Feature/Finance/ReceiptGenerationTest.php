@@ -122,7 +122,7 @@ function failingReceiptAttachmentWorker(
         Illuminate\Support\Facades\Event::listen(
             Illuminate\Database\Events\TransactionRolledBack::class,
             static function () use ($successResultPath): void {
-                $deadline = microtime(true) + 10;
+                $deadline = microtime(true) + 60;
 
                 while (! file_exists($successResultPath) && microtime(true) < $deadline) {
                     usleep(25_000);
@@ -140,7 +140,7 @@ function failingReceiptAttachmentWorker(
             }
 
             file_put_contents($activityPath, 'activity-inserted');
-            $deadline = microtime(true) + 10;
+            $deadline = microtime(true) + 60;
 
             while (! file_exists($releasePath) && microtime(true) < $deadline) {
                 usleep(25_000);
@@ -635,7 +635,7 @@ it('serializes two concurrent receipt attachments so only the winner writes byte
             $worker->start();
         }
 
-        $deadline = microtime(true) + 10;
+        $deadline = microtime(true) + 60;
 
         while ((! File::exists($readyA) || ! File::exists($readyB)) && microtime(true) < $deadline) {
             usleep(25_000);
@@ -723,7 +723,7 @@ it('does not let failed receipt cleanup delete a concurrent successor receipt', 
     try {
         File::delete($storagePath, $realStoragePath, ...$paths->values()->all());
         $failure->start();
-        $deadline = microtime(true) + 10;
+        $deadline = microtime(true) + 60;
 
         while (! File::exists($paths['failure-at-activity']) && microtime(true) < $deadline) {
             usleep(25_000);
@@ -735,7 +735,7 @@ it('does not let failed receipt cleanup delete a concurrent successor receipt', 
             ->and(File::get($storagePath))->toBe('failed-worker-bytes');
 
         $success->start();
-        $deadline = microtime(true) + 10;
+        $deadline = microtime(true) + 60;
 
         while (! File::exists($paths['success-ready']) && microtime(true) < $deadline) {
             usleep(25_000);

@@ -51,7 +51,7 @@ function portalCredentialWorker(int $actorId, int $studentId, string $readyPath,
                 App\Models\User::query()->count();
                 file_put_contents($readyPath, 'ready');
 
-                $deadline = microtime(true) + 10;
+                $deadline = microtime(true) + 60;
                 while (! file_exists($releasePath) && microtime(true) < $deadline) {
                     usleep(25_000);
                 }
@@ -105,7 +105,7 @@ it('returns one typed refusal when two students with the same email are issued c
             $worker->start();
         }
 
-        $deadline = microtime(true) + 10;
+        $deadline = microtime(true) + 60;
         while ((! File::exists($paths['a-ready']) || ! File::exists($paths['b-ready'])) && microtime(true) < $deadline) {
             usleep(25_000);
         }

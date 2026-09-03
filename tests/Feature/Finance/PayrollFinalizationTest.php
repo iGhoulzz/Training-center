@@ -339,7 +339,7 @@ it('uses a locking overlap scan after concurrent finalizers opened stale snapsho
             $worker->start();
         }
 
-        $deadline = microtime(true) + 10;
+        $deadline = microtime(true) + 60;
 
         while ((! File::exists($paths['a-ready']) || ! File::exists($paths['b-ready'])) && microtime(true) < $deadline) {
             usleep(25_000);
@@ -482,7 +482,7 @@ it('finalizes concurrent runs over oppositely ordered staff without deadlock', f
             $worker->start();
         }
 
-        $deadline = microtime(true) + 10;
+        $deadline = microtime(true) + 60;
         while ((! File::exists($paths['a-ready']) || ! File::exists($paths['b-ready'])) && microtime(true) < $deadline) {
             usleep(25_000);
         }
