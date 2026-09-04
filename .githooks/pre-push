@@ -2,9 +2,9 @@
 #
 # Full gate before anything leaves this machine.
 #
-# stdin carries the ref tuples git supplies to pre-push. Nothing here reads them
-# yet, but the hook must not consume or close stdin in a way that would break a
-# future reader — so it is left alone rather than redirected.
+# stdin carries the ref tuples git supplies to pre-push. They are captured up
+# front, because composer and php below inherit this hook's stdin and would
+# consume them; the frontend-build decision at the bottom needs them.
 #
 # Exit codes are propagated verbatim. `exit 1` for everything would tell whoever
 # is reading the terminal that something failed without saying which stage, and
@@ -13,26 +13,54 @@
 root=$(git rev-parse --show-toplevel) || exit 1
 cd "$root" || exit 1
 
+tuples=$(cat)
+
 # The worktree must be clean, or the gate certifies files that are not the
 # commits being pushed. See scripts/bin/guard-clean-worktree.php.
-php scripts/bin/guard-clean-worktree.php || exit $?
+php scripts/bin/guard-clean-worktree.php </dev/null || exit $?
 
 # composer verify = validate --strict + verify:fast + the serialised suite.
 # Called as one script rather than restated stage by stage, so this hook and CI
 # cannot drift apart.
-composer verify || exit $?
+composer verify </dev/null || exit $?
 
-# The frontend build always runs. It was originally conditional on the diff, but
-# a clean worktree at pre-push has no ordinary diff even when the pushed commits
-# changed Blade or CSS, so the detector would have had to parse the ref tuples
-# above. The build is seconds against the suite; a detector that enforces less
-# than it claims is not worth those seconds.
+# ---------------------------------------------------------------------------
+# The frontend build, and why it is conditional again
+# ---------------------------------------------------------------------------
 #
-# GitHub Desktop's Git-for-Windows shell can execute npm.cmd directly, but its
-# `npm` resolves to Node's bash wrapper. Desktop bundles `sh` without `bash`, so
-# that wrapper falls through to WSL and fails after the whole suite has passed.
-# Unix installations use the normal npm executable.
-case "$(uname -s)" in
-    MINGW*|MSYS*|CYGWIN*) npm.cmd run build || exit $? ;;
-    *) npm run build || exit $? ;;
-esac
+# An earlier version of this hook ran the build unconditionally and said why: a
+# conditional version had been tried, `git diff` finds nothing at pre-push
+# because the worktree is clean by then, and "a detector that enforces less than
+# it claims is not worth those seconds".
+#
+# THE DIAGNOSIS WAS RIGHT AND THE CONCLUSION EXPIRED. `git diff` is indeed the
+# wrong instrument, so the detector reads the ref tuples instead — which is
+# exactly what that comment said a correct one would have to do. And the build
+# is not "seconds": it resolves fonts from fonts.bunny.net over the NETWORK, so
+# it dies with `getaddrinfo ENOTFOUND` on an offline machine, and it dies with
+# `'vite' is not recognized` in a worktree where nobody has run `npm ci`. Both
+# happened on the same day, on branches touching no frontend file, each after
+# the full suite had already passed.
+#
+# NOTHING IS LOST BY SKIPPING. .github/workflows/ci.yml runs `npm run build` on
+# every push, unconditionally, and that stays true. CI is the backstop and it is
+# stricter than this hook: a broken asset build cannot reach `main` because of a
+# local skip, it can only reach CI, which is where a build failure belongs.
+#
+# THE DECISION IS NOT MADE HERE. scripts/bin/pre-push-needs-build.php owns it,
+# over Tooling\FrontendBuildScope, so it can be tested — see
+# tests/Unit/Tooling/FrontendBuildScopeTest.php. A pattern living in this file
+# could only be exercised by running the whole gate, which means a mistake in it
+# would be found by a push that wrongly skipped: the failure nobody notices.
+#
+# Exit 0 means build, exit 1 means skip, and every uncertain case exits 0.
+if printf '%s\n' "$tuples" | php scripts/bin/pre-push-needs-build.php; then
+    # GitHub Desktop's Git-for-Windows shell can execute npm.cmd directly, but
+    # its `npm` resolves to Node's bash wrapper. Desktop bundles `sh` without
+    # `bash`, so that wrapper falls through to WSL and fails after the whole
+    # suite has passed. Unix installations use the normal npm executable.
+    case "$(uname -s)" in
+        MINGW*|MSYS*|CYGWIN*) npm.cmd run build || exit $? ;;
+        *) npm run build || exit $? ;;
+    esac
+fi
