@@ -16,6 +16,7 @@ use Illuminate\Foundation\Testing\RefreshDatabaseState;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
+use PHPUnit\Framework\Assert;
 use Spatie\Permission\Models\Permission;
 use Symfony\Component\Process\Process;
 
@@ -106,7 +107,7 @@ function completionWorker(
 
                     if ($startPath !== null) {
                         // 60 seconds of headroom for slow CI nodes; the poll exits early on success.
-        $deadline = hrtime(true) + 60_000_000_000;
+                        $deadline = hrtime(true) + 60_000_000_000;
 
                         while (! file_exists($startPath) && hrtime(true) < $deadline) {
                             usleep(10_000);
@@ -145,11 +146,15 @@ function completionWorker(
  * Wait for $path to exist, or fail loudly. Returns the elapsed check so
  * callers can assert on it rather than trusting a silent timeout.
  */
-function waitForCompletionSignal(string $path, float $seconds = 60): bool
+function waitForCompletionSignal(string $path, float $seconds = 60, ?Process $worker = null): bool
 {
-    $deadline = hrtime(true) + ($seconds * 1_000_000_000);
+    $deadline = hrtime(true) + (int) ($seconds * 1_000_000_000);
 
     while (! File::exists($path) && hrtime(true) < $deadline) {
+        if ($worker !== null && ! $worker->isRunning()) {
+            Assert::fail('Worker died unexpectedly: '.$worker->getErrorOutput());
+        }
+
         usleep(25_000);
     }
 
@@ -210,8 +215,8 @@ it('lets one of two simultaneous completions through and types the other\'s refu
         $workerA->start();
         $workerB->start();
 
-        expect(waitForCompletionSignal($readyPathA))->toBeTrue('Worker A never established its old snapshot.')
-            ->and(waitForCompletionSignal($readyPathB))->toBeTrue('Worker B never established its old snapshot.');
+        expect(waitForCompletionSignal($readyPathA, 60, $workerA))->toBeTrue('Worker A never established its old snapshot.')
+            ->and(waitForCompletionSignal($readyPathB, 60, $workerB))->toBeTrue('Worker B never established its old snapshot.');
 
         expect($workerA->isRunning())->toBeTrue('Worker A finished before the starting gun.')
             ->and($workerB->isRunning())->toBeTrue('Worker B finished before the starting gun.')
