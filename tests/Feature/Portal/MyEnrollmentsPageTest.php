@@ -46,15 +46,23 @@ function enrollmentsActor(array $abilities): array
 /**
  * A completed enrolment for $student, with a distinctive course and batch.
  *
- * THE DATES ARE FIXED AND DELIBERATELY OLD, and that is a bug fix rather than
- * tidiness. An earlier version of the dates assertion used whatever the factory
- * produced — which is today — and a mutation that DELETED the whole dates
- * column from the view did not fail it, because today's date also renders
- * elsewhere on the page (the batch carries its own dates). The assertion was
- * agreeing with the page rather than testing it.
+ * THE DATES ARE FIXED, DISTINCTIVE, AND CHOSEN TO STRADDLE MIDNIGHT UTC.
  *
- * 2019-03-07 and 2021-11-23 cannot be produced by any other column, so seeing
- * them proves the enrolment's own date cells rendered.
+ * Two separate lessons are baked into these values.
+ *
+ * FIRST, they are distinctive. An earlier version used whatever the factory
+ * produced — today — and a mutation that DELETED the whole dates column did not
+ * fail it, because today's date also renders elsewhere on the page (the batch
+ * carries its own dates). The assertion was agreeing with the page.
+ *
+ * SECOND, THE TIMES ARE 22:30 UTC, WHICH IS THE NEXT DAY IN TRIPOLI. My first
+ * fix used 09:00 UTC precisely because it is unambiguous in both zones — which
+ * is exactly what made it unable to detect that the page was rendering UTC
+ * rather than centre-local dates. Cross-review caught that. A fixture chosen to
+ * be stable in both timezones cannot test which timezone is used.
+ *
+ * So: stored 2019-03-07 22:30 UTC, displayed 2019-03-08 in Tripoli. Asserting
+ * the Tripoli date fails the moment the page formats the raw UTC value.
  */
 function completedEnrollmentFor(Student $student, string $courseCode, string $batchCode): Enrollment
 {
@@ -62,8 +70,8 @@ function completedEnrollmentFor(Student $student, string $courseCode, string $ba
     $batch = Batch::factory()->for($course)->create(['code' => $batchCode]);
 
     return Enrollment::factory()->completed()->for($student)->for($batch)->create([
-        'enrolled_at' => CarbonImmutable::parse('2019-03-07 09:00:00', 'UTC'),
-        'completed_at' => CarbonImmutable::parse('2021-11-23 09:00:00', 'UTC'),
+        'enrolled_at' => CarbonImmutable::parse('2019-03-07 22:30:00', 'UTC'),
+        'completed_at' => CarbonImmutable::parse('2021-11-23 22:30:00', 'UTC'),
     ]);
 }
 
@@ -97,9 +105,16 @@ it('renders for a student holding view_own_enrollment', function () {
          * that referenced keys resolve, so two newly-unreferenced keys go
          * unnoticed.
          */
-        // LITERAL dates, not a re-read of the model — see completedEnrollmentFor().
-        ->toContain('2019-03-07')
-        ->toContain('2021-11-23');
+        /*
+         * THE TRIPOLI DATES, one day after the stored UTC ones. Literal, not a
+         * re-read of the model and not a call to CentreCalendar — either would
+         * let the assertion agree with whatever the page did.
+         */
+        ->toContain('2019-03-08')
+        ->toContain('2021-11-24')
+        // And NOT the UTC dates, which is what the page used to print.
+        ->not->toContain('2019-03-07')
+        ->not->toContain('2021-11-23');
 });
 
 it('shows the not-completed placeholder for an enrolment still in progress', function () {
@@ -110,7 +125,7 @@ it('shows the not-completed placeholder for an enrolment still in progress', fun
     $enrollment = Enrollment::factory()
         ->for($student)
         ->for(Batch::factory()->for(Course::factory()->create(['name_en' => 'In Progress Course'])))
-        ->create(['enrolled_at' => CarbonImmutable::parse('2018-05-14 09:00:00', 'UTC')]);
+        ->create(['enrolled_at' => CarbonImmutable::parse('2018-05-14 22:30:00', 'UTC')]);
 
     expect($enrollment->completed_at)->toBeNull();
 
@@ -120,7 +135,8 @@ it('shows the not-completed placeholder for an enrolment still in progress', fun
 
     expect($rendered)
         ->toContain(__('portal.not_completed'))
-        ->toContain('2018-05-14');
+        ->toContain('2018-05-15')
+        ->not->toContain('2018-05-14');
 });
 
 it('refuses a student without view_own_enrollment', function () {

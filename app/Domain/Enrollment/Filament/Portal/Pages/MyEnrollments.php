@@ -8,6 +8,7 @@ use App\Domain\Enrollment\Enums\CertificateStatus;
 use App\Domain\Enrollment\Models\Enrollment;
 use App\Domain\Enrollment\Models\StudentCertificate;
 use App\Domain\Enrollment\Support\AuthenticatedStudent;
+use App\Support\CentreCalendar;
 use BackedEnum;
 use Filament\Pages\Page;
 use Filament\Support\Icons\Heroicon;
@@ -184,8 +185,21 @@ class MyEnrollments extends Page
         return [
             'course' => $enrollment->batch->course->name(),
             'batch_code' => $enrollment->batch->code,
-            'enrolled_at' => $enrollment->enrolled_at->format('Y-m-d'),
-            'completed_at' => $enrollment->completed_at?->format('Y-m-d'),
+            /*
+             * CROSS-REVIEW FINDING: THESE WERE UTC.
+             *
+             * `enrolled_at` is stored UTC, and formatting it directly shows the
+             * student a UTC calendar date. Between 22:00 and 24:00 UTC that is
+             * YESTERDAY in Tripoli — the centre's own timezone, and the one the
+             * student is standing in. Certificates already localise
+             * `completed_on` through CentreCalendar for exactly this reason; the
+             * portal disagreeing with the certificate about the date of the same
+             * enrolment is the visible form of the bug.
+             */
+            'enrolled_at' => CentreCalendar::localise($enrollment->enrolled_at)->format('Y-m-d'),
+            'completed_at' => $enrollment->completed_at === null
+                ? null
+                : CentreCalendar::localise($enrollment->completed_at)->format('Y-m-d'),
             'status_label' => $enrollment->status->label(),
             'certificate_reference' => $certificate?->reference_number,
             'certificate_status_label' => $certificate?->status->label(),

@@ -103,13 +103,20 @@ beforeEach(function () {
     // Every ability on A's own account — bespoke, direct grant, not the
     // seeded `student` role, so this test does not depend on that role's
     // shape staying what it is today.
-    $this->a['user']->givePermissionTo([
+    $abilities = [
         'access_student_portal',
         'view_own_student_record',
         'view_own_enrollment',
         'view_own_balance',
         'view_own_certificate',
-    ]);
+    ];
+
+    /*
+     * BOTH students hold every ability, so the whole file can be run in either
+     * direction. See the bidirectional test at the bottom for why that matters.
+     */
+    $this->a['user']->givePermissionTo($abilities);
+    $this->b['user']->givePermissionTo($abilities);
 });
 
 it('never shows student B\'s name, code or status on A\'s overview page', function () {
@@ -227,4 +234,75 @@ it('still shows each of A\'s own markers on the page that owns it', function () 
         $this->actingAs($actor, 'student')->get('/portal/my-balance')->assertSuccessful(),
     );
     expect($balance)->toContain(__('portal.amount_lyd', ['amount' => $this->a['amount']]));
+});
+
+/*
+|--------------------------------------------------------------------------
+| The same claim, run from BOTH sides
+|--------------------------------------------------------------------------
+|
+| CROSS-REVIEW FINDING, AND IT IS A REAL HOLE IN EVERYTHING ABOVE.
+|
+| Every test in this file signs in as A and asserts B's data is absent. A is
+| built first, so A holds the LOWER ids throughout. A page that ignored the
+| resolved student entirely and returned, say, the first student's rows — or
+| anything with an implicit ordering that favours the lower id — would hand A
+| exactly A's own data and pass every assertion above while consulting
+| AuthenticatedStudent for nothing.
+|
+| The mutations that were run against this file do not cover it either: dropping
+| a `where('student_id')` returns BOTH students' rows, so B's markers appear and
+| the tests catch it. The uncaught shape is narrower — a page that returns ONE
+| student's rows, just not necessarily the viewer's.
+|
+| Signing in as B closes it. B holds the HIGHER ids, so a page biased towards the
+| lower id hands B student A's data, and the absence assertions fire. Whichever
+| way a buggy page leans, one of the two directions catches it.
+*/
+
+it('shows none of student A\'s markers on any of B\'s pages, the reverse of every test above', function () {
+    $actor = $this->b['user']->fresh();
+
+    $foreign = [
+        'IsolationA StudentA',
+        'STU-ISO-A',
+        $this->a['course'],
+        $this->a['batch'],
+        $this->a['reference'],
+        __('portal.amount_lyd', ['amount' => $this->a['amount']]),
+        __('portal.balance_enrollment_row', ['id' => $this->a['enrollment']->getKey()]),
+    ];
+
+    foreach (['/portal/overview', '/portal/my-enrollments', '/portal/my-balance'] as $url) {
+        $response = $this->actingAs($actor, 'student')->get($url);
+
+        $response->assertSuccessful();
+
+        foreach ($foreign as $marker) {
+            $response->assertDontSee($marker, false);
+        }
+    }
+});
+
+it('still shows each of B\'s own markers on the page that owns it', function () {
+    // The positive control for the direction above, mirroring the one A has.
+    $actor = $this->b['user']->fresh();
+
+    $overview = renderedWithoutLivewireState(
+        $this->actingAs($actor, 'student')->get('/portal/overview')->assertSuccessful(),
+    );
+    expect($overview)->toContain('IsolationB StudentB')->toContain('STU-ISO-B');
+
+    $enrollments = renderedWithoutLivewireState(
+        $this->actingAs($actor, 'student')->get('/portal/my-enrollments')->assertSuccessful(),
+    );
+    expect($enrollments)
+        ->toContain($this->b['course'])
+        ->toContain($this->b['batch'])
+        ->toContain($this->b['reference']);
+
+    $balance = renderedWithoutLivewireState(
+        $this->actingAs($actor, 'student')->get('/portal/my-balance')->assertSuccessful(),
+    );
+    expect($balance)->toContain(__('portal.amount_lyd', ['amount' => $this->b['amount']]));
 });
