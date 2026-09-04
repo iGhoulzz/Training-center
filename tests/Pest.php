@@ -9,6 +9,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Testing\File;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Testing\TestResponse;
 use Tests\TestCase;
 
 /*
@@ -376,6 +377,87 @@ function recordsActivityModels(): array
     sort($classes);
 
     return $classes;
+}
+
+/**
+ * A response body with Livewire's serialised state payload removed.
+ *
+ * WHY THIS EXISTS, AND IT IS NOT A CONVENIENCE.
+ * ------------------------------------------------
+ * A Livewire page embeds every public property in a `wire:snapshot` attribute
+ * as JSON. `assertSee()` searches the RAW body, so it matches that payload just
+ * as readily as the rendered HTML — which means an assertion that a page
+ * "shows" a value passes even when the page renders nothing at all.
+ *
+ * Measured, not theorised: replacing the whole of `portal/my-enrollments`
+ * with `<div>ENTIRE VIEW REMOVED BY PROBE</div>` left
+ * "renders for a student holding view_own_enrollment" GREEN, because the course
+ * code, batch code, status label and both dates were all still present in the
+ * snapshot.
+ *
+ * Strip the payload and the assertion means what its name says. Note the
+ * inverse does NOT need this: `assertDontSee()` over the raw body is STRICTER,
+ * since it also proves the value never reached the payload — which is exactly
+ * the guarantee PortalRowIsolationTest wants, and why those tests were sound
+ * as written.
+ */
+function renderedWithoutLivewireState(TestResponse $response): string
+{
+    $body = $response->getContent();
+
+    if (! is_string($body)) {
+        return '';
+    }
+
+    // wire:snapshot and wire:effects carry the serialised state.
+    return (string) preg_replace('/\swire:(snapshot|effects)="[^"]*"/i', ' ', $body);
+}
+
+/**
+ * A file's PHP with comments AND string literals removed, leaving only code.
+ *
+ * WHY THIS EXISTS SEPARATELY FROM appSourceWithoutComments().
+ * ------------------------------------------------------------
+ * That one strips T_COMMENT and T_DOC_COMMENT only. Anything inside a string
+ * survives, so a scanner built on it answers "does this text appear anywhere in
+ * the file", not "does this code do that". Cross-review demonstrated the bypass
+ * against PortalScopeArchTest: a page containing the literal string
+ * "AuthenticatedStudent::class)->resolve(" satisfied the resolver check while
+ * resolving nothing.
+ *
+ * DatabaseIsolationTest carries a source-based twin of this function, written
+ * after the same class of failure — that file once exempted itself because a
+ * raw-text search matched its own error message. The two are kept apart because
+ * this one takes a PATH and that one takes SOURCE, and consolidating them would
+ * edit a seam this task does not own; recorded for T14 rather than done here.
+ *
+ * A scanner must look at what the code DOES, never at what it says.
+ */
+function appCodeWithoutStringsOrComments(string $path): string
+{
+    $skipped = [
+        T_COMMENT,
+        T_DOC_COMMENT,
+        T_CONSTANT_ENCAPSED_STRING,
+        T_ENCAPSED_AND_WHITESPACE,
+        T_INLINE_HTML,
+    ];
+
+    $code = '';
+
+    foreach (token_get_all((string) file_get_contents($path)) as $token) {
+        if (! is_array($token)) {
+            $code .= $token;
+
+            continue;
+        }
+
+        // A space, not nothing: removing the token entirely could fuse two
+        // identifiers either side of it into one that never existed.
+        $code .= in_array($token[0], $skipped, true) ? ' ' : $token[1];
+    }
+
+    return $code;
 }
 
 /** The file's PHP source with all comments and docblocks removed. */
