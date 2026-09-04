@@ -130,12 +130,20 @@ it('resolves the viewing student through AuthenticatedStudent on every portal pa
      * resolver is never used. A page could name the class, derive a student
      * some other way, and this test would have called that compliant.
      *
-     * The pattern now requires the class literal AND a `->resolve()` on the
-     * expression it produces. Comments and string literals are stripped first
-     * by appSourceWithoutComments(), so a page cannot satisfy this by
-     * mentioning the call in prose — which matters here, because Overview's own
-     * docblock says "AuthenticatedStudent::resolve()" and would otherwise
-     * exempt the file it documents.
+     * The pattern requires the class literal AND a `->resolve()` on the
+     * expression it produces.
+     *
+     * AND IT READS CODE, NOT TEXT. An earlier version of this comment claimed
+     * appSourceWithoutComments() strips string literals. IT DOES NOT — it
+     * removes T_COMMENT and T_DOC_COMMENT and nothing else, so a page holding
+     * the literal string "AuthenticatedStudent::class)->resolve(" satisfied the
+     * check while resolving nothing. Cross-review demonstrated that bypass, and
+     * the false claim was in this docblock, in the file whose entire job is
+     * catching claims that are not true of the code.
+     *
+     * appCodeWithoutStringsOrComments() strips both. That also keeps Overview's
+     * own docblock — which says "AuthenticatedStudent::resolve()" in prose —
+     * from exempting the file it documents.
      *
      * STILL A SOURCE SCAN, AND STILL SAYS SO. Proving the call happens is not
      * proving the result was used to constrain the query — a page could resolve
@@ -146,7 +154,7 @@ it('resolves the viewing student through AuthenticatedStudent on every portal pa
     $offenders = [];
 
     foreach (portalPageFiles() as $path) {
-        $code = appSourceWithoutComments($path);
+        $code = appCodeWithoutStringsOrComments($path);
 
         if (preg_match('/AuthenticatedStudent::class\s*\)\s*->\s*resolve\s*\(/', $code) !== 1) {
             $offenders[] = str_replace(base_path().DIRECTORY_SEPARATOR, '', $path);

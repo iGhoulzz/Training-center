@@ -413,6 +413,53 @@ function renderedWithoutLivewireState(TestResponse $response): string
     return (string) preg_replace('/\swire:(snapshot|effects)="[^"]*"/i', ' ', $body);
 }
 
+/**
+ * A file's PHP with comments AND string literals removed, leaving only code.
+ *
+ * WHY THIS EXISTS SEPARATELY FROM appSourceWithoutComments().
+ * ------------------------------------------------------------
+ * That one strips T_COMMENT and T_DOC_COMMENT only. Anything inside a string
+ * survives, so a scanner built on it answers "does this text appear anywhere in
+ * the file", not "does this code do that". Cross-review demonstrated the bypass
+ * against PortalScopeArchTest: a page containing the literal string
+ * "AuthenticatedStudent::class)->resolve(" satisfied the resolver check while
+ * resolving nothing.
+ *
+ * DatabaseIsolationTest carries a source-based twin of this function, written
+ * after the same class of failure — that file once exempted itself because a
+ * raw-text search matched its own error message. The two are kept apart because
+ * this one takes a PATH and that one takes SOURCE, and consolidating them would
+ * edit a seam this task does not own; recorded for T14 rather than done here.
+ *
+ * A scanner must look at what the code DOES, never at what it says.
+ */
+function appCodeWithoutStringsOrComments(string $path): string
+{
+    $skipped = [
+        T_COMMENT,
+        T_DOC_COMMENT,
+        T_CONSTANT_ENCAPSED_STRING,
+        T_ENCAPSED_AND_WHITESPACE,
+        T_INLINE_HTML,
+    ];
+
+    $code = '';
+
+    foreach (token_get_all((string) file_get_contents($path)) as $token) {
+        if (! is_array($token)) {
+            $code .= $token;
+
+            continue;
+        }
+
+        // A space, not nothing: removing the token entirely could fuse two
+        // identifiers either side of it into one that never existed.
+        $code .= in_array($token[0], $skipped, true) ? ' ' : $token[1];
+    }
+
+    return $code;
+}
+
 /** The file's PHP source with all comments and docblocks removed. */
 function appSourceWithoutComments(string $path): string
 {
