@@ -142,6 +142,7 @@ return [
     'enrollment_not_completable' => 'Only an active enrolment can be completed.',
     'completion_not_reversible_status' => 'Only a completed enrolment can have its completion reversed.',
     'completion_not_reversible_certificate' => 'A valid certificate has been issued for this enrolment. Revoke it before reversing completion.',
+    'enrollment_has_certificate' => 'This enrolment has a certificate and cannot be deleted.',
 
     /*
      * Enum labels, reached by interpolation — BatchStatus::label() builds
