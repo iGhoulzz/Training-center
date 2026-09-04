@@ -31,6 +31,7 @@ use Illuminate\Support\Facades\Lang;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use PHPUnit\Framework\Assert;
 use Spatie\Activitylog\Models\Activity;
 use Symfony\Component\Process\Process;
 
@@ -122,9 +123,10 @@ function failingReceiptAttachmentWorker(
         Illuminate\Support\Facades\Event::listen(
             Illuminate\Database\Events\TransactionRolledBack::class,
             static function () use ($successResultPath): void {
-                $deadline = microtime(true) + 10;
+                // 60 seconds of headroom for slow CI nodes; the poll exits early on success.
+        $deadline = hrtime(true) + 60_000_000_000;
 
-                while (! file_exists($successResultPath) && microtime(true) < $deadline) {
+                while (! file_exists($successResultPath) && hrtime(true) < $deadline) {
                     usleep(25_000);
                 }
 
@@ -140,9 +142,10 @@ function failingReceiptAttachmentWorker(
             }
 
             file_put_contents($activityPath, 'activity-inserted');
-            $deadline = microtime(true) + 10;
+            // 60 seconds of headroom for slow CI nodes; the poll exits early on success.
+        $deadline = hrtime(true) + 60_000_000_000;
 
-            while (! file_exists($releasePath) && microtime(true) < $deadline) {
+            while (! file_exists($releasePath) && hrtime(true) < $deadline) {
                 usleep(25_000);
             }
 
@@ -635,9 +638,13 @@ it('serializes two concurrent receipt attachments so only the winner writes byte
             $worker->start();
         }
 
-        $deadline = microtime(true) + 10;
+        // 60 seconds of headroom for slow CI nodes; the poll exits early on success.
+        $deadline = hrtime(true) + 60_000_000_000;
 
-        while ((! File::exists($readyA) || ! File::exists($readyB)) && microtime(true) < $deadline) {
+        while ((! File::exists($readyA) || ! File::exists($readyB)) && hrtime(true) < $deadline) {
+            if (! $worker->isRunning()) {
+                Assert::fail('Worker died unexpectedly: '.$worker->getErrorOutput());
+            }
             usleep(25_000);
         }
 
@@ -723,9 +730,13 @@ it('does not let failed receipt cleanup delete a concurrent successor receipt', 
     try {
         File::delete($storagePath, $realStoragePath, ...$paths->values()->all());
         $failure->start();
-        $deadline = microtime(true) + 10;
+        // 60 seconds of headroom for slow CI nodes; the poll exits early on success.
+        $deadline = hrtime(true) + 60_000_000_000;
 
-        while (! File::exists($paths['failure-at-activity']) && microtime(true) < $deadline) {
+        while (! File::exists($paths['failure-at-activity']) && hrtime(true) < $deadline) {
+            if (! $failure->isRunning()) {
+                Assert::fail('Worker died unexpectedly: '.$failure->getErrorOutput());
+            }
             usleep(25_000);
         }
 
@@ -735,9 +746,13 @@ it('does not let failed receipt cleanup delete a concurrent successor receipt', 
             ->and(File::get($storagePath))->toBe('failed-worker-bytes');
 
         $success->start();
-        $deadline = microtime(true) + 10;
+        // 60 seconds of headroom for slow CI nodes; the poll exits early on success.
+        $deadline = hrtime(true) + 60_000_000_000;
 
-        while (! File::exists($paths['success-ready']) && microtime(true) < $deadline) {
+        while (! File::exists($paths['success-ready']) && hrtime(true) < $deadline) {
+            if (! $success->isRunning()) {
+                Assert::fail('Worker died unexpectedly: '.$success->getErrorOutput());
+            }
             usleep(25_000);
         }
 
