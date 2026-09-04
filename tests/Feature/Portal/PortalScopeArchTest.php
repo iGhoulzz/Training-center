@@ -121,16 +121,41 @@ it('includes a page registered by class name, not only ones found by discoverPag
 });
 
 it('resolves the viewing student through AuthenticatedStudent on every portal page', function () {
+    /*
+     * THE CALL, NOT MERELY THE NAME.
+     *
+     * CROSS-REVIEW FINDING. This used to match `AuthenticatedStudent::class`
+     * alone, which is satisfied by `app(AuthenticatedStudent::class)` with no
+     * resolution at all — the container is asked for the resolver and the
+     * resolver is never used. A page could name the class, derive a student
+     * some other way, and this test would have called that compliant.
+     *
+     * The pattern now requires the class literal AND a `->resolve()` on the
+     * expression it produces. Comments and string literals are stripped first
+     * by appSourceWithoutComments(), so a page cannot satisfy this by
+     * mentioning the call in prose — which matters here, because Overview's own
+     * docblock says "AuthenticatedStudent::resolve()" and would otherwise
+     * exempt the file it documents.
+     *
+     * STILL A SOURCE SCAN, AND STILL SAYS SO. Proving the call happens is not
+     * proving the result was used to constrain the query — a page could resolve
+     * a student, discard it, and query unscoped. That claim belongs to
+     * PortalRowIsolationTest, which now runs in both directions precisely
+     * because the one-directional version had its own blind spot.
+     */
     $offenders = [];
 
     foreach (portalPageFiles() as $path) {
-        if (preg_match('/\bAuthenticatedStudent::class\b/', appSourceWithoutComments($path)) !== 1) {
+        $code = appSourceWithoutComments($path);
+
+        if (preg_match('/AuthenticatedStudent::class\s*\)\s*->\s*resolve\s*\(/', $code) !== 1) {
             $offenders[] = str_replace(base_path().DIRECTORY_SEPARATOR, '', $path);
         }
     }
 
     expect($offenders)->toBeEmpty(
-        'Every portal page must resolve the viewing student through AuthenticatedStudent, '
-        ."never derive one for itself. Offending file(s):\n  ".implode("\n  ", $offenders),
+        'Every portal page must resolve the viewing student by CALLING '
+        .'AuthenticatedStudent::resolve(), never by naming the class and deriving a student some '
+        ."other way. Offending file(s):\n  ".implode("\n  ", $offenders),
     );
 });
