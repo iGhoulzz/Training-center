@@ -15,6 +15,7 @@ use Illuminate\Foundation\Testing\RefreshDatabaseState;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
+use PHPUnit\Framework\Assert;
 use Symfony\Component\Process\Process;
 
 /*
@@ -132,9 +133,13 @@ it('refuses an adjustment below an allocation committed while it waited for the 
 
         $worker->start();
 
-        $deadline = microtime(true) + 60;
+        // 60 seconds of headroom for slow CI nodes; the poll exits early on success.
+        $deadline = hrtime(true) + 60_000_000_000;
 
-        while (! File::exists($readyPath) && microtime(true) < $deadline) {
+        while (! File::exists($readyPath) && hrtime(true) < $deadline) {
+            if (! $worker->isRunning()) {
+                Assert::fail('Worker died unexpectedly: '.$worker->getErrorOutput());
+            }
             usleep(25_000);
         }
 

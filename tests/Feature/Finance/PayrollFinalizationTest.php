@@ -23,6 +23,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use PHPUnit\Framework\Assert;
 use Symfony\Component\Process\Process;
 
 uses(DatabaseTruncation::class);
@@ -339,9 +340,13 @@ it('uses a locking overlap scan after concurrent finalizers opened stale snapsho
             $worker->start();
         }
 
-        $deadline = microtime(true) + 60;
+        // 60 seconds of headroom for slow CI nodes; the poll exits early on success.
+        $deadline = hrtime(true) + 60_000_000_000;
 
-        while ((! File::exists($paths['a-ready']) || ! File::exists($paths['b-ready'])) && microtime(true) < $deadline) {
+        while ((! File::exists($paths['a-ready']) || ! File::exists($paths['b-ready'])) && hrtime(true) < $deadline) {
+            if (! $worker->isRunning()) {
+                Assert::fail('Worker died unexpectedly: '.$worker->getErrorOutput());
+            }
             usleep(25_000);
         }
 
@@ -482,8 +487,12 @@ it('finalizes concurrent runs over oppositely ordered staff without deadlock', f
             $worker->start();
         }
 
-        $deadline = microtime(true) + 60;
-        while ((! File::exists($paths['a-ready']) || ! File::exists($paths['b-ready'])) && microtime(true) < $deadline) {
+        // 60 seconds of headroom for slow CI nodes; the poll exits early on success.
+        $deadline = hrtime(true) + 60_000_000_000;
+        while ((! File::exists($paths['a-ready']) || ! File::exists($paths['b-ready'])) && hrtime(true) < $deadline) {
+            if (! $worker->isRunning()) {
+                Assert::fail('Worker died unexpectedly: '.$worker->getErrorOutput());
+            }
             usleep(25_000);
         }
 

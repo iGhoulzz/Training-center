@@ -105,9 +105,10 @@ function completionWorker(
                     file_put_contents($readyPath, 'ready');
 
                     if ($startPath !== null) {
-                        $deadline = microtime(true) + 60;
+                        // 60 seconds of headroom for slow CI nodes; the poll exits early on success.
+        $deadline = hrtime(true) + 60_000_000_000;
 
-                        while (! file_exists($startPath) && microtime(true) < $deadline) {
+                        while (! file_exists($startPath) && hrtime(true) < $deadline) {
                             usleep(10_000);
                         }
                     }
@@ -146,9 +147,9 @@ function completionWorker(
  */
 function waitForCompletionSignal(string $path, float $seconds = 60): bool
 {
-    $deadline = microtime(true) + $seconds;
+    $deadline = hrtime(true) + ($seconds * 1_000_000_000);
 
-    while (! File::exists($path) && microtime(true) < $deadline) {
+    while (! File::exists($path) && hrtime(true) < $deadline) {
         usleep(25_000);
     }
 
