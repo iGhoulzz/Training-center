@@ -37,8 +37,8 @@ uses(DatabaseMigrations::class);
 | What the public verifier is forbidden to say (design section 7.3, P3-T08)
 |--------------------------------------------------------------------------
 |
-| VerifyCertificateController builds CertificateVerificationView by naming six
-| properties off the model, never by handing the model — or its toArray() — to
+| VerifyCertificateController builds CertificateVerificationView by naming each
+| property off the model, never by handing the model — or its toArray() — to
 | the view. Every test in this file proves a way that boundary could otherwise
 | be crossed: a column added later, a revocation reason, a successor
 | reference, an external asset, or a piece of the student's own record that
@@ -178,6 +178,53 @@ it('renders byte-identical bodies at 404 for a malformed GET, an unknown GET, an
 */
 
 /**
+ * Elements that can fetch on their own, whatever their attributes say.
+ *
+ * WHY THIS EXISTS BESIDE verifierExternalOrigins() RATHER THAN INSIDE IT.
+ * -----------------------------------------------------------------------
+ * Replacing the old tag blacklist with URL extraction closed the CSS hole and
+ * opened a different one, which cross-review then demonstrated:
+ *
+ *     <script>fetch('https://analytics.example/pixel')</script>
+ *
+ * has no `src`, no listed attribute, no `<style>` and no style attribute. The
+ * extractor inspects none of it and returns an empty list, so the page contacts
+ * an analytics origin during render while the guard stays green. The blacklist
+ * was wrong about many things and right about this one.
+ *
+ * Parsing JavaScript for the URLs it might construct is not a test's job — a
+ * string can be assembled at runtime from pieces that appear nowhere in the
+ * source. So this asserts the stronger and simpler property the design already
+ * grants: design section 7.4 makes these pages standalone Blade with inline CSS
+ * and NO scripts at all, so the honest check is that none of these elements
+ * exists. `iframe`, `object` and `embed` are included for the same reason —
+ * each can carry executable or externally-sourced content that the URL
+ * extractor would only see if it happened to arrive through a plain attribute.
+ *
+ * @return list<string> the offending element names, empty when the page is inert
+ */
+function verifierExecutableElements(string $html): array
+{
+    $previous = libxml_use_internal_errors(true);
+    $document = new DOMDocument;
+    $document->loadHTML($html);
+    libxml_clear_errors();
+    libxml_use_internal_errors($previous);
+
+    $found = [];
+
+    foreach (['script', 'iframe', 'object', 'embed', 'applet'] as $tag) {
+        $count = $document->getElementsByTagName($tag)->length;
+
+        if ($count > 0) {
+            $found[] = $tag.' x'.$count;
+        }
+    }
+
+    return $found;
+}
+
+/**
  * Every URL the rendered page would fetch from, link to, or import.
  *
  * WHY THIS ENUMERATES RATHER THAN FORBIDS A LIST OF TAGS.
@@ -312,6 +359,19 @@ it('requests no external origin to render the form, the lookup or the not-found 
             ."reference through the request or the Referer header (design section 7.4):\n  "
             .implode("\n  ", $external),
         );
+
+        /*
+         * AND NOTHING EXECUTABLE, because a script needs no URL-bearing
+         * attribute to make a request — see verifierExecutableElements().
+         */
+        $executable = verifierExecutableElements((string) $response->getContent());
+
+        expect($executable)->toBeEmpty(
+            "The {$name} page carries executable or embedding content. These pages are "
+            .'standalone Blade with inline CSS and no scripts (design section 7.4), and a '
+            ."script can reach an analytics origin without any attribute this suite reads:\n  "
+            .implode("\n  ", $executable),
+        );
     }
 });
 
@@ -332,6 +392,28 @@ it('detects each external-origin shape this guard covers', function (string $htm
     'video poster' => '<html><body><video poster="https://cdn.example/poster.jpg"></video></body></html>',
     'source srcset' => '<html><body><picture><source srcset="https://cdn.example/i.webp 2x"></picture></body></html>',
     'external link' => '<html><body><a href="https://analytics.example/away">x</a></body></html>',
+]);
+
+it('detects executable content the URL extractor cannot see', function (string $html) {
+    /*
+     * The inline-fetch case is the one cross-review used to walk through the
+     * extractor: no attribute, no CSS, and a request to a third-party origin
+     * on render.
+     */
+    expect(verifierExecutableElements($html))->not->toBeEmpty();
+})->with([
+    'inline script with fetch' => '<html><body><script>fetch("https://analytics.example/pixel")</script></body></html>',
+    'empty inline script' => '<html><body><script></script></body></html>',
+    'iframe' => '<html><body><iframe srcdoc="<script>fetch(1)</script>"></iframe></body></html>',
+    'object' => '<html><body><object data="x"></object></body></html>',
+    'embed' => '<html><body><embed src="x"></embed></body></html>',
+]);
+
+it('leaves an inert page alone', function (string $html) {
+    expect(verifierExecutableElements($html))->toBeEmpty();
+})->with([
+    'inline CSS only' => '<html><head><style>body { color: #111; }</style></head><body><p>x</p></body></html>',
+    'a plain link' => '<html><body><a href="/verify/certificates">x</a></body></html>',
 ]);
 
 it('leaves a self-contained page alone', function (string $html) {

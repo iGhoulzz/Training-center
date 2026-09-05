@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 /*
 |--------------------------------------------------------------------------
-| The public certificate verifier (design section 6.5, P3-T08)
+| The public certificate verifier (design section 7, P3-T08)
 |--------------------------------------------------------------------------
 |
 | Every string on all three verify/* views comes from here. The not-found view
@@ -35,9 +35,14 @@ return [
     'field_issued_at' => 'Issued on',
     'field_confirmation' => 'Confirmed by',
 
-    // Exactly the three values CertificateStatus admits — no interpolation,
-    // because the sentence itself differs per status rather than a label
-    // being dropped into one shared template.
+    // Exactly the three values CertificateStatus admits. The sentence differs
+    // per status rather than a label being dropped into one shared template,
+    // which is why these are three keys and not one.
+    //
+    // Only the revoked one interpolates, and it must: design section 7.3
+    // requires the page to state "revoked on <date>". The placeholder is filled
+    // by VerifyCertificateController from revoked_at, localised to the centre's
+    // calendar — never by the view, which has no date to reach for.
     'status_message_valid' => 'This certificate is valid.',
     'status_message_revoked' => 'This certificate was revoked on :date and is no longer valid.',
     'status_message_replaced' => 'This certificate has been superseded by a more recent certificate and is no longer current.',
