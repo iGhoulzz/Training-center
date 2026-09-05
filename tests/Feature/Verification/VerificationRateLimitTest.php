@@ -54,7 +54,7 @@ it('refuses the eleventh request in a minute from one IP, reached through the re
 
 it('counts the form, the submission and the lookup against the same per-IP budget', function () {
     // All three verify routes carry the SAME named limiter, keyed only by IP
-    // — design section 6.5 requires the limit apply to the submission and the
+    // — design section 7.2 requires the limit apply to the submission and the
     // lookup alike, and routes/web.php puts all three in one group so none
     // can drift out of it. Nine lookups plus one submission is still ten.
     for ($i = 0; $i < 9; $i++) {

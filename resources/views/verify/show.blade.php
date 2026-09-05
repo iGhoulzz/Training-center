@@ -8,7 +8,7 @@
         /*
          * Self-hosted, inline, and the only styling this page carries — no
          * third-party font, script, analytics or stylesheet may touch this
-         * surface (design section 6.5). Logical properties only, per
+         * surface (design section 7.4). Logical properties only, per
          * docs/ENGINEERING.md.
          */
         :root {
@@ -83,7 +83,7 @@
 <body>
     <main>
         <h1>{{ __('verify.show_heading') }}</h1>
-        <p class="status-message">{{ __($statusMessageKey) }}</p>
+        <p class="status-message">{{ __($statusMessageKey, $statusMessageReplacements) }}</p>
 
         <dl>
             <div class="field">

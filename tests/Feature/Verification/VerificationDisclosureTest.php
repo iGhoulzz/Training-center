@@ -34,7 +34,7 @@ uses(DatabaseMigrations::class);
 
 /*
 |--------------------------------------------------------------------------
-| What the public verifier is forbidden to say (design section 6.5, P3-T08)
+| What the public verifier is forbidden to say (design section 7.3, P3-T08)
 |--------------------------------------------------------------------------
 |
 | VerifyCertificateController builds CertificateVerificationView by naming six
@@ -97,17 +97,30 @@ it('states a revoked certificate is revoked without its reason or any replacemen
     // predecessor's reference never appears either.
     $predecessor = StudentCertificate::factory()->replaced()->create();
 
+    /*
+     * THE TWO DATES ARE DELIBERATELY DIFFERENT, AND FAR APART.
+     *
+     * Design section 7.3 requires the page to state "revoked on <date>". If the
+     * view rendered `issued_at` under a revocation label the page would still
+     * look right, and a fixture where the two coincide could never tell that
+     * apart from the correct behaviour. Issued in January, revoked in March.
+     */
     $revoked = StudentCertificate::factory()
         ->revoked('Issued against a miscounted attendance record.')
-        ->create(['replaces_certificate_id' => $predecessor->getKey()]);
+        ->create([
+            'replaces_certificate_id' => $predecessor->getKey(),
+            'issued_at' => Carbon::parse('2026-01-09 08:00:00', 'UTC'),
+            'revoked_at' => Carbon::parse('2026-03-04 10:30:00', 'UTC'),
+        ]);
 
     $response = $this->get(route('verify.certificates.show', ['reference' => $revoked->reference_number]));
 
     $response->assertSuccessful();
     $response->assertSee($revoked->status->label());
-    $response->assertSee(__('verify.status_message_revoked'));
+    $response->assertSee(__('verify.status_message_revoked', ['date' => '2026-03-04']));
 
     expect($response->getContent())
+        ->toContain('2026-03-04')
         ->not->toContain('Issued against a miscounted attendance record.')
         ->not->toContain($predecessor->reference_number);
 });
@@ -164,28 +177,174 @@ it('renders byte-identical bodies at 404 for a malformed GET, an unknown GET, an
 |--------------------------------------------------------------------------
 */
 
+/**
+ * Every URL the rendered page would fetch from, link to, or import.
+ *
+ * WHY THIS ENUMERATES RATHER THAN FORBIDS A LIST OF TAGS.
+ * -------------------------------------------------------
+ * The first version of this check asserted the absence of seven strings —
+ * `<script`, `<link`, `<img`, `<iframe`, `<object`, `<embed`, `@import`. Every
+ * one of those is a true statement about the page and none of them is the
+ * property design section 7.4 actually requires, which is that the page fetches
+ * NOTHING from a third-party origin. Cross-review demonstrated the gap by
+ * adding `background-image: url(https://tracker.example/pixel)` to the inline
+ * CSS: zero of the seven tokens match, the check stays green, and the page
+ * hands the certificate reference to a tracker through the Referer header.
+ * `<video src>`, `<source srcset>` and `<a href>` are the same shape.
+ *
+ * A blacklist can only be as complete as the last person to think about it. So
+ * this pulls out the URLs and asks where they point.
+ *
+ * @return list<string> the offending URLs, empty when the page is self-contained
+ */
+function verifierExternalOrigins(string $html, string $appHost): array
+{
+    $urls = [];
+
+    $previous = libxml_use_internal_errors(true);
+    $document = new DOMDocument;
+    $document->loadHTML($html);
+    libxml_clear_errors();
+    libxml_use_internal_errors($previous);
+
+    /*
+     * Every HTML attribute whose value is a URL the browser acts on. `srcset`
+     * carries a comma-separated list with density descriptors mixed in; the
+     * descriptors are not URLs and classify as relative, which is harmless.
+     */
+    $urlAttributes = ['src', 'href', 'srcset', 'poster', 'data', 'action', 'formaction', 'background', 'cite'];
+
+    foreach (iterator_to_array($document->getElementsByTagName('*')) as $element) {
+        foreach ($urlAttributes as $attribute) {
+            if (! $element->hasAttribute($attribute)) {
+                continue;
+            }
+
+            foreach (preg_split('/[,\s]+/', $element->getAttribute($attribute), -1, PREG_SPLIT_NO_EMPTY) ?: [] as $candidate) {
+                $urls[] = $candidate;
+            }
+        }
+
+        // A style ATTRIBUTE carries CSS too, and carries it per element.
+        if ($element->hasAttribute('style')) {
+            $urls = array_merge($urls, verifierCssUrls($element->getAttribute('style')));
+        }
+    }
+
+    // <style> blocks are text, not attributes, so the loop above cannot see them
+    // — and this page's entire stylesheet lives in one.
+    foreach ($document->getElementsByTagName('style') as $style) {
+        $urls = array_merge($urls, verifierCssUrls((string) $style->textContent));
+    }
+
+    $external = [];
+
+    foreach ($urls as $url) {
+        $url = trim($url);
+
+        // A fragment, an inline datum, or nothing at all: no request leaves.
+        if ($url === '' || str_starts_with($url, '#') || str_starts_with($url, 'data:')) {
+            continue;
+        }
+
+        /*
+         * PROTOCOL-RELATIVE IS EXTERNAL. `//tracker.example/pixel` has no scheme,
+         * so parse_url() reports a host and it would be easy to treat as a path.
+         * The browser fetches it from tracker.example.
+         */
+        if (str_starts_with($url, '//')) {
+            $external[] = $url;
+
+            continue;
+        }
+
+        $host = parse_url($url, PHP_URL_HOST);
+
+        // No host means relative — same origin by construction.
+        if ($host === null || $host === false) {
+            continue;
+        }
+
+        if (strcasecmp((string) $host, $appHost) !== 0) {
+            $external[] = $url;
+        }
+    }
+
+    return array_values(array_unique($external));
+}
+
+/**
+ * The URLs inside a block of CSS — `url(...)` in any quoting style, and `@import`.
+ *
+ * @return list<string>
+ */
+function verifierCssUrls(string $css): array
+{
+    $found = [];
+
+    if (preg_match_all('/url\(\s*[\'"]?([^\'")]+)/i', $css, $matches) !== false) {
+        $found = array_merge($found, $matches[1]);
+    }
+
+    if (preg_match_all('/@import\s+(?:url\(\s*)?[\'"]([^\'"]+)/i', $css, $matches) !== false) {
+        $found = array_merge($found, $matches[1]);
+    }
+
+    return array_values($found);
+}
+
 it('requests no external origin to render the form, the lookup or the not-found page', function () {
     $certificate = StudentCertificate::factory()->create();
 
+    $appHost = (string) parse_url((string) config('app.url'), PHP_URL_HOST);
+
     $pages = [
-        $this->get(route('verify.certificates.form')),
-        $this->get(route('verify.certificates.show', ['reference' => $certificate->reference_number])),
-        $this->get(route('verify.certificates.show', ['reference' => 'not-a-real-reference'])),
+        'form' => $this->get(route('verify.certificates.form')),
+        'lookup' => $this->get(route('verify.certificates.show', ['reference' => $certificate->reference_number])),
+        'not-found' => $this->get(route('verify.certificates.show', ['reference' => 'not-a-real-reference'])),
     ];
 
-    $forbidden = ['<script', '<link', '<img', '<iframe', '<object', '<embed', '@import'];
+    foreach ($pages as $name => $response) {
+        $external = verifierExternalOrigins((string) $response->getContent(), $appHost);
 
-    foreach ($pages as $response) {
-        $body = $response->getContent();
-
-        foreach ($forbidden as $tag) {
-            expect($body)->not->toContain(
-                $tag,
-                "Found `{$tag}` in a verifier page — it may load nothing but its own inline HTML and CSS.",
-            );
-        }
+        expect($external)->toBeEmpty(
+            "The {$name} page reaches a third-party origin, which can receive the certificate "
+            ."reference through the request or the Referer header (design section 7.4):\n  "
+            .implode("\n  ", $external),
+        );
     }
 });
+
+it('detects each external-origin shape this guard covers', function (string $html) {
+    /*
+     * Without this, narrowing the extractor above leaves a guard that finds
+     * nothing and passes forever — the same reasoning ActivityLogTest gives for
+     * its own sample list. Every entry below is a real way a page reaches a
+     * third-party origin, and the CSS one is the case cross-review used to
+     * defeat the previous tag blacklist.
+     */
+    expect(verifierExternalOrigins($html, 'training-center.test'))->not->toBeEmpty();
+})->with([
+    'inline CSS background' => '<html><head><style>body { background-image: url(https://tracker.example/pixel); }</style></head><body></body></html>',
+    'CSS @import' => '<html><head><style>@import "https://fonts.example/face.css";</style></head><body></body></html>',
+    'style attribute' => '<html><body><div style="background: url(\'https://tracker.example/p.gif\')"></div></body></html>',
+    'protocol-relative script' => '<html><body><script src="//cdn.example/a.js"></script></body></html>',
+    'video poster' => '<html><body><video poster="https://cdn.example/poster.jpg"></video></body></html>',
+    'source srcset' => '<html><body><picture><source srcset="https://cdn.example/i.webp 2x"></picture></body></html>',
+    'external link' => '<html><body><a href="https://analytics.example/away">x</a></body></html>',
+]);
+
+it('leaves a self-contained page alone', function (string $html) {
+    // Over-broadening the guard fails here: each of these is something the
+    // verifier pages legitimately do.
+    expect(verifierExternalOrigins($html, 'training-center.test'))->toBeEmpty();
+})->with([
+    'same-origin absolute link' => '<html><body><a href="http://training-center.test/verify/certificates">x</a></body></html>',
+    'root-relative link' => '<html><body><a href="/verify/certificates">x</a></body></html>',
+    'fragment' => '<html><body><a href="#main">x</a></body></html>',
+    'inline data URI' => '<html><body><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></body></html>',
+    'inline CSS with no url()' => '<html><head><style>body { background: #f3f4f6; }</style></head><body></body></html>',
+]);
 
 /*
 |--------------------------------------------------------------------------

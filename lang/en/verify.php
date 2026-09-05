@@ -39,7 +39,7 @@ return [
     // because the sentence itself differs per status rather than a label
     // being dropped into one shared template.
     'status_message_valid' => 'This certificate is valid.',
-    'status_message_revoked' => 'This certificate has been revoked and is no longer valid.',
+    'status_message_revoked' => 'This certificate was revoked on :date and is no longer valid.',
     'status_message_replaced' => 'This certificate has been superseded by a more recent certificate and is no longer current.',
 
     'verify_another' => 'Verify another certificate',

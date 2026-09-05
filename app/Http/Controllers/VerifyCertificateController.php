@@ -16,7 +16,7 @@ use Illuminate\View\View;
 
 /**
  * The first thing in this system that serves the open internet (design section
- * 6.5, P3-T08).
+ * 7, P3-T08).
  *
  * THREE ROUTES, ONE CONTROLLER, ONE NOT-FOUND PATH.
  * ---------------------------------------------------
@@ -79,12 +79,29 @@ final class VerifyCertificateController extends Controller
         }
 
         /*
+         * THE REVOCATION DATE, AND ONLY THE DATE.
+         *
+         * Design §7.3 requires a revoked certificate to say "revoked on 4 March
+         * 2026" — so the date crosses to the public page, while `revoked_by` and
+         * `revocation_reason` never leave this method. The reason is internal and
+         * frequently about a person; the date is the part the holder of a bad
+         * certificate needs.
+         *
+         * Read only when the status is `revoked`. A `valid` row has no
+         * `revoked_at` to localise, and the database refuses the combination
+         * anyway (chk_student_certificates_revocation), so branching here keeps
+         * the null out of CentreCalendar rather than relying on that constraint.
+         */
+        $revokedOn = $certificate->status === CertificateStatus::Revoked && $certificate->revoked_at !== null
+            ? CentreCalendar::localise($certificate->revoked_at)->format('Y-m-d')
+            : null;
+
+        /*
          * NAMED, ONE BY ONE — NEVER `$certificate->toArray()`, NEVER THE MODEL
          * ITSELF HANDED TO THE VIEW. This is the entire enforcement mechanism
          * behind "a column added later cannot leak through the public surface
-         * by default": whatever this table gains next, this projection stays
-         * exactly six fields until a person deliberately adds a seventh line
-         * here.
+         * by default": whatever this table gains next, this projection carries
+         * only what someone deliberately adds to it.
          */
         $view = new CertificateVerificationView(
             status: $certificate->status,
@@ -93,11 +110,13 @@ final class VerifyCertificateController extends Controller
             completedOn: CentreCalendar::localise($certificate->completed_on)->format('Y-m-d'),
             issuedAt: CentreCalendar::localise($certificate->issued_at)->format('Y-m-d H:i'),
             centreName: (string) config('app.name'),
+            revokedOn: $revokedOn,
         );
 
         return response()->view('verify.show', [
             'view' => $view,
             'statusMessageKey' => $this->statusMessageKey($certificate->status),
+            'statusMessageReplacements' => $revokedOn === null ? [] : ['date' => $revokedOn],
         ]);
     }
 

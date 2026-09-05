@@ -11,7 +11,7 @@ uses(RefreshDatabase::class);
 
 /*
 |--------------------------------------------------------------------------
-| The public verifier's three routes (design section 6.5, P3-T08)
+| The public verifier's three routes (design section 7.1, P3-T08)
 |--------------------------------------------------------------------------
 |
 | GET /verify/certificates renders the form. POST /verify/certificates
@@ -23,7 +23,7 @@ uses(RefreshDatabase::class);
 | route would make a malformed value fail to match at all, and Laravel would
 | render its OWN 404 page instead of the verifier's — a signal telling a
 | caller "that shape was wrong" rather than "no such certificate", which
-| design section 6.5 forbids. Every test below that feeds a malformed value
+| design section 7.1 forbids. Every test below that feeds a malformed value
 | to the GET route therefore also proves the route matched and the
 | CONTROLLER decided, not the router.
 */

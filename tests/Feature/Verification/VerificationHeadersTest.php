@@ -13,7 +13,7 @@ uses(RefreshDatabase::class);
 /*
 |--------------------------------------------------------------------------
 | The three disclosure headers, on every route that can name a student
-| (design section 6.5, P3-T08)
+| (design section 7.2, P3-T08)
 |--------------------------------------------------------------------------
 |
 | `Cache-Control: private, no-store`, `Referrer-Policy: no-referrer`, and
@@ -35,7 +35,7 @@ function assertCarriesDisclosureHeaders(TestResponse $response): void
      * as `no-store, private`. Measured directly: asserting the literal string
      * this middleware sets failed this way even though the header was correct.
      * Order carries no meaning in RFC 7234's definition of this header, so the
-     * property that actually matters — and the one design section 6.5 requires
+     * property that actually matters — and the one design section 7.2 requires
      * — is that BOTH directives are present, which hasCacheControlDirective()
      * checks independently of how Symfony chose to order them.
      */

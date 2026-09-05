@@ -53,7 +53,7 @@ Route::middleware(AuthenticatePrivateFileSession::class)->group(function (): voi
 
 /*
 |--------------------------------------------------------------------------
-| The public certificate verifier (design section 6.5, P3-T08)
+| The public certificate verifier (design section 7.1, P3-T08)
 |--------------------------------------------------------------------------
 |
 | The first thing in this system that serves the open internet: no auth guard,
@@ -68,7 +68,7 @@ Route::middleware(AuthenticatePrivateFileSession::class)->group(function (): voi
 | here would make a malformed value fail to match the route at all, and
 | Laravel would render ITS OWN 404 page instead of the verifier's — a signal
 | distinguishing "wrong shape" from "no such certificate" that design section
-| 6.5 forbids. VerifyCertificateController::show() takes every value, whatever
+| 7.1 forbids. VerifyCertificateController::show() takes every value, whatever
 | its shape, and decides.
 |
 | `certificate-verification` is the named limiter registered in

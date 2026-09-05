@@ -10,7 +10,7 @@ use Symfony\Component\HttpFoundation\Response;
 
 /**
  * The three headers every public verifier response must carry (design section
- * 6.5, P3-T08).
+ * 7.2, P3-T08).
  *
  * WHY THESE THREE, ON EVERY RESPONSE FROM THE GROUP
  * ---------------------------------------------------

@@ -8,7 +8,7 @@
         /*
          * Self-hosted, inline, and the only styling this page carries — no
          * third-party font, script, analytics or stylesheet may touch this
-         * surface (design section 6.5). Logical properties only, per
+         * surface (design section 7.4). Logical properties only, per
          * docs/ENGINEERING.md: margin-inline / padding-inline / text-align:
          * start, never a physical left/right so the page is correct the day
          * phase 4 renders it with dir="rtl".
