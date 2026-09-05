@@ -1,11 +1,3 @@
-@php
-    /** @var \App\Domain\Enrollment\Data\CertificateVerificationView $view */
-    $statusMessageKey = match ($view->status) {
-        \App\Domain\Enrollment\Enums\CertificateStatus::Valid => 'verify.status_message_valid',
-        \App\Domain\Enrollment\Enums\CertificateStatus::Revoked => 'verify.status_message_revoked',
-        \App\Domain\Enrollment\Enums\CertificateStatus::Replaced => 'verify.status_message_replaced',
-    };
-@endphp
 <!DOCTYPE html>
 <html lang="{{ app()->getLocale() }}" dir="{{ str_starts_with(app()->getLocale(), 'ar') ? 'rtl' : 'ltr' }}">
 <head>

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use App\Domain\Enrollment\Data\CertificateVerificationView;
+use App\Domain\Enrollment\Enums\CertificateStatus;
 use App\Domain\Enrollment\Models\StudentCertificate;
 use App\Domain\Enrollment\Support\CertificateReference;
 use App\Support\CentreCalendar;
@@ -94,7 +95,35 @@ final class VerifyCertificateController extends Controller
             centreName: (string) config('app.name'),
         );
 
-        return response()->view('verify.show', ['view' => $view]);
+        return response()->view('verify.show', [
+            'view' => $view,
+            'statusMessageKey' => $this->statusMessageKey($certificate->status),
+        ]);
+    }
+
+    /**
+     * Which sentence the page leads with, chosen HERE rather than in the view.
+     *
+     * The mapping began as a `match` inside an `@php` block in show.blade.php,
+     * and LocalizationTest's gate caught it: the Blade detector strips `@php`
+     * as a directive but leaves the block's BODY as raw text, so three
+     * translation keys read to it as untranslated prose. The offence was
+     * cosmetic and the detector was right anyway — presentation mapping is the
+     * controller's job, and a view holding a `match` over an enum is view
+     * logic.
+     *
+     * Deriving the key by concatenation — `'verify.status_message_'.$status->value`
+     * — would also have silenced the detector, and is worse: the three keys
+     * stop being greppable, so nothing connects lang/en/verify.php to the code
+     * that reads it. They stay written out in full.
+     */
+    private function statusMessageKey(CertificateStatus $status): string
+    {
+        return match ($status) {
+            CertificateStatus::Valid => 'verify.status_message_valid',
+            CertificateStatus::Revoked => 'verify.status_message_revoked',
+            CertificateStatus::Replaced => 'verify.status_message_replaced',
+        };
     }
 
     /**
