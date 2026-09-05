@@ -56,7 +56,7 @@ function projectPhpunitAttributes(): array
  * @param  array<string, string>  $attributes  Root attributes for the child config.
  * @return string The directory, which the caller removes.
  */
-function makeWarningProbe(array $attributes, string $probeBody): string
+function makeIssueProbe(array $attributes, string $probeBody): string
 {
     $directory = sys_get_temp_dir().'/warning-gate-'.bin2hex(random_bytes(6));
 
@@ -113,7 +113,7 @@ function makeWarningProbe(array $attributes, string $probeBody): string
  *
  * @return array{exitCode: int, output: string}
  */
-function runWarningProbe(string $directory): array
+function runIssueProbe(string $directory): array
 {
     $process = proc_open(
         [PHP_BINARY, Repo::root().'/vendor/phpunit/phpunit/phpunit', '-c', $directory.'/phpunit.xml'],
@@ -141,7 +141,7 @@ function runWarningProbe(string $directory): array
  * arrived as a PHP warning, which this branch's own gate turned into a test
  * failure: the first thing failOnWarning caught was this file.
  */
-function removeWarningProbe(string $directory): void
+function removeIssueProbe(string $directory): void
 {
     $entries = new RecursiveIteratorIterator(
         new RecursiveDirectoryIterator($directory, FilesystemIterator::SKIP_DOTS),
@@ -161,12 +161,17 @@ function removeWarningProbe(string $directory): void
 |--------------------------------------------------------------------------
 */
 
-it('keeps the warning gate and the issue details switched on in phpunit.xml', function () {
+it('keeps the warning and notice gates and the issue details switched on in phpunit.xml', function () {
     $attributes = projectPhpunitAttributes();
 
     expect($attributes['failOnWarning'] ?? null)->toBe(
         'true',
         'phpunit.xml stopped failing on warnings. That is how 1347 of them went unnoticed.',
+    );
+
+    expect($attributes['failOnNotice'] ?? null)->toBe(
+        'true',
+        'phpunit.xml stopped failing on notices, so a newly introduced PHP notice could pass CI.',
     );
 
     /*
@@ -220,15 +225,15 @@ it('creates the CI .env before anything that boots Laravel', function () {
 */
 
 it('fails a run in which a test triggers a warning', function () {
-    $directory = makeWarningProbe(
+    $directory = makeIssueProbe(
         projectPhpunitAttributes(),
         "trigger_error('deliberate probe warning', E_USER_WARNING);",
     );
 
     try {
-        $result = runWarningProbe($directory);
+        $result = runIssueProbe($directory);
     } finally {
-        removeWarningProbe($directory);
+        removeIssueProbe($directory);
     }
 
     expect($result['exitCode'])->not->toBe(
@@ -252,19 +257,64 @@ it('passes the same probe once failOnWarning is removed, so the failure above is
     $attributes = projectPhpunitAttributes();
     $attributes['failOnWarning'] = 'false';
 
-    $directory = makeWarningProbe(
+    $directory = makeIssueProbe(
         $attributes,
         "trigger_error('deliberate probe warning', E_USER_WARNING);",
     );
 
     try {
-        $result = runWarningProbe($directory);
+        $result = runIssueProbe($directory);
     } finally {
-        removeWarningProbe($directory);
+        removeIssueProbe($directory);
     }
 
     expect($result['exitCode'])->toBe(
         0,
         "The probe fails even with failOnWarning off, so the other case proves nothing about the gate.\n".$result['output'],
+    );
+});
+
+it('fails a run in which a test triggers a notice', function () {
+    $directory = makeIssueProbe(
+        projectPhpunitAttributes(),
+        "trigger_error('deliberate probe notice', E_USER_NOTICE);",
+    );
+
+    try {
+        $result = runIssueProbe($directory);
+    } finally {
+        removeIssueProbe($directory);
+    }
+
+    expect($result['exitCode'])->not->toBe(
+        0,
+        "A test that triggers a notice exited 0. The notice gate is not gating.\n".$result['output'],
+    );
+
+    expect($result['output'])->toContain('deliberate probe notice');
+});
+
+it('passes the same notice probe once failOnNotice is removed, so the failure above is the notice gate and nothing else', function () {
+    /*
+     * THE MUTATION. This catches removing or disabling failOnNotice: the
+     * identical child run returns to zero only when that one gate is off.
+     */
+    $attributes = projectPhpunitAttributes();
+    $attributes['failOnNotice'] = 'false';
+
+    $directory = makeIssueProbe(
+        $attributes,
+        "trigger_error('deliberate probe notice', E_USER_NOTICE);",
+    );
+
+    try {
+        $result = runIssueProbe($directory);
+    } finally {
+        removeIssueProbe($directory);
+    }
+
+    expect($result['exitCode'])->toBe(
+        0,
+        "The notice probe fails even with failOnNotice off, so the other case proves nothing about the gate.\n".$result['output'],
     );
 });

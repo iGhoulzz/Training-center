@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-    WARNINGS ARE FAILURES, AND THEIR DETAILS ARE PRINTED.
+    WARNINGS AND NOTICES ARE FAILURES, AND THEIR DETAILS ARE PRINTED.
 
-    Neither was true until 2026-08-13, and the cost was concrete: CI reported
+    Warning failure and issue details began on 2026-08-13. Notice failure begins
+    with this measured change. The original cost was concrete: CI reported
     "success" on every run while PHPUnit classified 1347 of 1407 tests as
     warnings rather than passes. Nothing in the local workflow showed it — the
     summary reads "passed" — so the suite looked clean from the only place
@@ -16,7 +17,8 @@
 
     displayDetailsOnAllIssues is what makes an issue actionable rather than a
     badge: the message and the originating file:line are printed. failOnWarning
-    is what stops the next one from hiding behind a green run for a phase.
+    and failOnNotice stop either category from hiding behind a green run for a
+    phase.
 
     ALL ISSUES, RATHER THAN A LIST OF CATEGORIES. This began as four
     displayDetailsOnTestsThatTrigger* flags, and cross-review found the gap that
@@ -29,17 +31,16 @@
     PHPUnit has now and any it adds later, and it cannot be true of some
     categories and false of others.
 
-    NOTICES AND DEPRECATIONS PRINT BUT DO NOT FAIL, DELIBERATELY. The evidence
-    gathered here covers warnings only, and the lesson of finding this at all is
-    that a locally clean run says nothing about CI — the 1347 warnings were CI's
-    alone. Gating a category nobody has counted yet would be the same mistake in
-    the other direction. Their details are displayed, so the next run reports
-    what is actually there; gate them once that list is known and empty.
+    NOTICES NOW FAIL, AFTER THEY WERE COUNTED IN BOTH PAO MODES. The same full
+    suite run reports zero notices and zero warnings with PAO's condensed output
+    and with PAO_DISABLE=true, so this does not hide a known issue behind a new
+    gate. Deprecations still print but do not fail: they have not yet received
+    the same two-mode measurement.
 
-    WarningGateTest proves the gate rather than trusting this file: it runs a
-    child PHPUnit over a probe that triggers a warning, with the attributes read
-    from THIS file, and asserts the run exits non-zero — then flips
-    failOnWarning off and asserts the same probe passes.
+    WarningGateTest proves the gates rather than trusting this file: it runs a
+    child PHPUnit over probes that trigger a warning and a notice, with the
+    attributes read from THIS file, and asserts each run exits non-zero — then
+    flips the corresponding flag off and asserts the same probe passes.
 -->
 <phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
@@ -49,6 +50,7 @@
          displayDetailsOnAllIssues="true"
 
          failOnWarning="true"
+         failOnNotice="true"
 >
     <testsuites>
         <testsuite name="Unit">
