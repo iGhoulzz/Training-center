@@ -34,8 +34,11 @@ use App\Models\User;
 use Illuminate\Auth\Events\Failed;
 use Illuminate\Auth\Events\Login;
 use Illuminate\Auth\Events\Logout;
+use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Spatie\Activitylog\Models\Activity;
 
@@ -148,6 +151,54 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(Discount::class, DiscountPolicy::class);
         Gate::policy(StaffCompensation::class, StaffCompensationPolicy::class);
         Gate::policy(Activity::class, ActivityPolicy::class);
+
+        /*
+         * THE FIRST NAMED LIMITER IN THIS FILE, AND IT IS REFERENCED (P3-T08).
+         *
+         * `routes/web.php`'s public verifier group applies this by name —
+         * `throttle:certificate-verification` — to its three routes. Being
+         * referenced is the property whose absence got P1-T03's `login` limiter
+         * deleted: a registered-and-unreferenced limiter reads as a control
+         * while protecting nothing, and this repository does not carry one
+         * twice.
+         *
+         * TWO WINDOWS, ONE LIMITER. Returning an array of Limit objects layers
+         * both under the single name the route asks for, so a route cannot
+         * accidentally end up throttled by only one of the two: ten requests a
+         * minute stops a fast script, a hundred an hour stops a slow one
+         * spread out to dodge the first window.
+         *
+         * KEYED BY IP, NOT BY ANY ACCOUNT. There is no login here to key
+         * against — this is the public internet, unauthenticated by design.
+         *
+         * THE WINDOW NAME IS PART OF THE KEY, AND IT HAS TO BE.
+         * -----------------------------------------------------
+         * `ThrottleRequests::handleRequestUsingNamedLimiter()` derives each
+         * limit's cache key as `md5($limiterName.$limit->key)` — the limiter
+         * NAME plus whatever `by()` was given, and nothing that distinguishes
+         * one window from another. Two limits under one name keyed on the bare
+         * IP therefore produce the SAME key, and `handleRequest()` then hits
+         * that one bucket once per limit, twice per request, with the decay of
+         * whichever limit created the entry first. Measured on this exact code
+         * with `by($request->ip())` on both:
+         *
+         *     limit 0  maxAttempts=10   decay=60    key=23a3c129…
+         *     limit 1  maxAttempts=100  decay=3600  key=23a3c129…
+         *     Distinct keys: 1 of 2
+         *     Request 5: allowed   counter now = 10
+         *     Request 6: REFUSED (429)
+         *
+         * The sixth request refused rather than the eleventh, and no hour
+         * window existing at all. Prefixing each `by()` with its window name
+         * gives the two limits distinct keys, which is what makes them two
+         * windows rather than one bucket counted twice.
+         */
+        RateLimiter::for('certificate-verification', function (Request $request): array {
+            return [
+                Limit::perMinute(10)->by('minute:'.$request->ip()),
+                Limit::perHour(100)->by('hour:'.$request->ip()),
+            ];
+        });
 
         /*
          * saveQuietly() is deliberate: P1-T12 adds activity logging, and a login
