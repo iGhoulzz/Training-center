@@ -91,14 +91,10 @@ function receiptAttachmentWorker(
     );
 }
 
-function failingReceiptAttachmentWorker(
-    int $paymentId,
-    string $path,
-    string $bytes,
-    string $readyPath,
-    string $activityPath,
+function pausedReceiptPurgeWorker(
+    int $pendingFileDeletionId,
+    string $ownershipReleasedPath,
     string $releasePath,
-    string $successResultPath,
     string $resultPath,
 ): Process {
     $script = <<<'PHP'
@@ -110,66 +106,56 @@ function failingReceiptAttachmentWorker(
 
         [
             $script,
-            $paymentId,
-            $path,
-            $bytes,
-            $readyPath,
-            $activityPath,
+            $pendingFileDeletionId,
+            $ownershipReleasedPath,
             $releasePath,
-            $successResultPath,
             $resultPath,
         ] = $_SERVER['argv'];
 
-        Illuminate\Support\Facades\Event::listen(
-            Illuminate\Database\Events\TransactionRolledBack::class,
-            static function () use ($successResultPath): void {
-                // 60 seconds of headroom for slow CI nodes; the poll exits early on success.
-        $deadline = hrtime(true) + 60_000_000_000;
+        $sawReceiptOwnershipQuery = false;
 
-                while (! file_exists($successResultPath) && hrtime(true) < $deadline) {
-                    usleep(25_000);
-                }
-
-                if (! file_exists($successResultPath)) {
-                    throw new RuntimeException('The successor did not finish after rollback.');
+        Illuminate\Support\Facades\DB::listen(
+            static function ($query) use (&$sawReceiptOwnershipQuery): void {
+                if (
+                    $query->connectionName === App\Domain\Staff\Services\FileLifecycleService::compensationConnectionName()
+                    && str_contains($query->sql, '`payments`')
+                    && str_contains($query->sql, '`receipt_path`')
+                ) {
+                    $sawReceiptOwnershipQuery = true;
                 }
             },
         );
 
-        Illuminate\Support\Facades\DB::listen(static function ($query) use ($activityPath, $releasePath): void {
-            if (! str_contains($query->sql, 'activity_log')) {
-                return;
-            }
+        Illuminate\Support\Facades\Event::listen(
+            Illuminate\Database\Events\TransactionCommitted::class,
+            static function ($event) use (&$sawReceiptOwnershipQuery, $ownershipReleasedPath, $releasePath): void {
+                if (
+                    ! $sawReceiptOwnershipQuery
+                    || $event->connectionName !== App\Domain\Staff\Services\FileLifecycleService::compensationConnectionName()
+                    || $event->connection->transactionLevel() !== 0
+                ) {
+                    return;
+                }
 
-            file_put_contents($activityPath, 'activity-inserted');
-            // 60 seconds of headroom for slow CI nodes; the poll exits early on success.
-        $deadline = hrtime(true) + 60_000_000_000;
+                $sawReceiptOwnershipQuery = false;
+                file_put_contents($ownershipReleasedPath, 'ownership-released');
+                $deadline = hrtime(true) + 60_000_000_000;
 
-            while (! file_exists($releasePath) && hrtime(true) < $deadline) {
-                usleep(25_000);
-            }
+                while (! file_exists($releasePath) && hrtime(true) < $deadline) {
+                    usleep(25_000);
+                }
 
-            if (! file_exists($releasePath)) {
-                throw new RuntimeException('The failing worker was not released.');
-            }
+                if (! file_exists($releasePath)) {
+                    throw new RuntimeException('The purge worker was not released.');
+                }
+            },
+        );
 
-            throw new RuntimeException('forced concurrent activity failure');
-        });
-
-        file_put_contents($readyPath, 'ready');
-
-        try {
-            $attached = app(App\Domain\Finance\Actions\AttachReceiptAction::class)->execute(
-                (int) $paymentId,
-                $path,
-                $bytes,
-            );
-            $result = ['outcome' => 'attached', 'attached' => $attached];
-        } catch (Throwable $throwable) {
-            $result = ['outcome' => 'failed', 'message' => $throwable->getMessage()];
-        }
-
-        file_put_contents($resultPath, json_encode($result, JSON_THROW_ON_ERROR));
+        app()->call([
+            new App\Domain\Staff\Jobs\PurgeDeletedFileJob((int) $pendingFileDeletionId, true),
+            'handle',
+        ]);
+        file_put_contents($resultPath, json_encode(['purged' => true], JSON_THROW_ON_ERROR));
         PHP;
 
     return new Process(
@@ -177,13 +163,9 @@ function failingReceiptAttachmentWorker(
             PHP_BINARY,
             '-r',
             $script,
-            (string) $paymentId,
-            $path,
-            $bytes,
-            $readyPath,
-            $activityPath,
+            (string) $pendingFileDeletionId,
+            $ownershipReleasedPath,
             $releasePath,
-            $successResultPath,
             $resultPath,
         ],
         base_path(),
@@ -693,31 +675,32 @@ it('serializes two concurrent receipt attachments so only the winner writes byte
     }
 });
 
-it('does not let failed receipt cleanup delete a concurrent successor receipt', function (): void {
+it('does not let receipt cleanup delete a successor that commits after its ownership check', function (): void {
     $payment = Payment::factory()->create(['recorded_by' => $this->admin->getKey()]);
     $path = 'receipts/'.$payment->reference.'.pdf';
     $storagePath = Storage::disk('private')->path($path);
     $realStoragePath = storage_path('app/secure/'.$path);
+    $pending = PendingFileDeletion::on(FileLifecycleService::compensationConnectionName())->create([
+        'disk' => ReceiptLocation::DISK,
+        'path' => $path,
+        'attempts' => 0,
+        'last_error' => null,
+    ]);
     $token = Str::uuid()->toString();
     $paths = collect([
-        'failure-ready',
-        'failure-at-activity',
-        'failure-release',
-        'failure-result',
+        'ownership-released',
+        'purge-release',
+        'purge-result',
         'success-ready',
         'success-result',
     ])->mapWithKeys(fn (string $name): array => [
         $name => storage_path("framework/testing/receipt-{$token}-{$name}.json"),
     ]);
-    $failure = failingReceiptAttachmentWorker(
-        (int) $payment->getKey(),
-        $path,
-        'failed-worker-bytes',
-        $paths['failure-ready'],
-        $paths['failure-at-activity'],
-        $paths['failure-release'],
-        $paths['success-result'],
-        $paths['failure-result'],
+    $purge = pausedReceiptPurgeWorker(
+        (int) $pending->getKey(),
+        $paths['ownership-released'],
+        $paths['purge-release'],
+        $paths['purge-result'],
     );
     $success = receiptAttachmentWorker(
         (int) $payment->getKey(),
@@ -729,21 +712,21 @@ it('does not let failed receipt cleanup delete a concurrent successor receipt', 
 
     try {
         File::delete($storagePath, $realStoragePath, ...$paths->values()->all());
-        $failure->start();
+        Storage::disk('private')->put($path, 'stale-receipt-bytes');
+        $purge->start();
         // 60 seconds of headroom for slow CI nodes; the poll exits early on success.
         $deadline = hrtime(true) + 60_000_000_000;
 
-        while (! File::exists($paths['failure-at-activity']) && hrtime(true) < $deadline) {
-            if (! $failure->isRunning()) {
-                Assert::fail('Worker died unexpectedly: '.$failure->getErrorOutput());
+        while (! File::exists($paths['ownership-released']) && hrtime(true) < $deadline) {
+            if (! $purge->isRunning()) {
+                Assert::fail('Purge worker died unexpectedly: '.$purge->getErrorOutput());
             }
             usleep(25_000);
         }
 
-        expect(File::exists($paths['failure-ready']))->toBeTrue('The failing worker did not reach the Action.')
-            ->and(File::exists($paths['failure-at-activity']))->toBeTrue('The failing worker did not reach the activity insert.')
-            ->and($failure->isRunning())->toBeTrue('The failing worker did not hold its transaction open.')
-            ->and(File::get($storagePath))->toBe('failed-worker-bytes');
+        expect(File::exists($paths['ownership-released']))
+            ->toBeTrue('The purge worker did not finish its receipt ownership transaction.')
+            ->and($purge->isRunning())->toBeTrue('The purge worker did not pause after its ownership transaction.');
 
         $success->start();
         // 60 seconds of headroom for slow CI nodes; the poll exits early on success.
@@ -758,32 +741,40 @@ it('does not let failed receipt cleanup delete a concurrent successor receipt', 
 
         expect(File::exists($paths['success-ready']))->toBeTrue('The successor did not reach the Action.');
 
-        usleep(250_000);
+        $deadline = hrtime(true) + 60_000_000_000;
 
-        expect($success->isRunning())->toBeTrue('The successor did not wait on the failing worker\'s payment lock.')
-            ->and(File::exists($paths['success-result']))->toBeFalse();
+        while (! File::exists($paths['success-result']) && hrtime(true) < $deadline) {
+            if (! $success->isRunning()) {
+                Assert::fail('Successor died unexpectedly: '.$success->getErrorOutput());
+            }
+            usleep(25_000);
+        }
 
-        File::put($paths['failure-release'], 'release');
-        $failure->wait();
         $success->wait();
+        expect(File::exists($paths['success-result']))->toBeTrue('The successor did not finish while purge was paused.');
+        File::put($paths['purge-release'], 'release');
+        $purge->wait();
 
-        expect($failure->isSuccessful())->toBeTrue($failure->getErrorOutput())
+        expect($purge->isSuccessful())->toBeTrue($purge->getErrorOutput())
             ->and($success->isSuccessful())->toBeTrue($success->getErrorOutput());
 
-        $failureResult = json_decode((string) File::get($paths['failure-result']), true, flags: JSON_THROW_ON_ERROR);
+        $purgeResult = json_decode((string) File::get($paths['purge-result']), true, flags: JSON_THROW_ON_ERROR);
         $successResult = json_decode((string) File::get($paths['success-result']), true, flags: JSON_THROW_ON_ERROR);
 
-        expect($failureResult)->toMatchArray([
-            'outcome' => 'failed',
-            'message' => 'forced concurrent activity failure',
+        expect($purgeResult)->toMatchArray([
+            'purged' => true,
         ])->and($successResult)->toMatchArray([
             'attached' => true,
-        ])->and(File::get($storagePath))->toBe('successful-worker-bytes')
+        ]);
+        expect(File::exists($storagePath))->toBeTrue('The purge deleted the successor receipt.');
+        expect(File::get($storagePath))->toBe('successful-worker-bytes')
             ->and(File::exists($realStoragePath))->toBeFalse()
             ->and($payment->refresh()->receipt_path)->toBe($path)
+            ->and(PendingFileDeletion::on(FileLifecycleService::compensationConnectionName())
+                ->whereKey($pending->getKey())->exists())->toBeFalse()
             ->and(Activity::query()->where('event', 'receipt_generated')->count())->toBe(1);
     } finally {
-        foreach ([$failure, $success] as $worker) {
+        foreach ([$purge, $success] as $worker) {
             if ($worker->isRunning()) {
                 $worker->stop();
             }

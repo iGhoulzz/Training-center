@@ -50,8 +50,10 @@ use Throwable;
  * ---------------------------
  * New uploads get a write-ahead receipt so an outer transaction rollback cannot
  * orphan their bytes. Those jobs set $usesCompensationConnection and re-check
- * whether a committed profile/certificate owns the generated path. If it does,
- * only the stale receipt is removed; owned bytes are never touched.
+ * whether a committed owner owns the generated path. The ownership locks stay
+ * open through deletion, so a successor cannot claim the same path between the
+ * negative check and unlink. If an owner already exists, only the stale receipt
+ * is removed; owned bytes are never touched.
  */
 class PurgeDeletedFileJob implements ShouldQueue
 {
@@ -101,38 +103,14 @@ class PurgeDeletedFileJob implements ShouldQueue
             return;
         }
 
-        /*
-         * A provisional upload receipt may outlive a successful commit if its
-         * after-commit cancellation failed or the database reported an
-         * ambiguous commit result. Generated paths are never reassigned, so an
-         * existing owner means this receipt is stale and the bytes must stay.
-         */
-        if ($this->usesCompensationConnection && $this->isOwned($pending, $receiptFiles)) {
-            $pending->delete();
+        if ($this->usesCompensationConnection) {
+            $this->purgeCompensation($pending, $receiptFiles, $fileLifecycle);
 
             return;
         }
 
         try {
-            if ($pending->path_kind === PathKind::Directory) {
-                ($fileLifecycle ?? app(FileLifecycleService::class))
-                    ->guardExportDirectory($pending->disk, $pending->path);
-            }
-
-            $disk = Storage::disk($pending->disk);
-
-            // The disk is configured with throw => false, so a failed removal
-            // comes back as `false` rather than an exception. Flysystem treats
-            // an already absent file or directory as successfully deleted, so
-            // a false here means a real failure and not a duplicate purge.
-            $deleted = match ($pending->path_kind) {
-                PathKind::Directory => $disk->deleteDirectory($pending->path),
-                PathKind::File => $disk->delete($pending->path),
-            };
-
-            if (! $deleted) {
-                throw FileStorageException::deleteFailed($pending->disk, $pending->path);
-            }
+            $this->deleteStoredPath($pending, $fileLifecycle);
         } catch (Throwable $exception) {
             $this->recordFailure($pending, $exception);
 
@@ -141,6 +119,79 @@ class PurgeDeletedFileJob implements ShouldQueue
 
         // Only now: the bytes are confirmed gone, so the receipt can go too.
         $pending->delete();
+    }
+
+    private function purgeCompensation(
+        PendingFileDeletion $pending,
+        ReceiptFileOwnershipService $receiptFiles,
+        ?FileLifecycleService $fileLifecycle,
+    ): void {
+        $connection = FileLifecycleService::compensationConnectionName();
+        $deletionAttempted = false;
+
+        try {
+            DB::connection($connection)->transaction(function () use (
+                $pending,
+                $receiptFiles,
+                $fileLifecycle,
+                &$deletionAttempted,
+            ): void {
+                /*
+                 * A provisional upload receipt may outlive a successful commit
+                 * if its after-commit cancellation failed or the database
+                 * reported an ambiguous commit result. The ownership check and
+                 * unlink must share this outer transaction: otherwise a new
+                 * owner can commit after a negative check and before deletion.
+                 */
+                if ($this->isOwned($pending, $receiptFiles)) {
+                    $pending->delete();
+
+                    return;
+                }
+
+                $deletionAttempted = true;
+                $this->deleteStoredPath($pending, $fileLifecycle);
+
+                // The lock is still held while the receipt is consumed.
+                $pending->delete();
+            });
+        } catch (Throwable $exception) {
+            if ($deletionAttempted) {
+                $failedPending = PendingFileDeletion::on($connection)
+                    ->find($pending->getKey());
+
+                if ($failedPending instanceof PendingFileDeletion) {
+                    $this->recordFailure($failedPending, $exception);
+                }
+            }
+
+            throw $exception;
+        }
+    }
+
+    private function deleteStoredPath(
+        PendingFileDeletion $pending,
+        ?FileLifecycleService $fileLifecycle,
+    ): void {
+        if ($pending->path_kind === PathKind::Directory) {
+            ($fileLifecycle ?? app(FileLifecycleService::class))
+                ->guardExportDirectory($pending->disk, $pending->path);
+        }
+
+        $disk = Storage::disk($pending->disk);
+
+        // The disk is configured with throw => false, so a failed removal
+        // comes back as `false` rather than an exception. Flysystem treats an
+        // already absent file or directory as successfully deleted, so a false
+        // here means a real failure and not a duplicate purge.
+        $deleted = match ($pending->path_kind) {
+            PathKind::Directory => $disk->deleteDirectory($pending->path),
+            PathKind::File => $disk->delete($pending->path),
+        };
+
+        if (! $deleted) {
+            throw FileStorageException::deleteFailed($pending->disk, $pending->path);
+        }
     }
 
     private function isOwned(
