@@ -81,9 +81,12 @@ direct runtime evidence are kept in a separate candidate section.
 | 1,000 | 1 | 0 | 65.52, 61.39, 62.83 | 62.83 ms |
 | 4,000 | 1 | 0 | 259.20, 259.81, 260.10 | 259.81 ms |
 
-Four times as many rows took 4.14 times as long. Query count is constant, but
-database work, object hydration and PHP bucketing remain row-proportional. A
-separate 4,000-row run measured 236.74 ms and an 8 MiB allocator increase.
+Four times as many rows took 4.14 times as long. This dataset had zero
+allocations, the cheapest possible case for both dependent allocation
+subqueries, so the result is a lower bound and must not be projected as the
+payment-heavy growth trend. Query count is constant, but database work, object
+hydration and PHP bucketing remain row-proportional. A separate 4,000-row run
+measured 236.74 ms and an 8 MiB allocator increase.
 
 Building the presentation-ready `ReportDataset` for the same 4,000 rows took
 335.75–369.98 ms across two runs. An independently constructed snapshot encoded
@@ -104,10 +107,10 @@ and Livewire payload costs.
 A temporary Pest probe drove the real `ListUsers` Livewire component after
 priming the permission cache:
 
-| Users in database | Rows rendered | Total queries | Rank-related queries | Render time |
-|---:|---:|---:|---:|---:|
-| 2 | 2 | 11 | 9 | 29.66 ms |
-| 21 | 10 | 59 | 57 | 68.15 ms |
+| Users in database | Rows rendered | Total queries | Roles eager-load | Repeated rank lookups | Render time |
+|---:|---:|---:|---:|---:|---:|
+| 2 | 2 | 11 | 1 | 8 | 29.66 ms |
+| 21 | 10 | 59 | 1 | 56 | 68.15 ms |
 
 The populated page contained one eager-load query for displayed roles, followed
 by 28 identical super-admin role-id lookups and 28 pivot `exists` lookups. The
@@ -143,12 +146,19 @@ the model's loaded `roles` relation. The fresh id-based lookup exists because a
 stale in-memory relation previously bypassed the last-super-admin protection.
 The write Actions must remain self-authorizing against current database state.
 
-**Future direction:** add a real list query-count regression, then give the
-resource a page-local/batched rank projection for UX visibility while leaving
-the Action's binding authorization fresh. Resolve actor rank once for the page
-where safe, and avoid duplicating policy rules in the UI. Mutation-prove that
-removing the batched projection regresses query count and that changing roles
-before an Action still causes the Action to use current state.
+**Future direction:** add a real list query-count regression, then first measure
+request-scoped memoization of only `Role::superAdminId()`. Never cache the User
+pivot result: the Action's binding authorization must remain fresh. Prove that
+the role-id cache cannot leak across HTTP requests, queue jobs or long-lived
+workers, and account for bootstrap and seeding paths. The normal request path
+protects the canonical super-admin role from mutation, but trusted setup paths
+still make cache lifetime a requirement rather than an assumption.
+
+If the remaining pivot lookups still justify work, give the resource a
+page-local/batched rank projection for UX visibility while leaving the Actions
+self-authorizing against current state. Avoid duplicating policy rules in the
+UI. Mutation-prove that removing the projection regresses query count and that
+changing roles before an Action still causes the Action to use current state.
 
 ### Medium — Outstanding Aged repeats balance work and carries unused catalogue joins
 
@@ -300,20 +310,24 @@ tests and `EXPLAIN`; it does not replace them.
 
 Each item should be its own scoped, independently reviewed task.
 
-1. **User resource query-count guard:** batch the list's rank facts without
-   weakening the fresh, self-authorizing Actions; mutation-prove both query
-   growth and current-state authorization.
-2. **Outstanding report query plan:** narrow the Enrollment join, add a
+1. **Super-admin role-id lookup:** add the User resource query-count guard and
+   measure request-scoped memoization of the stable role id. Prove lifecycle
+   safety for requests, workers and seeders, and never cache the User pivot.
+2. **Remaining User resource rank reads:** if measurement still justifies it,
+   batch the list's UX-only rank facts without weakening the fresh,
+   self-authorizing Actions; mutation-prove both query growth and current-state
+   authorization.
+3. **Outstanding report query plan:** narrow the Enrollment join, add a
    payment-heavy benchmark/test fixture, compare `EXPLAIN`, and optimize without
    duplicating `ChargeBalance`.
-3. **Bounded report student selector:** server-side search, selected-option
+4. **Bounded report student selector:** server-side search, selected-option
    resolution and a narrow projection, with a 2,000-student query/payload guard.
-4. **Non-production lazy-loading guard:** enable it, mutation-prove it and run
+5. **Non-production lazy-loading guard:** enable it, mutation-prove it and run
    the full serial suite.
-5. **Export capacity benchmark:** measure serialized payload and PDF worker
+6. **Export capacity benchmark:** measure serialized payload and PDF worker
    peak/timeout with realistic allocations, then change transport only if the
    evidence justifies it.
-6. **Activity filter:** measure after portal-account adoption and bound the
+7. **Activity filter:** measure after portal-account adoption and bound the
    filter without losing historical staff actors.
 
 ## Verification record
