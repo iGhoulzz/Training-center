@@ -51,7 +51,9 @@ Phase 2's primary surface is one guided flow, not a set of CRUD screens the user
 
 The system allocates the payment to that bill. **Staff never see the word "allocation" and never make an allocation decision.**
 
-Later installments: search the student, open the unpaid bill, record another payment, issue another receipt. **One bill, many receipts**, all pointing back to the same `CHG-…`.
+Later installments: **one bill, many receipts**, all pointing back to the same `CHG-…`. That is a statement about the DATA MODEL, not about a screen.
+
+An earlier revision of this line read "search the student, open the unpaid bill, record another payment, issue another receipt", which described an interface the system deliberately does not have — system design section 12 lists collecting a later installment through the interface as out of scope, and section 6 says the same about the allocation table. It was raised twice in review of P2-T09 and is corrected here rather than a third time.
 
 ### The receipt
 

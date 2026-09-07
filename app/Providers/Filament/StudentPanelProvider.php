@@ -26,9 +26,10 @@ use Illuminate\View\Middleware\ShareErrorsFromSession;
  *
  * A SECOND PANEL, NOT A SECOND AUTH IMPLEMENTATION.
  * -------------------------------------------------
- * System design §3's table called /portal "Blade + Tailwind" while the prose
+ * System design §3's table once called /portal "Blade + Tailwind" while the prose
  * directly below it said "separate panels with separate auth guards". Both could
- * not be literal; phase 3's design resolved it in favour of a panel, because §4
+ * not be literal; phase 3's design resolved it in favour of a panel, and P3-T14
+ * corrected the table to say so. The reasoning is kept because §4
  * had already refused a second auth package to avoid two competing sources of
  * truth, and hand-rolling login, throttling, session invalidation and the
  * forced-password gate would have reintroduced exactly that on the system's most

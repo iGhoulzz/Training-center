@@ -19,13 +19,13 @@ use App\Domain\Enrollment\Enums\CertificateStatus;
  * requires someone to deliberately add a property here AND a deliberate line in
  * the controller that fills it in.
  *
- * WHY THIS IS SEVEN FIELDS WHERE THE DESIGN SAYS SIX (cross-review of P3-T08).
+ * WHY THIS CARRIES SEVEN VALUES (cross-review of P3-T08).
  * -------------------------------------------------------------------------
- * Design §7.3 says both things and they cannot both hold: it calls this a
- * "six-field projection", and one paragraph later it requires a revoked
- * certificate to state "revoked on 4 March 2026". The revocation date is a
- * seventh value; six fields cannot carry it, and `issued_at` is a different date
- * that happens to coincide only by accident.
+ * Design §7.3 USED TO say two things that could not both hold: it called this a
+ * "six-field projection", and one paragraph later required a revoked certificate
+ * to state "revoked on 4 March 2026". The revocation date is a seventh value;
+ * six fields cannot carry it, and `issued_at` is a different date that happens
+ * to coincide only by accident.
  *
  * The contradiction is resolved in favour of the BEHAVIOUR, because that is what
  * Task 8's Done-when also requires and what a person holding a bad certificate
@@ -33,9 +33,9 @@ use App\Domain\Enrollment\Enums\CertificateStatus;
  * guarantee; the guarantee is that this list is closed, named and deliberate,
  * and that survives a seventh entry intact.
  *
- * Recorded for T14: design §7.3's "six-field" wording is now stale and wants
- * correcting to name the closure rather than the number. This task does not own
- * that file.
+ * P3-T14 corrected this: design §7.3 and system design §6 now describe a CLOSED
+ * projection rather than a six-field one, and §6's enumeration names the
+ * revocation date. The wording there and the shape here now agree.
  *
  * `reference_number`, `enrollment_id`, `issued_by`, `revoked_by`,
  * `revocation_reason` and `replaces_certificate_id` are ABSENT ON PURPOSE. A
