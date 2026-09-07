@@ -1,6 +1,9 @@
 # Phase 3 — Student Portal and Certificates Implementation Plan
 
-**Status: step 0 closed — awaiting planning PR merge. No task may begin until it merges green.**
+**Status: COMPLETE.** All fourteen tasks are merged to `main`, every branch tip is
+tagged `task/P3-*-end` on origin, and the reconciliation at the end of this file
+records what was deviated from, what was raised and deliberately not absorbed,
+and the seam re-count. Closed by P3-T14 on 2026-09-06.
 
 **Goal:** A student signs in to `/portal` and sees their own record, enrolments and
 outstanding balance and nothing belonging to anyone else; staff mark a batch's
@@ -13,10 +16,10 @@ pinned to `web` so authentication and authorization resolve on different guards
 deliberately. Certificates are an append-only register whose central invariant —
 one valid certificate per enrolment — is enforced twice, by a row lock for the
 application path and by a stored generated column with a unique index for every
-other path. The public verifier is a three-route surface built from a fixed
-six-field projection.
+other path. The public verifier is a three-route surface built from a fixed,
+closed projection.
 
-**Tech stack:** Laravel 13.20, Filament 5.7.1, `spatie/laravel-permission` 7.4.2,
+**Tech stack:** Laravel 13.30.1, Filament 5.7.8, `spatie/laravel-permission` 7.4.2,
 Filament Shield 4.2.0, MySQL 8.4, Pest.
 
 **Reference documents:**
@@ -1085,7 +1088,7 @@ The first thing in this system that serves the open internet.
 - `routes/web.php` — **seam**; three routes in one middleware group
 - `app/Http/Controllers/VerifyCertificateController.php` — **new**
 - `app/Http/Middleware/VerificationResponseHeaders.php` — **new**
-- `app/Domain/Enrollment/Data/CertificateVerificationView.php` — **new**; the six-field projection
+- `app/Domain/Enrollment/Data/CertificateVerificationView.php` — **new**; the closed projection
 - `app/Providers/AppServiceProvider.php` — **seam**; the `certificate-verification` named limiter
 - `resources/views/verify/form.blade.php` — **new**
 - `resources/views/verify/show.blade.php` — **new**
@@ -1671,3 +1674,150 @@ printing and printer integration; public student self-registration; collecting a
 later instalment through the interface; two-factor authentication; and the Arabic
 translation pass, which is phase 4's work — every catalogue this phase adds ships
 with an empty `lang/ar/` counterpart.
+
+---
+
+# Reconciliation — P3-T14
+
+Closed 2026-09-06. Every claim below was checked against `main` at `2407385`, not
+against this plan's own text.
+
+## The three document corrections
+
+| | Correction | Verified against |
+|---|---|---|
+| System design §3 | `/portal` is a **Filament panel**, not Blade + Tailwind | `StudentPanelProvider->path('portal')` |
+| System design §4 | The login limiter does **not** return. The named limiter phase 3 introduced is `certificate-verification` | `AppServiceProvider:196` registers it, `routes/web.php:78` applies it — and it is the only `RateLimiter::for()` in the app |
+| Phase-2 design §2 | "Later installments" is a statement about the DATA MODEL, not a promise of a screen | System design §12 lists collecting a later instalment through the interface as out of scope |
+
+The fourth correction was T13's and is not repeated here.
+
+**The removed phrasing was grepped for repo-wide, and the grep is what made this
+task honest.** "Blade + Tailwind" still appears at system design §3's *public site*
+row, which is correct and was left. `six-field` appeared in four more places.
+
+## Declared scope expansion
+
+This task's declared scope was documentation. Its Done-when — "the old wording
+appears nowhere" — could not be satisfied inside it, because correcting the specs
+made three code comments stale and left one spec section outside the declared
+sections. **Raised with the owner and approved before any of it was edited**, in
+the same shape T06 used when it needed `EnrollmentsRelationManager`:
+
+- `app/Providers/Filament/StudentPanelProvider.php` — its docblock described a
+  contradiction between §3's table and its prose. The contradiction is now gone,
+  so the comment described a state that no longer exists.
+- `app/Domain/Enrollment/Data/CertificateVerificationView.php` — its docblock said
+  §7.3's wording "is now stale and wants correcting… recorded for T14". T14 has
+  corrected it, so the note pointed at finished work.
+- System design **§6** line 324 — the verifier's field enumeration, which omitted
+  the revocation date. §3 and §4 were the declared sections; §6 was not.
+
+## Deviations from this plan, recorded rather than absorbed
+
+**T08 shipped a seven-value projection where the design said six.** Phase-3 design
+§7.3 required both "a dedicated six-field projection" and that a revoked
+certificate state "revoked on 4 March 2026". Those cannot both hold — the
+revocation date is a seventh value, and `issued_at` is a different date that
+coincides only by accident. Resolved toward the behaviour, because T08's own
+Done-when required it and because it is what the holder of a bad certificate needs
+to read. The guarantee was never the number: it is that the projection is closed,
+named and cannot grow by accident. Both specs now say so.
+
+**T11 changed eight files where the plan scoped one.** The plan sized it against a
+repo-wide grep that missed `PortalCredentialConcurrencyTest`. The expansion was
+right and was approved.
+
+**T06 added `EnrollmentsRelationManager` to its scope**, having found that the new
+`EnrollmentHasCertificateException` would otherwise reach the operator as a 500.
+Raised and approved before the work.
+
+**T07 expanded `tests/Pest.php`** with two helpers. Approved, and recorded here
+because a shared test helper file is exactly the kind of seam this section exists
+to surface.
+
+**The gate changed mid-phase.** `chore/pre-push-conditional-build` (#43) made the
+frontend build conditional on the pushed commits touching frontend inputs, after
+the full gate's cost became the phase's main scheduling constraint. Not a task in
+this plan.
+
+**A dependency bump landed mid-phase.** #41 raised Filament and CommonMark for the
+September CVEs, which is why the tech-stack line above no longer matches what the
+plan was written against. Filament 5.7.1 → 5.7.8, Laravel 13.20 → 13.30.1.
+
+**#49 was written during this phase and is not a task in it.** A TOCTOU in receipt
+cleanup — `ReceiptFileOwnershipService::owns()` committed its locking read before
+`PurgeDeletedFileJob` unlinked, so a successor receipt could claim the same
+canonical path in the gap and have its bytes deleted. It surfaced as an
+intermittent Finance failure in P3-T08's CI and was fixed separately.
+
+## The seam re-count, done by counting
+
+Counted by walking each `task/P3-*-end` tag from its fork point with
+`--first-parent`, so a branch that merged `main` mid-flight does not inherit
+another task's files. Both a plain fork-point diff and the `--first-parent` walk
+give the same answer, which is the check that the method is not the finding.
+
+**Eight files were touched by two tasks each. Two were declared.**
+
+| File | Tasks | Declared? |
+|---|---|---|
+| `tests/Feature/Staff/ActionBoundaryArchTest.php` | T02, T03 | yes |
+| `app/Providers/Filament/StudentPanelProvider.php` | T01, T07 | yes |
+| `tests/Feature/Portal/PortalCredentialConcurrencyTest.php` | T02, T11 | no |
+| `tests/Feature/Enrollment/CompletionConcurrencyTest.php` | T03, T11 | no |
+| `tests/Feature/Enrollment/CertificateConcurrencyTest.php` | T05, T11 | no |
+| `lang/en/portal.php` | T01, T07 | no |
+| `lang/en/enrollment.php` | T03, T06 | no |
+| `app/Domain/.../EnrollmentsRelationManager.php` | T03, T06 | no |
+
+`AppServiceProvider`, `config/auth.php`, `routes/web.php` and
+`DatabaseIsolationTest` were declared as seams and turned out to be touched by one
+task each. Over-declaring costs nothing; the reverse is what collides.
+
+**The conclusion is not that the inventory is bad at predicting.** Four of the six
+undeclared seams — T11's three concurrency files and T06's relation manager — were
+created by scope expansions that were correctly raised and approved *while the
+phase was running*. The inventory was right when it was written and was never
+updated when scope changed. Only the two translation catalogues were genuinely
+unforeseen, and those are shared by construction: every task that adds
+user-facing copy writes to the same catalogue.
+
+**So the fix is procedural, not analytical: an approved scope expansion must
+update the seam inventory as part of the approval.** Recorded for the phase-4
+plan.
+
+## Raised and deliberately not absorbed — each with what it needs
+
+None of these are in this task's scope. They are listed so they have an owner
+rather than surviving as folklore.
+
+| Item | What it needs |
+|---|---|
+| **No `npm audit` in CI.** `ci.yml:116` runs `composer audit --locked`; line 124 runs a bare `npm ci`. The JS side has no advisory gate, and a high-severity `nanoid` advisory is currently unguarded | A gate task, in the shape of P3-T12. Touches `ci.yml` and `package.json` |
+| **`package-lock.json` carries `"name": "AGENT-T01"`** — npm derives that field from the directory, so `npm install` in any worktree dirties a tracked file and the pre-push clean-worktree guard refuses. CI is unaffected because it uses `npm ci` | One line. Any task that touches the frontend |
+| **Two near-identical source scanners.** `appCodeWithoutStringsOrComments()` in `tests/Pest.php` takes a path; `DatabaseIsolationTest` carries a twin that takes source. Both exist because a scanner once matched its own error message | Consolidation, and it edits a seam — needs declaring |
+| **Five test files still use the weaker `appSourceWithoutComments()`.** Audited during T08: every one asserts an ABSENCE, so a string literal makes them stricter, not weaker. `LocalizationTest` legitimately needs strings. **No action required** — recorded so the audit is not repeated | Nothing. Closed |
+| **Nothing exercises a Filament `Select` search through the component.** `CertificateResourceTest` mounts the action and sets `enrollment_id` directly; its only search test calls the static method. A break in the Livewire path is invisible to a green suite — which is how a real UI failure reached the owner | A test task. The gap is the pattern, not the one resource |
+| **Unrestored mutation probes reached review twice this phase.** One left a certificate security guard disabled; one left a public route outside its middleware group. Both probes were correct; neither was restored | A rule in `docs/WORKFLOW.md`: the author diffs against the pre-probe copy before committing |
+| **The development database has no backup**, in a project whose phase 1 shipped backups as a feature | An operational decision, not a task |
+
+## Owner feedback gathered during this phase
+
+Collected while the owner reviewed the running app. **Phase 4 scope, not
+reconciliation** — recorded here only so it is not lost:
+
+- Student and batch codes should be auto-generated in a fixed readable format;
+  course codes stay manual with suggestions. The justification for manual codes
+  existed only as a form comment and had never been put to the owner.
+- The financial reports need a UI rework: figures are not traceable to their rows,
+  and "Revenue" (collected, not billed) and "Profit" (revenue minus wages only,
+  no overheads) are correct implementations of unstated definitions.
+- An expenses concept does not exist and is wanted, so that rent and similar reach
+  Profit. A new domain area, not a UI change.
+- Report period filters are inconsistent and there is no all-time option, though
+  `ReportPeriod::between()` already exists.
+- Receipt PDFs are generated, stored and downloadable, and nothing in the UI links
+  to them.
+- Notification bodies and actions exist in 3 of 35 call sites; the exemplar is
+  `ChargeResource:430` and the exception detail needed is already thrown.

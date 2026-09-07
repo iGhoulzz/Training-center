@@ -38,9 +38,10 @@ serves the open internet. Both deserve the scrutiny payments got.
 
 ### 2.1 A Filament panel, not Blade
 
-System design §3's table calls `/portal` "Blade + Tailwind" while the prose
-immediately below it says "separate panels with separate auth guards". Both
-cannot be literal. **Resolved in favour of a Filament panel** —
+System design §3's table once called `/portal` "Blade + Tailwind" while the
+prose immediately below it said "separate panels with separate auth guards".
+Both could not be literal, and P3-T14 corrected the table to match this
+section. **Resolved in favour of a Filament panel** —
 `StudentPanelProvider`, `id('student')`, `path('portal')`.
 
 The reason is that §4 already refused a second auth package to avoid two
@@ -572,7 +573,7 @@ Status, printed student name, course name, completion date, issue date, centre
 confirmation. Never date of birth, national ID, contact details, portal account
 data, or anything financial.
 
-**The response is built from a dedicated six-field projection, never from the
+**The response is built from a dedicated closed projection, never from the
 model.** A column added to `student_certificates` in a later phase therefore
 cannot leak through the public surface by default — the projection would have to
 be edited deliberately.
@@ -809,7 +810,7 @@ Beyond the per-feature tests already named:
   collision refuses. Distinct tests, because a single test cannot tell them
   apart.
 - **The verifier reveals nothing**: malformed, unknown and revoked references each
-  produce the specified output and no more. The six-field projection is asserted
+  produce the specified output and no more. The closed projection is asserted
   as a projection — adding a column to the table must not change the response.
 - **Bespoke single-ability roles** for every new permission — §8.2.
 

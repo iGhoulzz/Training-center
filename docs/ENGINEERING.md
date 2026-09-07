@@ -283,6 +283,51 @@ need to be refused on the record, or does it simply not belong to them?
 
 ---
 
+## Panels, public surfaces and concurrency (phase 3)
+
+Four rules this phase paid for, each in a review round.
+
+**A locking read is the only read that is current inside a transaction.** Under REPEATABLE READ
+an ordinary `SELECT` is served from the snapshot opened by the transaction's *first* statement,
+which may be any earlier query — a permission lookup will do it. So "lock the row, then read the
+sum" does not do what it reads like: the lock is taken, and the read that follows can still return
+pre-lock data. Only `lockForUpdate()` or `sharedLock()` sees the present. Two tills double-collected
+against one balance before this was understood, and `EnrollmentMutex::acquire()` had an unlocked
+read that fixed the snapshot before the lock was even requested. If a decision depends on a value,
+the read that produces that value must lock.
+
+The same rule at one remove: a locking read **releases its locks when its transaction commits**.
+`ReceiptFileOwnershipService::owns()` opened its own transaction, so at top level it was correct
+and useless — the locks were gone before the caller acted on the answer. Nesting it inside the
+caller's transaction makes it a savepoint and the locks survive. A check and the action it
+authorises belong in one transaction.
+
+**A public surface renders a closed, named projection — never a model.** The verifier builds a
+readonly object by naming each field off the row, never `toArray()` and never the model itself.
+A column added to that table in a later phase then cannot reach the internet by default; reaching
+it takes a deliberate new property and a deliberate line that fills it. The guarantee is the
+*closure*, not the field count — the count changed during the phase and the property did not.
+
+**A test that asserts an absence must be told what it is looking for.** A guard built as a
+blacklist proves only that the listed tokens are absent, which is a true statement about the page
+and not the property required. Enumerate what the page actually emits and classify it — every
+URL-bearing attribute, plus CSS `url()` and `@import` — and keep a dataset of samples that must be
+caught alongside ones that must not, so narrowing the parser later cannot leave a scanner that
+scans for nothing. The same reasoning applies to source scanners: strip strings as well as
+comments, or the check answers "does this text appear" rather than "does this code do that".
+
+**Concurrency tests use a monotonic clock and detect a dead subprocess.** Deadlines are
+`hrtime(true)`, never `microtime(true)`, which moves with NTP steps. A poll waiting on a
+subprocess must also check `$worker->isRunning()` and fail with the subprocess's stderr —
+otherwise a worker that dies at startup is reported a minute later as a timeout, naming the wrong
+cause. Raising a ceiling without adding that check makes debugging worse, not better.
+
+**Assertions against a Livewire response are weaker than they look.** Every public property is
+serialised into `wire:snapshot` in the raw body, so `assertSee()` matches the payload as readily as
+the rendered HTML — a value never displayed to anyone still passes. Strip the snapshot before
+asserting presence. `assertDontSee()` over the raw body is the stricter direction and is fine as
+it stands, because it proves the value never reached the payload at all.
+
 ## Error handling
 
 - Typed custom exceptions carrying context, not generic `\Exception`.
