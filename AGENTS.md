@@ -10,7 +10,7 @@ Instructions for Codex working in this repository.
 
 A web-based management system for a single training center: students, courses and batches, enrollments, staff accounts, and finances, plus a public marketing site.
 
-**Stack:** Laravel (latest stable) + Filament admin panel, Blade for public pages, MySQL, Redis queues, deployed to a VPS via Ploi or Forge.
+**Stack:** Laravel (latest stable) + Filament admin panel, Blade for public pages, MySQL, Redis queues, deployed to a root Linux VPS. **The hosting provider is not chosen** — spec §2 records the four capabilities the code needs instead of a vendor.
 
 **Three surfaces:** public site at `/`, staff dashboard at `/admin` (Filament), student portal at `/portal` (phase 3). Staff and students use separate panels and separate auth guards.
 

@@ -28,7 +28,7 @@ A web-based management system for a single training center. It replaces nothing 
 | Legacy data | None | No migration or import work. |
 | Stack | Laravel + Filament | The dashboard is CRUD- and report-heavy, which is precisely Filament's domain. Effort goes into financial logic, not rebuilding tables and forms. |
 | Database | MySQL | Nothing here requires PostgreSQL-specific features. MySQL runs everywhere and is more portable for this team. Migrations use Laravel's query builder, keeping a later switch possible. |
-| Hosting | VPS (Hetzner/DigitalOcean) managed via Ploi or Forge | Provides queue workers, Redis, and scheduled tasks — including the nightly backup, which writes to a destination outside the server's own failure domain. Roughly $15–25/month. |
+| Hosting | **Provider not chosen.** The requirement is a root Linux VPS | **This row states a capability, not a vendor, because only the capability constrains the code.** Four things must be possible: a supervised long-lived queue worker, Redis, a one-minute cron entry for the scheduler, and SSH deploys — plus a backup destination outside the server's own failure domain. Shared and cPanel hosting supply none of the first three; without them receipts, report PDFs and exports stop being asynchronous and the queued-export UI describes behaviour the server cannot produce. Candidates include Hetzner or DigitalOcean, and a local Libyan host such as Libyan Spider — Filament round-trips to the server on most interactions, so a locally hosted server is felt on every click. A management panel (Ploi, Forge) is **orthogonal to the provider**: it configures any Ubuntu box it has SSH root on. Roughly $15–25/month. |
 | Languages | Arabic and English, RTL | Translation structure and logical CSS properties from the first commit; Arabic strings land in phase 4. |
 | Currency | Libyan Dinar (LYD), single currency | Stored as `decimal(12,3)` per ISO 4217 — the dinar subdivides into 1000 dirham. Display precision is a UI setting. Multi-currency is out of scope. |
 | Public registration | Disabled | All accounts are created by an administrator. |
@@ -402,9 +402,9 @@ Feature tests are the priority, because the risk in this system is in how the pi
 ## 11. Operations
 
 - **Backups from day one.** `spatie/laravel-backup`, dumping the database **and the private uploads disk** daily to storage in a **separate failure domain** — a rotated removable drive or off-site object storage, selected by `BACKUP_DISK` (P1-T17). The invariant is the failure domain, not the technology: an archive on the application's own disk dies with that disk, so the application refuses a backup path inside itself and refuses at backup time to write to its own filesystem, which is what an unmounted drive looks like. A drive that never leaves the building survives a dead server and not a fire. Both are required: restoring rows whose files are missing leaves staff certificates permanently unrecoverable, and the database records only their paths. This is set up in phase 1, before there is anything valuable to lose, because that is the only point at which anyone reliably remembers to do it. A training center's payment history is not reconstructible.
-- Queue workers via Redis, managed by the hosting panel.
+- Queue workers via Redis, run as a **supervised long-lived process** — restarted when it dies, because a worker that exits silently stops generating receipts and exports with no visible symptom. A management panel supervises it for you; a hand-configured server needs systemd or supervisor.
 - Laravel's scheduler on a one-minute cron entry.
-- Deployment on git push via Ploi or Forge.
+- Deployment over SSH, on git push where the host is managed through a panel such as Ploi or Forge. **Which provider and whether a panel is used are both open — see §2.** Nothing in the application depends on the answer; the four capabilities named there are what it depends on.
 
 ---
 
