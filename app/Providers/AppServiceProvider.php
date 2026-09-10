@@ -30,6 +30,7 @@ use App\Domain\Staff\Policies\StaffProfilePolicy;
 use App\Domain\Staff\Policies\UserPolicy;
 use App\Domain\Staff\Support\ActivityEvent;
 use App\Domain\Staff\Support\BackupConfiguration;
+use App\Domain\Staff\Support\SuperAdminRoleId;
 use App\Models\User;
 use Illuminate\Auth\Events\Failed;
 use Illuminate\Auth\Events\Login;
@@ -57,7 +58,24 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        /*
+         * SCOPED, NOT SINGLETON — AND THE DIFFERENCE IS THE WHOLE BINDING.
+         *
+         * SuperAdminRoleId memoizes one row's primary key so the user list stops
+         * re-reading it per row; P3-T15's audit measured 28 of these lookups on
+         * a 10-row page. The LIFETIME of that memo is the requirement, not an
+         * implementation detail: it must not outlive the request or the job that
+         * filled it.
+         *
+         * `scoped()` is `singleton()` plus registration in $scopedInstances
+         * (Container.php:528-535), and the queue worker's reset callback calls
+         * $app->forgetScopedInstances() between jobs
+         * (QueueServiceProvider.php:263). A plain singleton — or a static
+         * property on Role, which is the shape this started as — is rebuilt only
+         * when the process restarts, so a long-lived worker would carry one
+         * job's answer into every job after it.
+         */
+        $this->app->scoped(SuperAdminRoleId::class);
     }
 
     /**

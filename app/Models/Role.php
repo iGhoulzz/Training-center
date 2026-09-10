@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Models;
 
 use App\Domain\Staff\Support\RecordsActivity;
+use App\Domain\Staff\Support\SuperAdminRoleId;
 use Spatie\Permission\Models\Role as SpatieRole;
 
 /**
@@ -68,22 +69,20 @@ class Role extends SpatieRole
     public const SUPER_ADMIN = 'super_admin';
 
     /**
-     * Resolve the super-admin role's primary key from the database.
+     * Resolve the super-admin role's primary key.
      *
      * Callers compare identity by this key rather than by name, so a check
      * cannot drift from what Spatie writes (Spatie detaches by key).
+     *
+     * The query moved to {@see SuperAdminRoleId} (P35-T02), which memoizes it
+     * for the life of one request or one queued job. This signature is
+     * unchanged so no caller had to move with it. **Only the role id is
+     * memoized** — `User::isSuperAdmin()`'s pivot read stays fresh on every
+     * call, because that read, not this one, is the authorization decision.
      */
     public static function superAdminId(): int|string|null
     {
-        /** @var self|null $role */
-        $role = static::query()
-            ->where('name', self::SUPER_ADMIN)
-            ->where('guard_name', config('auth.defaults.guard'))
-            ->first();
-
-        $key = $role?->getKey();
-
-        return is_int($key) || is_string($key) ? $key : null;
+        return app(SuperAdminRoleId::class)->value();
     }
 
     /**
