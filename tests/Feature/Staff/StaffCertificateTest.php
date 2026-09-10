@@ -51,8 +51,13 @@ it('lets one profile hold several certificates', function () {
 
     StaffCertificate::factory()->count(3)->for($profile, 'staffProfile')->create();
 
+    // The inverse relation is loaded rather than read off an unloaded model:
+    // P35-T04 turned Model::preventLazyLoading() on outside production, and
+    // ->certificates on a three-row result arms the per-instance flag. Same two
+    // assertions, same rows.
     expect($profile->certificates()->count())->toBe(3)
-        ->and($profile->certificates->first()?->staffProfile->id)->toBe($profile->id);
+        ->and($profile->certificates()->with('staffProfile')->first()?->staffProfile->id)
+        ->toBe($profile->id);
 });
 
 it('deletes the certificates when the profile is deleted', function () {

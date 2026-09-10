@@ -36,6 +36,7 @@ use Illuminate\Auth\Events\Failed;
 use Illuminate\Auth\Events\Login;
 use Illuminate\Auth\Events\Logout;
 use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
@@ -101,6 +102,56 @@ class AppServiceProvider extends ServiceProvider
          * through Artisan::call(). See BackupConfiguration.
          */
         BackupConfiguration::assertReadyForProduction($this->app->environment());
+
+        /*
+         * AN UNEXPECTED LAZY LOAD FAILS IN DEVELOPMENT AND CI, NEVER IN PRODUCTION.
+         *
+         * On local and testing this throws `LazyLoadingViolationException` the
+         * moment a relationship is read without being loaded, which is where an
+         * N+1 is cheap to see and cheap to fix. In production it is OFF: turning
+         * a public request into a 500 over a performance defect trades a slow
+         * page for no page, and a certificate verification or a receipt download
+         * failing outright is worse for the centre than one extra query.
+         *
+         * WHAT THIS DOES NOT CATCH, STATED HERE BECAUSE A COMMENT CLAIMING MORE
+         * THAN THE MECHANISM DELIVERS IS THIS REPOSITORY'S MOST FREQUENT DEFECT.
+         * ---------------------------------------------------------------------
+         * It catches ONE shape: reading an Eloquent relationship that was not
+         * eager-loaded. It does not detect full table scans, bad join order,
+         * correlated subqueries, repeated scalar queries, or a query builder
+         * returning an unbounded result set.
+         *
+         * The sharpest illustration is P3-T15's own headline finding, which this
+         * guard would NOT have caught: the user list's per-row
+         * `roles()->whereKey($id)->exists()` is an explicit relationship QUERY,
+         * not a lazy-loaded property, so it never triggers a violation. It took
+         * 59 statements for a populated page and was found by counting
+         * statements, which is what P35-T02's UserResourceQueryCountTest now
+         * does. This guard complements query-count tests and EXPLAIN; it does
+         * not replace either.
+         *
+         * AND IT IS NARROWER STILL THAN "RELATIONSHIP LAZY LOADING", IN A WAY
+         * THE AUDIT DID NOT STATE AND NOBODY WOULD GUESS.
+         * ---------------------------------------------------------------------
+         * `Builder::hydrate():498-501` in the installed framework arms the
+         * per-instance flag ONLY when the result carried more than one row:
+         *
+         *     if (count($items) > 1) {
+         *         $model->preventsLazyLoading = Model::preventsLazyLoading();
+         *     }
+         *
+         * A model from `find()`, `first()` or `findOrFail()` therefore never
+         * violates, however many relations are read off it. Laravel's reasoning
+         * holds — one model read once is not an N+1 — but the practical effect
+         * is that verifying this guard with `Model::find(1)->relation` shows it
+         * doing nothing, and reads exactly like a guard that was never wired up.
+         * That is measured behaviour, not a reading of the docs, and
+         * LazyLoadingGuardTest pins it in both directions.
+         *
+         * A violation is a bug in the caller. Fix the eager load — never widen
+         * the environment check to make a failing test pass.
+         */
+        Model::preventLazyLoading(! $this->app->isProduction());
 
         /*
          * The transient half of that guard, on the commands themselves.
