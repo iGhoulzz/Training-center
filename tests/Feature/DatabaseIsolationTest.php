@@ -64,6 +64,7 @@ const READ_ONLY_FEATURE_TESTS = [
     'PolicyAbilitySurfaceTest.php',
     'Staff/ActionBoundaryArchTest.php',
     'Staff/FileLifecycleConfigurationTest.php',
+    'Tooling/ProductionDefaultsTest.php',
 ];
 
 /**
