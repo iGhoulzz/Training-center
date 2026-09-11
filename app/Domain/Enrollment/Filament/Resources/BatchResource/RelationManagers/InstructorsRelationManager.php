@@ -169,9 +169,10 @@ class InstructorsRelationManager extends RelationManager
                      * same rule server-side, because a Select's options are a
                      * suggestion and the submitted value is user input.
                      */
-                    ->options(fn (): array => self::eligibleInstructors())
+                    ->options(fn (): array => self::searchEligibleInstructors(''))
                     ->searchable()
-                    ->preload(),
+                    ->getSearchResultsUsing(fn (string $search): array => self::searchEligibleInstructors($search))
+                    ->getOptionLabelUsing(fn (mixed $value): ?string => self::instructorOptionLabel($value)),
 
                 TextInput::make('assigned_hours')
                     ->label(__('enrollment.assigned_hours'))
@@ -330,14 +331,26 @@ class InstructorsRelationManager extends RelationManager
      *
      * @return array<int, string>
      */
-    private static function eligibleInstructors(): array
+    public static function searchEligibleInstructors(string $search): array
+    {
+        return User::query()
+            ->select(['id', 'name'])
+            ->active()
+            ->whereIn('users.id', StaffProfile::query()->instructors()->select('user_id'))
+            ->where('name', 'like', "%{$search}%")
+            ->orderBy('name')
+            ->limit(25)
+            ->pluck('name', 'id')
+            ->all();
+    }
+
+    public static function instructorOptionLabel(mixed $value): ?string
     {
         return User::query()
             ->active()
             ->whereIn('users.id', StaffProfile::query()->instructors()->select('user_id'))
-            ->orderBy('name')
-            ->pluck('name', 'id')
-            ->all();
+            ->whereKey($value)
+            ->value('name');
     }
 
     /**

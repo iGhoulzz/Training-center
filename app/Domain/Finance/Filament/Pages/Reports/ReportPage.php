@@ -18,16 +18,25 @@ use App\Support\CentreCalendar;
 use Filament\Actions\Action;
 use Filament\Actions\ExportAction;
 use Filament\Actions\Exports\Enums\ExportFormat;
+use Filament\Forms\Components\DatePicker;
+use Filament\Forms\Components\Select;
+use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Pages\PageConfiguration;
 use Filament\Panel;
+use Filament\Schemas\Components\Component;
+use Filament\Schemas\Schema;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Route;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Locked;
 
-/** Shared filter, authorization, and queued-export shell for report pages. */
+/**
+ * Shared filter, authorization, and queued-export shell for report pages.
+ *
+ * @property-read Schema $form
+ */
 abstract class ReportPage extends Page
 {
     protected string $view = 'finance.reports.page';
@@ -97,6 +106,15 @@ abstract class ReportPage extends Page
         $this->requesterId = $user->getKey();
         $this->filters = $this->defaultFilters();
         $this->appliedFilters = $this->filters;
+        $this->form->fill($this->filters);
+    }
+
+    public function form(Schema $schema): Schema
+    {
+        return $schema
+            ->components($this->filterComponents())
+            ->columns(3)
+            ->statePath('filters');
     }
 
     public function applyFilters(): void
@@ -115,33 +133,69 @@ abstract class ReportPage extends Page
         );
     }
 
-    /**
-     * @return list<array{name: string, type: string, label: string, options?: array<int, string>}>
-     */
-    public function filterFields(): array
+    /** @return list<Component> */
+    private function filterComponents(): array
     {
         return match (static::kind()) {
             ReportKind::Revenue, ReportKind::PaymentMethod => [
-                $this->field('from', 'date'),
-                $this->field('to', 'date'),
+                DatePicker::make('from')
+                    ->label(__('reports.filters.from'))
+                    ->required(),
+                DatePicker::make('to')
+                    ->label(__('reports.filters.to'))
+                    ->required()
+                    ->afterOrEqual('from'),
             ],
             ReportKind::OutstandingAged, ReportKind::DailyTender => [
-                $this->field('date', 'date'),
+                DatePicker::make('date')
+                    ->label(__('reports.filters.date'))
+                    ->required(),
             ],
             ReportKind::WageCost, ReportKind::Profit => [
-                $this->field('month', 'month'),
+                TextInput::make('month')
+                    ->label(__('reports.filters.month'))
+                    ->type('month')
+                    ->required(),
             ],
-            ReportKind::StudentPaymentHistory => [[
-                ...$this->field('student_id', 'select'),
-                'options' => Student::withTrashed()
-                    ->orderBy('last_name')
-                    ->orderBy('first_name')
-                    ->get()
-                    ->mapWithKeys(fn (Student $student): array => [
-                        $student->getKey() => "{$student->student_code} — {$student->full_name}",
-                    ])->all(),
-            ]],
+            ReportKind::StudentPaymentHistory => [
+                Select::make('student_id')
+                    ->label(__('reports.filters.student_id'))
+                    ->placeholder(__('reports.filters.choose_student'))
+                    ->searchable()
+                    ->getSearchResultsUsing(fn (string $search): array => self::searchStudents($search))
+                    ->getOptionLabelUsing(fn (mixed $value): ?string => self::studentOptionLabel($value)),
+            ],
         };
+    }
+
+    /** @return array<int, string> */
+    public static function searchStudents(string $search): array
+    {
+        return Student::withTrashed()
+            ->select(['id', 'student_code', 'first_name', 'last_name'])
+            ->where(function (Builder $query) use ($search): void {
+                $query
+                    ->where('student_code', 'like', "%{$search}%")
+                    ->orWhere('first_name', 'like', "%{$search}%")
+                    ->orWhere('last_name', 'like', "%{$search}%");
+            })
+            ->orderBy('last_name')
+            ->orderBy('first_name')
+            ->limit(25)
+            ->get()
+            ->mapWithKeys(fn (Student $student): array => [
+                (int) $student->getKey() => self::studentLabel($student),
+            ])
+            ->all();
+    }
+
+    public static function studentOptionLabel(mixed $value): ?string
+    {
+        $student = Student::withTrashed()
+            ->select(['id', 'student_code', 'first_name', 'last_name'])
+            ->find($value);
+
+        return $student instanceof Student ? self::studentLabel($student) : null;
     }
 
     /** @return array<string, mixed> */
@@ -149,7 +203,6 @@ abstract class ReportPage extends Page
     {
         return [
             'dataset' => $this->dataset(),
-            'filterFields' => $this->filterFields(),
         ];
     }
 
@@ -229,16 +282,6 @@ abstract class ReportPage extends Page
         };
     }
 
-    /** @return array{name: string, type: string, label: string} */
-    private function field(string $name, string $type): array
-    {
-        return [
-            'name' => $name,
-            'type' => $type,
-            'label' => (string) __("reports.filters.{$name}"),
-        ];
-    }
-
     private function requester(): User
     {
         return User::query()->findOrFail($this->requesterId);
@@ -279,19 +322,28 @@ abstract class ReportPage extends Page
     /** @return array<string, string> */
     private function displayedFilters(): array
     {
-        $displayed = [];
+        return match (static::kind()) {
+            ReportKind::Revenue, ReportKind::PaymentMethod => [
+                (string) __('reports.filters.from') => (string) ($this->appliedFilters['from'] ?? ''),
+                (string) __('reports.filters.to') => (string) ($this->appliedFilters['to'] ?? ''),
+            ],
+            ReportKind::OutstandingAged, ReportKind::DailyTender => [
+                (string) __('reports.filters.date') => (string) ($this->appliedFilters['date'] ?? ''),
+            ],
+            ReportKind::WageCost, ReportKind::Profit => [
+                (string) __('reports.filters.month') => (string) ($this->appliedFilters['month'] ?? ''),
+            ],
+            ReportKind::StudentPaymentHistory => [
+                (string) __('reports.filters.student_id') => self::studentOptionLabel(
+                    $this->appliedFilters['student_id'] ?? null,
+                ) ?? (string) __('reports.filters.not_selected'),
+            ],
+        };
+    }
 
-        foreach ($this->filterFields() as $field) {
-            $value = $this->appliedFilters[$field['name']] ?? null;
-
-            if ($field['type'] === 'select') {
-                $value = $field['options'][(int) $value] ?? __('reports.filters.not_selected');
-            }
-
-            $displayed[$field['label']] = (string) $value;
-        }
-
-        return $displayed;
+    private static function studentLabel(Student $student): string
+    {
+        return "{$student->student_code} — {$student->full_name}";
     }
 
     private static function pageLabel(string $label): string

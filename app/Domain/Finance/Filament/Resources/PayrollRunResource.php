@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Finance\Filament\Resources;
 
+use App\Domain\Enrollment\Services\EnrollmentQueryService;
 use App\Domain\Finance\Enums\PayrollRunType;
 use App\Domain\Finance\Filament\Resources\PayrollRunResource\Pages\CreatePayrollRun;
 use App\Domain\Finance\Filament\Resources\PayrollRunResource\Pages\ListPayrollRuns;
@@ -11,9 +12,7 @@ use App\Domain\Finance\Filament\Resources\PayrollRunResource\Pages\ReviewPayroll
 use App\Domain\Finance\Models\PayrollLine;
 use App\Domain\Finance\Models\PayrollRun;
 use App\Domain\Finance\Services\PayrollCalculator;
-use App\Models\User;
 use BackedEnum;
-use Filament\Forms\Components\CheckboxList;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
@@ -78,18 +77,20 @@ final class PayrollRunResource extends Resource
                 ->required(fn (Get $get): bool => $get('type') === PayrollRunType::MonthlySalary->value)
                 ->afterOrEqual('period_start'),
 
-            CheckboxList::make('assignment_ids')
+            Select::make('assignment_ids')
                 ->label(__('payroll.instructor_assignments'))
-                ->options(fn (): array => self::instructorAssignmentOptions())
+                ->multiple()
                 ->searchable()
-                ->bulkToggleable()
+                ->getSearchResultsUsing(fn (string $search): array => self::searchInstructorAssignments($search))
+                ->getOptionLabelsUsing(fn (array $values): array => self::instructorAssignmentLabels($values))
                 ->visible(fn (Get $get): bool => $get('type') === PayrollRunType::InstructorBatch->value)
                 ->required(fn (Get $get): bool => $get('type') === PayrollRunType::InstructorBatch->value),
 
             Select::make('target_line_id')
                 ->label(__('payroll.corrected_line'))
-                ->options(fn (): array => self::correctionTargetOptions())
                 ->searchable()
+                ->getSearchResultsUsing(fn (string $search): array => self::searchCorrectionTargets($search))
+                ->getOptionLabelUsing(fn (mixed $value): ?string => self::correctionTargetOptionLabel($value))
                 ->visible(fn (Get $get): bool => $get('type') === PayrollRunType::Adjustment->value)
                 ->required(fn (Get $get): bool => $get('type') === PayrollRunType::Adjustment->value),
 
@@ -194,38 +195,84 @@ final class PayrollRunResource extends Resource
     }
 
     /** @return array<int, string> */
-    private static function instructorAssignmentOptions(): array
+    public static function searchInstructorAssignments(string $search): array
     {
-        $assignments = app(PayrollCalculator::class)->availableInstructorAssignments();
-        $names = User::withTrashed()
-            ->whereKey($assignments->pluck('user_id'))
-            ->pluck('name', 'id');
+        $assignments = app(PayrollCalculator::class)->searchAvailableInstructorAssignments($search);
 
         return $assignments->mapWithKeys(fn (array $assignment): array => [
-            $assignment['id'] => __('payroll.assignment_option', [
-                'employee' => $names[$assignment['user_id']] ?? (string) $assignment['user_id'],
-                'batch' => $assignment['batch_id'],
-                'hours' => $assignment['assigned_hours'],
-            ]),
+            $assignment['id'] => self::instructorAssignmentLabel($assignment),
         ])->all();
     }
 
-    /** @return array<int, string> */
-    private static function correctionTargetOptions(): array
+    /**
+     * @param  list<int|string>  $values
+     * @return array<int, string>
+     */
+    public static function instructorAssignmentLabels(array $values): array
     {
-        return PayrollLine::query()
-            ->finalized()
-            ->whereNull('corrects_payroll_line_id')
-            ->with('user')
-            ->orderByDesc('id')
-            ->get()
-            ->mapWithKeys(fn (PayrollLine $line): array => [
-                $line->getKey() => __('payroll.correction_target_option', [
-                    'line' => $line->getKey(),
-                    'employee' => $line->user->name,
-                    'amount' => $line->computed_amount,
-                ]),
+        return app(EnrollmentQueryService::class)
+            ->instructorAssignmentsById(array_map('intval', $values))
+            ->mapWithKeys(fn (array $assignment): array => [
+                $assignment['id'] => self::instructorAssignmentLabel($assignment),
             ])
             ->all();
+    }
+
+    /**
+     * @param  array{id: int, batch_id: int, batch_code: string, user_id: int, user_name: string, assigned_hours: int}  $assignment
+     */
+    private static function instructorAssignmentLabel(array $assignment): string
+    {
+        return __('payroll.assignment_option', [
+            'employee' => $assignment['user_name'],
+            'batch' => $assignment['batch_code'],
+            'hours' => $assignment['assigned_hours'],
+        ]);
+    }
+
+    /** @return array<int, string> */
+    public static function searchCorrectionTargets(string $search): array
+    {
+        return PayrollLine::query()
+            ->select(['id', 'user_id', 'computed_amount'])
+            ->finalized()
+            ->whereNull('corrects_payroll_line_id')
+            ->where(function (Builder $query) use ($search): void {
+                $query->whereHas(
+                    'user',
+                    fn (Builder $userQuery): Builder => $userQuery->where('name', 'like', "%{$search}%"),
+                );
+
+                if (ctype_digit($search)) {
+                    $query->orWhereKey((int) $search);
+                }
+            })
+            ->with('user:id,name')
+            ->orderByDesc('id')
+            ->limit(25)
+            ->get()
+            ->mapWithKeys(fn (PayrollLine $line): array => [
+                $line->getKey() => self::correctionTargetLabel($line),
+            ])
+            ->all();
+    }
+
+    public static function correctionTargetOptionLabel(mixed $value): ?string
+    {
+        $line = PayrollLine::query()
+            ->select(['id', 'user_id', 'computed_amount'])
+            ->with('user:id,name')
+            ->find($value);
+
+        return $line instanceof PayrollLine ? self::correctionTargetLabel($line) : null;
+    }
+
+    private static function correctionTargetLabel(PayrollLine $line): string
+    {
+        return __('payroll.correction_target_option', [
+            'line' => $line->getKey(),
+            'employee' => $line->user->name,
+            'amount' => $line->computed_amount,
+        ]);
     }
 }

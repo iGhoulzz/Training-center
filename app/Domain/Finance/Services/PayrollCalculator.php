@@ -172,4 +172,28 @@ final class PayrollCalculator
             ->reject(fn (array $assignment): bool => $paidIds->has($assignment['id']))
             ->values();
     }
+
+    /**
+     * @return Collection<int, array{
+     *     id: int,
+     *     batch_id: int,
+     *     batch_code: string,
+     *     user_id: int,
+     *     user_name: string,
+     *     assigned_hours: int
+     * }>
+     */
+    public function searchAvailableInstructorAssignments(string $search, int $limit = 25): Collection
+    {
+        $paidAssignmentIds = PayrollLine::query()
+            ->finalized()
+            ->whereNotNull('batch_instructor_id')
+            ->select('batch_instructor_id');
+
+        return $this->enrollments->searchInstructorAssignments(
+            $paidAssignmentIds,
+            $search,
+            $limit,
+        );
+    }
 }

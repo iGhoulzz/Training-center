@@ -33,6 +33,8 @@ final class ReviewPayrollRun extends ViewRecord
                 ->schema([
                     Select::make('line_id')
                         ->label(__('payroll.line'))
+                        // Bounded by the lines already frozen onto this one
+                        // draft run; this is not a centre-wide catalogue.
                         ->options(fn (): array => $this->run()->lines
                             ->mapWithKeys(fn (PayrollLine $line): array => [
                                 $line->getKey() => __('payroll.line_option', [

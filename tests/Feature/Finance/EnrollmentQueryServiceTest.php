@@ -196,6 +196,44 @@ it('gives task 8 every assignment in the centre, whatever the batch status', fun
         ->toEqualCanonicalizing([(int) $this->batch->getKey(), (int) $completed->getKey()]);
 });
 
+it('searches task 3 instructor assignments within the requested bound before hydration', function () {
+    $this->batch->update(['code' => 'NEEDLE-BATCH']);
+    $users = User::factory()->count(2_000)->create();
+    $this->batch->instructors()->attach($users->mapWithKeys(
+        fn (User $user): array => [$user->getKey() => ['assigned_hours' => 1]],
+    )->all());
+
+    $excludedId = (int) DB::table('batch_instructor')->value('id');
+    $excluded = User::query()
+        ->whereKey($users->firstOrFail()->getKey())
+        ->selectRaw("{$excludedId} as batch_instructor_id");
+
+    $results = $this->enrollments->searchInstructorAssignments($excluded, 'NEEDLE-BATCH', 25);
+
+    expect($results)->toHaveCount(25)
+        ->and($results->pluck('id'))->not->toContain($excludedId)
+        ->and($results->every(fn (array $row): bool => array_keys($row) === [
+            'id',
+            'batch_id',
+            'batch_code',
+            'user_id',
+            'user_name',
+            'assigned_hours',
+        ]))->toBeTrue()
+        ->and($results->every(fn (array $row): bool => $row['batch_code'] === 'NEEDLE-BATCH'))->toBeTrue();
+
+    $selected = $this->enrollments->instructorAssignmentsById([
+        $results->firstOrFail()['id'],
+        $results->last()['id'],
+    ]);
+
+    expect($selected)->toHaveCount(2)
+        ->and($selected->pluck('id')->all())->toEqualCanonicalizing([
+            $results->firstOrFail()['id'],
+            $results->last()['id'],
+        ]);
+});
+
 it('gives task 8 an empty list for a batch nobody teaches, rather than failing', function () {
     expect($this->enrollments->instructorAssignmentsFor((int) $this->batch->getKey()))
         ->toBeEmpty();
