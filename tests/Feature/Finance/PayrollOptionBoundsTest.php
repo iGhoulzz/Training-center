@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Course;
+use App\Domain\Finance\Enums\CompensationType;
+use App\Domain\Finance\Enums\PayrollRunType;
 use App\Domain\Finance\Filament\Resources\PayrollRunResource\Pages\CreatePayrollRun;
 use App\Domain\Finance\Filament\Resources\StaffCompensationResource\Pages\CreateStaffCompensation;
 use App\Domain\Finance\Models\PayrollLine;
@@ -21,7 +23,118 @@ use Livewire\Livewire;
 
 uses(RefreshDatabase::class);
 
-it('bounds staff owner pickers and redisplays a departed employee', function () {
+/**
+ * @param  ArrayObject<int, array{sql: string, bindings: array<int, mixed>, level: int}>  $statements
+ * @param  list<string>  $projectedColumns
+ */
+function expectBoundedPayrollOptionQuery(ArrayObject $statements, string $table, array $projectedColumns): void
+{
+    $queries = collect($statements)
+        ->filter(fn (array $statement): bool => str_starts_with($statement['sql'], 'select ')
+            && str_contains($statement['sql'], " from `{$table}`"))
+        ->values();
+
+    expect($queries)->toHaveCount(1);
+
+    $sql = $queries->firstOrFail()['sql'];
+    $projection = explode(' from ', $sql, 2)[0];
+
+    expect($sql)->toMatch('/\blimit 25\b/')
+        ->and($projection)->not->toContain('*');
+
+    foreach ($projectedColumns as $column) {
+        expect($projection)->toContain("`{$column}`");
+    }
+}
+
+it('submits multiple instructor assignments through the real payroll create form', function () {
+    $this->seed(RolePermissionSeeder::class);
+
+    $actor = User::factory()->create(['is_active' => true]);
+    app(SystemRoleWriter::class)->assignRoles($actor, 'super_admin');
+
+    $batch = Batch::factory()
+        ->for(Course::factory())
+        ->create(['code' => 'FORM-BATCH']);
+    $instructors = User::factory()->count(2)->create();
+
+    foreach ($instructors as $instructor) {
+        StaffCompensation::factory()->create([
+            'user_id' => $instructor->getKey(),
+            'type' => CompensationType::Hourly,
+            'amount' => '12.500',
+            'effective_from' => '2026-01-01',
+            'effective_to' => null,
+        ]);
+    }
+
+    $batch->instructors()->attach([
+        $instructors[0]->getKey() => ['assigned_hours' => 3],
+        $instructors[1]->getKey() => ['assigned_hours' => 5],
+    ]);
+    $assignmentIds = DB::table('batch_instructor')
+        ->where('batch_id', $batch->getKey())
+        ->orderBy('id')
+        ->pluck('id')
+        ->map(fn (int $id): int => $id)
+        ->all();
+
+    $component = Livewire::actingAs($actor)
+        ->test(CreatePayrollRun::class)
+        ->fillForm([
+            'type' => PayrollRunType::InstructorBatch->value,
+            'assignment_ids' => $assignmentIds,
+            'notes' => 'Submitted through Filament.',
+        ]);
+
+    $dehydratedState = $component->instance()->getSchema('form')?->getState();
+
+    expect($dehydratedState['assignment_ids'] ?? null)->toBe($assignmentIds)
+        ->and($dehydratedState['assignment_ids'])->each->toBeInt();
+
+    $component
+        ->call('create')
+        ->assertHasNoFormErrors();
+
+    $run = PayrollRun::query()->sole();
+    $lines = $run->lines()->orderBy('batch_instructor_id')->get();
+
+    expect($run->type)->toBe(PayrollRunType::InstructorBatch)
+        ->and($lines)->toHaveCount(2)
+        ->and($lines->pluck('batch_instructor_id')->all())->toBe($assignmentIds)
+        ->and($lines->pluck('frozen_hours')->all())->toBe([3, 5]);
+});
+
+it('rejects an ineligible compensation owner submitted through the create form', function (bool $isActive, bool $hasProfile) {
+    $this->seed(RolePermissionSeeder::class);
+
+    $actor = User::factory()->create(['is_active' => true]);
+    app(SystemRoleWriter::class)->assignRoles($actor, 'super_admin');
+
+    $employee = User::factory()->create(['is_active' => $isActive]);
+
+    if ($hasProfile) {
+        StaffProfile::factory()->for($employee)->create();
+    }
+
+    Livewire::actingAs($actor)
+        ->test(CreateStaffCompensation::class)
+        ->fillForm([
+            'user_id' => $employee->getKey(),
+            'type' => CompensationType::Hourly->value,
+            'amount' => '12.500',
+            'effective_from' => '2026-09-01',
+        ])
+        ->call('create')
+        ->assertHasFormErrors(['user_id']);
+
+    expect(StaffCompensation::query()->count())->toBe(0);
+})->with([
+    'inactive account with profile' => [false, true],
+    'active account without profile' => [true, false],
+]);
+
+it('bounds staff owner pickers and resolves values within each picker eligibility domain', function () {
     $this->seed(RolePermissionSeeder::class);
 
     $actor = User::factory()->create(['is_active' => true]);
@@ -36,6 +149,7 @@ it('bounds staff owner pickers and redisplays a departed employee', function () 
     $departed = $profiles->last()->user;
     $departed->update(['name' => 'Departed Employee']);
     $departed->delete();
+    $eligibleCompensationOwner = $profiles[29]->user;
 
     $profilePage = Livewire::actingAs($actor)->test(CreateStaffProfile::class);
     $profileField = $profilePage->instance()->getSchema('form')?->getComponent('user_id');
@@ -46,19 +160,33 @@ it('bounds staff owner pickers and redisplays a departed employee', function () 
         ->and($compensationField)->toBeInstanceOf(Select::class);
 
     /** @var Select $profileField */
+    $profileInitialStatements = captureStatements();
+    $profileInitialOptions = $profileField->getOptions();
+    expectBoundedPayrollOptionQuery($profileInitialStatements, 'users', ['id', 'name']);
+
+    $profileSearchStatements = captureStatements();
     $profileResults = $profileField->getSearchResults('Needle Employee');
+    expectBoundedPayrollOptionQuery($profileSearchStatements, 'users', ['id', 'name']);
     $profileField->state($departed->getKey());
 
     /** @var Select $compensationField */
-    $compensationResults = $compensationField->getSearchResults('Needle Employee');
-    $compensationField->state($departed->getKey());
+    $compensationInitialStatements = captureStatements();
+    $compensationInitialOptions = $compensationField->getOptions();
+    expectBoundedPayrollOptionQuery($compensationInitialStatements, 'users', ['id', 'name']);
 
-    expect($profileResults)->toHaveCount(25)
+    $compensationSearchStatements = captureStatements();
+    $compensationResults = $compensationField->getSearchResults('Needle Employee');
+    expectBoundedPayrollOptionQuery($compensationSearchStatements, 'users', ['id', 'name']);
+    $compensationField->state($eligibleCompensationOwner->getKey());
+
+    expect($profileInitialOptions)->toHaveCount(25)
+        ->and($profileResults)->toHaveCount(25)
         ->and(array_values($profileResults))->toContain('Needle Employee 00')
         ->and($profileField->getOptionLabel())->toBe('Departed Employee')
+        ->and($compensationInitialOptions)->toHaveCount(25)
         ->and($compensationResults)->toHaveCount(25)
         ->and(array_values($compensationResults))->toContain('Needle Employee 00')
-        ->and($compensationField->getOptionLabel())->toBe('Departed Employee');
+        ->and($compensationField->getOptionLabel())->toBe('Needle Employee 29');
 });
 
 it('bounds correction target search and redisplays a finalized line', function () {
@@ -95,7 +223,9 @@ it('bounds correction target search and redisplays a finalized line', function (
     expect($field)->toBeInstanceOf(Select::class);
 
     /** @var Select $field */
+    $searchStatements = captureStatements();
     $searchResults = $field->getSearchResults('Needle Correction');
+    expectBoundedPayrollOptionQuery($searchStatements, 'payroll_lines', ['id', 'user_id', 'computed_amount']);
     $field->state($selected->getKey());
 
     expect($searchResults)->toHaveCount(25)
@@ -142,7 +272,16 @@ it('bounds the payroll assignment multi-select and redisplays exact assignment l
     expect($field)->toBeInstanceOf(Select::class);
 
     /** @var Select $field */
+    $searchStatements = captureStatements();
     $searchResults = $field->getSearchResults('Needle Instructor');
+    expectBoundedPayrollOptionQuery($searchStatements, 'batch_instructor', [
+        'id',
+        'batch_id',
+        'batch_code',
+        'user_id',
+        'user_name',
+        'assigned_hours',
+    ]);
     $selectedId = (int) array_key_first($searchResults);
     $field->state([$selectedId]);
     $selectedLabels = $field->getOptionLabels();

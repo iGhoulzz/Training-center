@@ -188,7 +188,8 @@ final class PayrollCalculator
         $paidAssignmentIds = PayrollLine::query()
             ->finalized()
             ->whereNotNull('batch_instructor_id')
-            ->select('batch_instructor_id');
+            ->select('batch_instructor_id')
+            ->getQuery();
 
         return $this->enrollments->searchInstructorAssignments(
             $paidAssignmentIds,

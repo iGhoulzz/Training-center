@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Domain\Enrollment\Models\Student;
+use App\Domain\Finance\Filament\Pages\Reports\RevenueReportPage;
 use App\Domain\Finance\Filament\Pages\Reports\StudentPaymentHistoryPage;
 use App\Domain\Staff\Actions\SystemRoleWriter;
 use App\Models\User;
@@ -12,6 +13,43 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Livewire\Livewire;
 
 uses(RefreshDatabase::class);
+
+/** @param ArrayObject<int, array{sql: string, bindings: array<int, mixed>, level: int}> $statements */
+function expectBoundedStudentOptionQuery(ArrayObject $statements): void
+{
+    $queries = collect($statements)
+        ->filter(fn (array $statement): bool => str_starts_with($statement['sql'], 'select ')
+            && str_contains($statement['sql'], ' from `students`'))
+        ->values();
+
+    expect($queries)->toHaveCount(1);
+
+    $sql = $queries->firstOrFail()['sql'];
+    $projection = explode(' from ', $sql, 2)[0];
+
+    expect($sql)->toMatch('/\blimit 25\b/')
+        ->and($projection)->not->toContain('*')
+        ->and($projection)->toContain('`id`', '`student_code`', '`first_name`', '`last_name`');
+}
+
+it('rejects an end date before the start date through apply filters', function () {
+    $this->seed(RolePermissionSeeder::class);
+
+    $actor = User::factory()->create(['is_active' => true]);
+    app(SystemRoleWriter::class)->assignRoles($actor, 'admin');
+
+    $component = Livewire::actingAs($actor)->test(RevenueReportPage::class);
+    $originalAppliedFilters = $component->get('appliedFilters');
+
+    $component
+        ->fillForm([
+            'from' => '2026-09-10',
+            'to' => '2026-09-09',
+        ])
+        ->call('applyFilters')
+        ->assertHasFormErrors(['to'])
+        ->assertSet('appliedFilters', $originalAppliedFilters);
+});
 
 it('bounds the report student picker and redisplays a historical selection', function () {
     $this->seed(RolePermissionSeeder::class);
@@ -40,7 +78,9 @@ it('bounds the report student picker and redisplays a historical selection', fun
     expect($field)->toBeInstanceOf(Select::class);
 
     /** @var Select $field */
+    $searchStatements = captureStatements();
     $searchResults = $field->getSearchResults('Needle');
+    expectBoundedStudentOptionQuery($searchStatements);
     $field->state($historical->getKey());
 
     expect($searchResults)->toHaveCount(25)

@@ -32,6 +32,31 @@ use Illuminate\Support\Facades\DB;
 */
 uses(RefreshDatabase::class);
 
+/** @param ArrayObject<int, array{sql: string, bindings: array<int, mixed>, level: int}> $statements */
+function expectBoundedAssignmentSearchQuery(ArrayObject $statements): void
+{
+    $queries = collect($statements)
+        ->filter(fn (array $statement): bool => str_starts_with($statement['sql'], 'select ')
+            && str_contains($statement['sql'], ' from `batch_instructor`'))
+        ->values();
+
+    expect($queries)->toHaveCount(1);
+
+    $sql = $queries->firstOrFail()['sql'];
+    $projection = explode(' from ', $sql, 2)[0];
+
+    expect($sql)->toMatch('/\blimit 25\b/')
+        ->and($projection)->not->toContain('*')
+        ->and($projection)->toContain(
+            '`id`',
+            '`batch_id`',
+            '`batch_code`',
+            '`user_id`',
+            '`user_name`',
+            '`assigned_hours`',
+        );
+}
+
 beforeEach(function () {
     $this->seed(RolePermissionSeeder::class);
 
@@ -204,13 +229,18 @@ it('searches task 3 instructor assignments within the requested bound before hyd
     )->all());
 
     $excludedId = (int) DB::table('batch_instructor')->value('id');
-    $excluded = User::query()
-        ->whereKey($users->firstOrFail()->getKey())
-        ->selectRaw("{$excludedId} as batch_instructor_id");
+    $excluded = DB::query()->selectRaw("{$excludedId} as batch_instructor_id");
 
+    $searchStatements = captureStatements();
     $results = $this->enrollments->searchInstructorAssignments($excluded, 'NEEDLE-BATCH', 25);
+    expectBoundedAssignmentSearchQuery($searchStatements);
+
+    $oversizedSearchStatements = captureStatements();
+    $oversizedResults = $this->enrollments->searchInstructorAssignments($excluded, 'NEEDLE-BATCH', 100);
+    expectBoundedAssignmentSearchQuery($oversizedSearchStatements);
 
     expect($results)->toHaveCount(25)
+        ->and($oversizedResults)->toHaveCount(25)
         ->and($results->pluck('id'))->not->toContain($excludedId)
         ->and($results->every(fn (array $row): bool => array_keys($row) === [
             'id',
@@ -222,12 +252,23 @@ it('searches task 3 instructor assignments within the requested bound before hyd
         ]))->toBeTrue()
         ->and($results->every(fn (array $row): bool => $row['batch_code'] === 'NEEDLE-BATCH'))->toBeTrue();
 
+    expect(fn () => $this->enrollments->searchInstructorAssignments($excluded, 'NEEDLE-BATCH', 0))
+        ->toThrow(InvalidArgumentException::class);
+
+    $selectedStatements = captureStatements();
     $selected = $this->enrollments->instructorAssignmentsById([
         $results->firstOrFail()['id'],
         $results->last()['id'],
     ]);
 
+    $selectedQuery = collect($selectedStatements)
+        ->firstOrFail(fn (array $statement): bool => str_starts_with($statement['sql'], 'select ')
+            && str_contains($statement['sql'], ' from `batch_instructor`'));
+    $selectedProjection = explode(' from ', $selectedQuery['sql'], 2)[0];
+
     expect($selected)->toHaveCount(2)
+        ->and($selectedProjection)->not->toContain('*')
+        ->and($selectedQuery['sql'])->toContain('`batch_instructor`.`id` in (?, ?)')
         ->and($selected->pluck('id')->all())->toEqualCanonicalizing([
             $results->firstOrFail()['id'],
             $results->last()['id'],

@@ -5,8 +5,6 @@ declare(strict_types=1);
 namespace App\Domain\Enrollment\Services;
 
 use App\Domain\Enrollment\Models\Enrollment;
-use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
-use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -207,9 +205,6 @@ final class EnrollmentQueryService
     }
 
     /**
-     * @template TModel of Model
-     *
-     * @param  EloquentBuilder<TModel>  $excludedAssignmentIds
      * @return Collection<int, array{
      *     id: int,
      *     batch_id: int,
@@ -220,7 +215,7 @@ final class EnrollmentQueryService
      * }>
      */
     public function searchInstructorAssignments(
-        EloquentBuilder $excludedAssignmentIds,
+        Builder $excludedAssignmentIds,
         string $search,
         int $limit,
     ): Collection {
@@ -236,7 +231,7 @@ final class EnrollmentQueryService
                         ->where('users.name', 'like', "%{$search}%")
                         ->orWhere('batches.code', 'like', "%{$search}%");
                 })
-                ->limit($limit),
+                ->limit(min($limit, 25)),
         );
     }
 

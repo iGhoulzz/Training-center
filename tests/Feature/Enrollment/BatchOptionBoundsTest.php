@@ -19,6 +19,30 @@ use Livewire\Livewire;
 
 uses(RefreshDatabase::class);
 
+/**
+ * @param  ArrayObject<int, array{sql: string, bindings: array<int, mixed>, level: int}>  $statements
+ * @param  list<string>  $projectedColumns
+ */
+function expectBoundedEnrollmentOptionQuery(ArrayObject $statements, string $table, array $projectedColumns): void
+{
+    $queries = collect($statements)
+        ->filter(fn (array $statement): bool => str_starts_with($statement['sql'], 'select ')
+            && str_contains($statement['sql'], " from `{$table}`"))
+        ->values();
+
+    expect($queries)->toHaveCount(1);
+
+    $sql = $queries->firstOrFail()['sql'];
+    $projection = explode(' from ', $sql, 2)[0];
+
+    expect($sql)->toMatch('/\blimit 25\b/')
+        ->and($projection)->not->toContain('*');
+
+    foreach ($projectedColumns as $column) {
+        expect($projection)->toContain("`{$column}`");
+    }
+}
+
 it('bounds the batch course picker and redisplays a retired course', function () {
     $this->seed(RolePermissionSeeder::class);
 
@@ -39,10 +63,17 @@ it('bounds the batch course picker and redisplays a retired course', function ()
     expect($field)->toBeInstanceOf(Select::class);
 
     /** @var Select $field */
+    $initialStatements = captureStatements();
+    $initialOptions = $field->getOptions();
+    expectBoundedEnrollmentOptionQuery($initialStatements, 'courses', ['id', 'code']);
+
+    $searchStatements = captureStatements();
     $searchResults = $field->getSearchResults('NEEDLE');
+    expectBoundedEnrollmentOptionQuery($searchStatements, 'courses', ['id', 'code']);
     $field->state($retired->getKey());
 
-    expect($searchResults)->toHaveCount(25)
+    expect($initialOptions)->toHaveCount(25)
+        ->and($searchResults)->toHaveCount(25)
         ->and(array_values($searchResults))->toContain('NEEDLE-00')
         ->and($field->getOptionLabel())->toBe('RETIRED-001');
 });
@@ -80,16 +111,30 @@ it('bounds the enrolment batch and discount pickers and resolves retired selecti
         ->and($discountField)->toBeInstanceOf(Select::class);
 
     /** @var Select $batchField */
+    $batchInitialStatements = captureStatements();
+    $batchInitialOptions = $batchField->getOptions();
+    expectBoundedEnrollmentOptionQuery($batchInitialStatements, 'batches', ['id', 'code', 'course_code']);
+
+    $batchSearchStatements = captureStatements();
     $batchResults = $batchField->getSearchResults('NEEDLE-BATCH');
+    expectBoundedEnrollmentOptionQuery($batchSearchStatements, 'batches', ['id', 'code', 'course_code']);
     $batchField->state($closedBatch->getKey());
 
     /** @var Select $discountField */
+    $discountInitialStatements = captureStatements();
+    $discountInitialOptions = $discountField->getOptions();
+    expectBoundedEnrollmentOptionQuery($discountInitialStatements, 'discounts', ['id', 'name', 'percentage']);
+
+    $discountSearchStatements = captureStatements();
     $discountResults = $discountField->getSearchResults('Needle Discount');
+    expectBoundedEnrollmentOptionQuery($discountSearchStatements, 'discounts', ['id', 'name', 'percentage']);
     $discountField->state($retiredDiscount->getKey());
 
-    expect($batchResults)->toHaveCount(25)
+    expect($batchInitialOptions)->toHaveCount(25)
+        ->and($batchResults)->toHaveCount(25)
         ->and(array_values($batchResults))->toContain('NEEDLE-BATCH-00 — COURSE-001')
         ->and($batchField->getOptionLabel())->toBe('CLOSED-001 — COURSE-001')
+        ->and($discountInitialOptions)->toHaveCount(25)
         ->and($discountResults)->toHaveCount(25)
         ->and(array_values($discountResults))->toContain('Needle Discount 00 (5.00%)')
         ->and($discountField->getOptionLabel())->toBe('Retired Discount (15.00%)');
@@ -119,10 +164,17 @@ it('bounds the eligible instructor picker and resolves a submitted eligible acco
     expect($field)->toBeInstanceOf(Select::class);
 
     /** @var Select $field */
+    $initialStatements = captureStatements();
+    $initialOptions = $field->getOptions();
+    expectBoundedEnrollmentOptionQuery($initialStatements, 'users', ['id', 'name']);
+
+    $searchStatements = captureStatements();
     $searchResults = $field->getSearchResults('Needle Instructor');
+    expectBoundedEnrollmentOptionQuery($searchStatements, 'users', ['id', 'name']);
     $field->state($selected->getKey());
 
-    expect($searchResults)->toHaveCount(25)
+    expect($initialOptions)->toHaveCount(25)
+        ->and($searchResults)->toHaveCount(25)
         ->and(array_values($searchResults))->toContain('Needle Instructor 00')
         ->and($field->getOptionLabel())->toBe('Needle Instructor 29');
 });

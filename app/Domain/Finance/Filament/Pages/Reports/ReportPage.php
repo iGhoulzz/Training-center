@@ -15,17 +15,18 @@ use App\Domain\Finance\Exports\ReportSnapshot;
 use App\Domain\Finance\Jobs\GenerateReportPdfJob;
 use App\Models\User;
 use App\Support\CentreCalendar;
+use Closure;
 use Filament\Actions\Action;
 use Filament\Actions\ExportAction;
 use Filament\Actions\Exports\Enums\ExportFormat;
 use Filament\Forms\Components\DatePicker;
+use Filament\Forms\Components\Field;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Pages\PageConfiguration;
 use Filament\Panel;
-use Filament\Schemas\Components\Component;
 use Filament\Schemas\Schema;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Route;
@@ -104,9 +105,8 @@ abstract class ReportPage extends Page
         /** @var User $user */
         $user = auth()->user();
         $this->requesterId = $user->getKey();
-        $this->filters = $this->defaultFilters();
+        $this->form->fill();
         $this->appliedFilters = $this->filters;
-        $this->form->fill($this->filters);
     }
 
     public function form(Schema $schema): Schema
@@ -119,8 +119,7 @@ abstract class ReportPage extends Page
 
     public function applyFilters(): void
     {
-        $validated = $this->validate($this->filterRules());
-        $this->appliedFilters = $validated['filters'];
+        $this->appliedFilters = $this->form->getState();
     }
 
     #[Computed]
@@ -133,37 +132,51 @@ abstract class ReportPage extends Page
         );
     }
 
-    /** @return list<Component> */
+    /** @return list<Field> */
     private function filterComponents(): array
     {
+        $today = CentreCalendar::localise(now());
+
         return match (static::kind()) {
             ReportKind::Revenue, ReportKind::PaymentMethod => [
                 DatePicker::make('from')
                     ->label(__('reports.filters.from'))
+                    ->default($today->startOfMonth()->format('Y-m-d'))
+                    ->rules(['date_format:Y-m-d'])
                     ->required(),
                 DatePicker::make('to')
                     ->label(__('reports.filters.to'))
+                    ->default($today->endOfMonth()->format('Y-m-d'))
+                    ->rules(['date_format:Y-m-d'])
                     ->required()
                     ->afterOrEqual('from'),
             ],
             ReportKind::OutstandingAged, ReportKind::DailyTender => [
                 DatePicker::make('date')
                     ->label(__('reports.filters.date'))
+                    ->default($today->format('Y-m-d'))
+                    ->rules(['date_format:Y-m-d'])
                     ->required(),
             ],
             ReportKind::WageCost, ReportKind::Profit => [
                 TextInput::make('month')
                     ->label(__('reports.filters.month'))
                     ->type('month')
+                    ->default($today->format('Y-m'))
+                    ->rules(['date_format:Y-m'])
                     ->required(),
             ],
             ReportKind::StudentPaymentHistory => [
                 Select::make('student_id')
                     ->label(__('reports.filters.student_id'))
                     ->placeholder(__('reports.filters.choose_student'))
+                    ->default(null)
+                    ->rules(['nullable', 'integer', 'exists:students,id'])
                     ->searchable()
                     ->getSearchResultsUsing(fn (string $search): array => self::searchStudents($search))
-                    ->getOptionLabelUsing(fn (mixed $value): ?string => self::studentOptionLabel($value)),
+                    ->getOptionLabelUsing(fn (mixed $value): ?string => self::studentOptionLabel($value))
+                    ->meta('reportDisplayValue', fn (mixed $value): string => self::studentOptionLabel($value)
+                        ?? (string) __('reports.filters.not_selected')),
             ],
         };
     }
@@ -242,46 +255,6 @@ abstract class ReportPage extends Page
         ];
     }
 
-    /** @return array<string, mixed> */
-    private function defaultFilters(): array
-    {
-        $today = CentreCalendar::localise(now());
-
-        return match (static::kind()) {
-            ReportKind::Revenue, ReportKind::PaymentMethod => [
-                'from' => $today->startOfMonth()->format('Y-m-d'),
-                'to' => $today->endOfMonth()->format('Y-m-d'),
-            ],
-            ReportKind::OutstandingAged, ReportKind::DailyTender => [
-                'date' => $today->format('Y-m-d'),
-            ],
-            ReportKind::WageCost, ReportKind::Profit => [
-                'month' => $today->format('Y-m'),
-            ],
-            ReportKind::StudentPaymentHistory => ['student_id' => null],
-        };
-    }
-
-    /** @return array<string, list<string>> */
-    private function filterRules(): array
-    {
-        return match (static::kind()) {
-            ReportKind::Revenue, ReportKind::PaymentMethod => [
-                'filters.from' => ['required', 'date_format:Y-m-d'],
-                'filters.to' => ['required', 'date_format:Y-m-d', 'after_or_equal:filters.from'],
-            ],
-            ReportKind::OutstandingAged, ReportKind::DailyTender => [
-                'filters.date' => ['required', 'date_format:Y-m-d'],
-            ],
-            ReportKind::WageCost, ReportKind::Profit => [
-                'filters.month' => ['required', 'date_format:Y-m'],
-            ],
-            ReportKind::StudentPaymentHistory => [
-                'filters.student_id' => ['nullable', 'integer', 'exists:students,id'],
-            ],
-        };
-    }
-
     private function requester(): User
     {
         return User::query()->findOrFail($this->requesterId);
@@ -322,23 +295,24 @@ abstract class ReportPage extends Page
     /** @return array<string, string> */
     private function displayedFilters(): array
     {
-        return match (static::kind()) {
-            ReportKind::Revenue, ReportKind::PaymentMethod => [
-                (string) __('reports.filters.from') => (string) ($this->appliedFilters['from'] ?? ''),
-                (string) __('reports.filters.to') => (string) ($this->appliedFilters['to'] ?? ''),
-            ],
-            ReportKind::OutstandingAged, ReportKind::DailyTender => [
-                (string) __('reports.filters.date') => (string) ($this->appliedFilters['date'] ?? ''),
-            ],
-            ReportKind::WageCost, ReportKind::Profit => [
-                (string) __('reports.filters.month') => (string) ($this->appliedFilters['month'] ?? ''),
-            ],
-            ReportKind::StudentPaymentHistory => [
-                (string) __('reports.filters.student_id') => self::studentOptionLabel(
-                    $this->appliedFilters['student_id'] ?? null,
-                ) ?? (string) __('reports.filters.not_selected'),
-            ],
-        };
+        $displayed = [];
+
+        foreach ($this->form->getComponents() as $component) {
+            if (! $component instanceof Field) {
+                continue;
+            }
+
+            $value = $this->appliedFilters[$component->getName()] ?? null;
+            $formatter = $component->getMeta('reportDisplayValue');
+
+            if ($formatter instanceof Closure) {
+                $value = $formatter($value);
+            }
+
+            $displayed[(string) $component->getLabel()] = (string) $value;
+        }
+
+        return $displayed;
     }
 
     private static function studentLabel(Student $student): string

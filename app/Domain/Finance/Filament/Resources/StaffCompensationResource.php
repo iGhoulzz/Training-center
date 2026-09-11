@@ -97,7 +97,9 @@ final class StaffCompensationResource extends Resource
 
     public static function employeeOptionLabel(mixed $value): ?string
     {
-        return User::withTrashed()
+        return User::query()
+            ->where('is_active', true)
+            ->whereHas('staffProfile')
             ->whereKey($value)
             ->value('name');
     }
