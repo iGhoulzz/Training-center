@@ -12,7 +12,9 @@ use App\Domain\Finance\Models\PayrollLine;
 use App\Domain\Finance\Models\PayrollRun;
 use App\Domain\Finance\Models\StaffCompensation;
 use App\Domain\Staff\Actions\SystemRoleWriter;
+use App\Domain\Staff\Enums\EmploymentType;
 use App\Domain\Staff\Filament\Resources\StaffProfileResource\Pages\CreateStaffProfile;
+use App\Domain\Staff\Filament\Resources\StaffProfileResource\Pages\EditStaffProfile;
 use App\Domain\Staff\Models\StaffProfile;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
@@ -134,6 +136,46 @@ it('rejects an ineligible compensation owner submitted through the create form',
     'active account without profile' => [true, false],
 ]);
 
+it('rejects a soft-deleted owner submitted through the real staff profile create form', function () {
+    $this->seed(RolePermissionSeeder::class);
+
+    $actor = User::factory()->create(['is_active' => true]);
+    app(SystemRoleWriter::class)->assignRoles($actor, 'super_admin');
+    $departed = User::factory()->create();
+    $departed->delete();
+
+    Livewire::actingAs($actor)
+        ->test(CreateStaffProfile::class)
+        ->fillForm([
+            'user_id' => $departed->getKey(),
+            'employment_type' => EmploymentType::Administrative->value,
+        ])
+        ->call('create')
+        ->assertHasFormErrors(['user_id']);
+
+    expect(StaffProfile::query()->count())->toBe(0);
+});
+
+it('redisplays the immutable profile owner after the account is soft deleted', function () {
+    $this->seed(RolePermissionSeeder::class);
+
+    $actor = User::factory()->create(['is_active' => true]);
+    app(SystemRoleWriter::class)->assignRoles($actor, 'super_admin');
+    $profile = StaffProfile::factory()->create();
+    $profile->user->update(['name' => 'Departed Employee']);
+    $profile->user->delete();
+
+    $component = Livewire::actingAs($actor)->test(EditStaffProfile::class, [
+        'record' => $profile->getKey(),
+    ]);
+    $field = $component->instance()->getSchema('form')?->getComponent('user_id');
+
+    expect($field)->toBeInstanceOf(Select::class);
+
+    /** @var Select $field */
+    expect($field->getOptionLabel())->toBe('Departed Employee');
+});
+
 it('bounds staff owner pickers and resolves values within each picker eligibility domain', function () {
     $this->seed(RolePermissionSeeder::class);
 
@@ -146,9 +188,6 @@ it('bounds staff owner pickers and resolves values within each picker eligibilit
             'name' => 'Needle Employee '.str_pad((string) $index, 2, '0', STR_PAD_LEFT),
         ]);
     });
-    $departed = $profiles->last()->user;
-    $departed->update(['name' => 'Departed Employee']);
-    $departed->delete();
     $eligibleCompensationOwner = $profiles[29]->user;
 
     $profilePage = Livewire::actingAs($actor)->test(CreateStaffProfile::class);
@@ -167,8 +206,6 @@ it('bounds staff owner pickers and resolves values within each picker eligibilit
     $profileSearchStatements = captureStatements();
     $profileResults = $profileField->getSearchResults('Needle Employee');
     expectBoundedPayrollOptionQuery($profileSearchStatements, 'users', ['id', 'name']);
-    $profileField->state($departed->getKey());
-
     /** @var Select $compensationField */
     $compensationInitialStatements = captureStatements();
     $compensationInitialOptions = $compensationField->getOptions();
@@ -182,7 +219,6 @@ it('bounds staff owner pickers and resolves values within each picker eligibilit
     expect($profileInitialOptions)->toHaveCount(25)
         ->and($profileResults)->toHaveCount(25)
         ->and(array_values($profileResults))->toContain('Needle Employee 00')
-        ->and($profileField->getOptionLabel())->toBe('Departed Employee')
         ->and($compensationInitialOptions)->toHaveCount(25)
         ->and($compensationResults)->toHaveCount(25)
         ->and(array_values($compensationResults))->toContain('Needle Employee 00')

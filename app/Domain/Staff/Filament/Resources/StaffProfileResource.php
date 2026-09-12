@@ -192,7 +192,10 @@ class StaffProfileResource extends Resource
                 ->options(fn (): array => self::searchUsers(''))
                 ->searchable()
                 ->getSearchResultsUsing(fn (string $search): array => self::searchUsers($search))
-                ->getOptionLabelUsing(fn (mixed $value): ?string => self::userOptionLabel($value))
+                ->getOptionLabelUsing(fn (mixed $value, ?StaffProfile $record): ?string => self::userOptionLabel(
+                    $value,
+                    $record?->user_id,
+                ))
                 ->required()
                 /*
                  * An employment profile owns its photo and credentials. Letting
@@ -260,10 +263,13 @@ class StaffProfileResource extends Resource
             ->all();
     }
 
-    public static function userOptionLabel(mixed $value): ?string
+    public static function userOptionLabel(mixed $value, ?int $currentUserId = null): ?string
     {
         return User::withTrashed()
             ->whereKey($value)
+            ->where(fn (Builder $query) => $query
+                ->whereNull('users.deleted_at')
+                ->orWhereKey($currentUserId))
             ->value('name');
     }
 

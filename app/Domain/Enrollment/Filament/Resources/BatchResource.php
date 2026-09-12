@@ -202,7 +202,10 @@ class BatchResource extends Resource
                     $search,
                     $record?->course_id,
                 ))
-                ->getOptionLabelUsing(fn (mixed $value): ?string => self::courseOptionLabel($value)),
+                ->getOptionLabelUsing(fn (mixed $value, ?Batch $record): ?string => self::courseOptionLabel(
+                    $value,
+                    $record?->course_id,
+                )),
 
             TextInput::make('code')
                 ->label(__('enrollment.batch_code'))
@@ -291,10 +294,13 @@ class BatchResource extends Resource
             ->all();
     }
 
-    public static function courseOptionLabel(mixed $value): ?string
+    public static function courseOptionLabel(mixed $value, ?int $currentCourseId = null): ?string
     {
         return Course::query()
             ->whereKey($value)
+            ->where(fn (Builder $query) => $query
+                ->active()
+                ->orWhereKey($currentCourseId))
             ->value('code');
     }
 

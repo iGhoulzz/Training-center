@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Domain\Enrollment\Filament\Resources\BatchResource\Pages\CreateBatch;
+use App\Domain\Enrollment\Filament\Resources\BatchResource\Pages\EditBatch;
 use App\Domain\Enrollment\Filament\Resources\BatchResource\Pages\ViewBatch;
 use App\Domain\Enrollment\Filament\Resources\BatchResource\RelationManagers\InstructorsRelationManager;
 use App\Domain\Enrollment\Models\Batch;
@@ -43,7 +44,7 @@ function expectBoundedEnrollmentOptionQuery(ArrayObject $statements, string $tab
     }
 }
 
-it('bounds the batch course picker and redisplays a retired course', function () {
+it('bounds the batch course picker', function () {
     $this->seed(RolePermissionSeeder::class);
 
     $actor = User::factory()->create(['is_active' => true]);
@@ -55,8 +56,6 @@ it('bounds the batch course picker and redisplays a retired course', function ()
             'code' => 'NEEDLE-'.str_pad((string) $sequence->index, 2, '0', STR_PAD_LEFT),
         ],
     )->create();
-    $retired = Course::factory()->inactive()->create(['code' => 'RETIRED-001']);
-
     $component = Livewire::actingAs($actor)->test(CreateBatch::class);
     $field = $component->instance()->getSchema('form')?->getComponent('course_id');
 
@@ -70,12 +69,49 @@ it('bounds the batch course picker and redisplays a retired course', function ()
     $searchStatements = captureStatements();
     $searchResults = $field->getSearchResults('NEEDLE');
     expectBoundedEnrollmentOptionQuery($searchStatements, 'courses', ['id', 'code']);
-    $field->state($retired->getKey());
 
     expect($initialOptions)->toHaveCount(25)
         ->and($searchResults)->toHaveCount(25)
-        ->and(array_values($searchResults))->toContain('NEEDLE-00')
-        ->and($field->getOptionLabel())->toBe('RETIRED-001');
+        ->and(array_values($searchResults))->toContain('NEEDLE-00');
+});
+
+it('rejects a retired course submitted through the real batch create form', function () {
+    $this->seed(RolePermissionSeeder::class);
+
+    $actor = User::factory()->create(['is_active' => true]);
+    app(SystemRoleWriter::class)->assignRoles($actor, 'admin');
+    $retired = Course::factory()->inactive()->create();
+
+    Livewire::actingAs($actor)
+        ->test(CreateBatch::class)
+        ->fillForm([
+            'course_id' => $retired->getKey(),
+            'code' => 'RETIRED-BATCH',
+            'capacity' => 20,
+        ])
+        ->call('create')
+        ->assertHasFormErrors(['course_id']);
+
+    expect(Batch::query()->count())->toBe(0);
+});
+
+it('redisplays the existing batch course after that course is retired', function () {
+    $this->seed(RolePermissionSeeder::class);
+
+    $actor = User::factory()->create(['is_active' => true]);
+    app(SystemRoleWriter::class)->assignRoles($actor, 'admin');
+    $retired = Course::factory()->inactive()->create(['code' => 'RETIRED-001']);
+    $batch = Batch::factory()->for($retired)->create();
+
+    $component = Livewire::actingAs($actor)->test(EditBatch::class, [
+        'record' => $batch->getKey(),
+    ]);
+    $field = $component->instance()->getSchema('form')?->getComponent('course_id');
+
+    expect($field)->toBeInstanceOf(Select::class);
+
+    /** @var Select $field */
+    expect($field->getOptionLabel())->toBe('RETIRED-001');
 });
 
 it('bounds the enrolment batch and discount pickers and resolves retired selections', function () {
