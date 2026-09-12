@@ -15,19 +15,29 @@ use App\Domain\Finance\Exports\ReportSnapshot;
 use App\Domain\Finance\Jobs\GenerateReportPdfJob;
 use App\Models\User;
 use App\Support\CentreCalendar;
+use Closure;
 use Filament\Actions\Action;
 use Filament\Actions\ExportAction;
 use Filament\Actions\Exports\Enums\ExportFormat;
+use Filament\Forms\Components\DatePicker;
+use Filament\Forms\Components\Field;
+use Filament\Forms\Components\Select;
+use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Pages\PageConfiguration;
 use Filament\Panel;
+use Filament\Schemas\Schema;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Route;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Locked;
 
-/** Shared filter, authorization, and queued-export shell for report pages. */
+/**
+ * Shared filter, authorization, and queued-export shell for report pages.
+ *
+ * @property-read Schema $form
+ */
 abstract class ReportPage extends Page
 {
     protected string $view = 'finance.reports.page';
@@ -95,14 +105,21 @@ abstract class ReportPage extends Page
         /** @var User $user */
         $user = auth()->user();
         $this->requesterId = $user->getKey();
-        $this->filters = $this->defaultFilters();
+        $this->form->fill();
         $this->appliedFilters = $this->filters;
+    }
+
+    public function form(Schema $schema): Schema
+    {
+        return $schema
+            ->components($this->filterComponents())
+            ->columns(3)
+            ->statePath('filters');
     }
 
     public function applyFilters(): void
     {
-        $validated = $this->validate($this->filterRules());
-        $this->appliedFilters = $validated['filters'];
+        $this->appliedFilters = $this->form->getState();
     }
 
     #[Computed]
@@ -115,33 +132,83 @@ abstract class ReportPage extends Page
         );
     }
 
-    /**
-     * @return list<array{name: string, type: string, label: string, options?: array<int, string>}>
-     */
-    public function filterFields(): array
+    /** @return list<Field> */
+    private function filterComponents(): array
     {
+        $today = CentreCalendar::localise(now());
+
         return match (static::kind()) {
             ReportKind::Revenue, ReportKind::PaymentMethod => [
-                $this->field('from', 'date'),
-                $this->field('to', 'date'),
+                DatePicker::make('from')
+                    ->label(__('reports.filters.from'))
+                    ->default($today->startOfMonth()->format('Y-m-d'))
+                    ->rules(['date_format:Y-m-d'])
+                    ->required(),
+                DatePicker::make('to')
+                    ->label(__('reports.filters.to'))
+                    ->default($today->endOfMonth()->format('Y-m-d'))
+                    ->rules(['date_format:Y-m-d'])
+                    ->required()
+                    ->afterOrEqual('from'),
             ],
             ReportKind::OutstandingAged, ReportKind::DailyTender => [
-                $this->field('date', 'date'),
+                DatePicker::make('date')
+                    ->label(__('reports.filters.date'))
+                    ->default($today->format('Y-m-d'))
+                    ->rules(['date_format:Y-m-d'])
+                    ->required(),
             ],
             ReportKind::WageCost, ReportKind::Profit => [
-                $this->field('month', 'month'),
+                TextInput::make('month')
+                    ->label(__('reports.filters.month'))
+                    ->type('month')
+                    ->default($today->format('Y-m'))
+                    ->rules(['date_format:Y-m'])
+                    ->required(),
             ],
-            ReportKind::StudentPaymentHistory => [[
-                ...$this->field('student_id', 'select'),
-                'options' => Student::withTrashed()
-                    ->orderBy('last_name')
-                    ->orderBy('first_name')
-                    ->get()
-                    ->mapWithKeys(fn (Student $student): array => [
-                        $student->getKey() => "{$student->student_code} — {$student->full_name}",
-                    ])->all(),
-            ]],
+            ReportKind::StudentPaymentHistory => [
+                Select::make('student_id')
+                    ->label(__('reports.filters.student_id'))
+                    ->placeholder(__('reports.filters.choose_student'))
+                    ->default(null)
+                    ->rules(['nullable', 'integer', 'exists:students,id'])
+                    ->searchable()
+                    ->getSearchResultsUsing(fn (string $search): array => self::searchStudents($search))
+                    ->getOptionLabelUsing(fn (mixed $value): ?string => self::studentOptionLabel($value))
+                    ->meta('reportDisplayValue', fn (mixed $value): string => self::studentOptionLabel($value)
+                        ?? (string) __('reports.filters.not_selected')),
+            ],
         };
+    }
+
+    /** @return array<int, string> */
+    public static function searchStudents(string $search): array
+    {
+        return Student::withTrashed()
+            ->select(['id', 'student_code', 'first_name', 'last_name'])
+            ->where(function (Builder $query) use ($search): void {
+                $query
+                    ->where('student_code', 'like', "%{$search}%")
+                    ->orWhere('first_name', 'like', "%{$search}%")
+                    ->orWhere('last_name', 'like', "%{$search}%");
+            })
+            ->orderBy('last_name')
+            ->orderBy('first_name')
+            ->limit(25)
+            ->get()
+            ->mapWithKeys(fn (Student $student): array => [
+                (int) $student->getKey() => self::studentLabel($student),
+            ])
+            ->all();
+    }
+
+    public static function studentOptionLabel(mixed $value): ?string
+    {
+        $student = Student::withTrashed()
+            ->select(['id', 'student_code', 'first_name', 'last_name'])
+            ->find($value);
+
+        return $student instanceof Student ? self::studentLabel($student) : null;
     }
 
     /** @return array<string, mixed> */
@@ -149,7 +216,6 @@ abstract class ReportPage extends Page
     {
         return [
             'dataset' => $this->dataset(),
-            'filterFields' => $this->filterFields(),
         ];
     }
 
@@ -186,56 +252,6 @@ abstract class ReportPage extends Page
                         ->success()
                         ->send();
                 }),
-        ];
-    }
-
-    /** @return array<string, mixed> */
-    private function defaultFilters(): array
-    {
-        $today = CentreCalendar::localise(now());
-
-        return match (static::kind()) {
-            ReportKind::Revenue, ReportKind::PaymentMethod => [
-                'from' => $today->startOfMonth()->format('Y-m-d'),
-                'to' => $today->endOfMonth()->format('Y-m-d'),
-            ],
-            ReportKind::OutstandingAged, ReportKind::DailyTender => [
-                'date' => $today->format('Y-m-d'),
-            ],
-            ReportKind::WageCost, ReportKind::Profit => [
-                'month' => $today->format('Y-m'),
-            ],
-            ReportKind::StudentPaymentHistory => ['student_id' => null],
-        };
-    }
-
-    /** @return array<string, list<string>> */
-    private function filterRules(): array
-    {
-        return match (static::kind()) {
-            ReportKind::Revenue, ReportKind::PaymentMethod => [
-                'filters.from' => ['required', 'date_format:Y-m-d'],
-                'filters.to' => ['required', 'date_format:Y-m-d', 'after_or_equal:filters.from'],
-            ],
-            ReportKind::OutstandingAged, ReportKind::DailyTender => [
-                'filters.date' => ['required', 'date_format:Y-m-d'],
-            ],
-            ReportKind::WageCost, ReportKind::Profit => [
-                'filters.month' => ['required', 'date_format:Y-m'],
-            ],
-            ReportKind::StudentPaymentHistory => [
-                'filters.student_id' => ['nullable', 'integer', 'exists:students,id'],
-            ],
-        };
-    }
-
-    /** @return array{name: string, type: string, label: string} */
-    private function field(string $name, string $type): array
-    {
-        return [
-            'name' => $name,
-            'type' => $type,
-            'label' => (string) __("reports.filters.{$name}"),
         ];
     }
 
@@ -281,17 +297,27 @@ abstract class ReportPage extends Page
     {
         $displayed = [];
 
-        foreach ($this->filterFields() as $field) {
-            $value = $this->appliedFilters[$field['name']] ?? null;
-
-            if ($field['type'] === 'select') {
-                $value = $field['options'][(int) $value] ?? __('reports.filters.not_selected');
+        foreach ($this->form->getComponents() as $component) {
+            if (! $component instanceof Field) {
+                continue;
             }
 
-            $displayed[$field['label']] = (string) $value;
+            $value = $this->appliedFilters[$component->getName()] ?? null;
+            $formatter = $component->getMeta('reportDisplayValue');
+
+            if ($formatter instanceof Closure) {
+                $value = $formatter($value);
+            }
+
+            $displayed[(string) $component->getLabel()] = (string) $value;
         }
 
         return $displayed;
+    }
+
+    private static function studentLabel(Student $student): string
+    {
+        return "{$student->student_code} — {$student->full_name}";
     }
 
     private static function pageLabel(string $label): string

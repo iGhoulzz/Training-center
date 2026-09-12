@@ -1,27 +1,6 @@
 <x-filament-panels::page>
     <form wire:submit="applyFilters" class="rounded-xl bg-white p-6 shadow-sm ring-1 ring-gray-950/5 dark:bg-gray-900 dark:ring-white/10">
-        <div class="grid gap-4 md:grid-cols-3">
-            @foreach ($filterFields as $field)
-                <label class="grid gap-2 text-sm font-medium text-gray-950 dark:text-white">
-                    <span>{{ $field['label'] }}</span>
-
-                    @if ($field['type'] === 'select')
-                        <select wire:model="filters.{{ $field['name'] }}" class="rounded-lg border-gray-300 bg-white text-gray-950 shadow-sm dark:border-white/10 dark:bg-white/5 dark:text-white">
-                            <option value="">{{ __('reports.filters.choose_student') }}</option>
-                            @foreach ($field['options'] as $value => $label)
-                                <option value="{{ $value }}">{{ $label }}</option>
-                            @endforeach
-                        </select>
-                    @else
-                        <input type="{{ $field['type'] }}" wire:model="filters.{{ $field['name'] }}" class="rounded-lg border-gray-300 bg-white text-gray-950 shadow-sm dark:border-white/10 dark:bg-white/5 dark:text-white">
-                    @endif
-
-                    @error('filters.'.$field['name'])
-                        <span class="text-sm text-danger-600 dark:text-danger-400">{{ $message }}</span>
-                    @enderror
-                </label>
-            @endforeach
-        </div>
+        {{ $this->form }}
 
         <div class="mt-4">
             <x-filament::button type="submit">{{ __('reports.actions.apply_filters') }}</x-filament::button>

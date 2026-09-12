@@ -387,20 +387,10 @@ class EnrollAndCollect extends Page
                 Select::make('batch_id')
                     ->label(__('collect.batch'))
                     ->required()
+                    ->options(fn (): array => self::searchBatches(''))
                     ->searchable()
-                    ->preload()
-                    ->options(fn (): array => Batch::query()
-                        ->open()
-                        ->with('course')
-                        ->orderBy('code')
-                        ->get()
-                        ->mapWithKeys(fn (Batch $batch): array => [
-                            (int) $batch->getKey() => __('collect.batch_option', [
-                                'code' => $batch->code,
-                                'course' => $batch->course?->code,
-                            ]),
-                        ])
-                        ->all()),
+                    ->getSearchResultsUsing(fn (string $search): array => self::searchBatches($search))
+                    ->getOptionLabelUsing(fn (mixed $value): ?string => self::batchOptionLabel($value)),
             ]);
     }
 
@@ -453,16 +443,10 @@ class EnrollAndCollect extends Page
             ->schema([
                 Select::make('discount_id')
                     ->label(__('collect.discount'))
+                    ->options(fn (): array => self::searchDiscounts(''))
                     ->searchable()
                     ->live()
-                    ->options(fn (): array => Discount::query()
-                        ->active()
-                        ->orderBy('name')
-                        ->get()
-                        ->mapWithKeys(fn (Discount $discount): array => [
-                            (int) $discount->getKey() => self::discountLabel($discount),
-                        ])
-                        ->all())
+                    ->getSearchResultsUsing(fn (string $search): array => self::searchDiscounts($search))
                     ->getOptionLabelUsing(fn (mixed $value): ?string => self::discountOptionLabel($value)),
             ]);
     }
@@ -1071,9 +1055,64 @@ class EnrollAndCollect extends Page
      */
     public static function discountOptionLabel(mixed $value): ?string
     {
-        $discount = Discount::query()->find($value);
+        $discount = Discount::query()
+            ->select(['id', 'name', 'percentage'])
+            ->find($value);
 
         return $discount instanceof Discount ? self::discountLabel($discount) : null;
+    }
+
+    /** @return array<int, string> */
+    public static function searchDiscounts(string $search): array
+    {
+        return Discount::query()
+            ->select(['id', 'name', 'percentage'])
+            ->active()
+            ->where('name', 'like', "%{$search}%")
+            ->orderBy('name')
+            ->limit(self::SEARCH_RESULT_LIMIT)
+            ->get()
+            ->mapWithKeys(fn (Discount $discount): array => [
+                (int) $discount->getKey() => self::discountLabel($discount),
+            ])
+            ->all();
+    }
+
+    /** @return array<int, string> */
+    public static function searchBatches(string $search): array
+    {
+        return Batch::query()
+            ->open()
+            ->join('courses', 'courses.id', '=', 'batches.course_id')
+            ->select(['batches.id', 'batches.code', 'courses.code as course_code'])
+            ->where(fn (Builder $query): Builder => $query
+                ->where('batches.code', 'like', "%{$search}%")
+                ->orWhere('courses.code', 'like', "%{$search}%"))
+            ->orderBy('batches.code')
+            ->limit(self::SEARCH_RESULT_LIMIT)
+            ->get()
+            ->mapWithKeys(fn (Batch $batch): array => [
+                (int) $batch->getKey() => self::batchLabel($batch),
+            ])
+            ->all();
+    }
+
+    public static function batchOptionLabel(mixed $value): ?string
+    {
+        $batch = Batch::query()
+            ->join('courses', 'courses.id', '=', 'batches.course_id')
+            ->select(['batches.id', 'batches.code', 'courses.code as course_code'])
+            ->find($value);
+
+        return $batch instanceof Batch ? self::batchLabel($batch) : null;
+    }
+
+    private static function batchLabel(Batch $batch): string
+    {
+        return __('collect.batch_option', [
+            'code' => $batch->code,
+            'course' => $batch->getAttribute('course_code'),
+        ]);
     }
 
     /** The composite label shown for one discount definition, wherever it is offered or redisplayed. */

@@ -55,13 +55,10 @@ final class StaffCompensationResource extends Resource
         return $schema->components([
             Select::make('user_id')
                 ->label(__('payroll.employee'))
-                ->options(fn (): array => User::query()
-                    ->where('is_active', true)
-                    ->whereHas('staffProfile')
-                    ->orderBy('name')
-                    ->pluck('name', 'id')
-                    ->all())
+                ->options(fn (): array => self::searchEmployees(''))
                 ->searchable()
+                ->getSearchResultsUsing(fn (string $search): array => self::searchEmployees($search))
+                ->getOptionLabelUsing(fn (mixed $value): ?string => self::employeeOptionLabel($value))
                 ->required(),
 
             Select::make('type')
@@ -82,6 +79,29 @@ final class StaffCompensationResource extends Resource
                 ->label(__('payroll.effective_from'))
                 ->required(),
         ]);
+    }
+
+    /** @return array<int, string> */
+    public static function searchEmployees(string $search): array
+    {
+        return User::query()
+            ->select(['id', 'name'])
+            ->where('is_active', true)
+            ->whereHas('staffProfile')
+            ->where('name', 'like', "%{$search}%")
+            ->orderBy('name')
+            ->limit(25)
+            ->pluck('name', 'id')
+            ->all();
+    }
+
+    public static function employeeOptionLabel(mixed $value): ?string
+    {
+        return User::query()
+            ->where('is_active', true)
+            ->whereHas('staffProfile')
+            ->whereKey($value)
+            ->value('name');
     }
 
     public static function infolist(Schema $schema): Schema

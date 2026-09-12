@@ -134,6 +134,8 @@ class UserResource extends Resource
                 // to, silently created and needing a second edit to fix.
                 ->required()
                 ->minItems(1)
+                // Bounded by the four system-defined roles. Roles are not a
+                // user-generated catalogue and do not grow with account count.
                 ->options(fn (): array => Role::query()->pluck('name', 'name')->all())
                 ->afterStateHydrated(fn (Select $component, ?User $record) => $component->state(
                     $record?->roles()->pluck('name')->all() ?? [],
