@@ -51,8 +51,28 @@ it('lets one profile hold several certificates', function () {
 
     StaffCertificate::factory()->count(3)->for($profile, 'staffProfile')->create();
 
+    /*
+     * DELIBERATELY A MULTI-ROW HYDRATION, AND THE EAGER LOAD IS WHAT CARRIES IT.
+     *
+     * P35-T04 turned Model::preventLazyLoading() on outside production, and
+     * Builder::hydrate():498-501 arms the per-instance flag only when the result
+     * carried more than one row.
+     *
+     * The first version of this fix read the relation off ->first(), which is a
+     * one-row result: the model is never armed, so the assertion passed whether
+     * the eager load was there or not. That removed the violation by disarming
+     * the guard rather than by loading the relation — the eager load was
+     * decorative, and deleting it would not have failed anything.
+     *
+     * Fetching all three keeps the guard live, so removing with('staffProfile')
+     * below fails here with a LazyLoadingViolationException, which is what
+     * T04's Done-when asks for.
+     */
+    $certificates = $profile->certificates()->with('staffProfile')->get();
+
     expect($profile->certificates()->count())->toBe(3)
-        ->and($profile->certificates->first()?->staffProfile->id)->toBe($profile->id);
+        ->and($certificates)->toHaveCount(3)
+        ->and($certificates->first()?->staffProfile->id)->toBe($profile->id);
 });
 
 it('deletes the certificates when the profile is deleted', function () {

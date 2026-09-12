@@ -61,8 +61,12 @@ beforeEach(function () {
     $this->outstandingIndependently = function (Charge $charge): Money {
         $balance = Money::fromDecimal((string) $charge->fresh()->amount);
 
+        // with('payment') because the loop below reads it per row, and P35-T04
+        // turned Model::preventLazyLoading() on outside production. The rows and
+        // the arithmetic are unchanged; only the number of statements is.
         $allocations = PaymentAllocation::query()
             ->where('charge_id', $charge->getKey())
+            ->with('payment')
             ->get();
 
         foreach ($allocations as $allocation) {
