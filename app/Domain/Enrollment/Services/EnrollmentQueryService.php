@@ -205,6 +205,65 @@ final class EnrollmentQueryService
     }
 
     /**
+     * @return Collection<int, array{
+     *     id: int,
+     *     batch_id: int,
+     *     batch_code: string,
+     *     user_id: int,
+     *     user_name: string,
+     *     assigned_hours: int
+     * }>
+     */
+    public function searchInstructorAssignments(
+        Builder $excludedAssignmentIds,
+        string $search,
+        int $limit,
+    ): Collection {
+        if ($limit < 1) {
+            throw new InvalidArgumentException('The instructor assignment search limit must be positive.');
+        }
+
+        return $this->labelledInstructorAssignmentRows(
+            DB::table('batch_instructor')
+                ->whereNotIn('batch_instructor.id', $excludedAssignmentIds)
+                ->where(function (Builder $query) use ($search): void {
+                    $query
+                        ->where('users.name', 'like', "%{$search}%")
+                        ->orWhere('batches.code', 'like', "%{$search}%");
+                })
+                ->limit(min($limit, 25)),
+        );
+    }
+
+    /**
+     * @param  list<int>  $ids
+     * @return Collection<int, array{
+     *     id: int,
+     *     batch_id: int,
+     *     batch_code: string,
+     *     user_id: int,
+     *     user_name: string,
+     *     assigned_hours: int
+     * }>
+     */
+    public function instructorAssignmentsById(array $ids): Collection
+    {
+        $selectedIds = collect($ids)
+            ->map(fn (int|string $id): int => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($selectedIds === []) {
+            return collect();
+        }
+
+        return $this->labelledInstructorAssignmentRows(
+            DB::table('batch_instructor')->whereIn('batch_instructor.id', $selectedIds),
+        );
+    }
+
+    /**
      * @return Collection<int, array{id: int, batch_id: int, user_id: int, assigned_hours: int}>
      */
     private function instructorAssignmentRows(Builder $query): Collection
@@ -217,6 +276,42 @@ final class EnrollmentQueryService
                 'id' => (int) $row->id,
                 'batch_id' => (int) $row->batch_id,
                 'user_id' => (int) $row->user_id,
+                'assigned_hours' => (int) $row->assigned_hours,
+            ])
+            ->values();
+    }
+
+    /**
+     * @return Collection<int, array{
+     *     id: int,
+     *     batch_id: int,
+     *     batch_code: string,
+     *     user_id: int,
+     *     user_name: string,
+     *     assigned_hours: int
+     * }>
+     */
+    private function labelledInstructorAssignmentRows(Builder $query): Collection
+    {
+        return $query
+            ->join('batches', 'batches.id', '=', 'batch_instructor.batch_id')
+            ->join('users', 'users.id', '=', 'batch_instructor.user_id')
+            ->orderBy('batches.code')
+            ->orderBy('users.name')
+            ->get([
+                'batch_instructor.id',
+                'batch_instructor.batch_id',
+                'batches.code as batch_code',
+                'batch_instructor.user_id',
+                'users.name as user_name',
+                'batch_instructor.assigned_hours',
+            ])
+            ->map(fn (object $row): array => [
+                'id' => (int) $row->id,
+                'batch_id' => (int) $row->batch_id,
+                'batch_code' => (string) $row->batch_code,
+                'user_id' => (int) $row->user_id,
+                'user_name' => (string) $row->user_name,
                 'assigned_hours' => (int) $row->assigned_hours,
             ])
             ->values();

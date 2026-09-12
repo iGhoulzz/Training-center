@@ -118,10 +118,9 @@ class StaffProfileResource extends Resource
      * WITHOUT THIS, THE VIEW PAGE RENDERED THE EDIT FORM — AND LEAKED THE ROSTER.
      *
      * ViewStaffProfile declared no schema and this resource had no infolist(), so
-     * Filament fell back to form(). That form opens with
-     * Select::make('user_id')->options(User::query()->pluck('name', 'id')): every
-     * account name in the system, rendered as options, to anybody who could reach
-     * the page.
+     * Filament fell back to form(). At the time that form opened with a preloaded
+     * user Select: every account name in the system was rendered as options to
+     * anybody who could reach the page.
      *
      * Proven with a synthetic role holding view_any_staff_profile,
      * view_staff_profile and access_admin_panel and NO user permission — a shape
@@ -190,11 +189,13 @@ class StaffProfileResource extends Resource
         return $schema->components([
             Select::make('user_id')
                 ->label(__('staff.user'))
-                ->options(fn (): array => User::query()
-                    ->orderBy('name')
-                    ->pluck('name', 'id')
-                    ->all())
+                ->options(fn (): array => self::searchUsers(''))
                 ->searchable()
+                ->getSearchResultsUsing(fn (string $search): array => self::searchUsers($search))
+                ->getOptionLabelUsing(fn (mixed $value, ?StaffProfile $record): ?string => self::userOptionLabel(
+                    $value,
+                    $record?->user_id,
+                ))
                 ->required()
                 /*
                  * An employment profile owns its photo and credentials. Letting
@@ -248,6 +249,28 @@ class StaffProfileResource extends Resource
                 ->helperText(__('staff.profile_photo_help'))
                 ->columnSpanFull(),
         ]);
+    }
+
+    /** @return array<int, string> */
+    public static function searchUsers(string $search): array
+    {
+        return User::query()
+            ->select(['id', 'name'])
+            ->where('name', 'like', "%{$search}%")
+            ->orderBy('name')
+            ->limit(25)
+            ->pluck('name', 'id')
+            ->all();
+    }
+
+    public static function userOptionLabel(mixed $value, ?int $currentUserId = null): ?string
+    {
+        return User::withTrashed()
+            ->whereKey($value)
+            ->where(fn (Builder $query) => $query
+                ->whereNull('users.deleted_at')
+                ->orWhereKey($currentUserId))
+            ->value('name');
     }
 
     public static function table(Table $table): Table

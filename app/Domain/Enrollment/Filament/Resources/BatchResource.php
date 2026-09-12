@@ -196,15 +196,16 @@ class BatchResource extends Resource
                  * rejects it as invalid and an unrelated edit to the batch
                  * cannot be saved at all.
                  */
-                ->options(fn (?Batch $record): array => Course::query()
-                    ->where(fn (Builder $query) => $query
-                        ->active()
-                        ->orWhere('id', $record?->course_id))
-                    ->orderBy('code')
-                    ->pluck('code', 'id')
-                    ->all())
+                ->options(fn (?Batch $record): array => self::searchCourses('', $record?->course_id))
                 ->searchable()
-                ->preload(),
+                ->getSearchResultsUsing(fn (string $search, ?Batch $record): array => self::searchCourses(
+                    $search,
+                    $record?->course_id,
+                ))
+                ->getOptionLabelUsing(fn (mixed $value, ?Batch $record): ?string => self::courseOptionLabel(
+                    $value,
+                    $record?->course_id,
+                )),
 
             TextInput::make('code')
                 ->label(__('enrollment.batch_code'))
@@ -276,6 +277,31 @@ class BatchResource extends Resource
                 ->visible(fn (): bool => auth()->user()?->can('manage_pricing') ?? false)
                 ->dehydrated(false),
         ]);
+    }
+
+    /** @return array<int, string> */
+    public static function searchCourses(string $search, ?int $currentCourseId = null): array
+    {
+        return Course::query()
+            ->select(['id', 'code'])
+            ->where(fn (Builder $query) => $query
+                ->active()
+                ->orWhereKey($currentCourseId))
+            ->where('code', 'like', "%{$search}%")
+            ->orderBy('code')
+            ->limit(25)
+            ->pluck('code', 'id')
+            ->all();
+    }
+
+    public static function courseOptionLabel(mixed $value, ?int $currentCourseId = null): ?string
+    {
+        return Course::query()
+            ->whereKey($value)
+            ->where(fn (Builder $query) => $query
+                ->active()
+                ->orWhereKey($currentCourseId))
+            ->value('code');
     }
 
     public static function table(Table $table): Table

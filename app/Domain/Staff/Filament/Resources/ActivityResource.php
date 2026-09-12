@@ -181,14 +181,13 @@ class ActivityResource extends Resource
                  */
                 SelectFilter::make('causer_id')
                     ->label(__('activity.who'))
+                    ->options(fn (): array => self::searchActors(''))
+                    ->searchable()
+                    ->getSearchResultsUsing(fn (string $search): array => self::searchActors($search))
                     // withTrashed(): a departed member of staff is still an actor
                     // in the history, and dropping them from the filter would make
                     // their entries unreachable.
-                    ->options(fn (): array => User::withTrashed()
-                        ->orderBy('name')
-                        ->pluck('name', 'id')
-                        ->all())
-                    ->searchable()
+                    ->getOptionLabelUsing(fn (mixed $value): ?string => self::actorOptionLabel($value))
                     ->query(fn (Builder $query, array $data): Builder => $query
                         ->when(
                             $data['value'] ?? null,
@@ -203,6 +202,8 @@ class ActivityResource extends Resource
                  */
                 SelectFilter::make('subject_type')
                     ->label(__('activity.record'))
+                    // Bounded by the application's model classes, not by the
+                    // number of append-only activity rows.
                     ->options(fn (): array => Activity::query()
                         ->whereNotNull('subject_type')
                         ->distinct()
@@ -214,6 +215,8 @@ class ActivityResource extends Resource
 
                 SelectFilter::make('log_name')
                     ->label(__('activity.log'))
+                    // Bounded by the application's named log channels, not by
+                    // the number of append-only activity rows.
                     ->options(fn (): array => Activity::query()
                         ->whereNotNull('log_name')
                         ->distinct()
@@ -313,6 +316,25 @@ class ActivityResource extends Resource
             'type' => self::recordTypeLabel($activity->subject_type),
             'id' => (string) $activity->subject_id,
         ]);
+    }
+
+    /** @return array<int, string> */
+    public static function searchActors(string $search): array
+    {
+        return User::withTrashed()
+            ->select(['id', 'name'])
+            ->where('name', 'like', "%{$search}%")
+            ->orderBy('name')
+            ->limit(25)
+            ->pluck('name', 'id')
+            ->all();
+    }
+
+    public static function actorOptionLabel(mixed $value): ?string
+    {
+        return User::withTrashed()
+            ->whereKey($value)
+            ->value('name');
     }
 
     /**
