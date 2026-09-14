@@ -8,6 +8,7 @@ use App\Support\PerformanceDatabaseGuard;
 use Database\Seeders\PerformanceDatasetSeeder;
 use Illuminate\Console\Command;
 use RuntimeException;
+use Tooling\SerialLock;
 
 /**
  * Rebuild an explicitly disposable database with a fixed performance fixture.
@@ -48,6 +49,15 @@ final class SeedPerformanceDatasetCommand extends Command
 
             return self::FAILURE;
         }
+
+        /*
+         * Standalone Artisan commands do not load tests/bootstrap.php. Acquire
+         * the same repository-wide process lock here before migrate:fresh; its
+         * static handle stays alive through every migration and seed write.
+         * In-process Pest calls are idempotent because the test process already
+         * owns this exact lock.
+         */
+        SerialLock::acquireForProcess();
 
         $migrationExitCode = $this->call('migrate:fresh', ['--force' => true]);
 

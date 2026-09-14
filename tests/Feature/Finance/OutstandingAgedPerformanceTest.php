@@ -26,8 +26,6 @@ it('uses one dependent balance subquery and only the enrollment identity join', 
     $chargeCount = $profile === 'medium' ? 4_000 : 1_000;
     $database = DB::connection()->getDatabaseName();
 
-    config(['performance.allowed_databases' => [$database]]);
-
     app(PerformanceDatasetSeeder::class)->run(
         profile: $profile,
         confirmedDatabase: $database,

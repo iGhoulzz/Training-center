@@ -3,8 +3,13 @@
 declare(strict_types=1);
 
 use Database\Seeders\PerformanceDatasetSeeder;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Testing\DatabaseMigrations;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use Symfony\Component\Process\Process;
+use Tooling\SerialLock;
 
 /*
 |--------------------------------------------------------------------------
@@ -44,11 +49,17 @@ function expectPerformanceResetWasNotAttempted(): void
     expect(DB::table('courses')->where('code', 'RESET-SENTINEL')->exists())->toBeTrue();
 }
 
+it('allowlists exactly the two approved disposable databases', function () {
+    expect(config('performance.allowed_databases'))->toBe([
+        'training_center_test',
+        'training_center_performance',
+    ]);
+});
+
 it('refuses production before attempting to reset the database', function () {
     insertPerformanceResetSentinel();
 
     $database = performanceTestDatabase();
-    config(['performance.allowed_databases' => [$database]]);
     $this->app->instance('env', 'production');
 
     try {
@@ -69,8 +80,6 @@ it('refuses production before attempting to reset the database', function () {
 
 it('refuses a confirmation that does not exactly name the connected database before reset', function () {
     insertPerformanceResetSentinel();
-
-    config(['performance.allowed_databases' => [performanceTestDatabase()]]);
 
     $this->artisan('seed:performance-dataset', [
         '--profile' => 'small',
@@ -97,7 +106,6 @@ it('refuses a missing or unknown profile before reset', function (?string $profi
     insertPerformanceResetSentinel();
 
     $database = performanceTestDatabase();
-    config(['performance.allowed_databases' => [$database]]);
 
     $arguments = ['--confirm-database' => $database];
 
@@ -116,8 +124,6 @@ it('refuses a missing or unknown profile before reset', function (?string $profi
 it('enforces the same guard when the seeder is invoked directly', function () {
     insertPerformanceResetSentinel();
 
-    config(['performance.allowed_databases' => [performanceTestDatabase()]]);
-
     expect(fn () => app(PerformanceDatasetSeeder::class)->run(
         profile: 'small',
         confirmedDatabase: performanceTestDatabase().'-wrong',
@@ -128,6 +134,84 @@ it('enforces the same guard when the seeder is invoked directly', function () {
         ->and(DB::table('payment_allocations')->count())->toBe(0);
 });
 
+it('makes the public command wait on the repository lock before resetting', function () {
+    expect(SerialLock::isHeld())->toBeTrue();
+
+    $database = performanceTestDatabase();
+    $process = null;
+    $probeSurvived = true;
+
+    try {
+        Schema::dropIfExists('performance_lock_probe');
+        Schema::create('performance_lock_probe', function (Blueprint $table): void {
+            $table->id();
+        });
+
+        /** @var array<string, mixed> $mysql */
+        $mysql = config('database.connections.mysql');
+        $environment = [
+            'APP_ENV' => 'testing',
+            'DB_CONNECTION' => 'mysql',
+            'DB_URL' => '',
+            'DB_HOST' => (string) ($mysql['host'] ?? ''),
+            'DB_PORT' => (string) ($mysql['port'] ?? ''),
+            'DB_DATABASE' => $database,
+            'DB_USERNAME' => (string) ($mysql['username'] ?? ''),
+            'DB_PASSWORD' => (string) ($mysql['password'] ?? ''),
+        ];
+
+        $process = new Process([
+            PHP_BINARY,
+            base_path('artisan'),
+            'seed:performance-dataset',
+            '--profile=small',
+            '--confirm-database='.$database,
+            '--no-ansi',
+        ], base_path(), $environment);
+        $process->setTimeout(null);
+        $process->start();
+
+        $stderr = '';
+        $deadline = microtime(true) + 20;
+
+        do {
+            $stderr .= $process->getIncrementalErrorOutput();
+            $process->getIncrementalOutput();
+
+            if (str_contains($stderr, 'Waiting for the shared test database')) {
+                break;
+            }
+
+            if (! Schema::hasTable('performance_lock_probe')) {
+                break;
+            }
+
+            usleep(50_000);
+        } while ($process->isRunning() && microtime(true) < $deadline);
+
+        $probeSurvived = Schema::hasTable('performance_lock_probe');
+
+        expect($stderr)->toContain('Waiting for the shared test database')
+            ->and($process->isRunning())->toBeTrue()
+            ->and($probeSurvived)->toBeTrue();
+    } finally {
+        if ($process instanceof Process && $process->isRunning()) {
+            $process->stop(1);
+        }
+
+        if ($probeSurvived) {
+            Schema::dropIfExists('performance_lock_probe');
+        } else {
+            /*
+             * The deliberate red case proves the old command reached
+             * migrate:fresh. Restore the shared schema before the assertion
+             * leaves this test so no later case observes the controlled probe.
+             */
+            Artisan::call('migrate:fresh', ['--force' => true]);
+        }
+    }
+});
+
 it('rebuilds the complete database and seeds the fixed profile cardinalities', function (
     string $profile,
     int $charges,
@@ -136,7 +220,6 @@ it('rebuilds the complete database and seeds the fixed profile cardinalities', f
     insertPerformanceResetSentinel();
 
     $database = performanceTestDatabase();
-    config(['performance.allowed_databases' => [$database]]);
 
     $this->artisan('seed:performance-dataset', [
         '--profile' => $profile,
@@ -160,7 +243,6 @@ it('rebuilds the complete database and seeds the fixed profile cardinalities', f
 
 it('rebuilds to the same deterministic small dataset on every run', function () {
     $database = performanceTestDatabase();
-    config(['performance.allowed_databases' => [$database]]);
 
     $arguments = [
         '--profile' => 'small',
