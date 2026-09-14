@@ -42,8 +42,15 @@ use Illuminate\Database\Eloquent\Builder;
  * and `ActivityResource::canCreate()` already use, even though nothing here
  * is unconditionally refused the way theirs is.
  *
- * ONE ACTION, AUTHORIZED, NOT MERELY HIDDEN
- * -------------------------------------------
+ * TWO ROW ACTIONS, BOTH AUTHORIZED, NOT MERELY HIDDEN
+ * -----------------------------------------------------
+ * `downloadReceiptAction()` (P35-T06) is a link to the policy-authorized
+ * receipt route with no server handler of its own, so its boundary is that
+ * route rather than the action — see its docblock. It is a static builder,
+ * but `ViewPayment` does not use it: **only `reverseAction()` is shared with
+ * that page**, so only "reverse" carries the no-drift guarantee described
+ * below.
+ *
  * `reverseAction()` below calls `ReversePaymentAction` directly and is
  * gated with `->authorize()`, never `->visible()` alone —
  * `docs/ENGINEERING.md`'s note that `visible()` is a UX affordance a
@@ -246,8 +253,9 @@ class PaymentResource extends Resource
             ])
             ->defaultSort('received_at', 'desc')
             // authorize() on each action, not visible() alone — see the
-            // class docblock. Shared builders so the table row and
-            // ViewPayment's header action cannot drift apart.
+            // class docblock. Only reverseAction() is shared with
+            // ViewPayment's header, so only "reverse" is guaranteed not to
+            // drift between the two; the download link is table-only.
             ->recordActions([
                 self::downloadReceiptAction(),
                 self::reverseAction(),
@@ -288,13 +296,14 @@ class PaymentResource extends Resource
      * and the controller's policy, disk and canonical-path checks. Do not move
      * any of that into this action, and do not point the URL anywhere else.
      *
-     * HIDDEN UNTIL THE FILE EXISTS, AND ONLY FOR THAT
-     * -----------------------------------------------
+     * HIDDEN UNTIL A RECEIPT PATH IS RECORDED, AND ONLY FOR THAT
+     * ----------------------------------------------------------
      * The job is queued, so a payment spends time with a null
-     * `receipt_path`. That is the whole visibility rule. The wrong disk, a
-     * non-canonical path and a missing file are the controller's 404s;
-     * repeating them here would be a second definition of which receipts are
-     * valid.
+     * `receipt_path`. That is the whole visibility rule: a RECORDED PATH, not
+     * a file known to exist. A path pointing at a missing file, the wrong disk
+     * or a non-canonical location stays visible and is refused by the
+     * controller with 404; repeating those checks here would be a second
+     * definition of which receipts are valid.
      *
      * NOT HIDDEN ON REVERSAL — THE OPPOSITE OF `reverseAction()`
      * ---------------------------------------------------------

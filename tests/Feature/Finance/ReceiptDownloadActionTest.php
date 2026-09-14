@@ -52,10 +52,12 @@ beforeEach(function (): void {
     };
 });
 
-it('offers the download only once the receipt exists', function (): void {
+it('offers the download only once a receipt path is recorded', function (): void {
     $withReceipt = ($this->paymentWithReceipt)();
 
-    // GenerateReceiptJob is queued, so a payment spends time with no file yet.
+    // GenerateReceiptJob is queued, so a payment spends time with no receipt
+    // path recorded. The visibility rule is the recorded path, not the file:
+    // a path to a missing file stays visible and the controller answers 404.
     $pending = Payment::factory()->create(['receipt_path' => null]);
 
     Livewire::actingAs($this->superAdmin)
