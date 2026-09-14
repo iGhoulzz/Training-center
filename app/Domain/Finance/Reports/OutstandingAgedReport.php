@@ -23,13 +23,15 @@ use InvalidArgumentException;
  *
  * OUTSTANDING COMES FROM ChargeBalance, AND FROM NOWHERE ELSE
  * -------------------------------------------------------------
- * `ChargeBalance::outstandingSql()` is composed straight into this query, both
- * to select the figure and to filter on it. There is no second subtraction
- * written here and no per-row `outstandingFor()` call — either would be either
- * a second definition of "outstanding" or an N+1 over every charge in the
- * table. This is a report, not about to act on the answer, so it reads through
- * the ordinary (non-locking) surface — see `ChargeBalance`'s own docblock for
- * why locking rows to render a column would be a real cost for nothing.
+ * `ChargeBalance::outstandingSql()` is composed into the select list exactly
+ * once, then its published OUTSTANDING_ALIAS is filtered with HAVING. Repeating
+ * the expression in WHERE makes MySQL execute two dependent allocation
+ * subqueries per charge. There is no second subtraction written here and no
+ * per-row `outstandingFor()` call — either would be a second definition of
+ * "outstanding" or an N+1 over every charge in the table. This is a report, not
+ * about to act on the answer, so it reads through the ordinary (non-locking)
+ * surface — see `ChargeBalance`'s own docblock for why locking rows to render a
+ * column would be a real cost for nothing.
  *
  * A WRITE-OFF IS A REPORT-LEVEL FILTER, NOT A CHANGE TO WHAT IS OWED
  * ----------------------------------------------------------------------
@@ -86,10 +88,10 @@ use InvalidArgumentException;
  * it. A charge reaches its student through `enrollment_id`, and this class
  * does not walk `$charge->enrollment->student` to get there — that is the
  * exact cross-domain query the architecture test forbids (design §5). The
- * join is contributed by `EnrollmentQueryService::joinCatalogueTo()`, the
- * published boundary Finance reads enrolments through; `student_id` is then
- * read off the join it already made, the same way `RevenueReport` reads the
- * catalogue columns off that same join rather than re-deriving them.
+ * join is contributed by
+ * `EnrollmentQueryService::joinEnrollmentStudentIdentityTo()`, the narrow
+ * published boundary Finance reads this identity through. It deliberately does
+ * not visit batches or courses, because no catalogue field is consumed here.
  */
 final class OutstandingAgedReport
 {
@@ -150,15 +152,13 @@ final class OutstandingAgedReport
                 'charges.due_date',
             ])
             ->selectRaw(ChargeBalance::outstandingSql().' as '.ChargeBalance::OUTSTANDING_ALIAS)
-            // A correlated subquery, not an aggregate over this query, so it
-            // is a plain WHERE — never a HAVING, which ChargeBalance's own
-            // docblock warns resolves against the select list rather than
-            // the table and would raise on `charges.amount` here.
-            ->whereRaw(ChargeBalance::outstandingSql().' > 0');
+            // Filter the selected alias rather than repeating the correlated
+            // expression. ChargeBalance documents this exact valid HAVING form.
+            ->having(ChargeBalance::OUTSTANDING_ALIAS, '>', 0);
 
-        $this->enrollments->joinCatalogueTo($query, 'charges.enrollment_id', [EnrollmentQueryService::DIMENSION_COURSE]);
+        $this->enrollments->joinEnrollmentStudentIdentityTo($query, 'charges.enrollment_id');
 
-        $query->addSelect('enrollments.student_id')->orderBy('charges.due_date');
+        $query->orderBy('charges.due_date');
 
         $rows = $query->get()->map(function (object $row) use ($asOf): array {
             $dueDate = $this->parseLocalDate(substr((string) $row->due_date, 0, 10));
@@ -166,7 +166,7 @@ final class OutstandingAgedReport
             return [
                 'charge_id' => (int) $row->charge_id,
                 'charge_reference' => (string) $row->charge_reference,
-                'student_id' => (int) $row->student_id,
+                'student_id' => (int) $row->{EnrollmentQueryService::ENROLLMENT_STUDENT_ID},
                 'due_date' => $dueDate,
                 'days_past_due' => $this->daysPastDue($asOf, $dueDate),
                 'outstanding' => Money::fromDecimal((string) $row->{ChargeBalance::OUTSTANDING_ALIAS}),
