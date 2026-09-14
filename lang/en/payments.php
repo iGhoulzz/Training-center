@@ -110,4 +110,7 @@ return [
     // system cannot represent. The hint says so where the decision is made.
     'reverse_reason_hint' => 'Use this only for a payment that should never have been recorded — entered against the wrong bill, duplicated, or never actually received. It does not record money being returned to the student, and the centre does not issue refunds.',
     'reversed_successfully' => 'Payment reversed.',
+
+    // PaymentResource::downloadReceiptAction() (P35-T06).
+    'download_receipt' => 'Download receipt',
 ];
