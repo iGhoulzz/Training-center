@@ -66,7 +66,7 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | PaymentResource — labels, filters and the one record action
+    | PaymentResource — labels, filters and the record actions
     |--------------------------------------------------------------------------
     |
     | Added by the same task (P2-T04, unit 5); see the file header above for

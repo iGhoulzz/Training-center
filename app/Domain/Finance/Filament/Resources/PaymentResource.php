@@ -23,8 +23,8 @@ use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 
 /**
- * Payments — read-plus-one-action, never created or edited through the panel
- * (P2-T04).
+ * Payments — listed and viewed, never created or edited through the panel.
+ * Two row actions: a receipt download link (P35-T06) and a reversal (P2-T04).
  *
  * WHY THERE IS NO CREATE PAGE AND NO EDIT PAGE
  * ---------------------------------------------
@@ -42,11 +42,12 @@ use Illuminate\Database\Eloquent\Builder;
  * and `ActivityResource::canCreate()` already use, even though nothing here
  * is unconditionally refused the way theirs is.
  *
- * TWO ROW ACTIONS, BOTH AUTHORIZED, NOT MERELY HIDDEN
- * -----------------------------------------------------
+ * TWO ROW ACTIONS, BOTH GATED WITH authorize() — ONLY REVERSE IS GUARDED HERE
+ * ---------------------------------------------------------------------------
  * `downloadReceiptAction()` (P35-T06) is a link to the policy-authorized
- * receipt route with no server handler of its own, so its boundary is that
- * route rather than the action — see its docblock. It is a static builder,
+ * receipt route with no server handler of its own. Its `authorize()` only
+ * decides whether the button renders; what protects the bytes is that
+ * route — see its docblock. It is a static builder,
  * but `ViewPayment` does not use it: **only `reverseAction()` is shared with
  * that page**, so only "reverse" carries the no-drift guarantee described
  * below.
@@ -291,19 +292,24 @@ class PaymentResource extends Resource
      * A LINK HAS NO SERVER HANDLER, SO THIS ACTION GUARDS NOTHING
      * ------------------------------------------------------------
      * Unlike `reverseAction()`, there is no Livewire callback here for
-     * `authorize()` to make unmountable. Everything that protects the bytes
-     * lives on the route: `AuthenticatePrivateFileSession`, `throttle:60,1`,
-     * and the controller's policy, disk and canonical-path checks. Do not move
-     * any of that into this action, and do not point the URL anywhere else.
+     * `authorize()` to make unmountable. What protects the bytes lives on the
+     * route: the `AuthenticatePrivateFileSession` group and `throttle:60,1`,
+     * then the controller's guest and `is_active` refusals, its policy check,
+     * and its wrong-disk, non-canonical-path and missing-file 404s. Do not
+     * move any of that into this action, and do not point the URL anywhere
+     * else.
      *
-     * HIDDEN UNTIL A RECEIPT PATH IS RECORDED, AND ONLY FOR THAT
-     * ----------------------------------------------------------
-     * The job is queued, so a payment spends time with a null
-     * `receipt_path`. That is the whole visibility rule: a RECORDED PATH, not
-     * a file known to exist. A path pointing at a missing file, the wrong disk
-     * or a non-canonical location stays visible and is refused by the
-     * controller with 404; repeating those checks here would be a second
-     * definition of which receipts are valid.
+     * HIDDEN UNTIL A RECEIPT PATH IS RECORDED
+     * ---------------------------------------
+     * `authorize('view')` above decides WHO sees the button; this decides
+     * WHEN. The job is queued, so a payment spends time with a null
+     * `receipt_path`, and that null is the entire record-state rule: a
+     * RECORDED PATH, not a file known to exist. A path pointing at a missing
+     * file, the wrong disk or a non-canonical location stays visible and is
+     * refused by the controller with 404; repeating those checks here would
+     * cost a filesystem call per row and be a second definition of which
+     * receipts are valid. `ReceiptDownloadActionTest` pins both sides: a null
+     * path hides the button, a recorded path to a missing file keeps it.
      *
      * NOT HIDDEN ON REVERSAL — THE OPPOSITE OF `reverseAction()`
      * ---------------------------------------------------------
