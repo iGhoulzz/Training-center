@@ -23,8 +23,8 @@ use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 
 /**
- * Payments — read-plus-one-action, never created or edited through the panel
- * (P2-T04).
+ * Payments — listed and viewed, never created or edited through the panel.
+ * Two row actions: a receipt download link (P35-T06) and a reversal (P2-T04).
  *
  * WHY THERE IS NO CREATE PAGE AND NO EDIT PAGE
  * ---------------------------------------------
@@ -42,8 +42,16 @@ use Illuminate\Database\Eloquent\Builder;
  * and `ActivityResource::canCreate()` already use, even though nothing here
  * is unconditionally refused the way theirs is.
  *
- * ONE ACTION, AUTHORIZED, NOT MERELY HIDDEN
- * -------------------------------------------
+ * TWO ROW ACTIONS, BOTH GATED WITH authorize() — ONLY REVERSE IS GUARDED HERE
+ * ---------------------------------------------------------------------------
+ * `downloadReceiptAction()` (P35-T06) is a link to the policy-authorized
+ * receipt route with no server handler of its own. Its `authorize()` only
+ * decides whether the button renders; what protects the bytes is that
+ * route — see its docblock. It is a static builder,
+ * but `ViewPayment` does not use it: **only `reverseAction()` is shared with
+ * that page**, so only "reverse" carries the no-drift guarantee described
+ * below.
+ *
  * `reverseAction()` below calls `ReversePaymentAction` directly and is
  * gated with `->authorize()`, never `->visible()` alone —
  * `docs/ENGINEERING.md`'s note that `visible()` is a UX affordance a
@@ -245,10 +253,12 @@ class PaymentResource extends Resource
                     ->nullable(),
             ])
             ->defaultSort('received_at', 'desc')
-            // authorize() on the action, not visible() alone — see the
-            // class docblock. A shared builder so the table row and
-            // ViewPayment's header action cannot drift apart.
+            // authorize() on each action, not visible() alone — see the
+            // class docblock. Only reverseAction() is shared with
+            // ViewPayment's header, so only "reverse" is guaranteed not to
+            // drift between the two; the download link is table-only.
             ->recordActions([
+                self::downloadReceiptAction(),
                 self::reverseAction(),
             ])
             // No bulk actions of any kind. PaymentPolicy's *Any methods
@@ -258,6 +268,65 @@ class PaymentResource extends Resource
             // explicitly rather than left absent, the same defensive style
             // ChargeResource::table() uses.
             ->toolbarActions([]);
+    }
+
+    /**
+     * A link to the policy-authorized receipt download route (P35-T06).
+     *
+     * WHY IT EXISTS
+     * -------------
+     * A finished feature was unreachable. `GenerateReceiptJob` renders the
+     * PDF, `receipt_disk` / `receipt_path` record it,
+     * `ReceiptDownloadController` serves it and `finance.receipts.download`
+     * routes to it — and nothing in the panel linked to that route.
+     *
+     * AUTHORIZED ON THE SAME ABILITY THE ROUTE RE-CHECKS
+     * --------------------------------------------------
+     * `authorize('view')` is `PaymentPolicy::view()`, exactly what
+     * `ReceiptDownloadController` checks per request after `is_active`.
+     * `view_any_payment` opens this list without granting `view_payment`, so
+     * without this line that actor would see a button that answers 403.
+     * The gate is UX and the route is the boundary — the same split, and the
+     * same shape, as `CertificatesRelationManager::downloadAction()`.
+     *
+     * A LINK HAS NO SERVER HANDLER, SO THIS ACTION GUARDS NOTHING
+     * ------------------------------------------------------------
+     * Unlike `reverseAction()`, there is no Livewire callback here for
+     * `authorize()` to make unmountable. What protects the bytes lives on the
+     * route: the `AuthenticatePrivateFileSession` group and `throttle:60,1`,
+     * then the controller's guest and `is_active` refusals, its policy check,
+     * and its wrong-disk, non-canonical-path and missing-file 404s. Do not
+     * move any of that into this action, and do not point the URL anywhere
+     * else.
+     *
+     * HIDDEN UNTIL A RECEIPT PATH IS RECORDED
+     * ---------------------------------------
+     * `authorize('view')` above decides WHO sees the button; this decides
+     * WHEN. The job is queued, so a payment spends time with a null
+     * `receipt_path`, and that null is the entire record-state rule: a
+     * RECORDED PATH, not a file known to exist. A path pointing at a missing
+     * file, the wrong disk or a non-canonical location stays visible and is
+     * refused by the controller with 404; repeating those checks here would
+     * cost a filesystem call per row and be a second definition of which
+     * receipts are valid. `ReceiptDownloadActionTest` pins both sides: a null
+     * path hides the button, a recorded path to a missing file keeps it.
+     *
+     * NOT HIDDEN ON REVERSAL — THE OPPOSITE OF `reverseAction()`
+     * ---------------------------------------------------------
+     * The receipt was issued. Reversing a payment removes it from every
+     * balance without un-issuing the paper, and `ReceiptDownloadTest` already
+     * proves the route keeps serving it. This action preserves that decision
+     * rather than reopening it.
+     */
+    public static function downloadReceiptAction(): Action
+    {
+        return Action::make('downloadReceipt')
+            ->label(__('payments.download_receipt'))
+            ->icon(Heroicon::OutlinedArrowDownTray)
+            ->authorize('view')
+            ->visible(fn (Payment $record): bool => $record->receipt_path !== null)
+            ->url(fn (Payment $record): string => route('finance.receipts.download', $record))
+            ->openUrlInNewTab();
     }
 
     /**
