@@ -172,7 +172,7 @@ it('makes the public command wait on the repository lock before resetting', func
         $process->start();
 
         $stderr = '';
-        $deadline = microtime(true) + 20;
+        $deadline = hrtime(true) + 20_000_000_000;
 
         do {
             $stderr .= $process->getIncrementalErrorOutput();
@@ -182,12 +182,27 @@ it('makes the public command wait on the repository lock before resetting', func
                 break;
             }
 
+            if (! $process->isRunning()) {
+                $this->fail(sprintf(
+                    "Performance dataset subprocess exited before waiting for the shared database lock (exit code %s).\nComplete stderr:\n%s",
+                    $process->getExitCode() === null ? 'unknown' : (string) $process->getExitCode(),
+                    $process->getErrorOutput(),
+                ));
+            }
+
             if (! Schema::hasTable('performance_lock_probe')) {
                 break;
             }
 
+            if (hrtime(true) >= $deadline) {
+                $this->fail(sprintf(
+                    "Timed out waiting for the performance dataset subprocess to report lock contention.\nComplete stderr:\n%s",
+                    $process->getErrorOutput(),
+                ));
+            }
+
             usleep(50_000);
-        } while ($process->isRunning() && microtime(true) < $deadline);
+        } while (true);
 
         $probeSurvived = Schema::hasTable('performance_lock_probe');
 
