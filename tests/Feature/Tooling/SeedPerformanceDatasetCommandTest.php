@@ -49,9 +49,10 @@ function expectPerformanceResetWasNotAttempted(): void
     expect(DB::table('courses')->where('code', 'RESET-SENTINEL')->exists())->toBeTrue();
 }
 
-it('allowlists exactly the two approved disposable databases', function () {
+it('allowlists exactly the approved disposable databases', function () {
     expect(config('performance.allowed_databases'))->toBe([
         'training_center_test',
+        'training_center_ci',
         'training_center_performance',
     ]);
 });
