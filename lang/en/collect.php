@@ -110,6 +110,10 @@ return [
     // replay. Whole sentence, and it tells the operator what to do next.
     'installment_conflict' => 'This collection has already been recorded, and nothing further was taken. Collecting another installment against this bill is not available yet.',
 
+    // PaymentExceedsOutstandingException carries both figures, so the
+    // operator can correct the attempted collection without another lookup.
+    'payment_exceeds_outstanding_detail' => 'Attempted :attempted; outstanding :outstanding.',
+
     // The shape rule accepts 0.000; this is what refuses it, before
     // TenderData's developer-facing guard can reach a user in English.
     'amount_must_be_positive' => 'Enter an amount greater than zero.',

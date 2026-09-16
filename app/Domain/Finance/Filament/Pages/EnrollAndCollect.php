@@ -913,6 +913,10 @@ class EnrollAndCollect extends Page
         } catch (PaymentExceedsOutstandingException $exception) {
             Notification::make()
                 ->title($exception->getMessage())
+                ->body(__('collect.payment_exceeds_outstanding_detail', [
+                    'attempted' => self::formatMoney($exception->attemptedAmount),
+                    'outstanding' => self::formatMoney($exception->outstandingAmount),
+                ]))
                 ->danger()
                 ->send();
 
