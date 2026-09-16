@@ -333,6 +333,10 @@ it stands, because it proves the value never reached the payload at all.
 - Typed custom exceptions carrying context, not generic `\Exception`.
 - Multi-table operations run in `DB::transaction()`.
 - Domain exceptions render as readable UI messages. Stack traces never reach users.
+- A refusal notification carries a detail body only when its exception already
+  holds user-actionable context. Render only those fields; never query from a
+  catch block to enrich a refusal. An internal row id alone is not user detail,
+  and an authorization refusal never names the permission the actor lacks.
 - Dispatch queued jobs with `afterCommit()` when dispatching inside a transaction.
 
 ---
