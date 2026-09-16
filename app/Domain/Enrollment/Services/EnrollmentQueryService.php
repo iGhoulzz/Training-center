@@ -340,6 +340,35 @@ final class EnrollmentQueryService
 
     public const COURSE_CODE = 'catalogue_course_code';
 
+    /** The student identity alias contributed to a report query. */
+    public const ENROLLMENT_STUDENT_ID = 'enrollment_student_id';
+
+    /**
+     * Add only the enrolment identity a report needs to somebody else's query.
+     *
+     * This is deliberately narrower than joinCatalogueTo(): a report that only
+     * names the student owing a charge has no reason to visit batches or
+     * courses, and those joins materially multiply the work of a correlated
+     * balance query.
+     *
+     * REPORT IDENTITY, NOT PORTAL AUTHORIZATION
+     * -----------------------------------------
+     * This method projects a student id but does not constrain one. Portal code
+     * must keep using scopeToStudent(), whose join and ownership predicate are
+     * inseparable; using this reporting helper as a security boundary would
+     * expose every student's row.
+     *
+     * @param  Builder  $query  A query already selecting from a table that
+     *                          carries an enrolment id.
+     * @param  string  $enrollmentIdColumn  Qualified, e.g. `charges.enrollment_id`.
+     */
+    public function joinEnrollmentStudentIdentityTo(Builder $query, string $enrollmentIdColumn): Builder
+    {
+        return $query
+            ->join('enrollments', 'enrollments.id', '=', $enrollmentIdColumn)
+            ->addSelect('enrollments.student_id as '.self::ENROLLMENT_STUDENT_ID);
+    }
+
     /**
      * Add the enrolment → batch → course path to somebody else's query.
      *
