@@ -59,6 +59,7 @@ const READ_ONLY_FEATURE_TESTS = [
     // Listed explicitly because it used to slip through on its own error message.
     'DatabaseIsolationTest.php',
     'BackupConfigurationTest.php',
+    'Enrollment/IdentifierCodeArchTest.php',
     'ExampleTest.php',
     'Finance/MoneyCastArchTest.php',
     'PolicyAbilitySurfaceTest.php',

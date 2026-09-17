@@ -86,6 +86,9 @@ class CourseResource extends Resource
             TextInput::make('code')
                 ->label(__('enrollment.course_code'))
                 ->required()
+                // Course codes stay manual (P35-T09): the placeholder suggests a
+                // shape and never fills one, so nothing is submitted untyped.
+                ->placeholder(__('enrollment.course_code_placeholder'))
                 ->maxLength(30)
                 // The code is what humans mean by a course, on the phone and in
                 // brochures, so a duplicate is a real-world ambiguity rather

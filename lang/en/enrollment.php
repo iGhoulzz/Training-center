@@ -63,6 +63,15 @@ return [
 
     // Batch fields.
     'batch_code' => 'Batch code',
+
+    // Generated student and batch codes (P35-T09). One hint and one pair of
+    // refusals shared by every creation path: the student and batch pages and
+    // Enrol & Collect's quick-create all say the same thing.
+    'identifier_code_hint' => 'Leave blank to generate one.',
+    'identifier_code_already_used' => 'This code is already in use. Enter a different one, or leave it blank to generate one.',
+    'identifier_code_exhausted' => 'A code could not be generated. Please try again.',
+    // Course codes stay manual: an example shape, never a filled value.
+    'course_code_placeholder' => 'e.g. ENG-B1',
     'start_date' => 'Start date',
     'end_date' => 'End date',
     'capacity' => 'Capacity',
