@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Prepare the Linux working copy (P35-T14). Idempotent: safe to re-run.
 #
-#   docker compose exec app bash /host-repo/docker/dev-linux/setup.sh
+#   docker compose exec app bash /bootstrap/setup.sh
 #
 # WHY IT CLONES INSTEAD OF USING THE MOUNT
 # ----------------------------------------
@@ -29,7 +29,8 @@ git config --global --add safe.directory '*'
 if [ -f "${SOURCE}/.git" ]; then
     echo "ERROR: ${SOURCE} is a linked git worktree, which cannot be cloned inside this container." >&2
     echo '       Start compose with HOST_REPO set to the main checkout, for example:' >&2
-    echo '       HOST_REPO=/c/Users/User/Desktop/Training-center docker compose up -d' >&2
+    echo '         PowerShell:  $env:HOST_REPO = ''C:\Users\User\Desktop\Training-center''' >&2
+    echo '         then:        docker compose up -d --build' >&2
     exit 1
 fi
 

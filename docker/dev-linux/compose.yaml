@@ -3,7 +3,7 @@
 # Run every command from this directory:
 #
 #   docker compose up -d --build
-#   docker compose exec app bash /host-repo/docker/dev-linux/setup.sh
+#   docker compose exec app bash /bootstrap/setup.sh
 #   docker compose exec app composer verify
 #
 # THIS MYSQL IS ITS OWN SERVER, AND THAT IS THE WHOLE POINT
@@ -58,6 +58,10 @@ services:
             # still on a branch, run compose with HOST_REPO set to the main
             # checkout — setup.sh refuses with that instruction either way.
             - ${HOST_REPO:-../..}:/host-repo:ro
+            # This directory, so setup.sh is reachable whatever branch the
+            # clone source happens to be on — including now, before this task
+            # has merged into main.
+            - .:/bootstrap:ro
         depends_on:
             mysql:
                 condition: service_healthy
