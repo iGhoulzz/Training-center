@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Domain\Finance\Exports\PrepareReportCsvExport;
 use App\Domain\Finance\Exports\ReportExportAuthorization;
+use App\Domain\Finance\Exports\ReportSnapshot;
 use App\Domain\Finance\Filament\Pages\Reports\DailyTenderReportPage;
 use App\Domain\Finance\Filament\Pages\Reports\OutstandingAgedReportPage;
 use App\Domain\Finance\Filament\Pages\Reports\PaymentMethodReportPage;
@@ -11,11 +12,14 @@ use App\Domain\Finance\Filament\Pages\Reports\ProfitReportPage;
 use App\Domain\Finance\Filament\Pages\Reports\RevenueReportPage;
 use App\Domain\Finance\Filament\Pages\Reports\StudentPaymentHistoryPage;
 use App\Domain\Finance\Filament\Pages\Reports\WageCostReportPage;
+use App\Domain\Finance\Jobs\GenerateReportPdfJob;
+use App\Domain\Finance\Models\PayrollLine;
 use App\Domain\Staff\Actions\SystemRoleWriter;
 use App\Models\Role;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Queue;
 use Livewire\Livewire;
 
 uses(RefreshDatabase::class);
@@ -127,3 +131,72 @@ it('separates viewing a report from exporting it', function (string $page) {
         ->assertActionHidden('export_xlsx')
         ->assertActionHidden('export_pdf');
 })->with('financial report pages');
+
+/*
+|--------------------------------------------------------------------------
+| Whole-month report filters and their frozen export snapshot
+|--------------------------------------------------------------------------
+|
+| Catches a production mutation that keeps the single-month control, ignores
+| either endpoint when applying filters, or snapshots a displayed range other
+| than the range used to build the report data.
+*/
+
+it('applies from and to whole-month filters and freezes their displayed range in a wage-cost export snapshot', function () {
+    $employee = User::factory()->create();
+    PayrollLine::factory()->create([
+        'user_id' => $employee->getKey(),
+        'computed_amount' => '250.000',
+        'segment_start' => '2025-12-01',
+        'segment_end' => '2025-12-31',
+        'frozen_days' => 31,
+        'frozen_days_in_month' => 31,
+        'posting_period_start' => '2025-12-01',
+        'finalized_at' => '2025-12-31 09:00:00',
+    ]);
+    PayrollLine::factory()->create([
+        'user_id' => $employee->getKey(),
+        'computed_amount' => '125.000',
+        'segment_start' => '2026-01-01',
+        'segment_end' => '2026-01-31',
+        'frozen_days' => 31,
+        'frozen_days_in_month' => 31,
+        'posting_period_start' => '2026-01-01',
+        'finalized_at' => '2026-01-31 09:00:00',
+    ]);
+
+    Queue::fake();
+
+    Livewire::actingAs($this->admin)
+        ->test(WageCostReportPage::class)
+        ->set('filters.from', '2025-12')
+        ->set('filters.to', '2026-01')
+        ->call('applyFilters')
+        ->assertSet('appliedFilters', ['from' => '2025-12', 'to' => '2026-01'])
+        ->callAction('export_pdf')
+        ->assertHasNoActionErrors();
+
+    /** @var GenerateReportPdfJob $job */
+    $job = Queue::pushed(GenerateReportPdfJob::class)->sole();
+    $snapshot = ReportSnapshot::fromArray($job->snapshot);
+
+    expect($snapshot->filters)->toBe([
+        'From' => '2025-12',
+        'To' => '2026-01',
+    ])->and($snapshot->dataset->carrierIds())->toBe([$employee->getKey()])
+        ->and($snapshot->dataset->cell($employee->getKey(), 'total'))->toBe('375.000');
+});
+
+it('rejects a reversed whole-month range before replacing the applied report snapshot', function () {
+    $component = Livewire::actingAs($this->admin)->test(WageCostReportPage::class);
+    $originalAppliedFilters = $component->get('appliedFilters');
+
+    $component
+        ->fillForm([
+            'from' => '2026-02',
+            'to' => '2026-01',
+        ])
+        ->call('applyFilters')
+        ->assertHasFormErrors(['to'])
+        ->assertSet('appliedFilters', $originalAppliedFilters);
+});

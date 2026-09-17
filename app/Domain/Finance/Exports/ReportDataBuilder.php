@@ -17,6 +17,7 @@ use App\Domain\Finance\Reports\StudentPaymentHistory;
 use App\Domain\Finance\Reports\TenderBreakdownReport;
 use App\Domain\Finance\Reports\WageCostReport;
 use App\Domain\Finance\Support\Money;
+use App\Domain\Finance\Support\MonthRange;
 use App\Domain\Finance\Support\ReportPeriod;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -180,8 +181,7 @@ final readonly class ReportDataBuilder
     /** @param array<string, mixed> $options */
     private function wageCost(array $options): ReportDataset
     {
-        [$year, $month] = $this->month($options);
-        $rows = $this->wageCost->forMonth($year, $month);
+        $rows = $this->wageCost->forMonths($this->monthRange($options));
         $users = User::withTrashed()->whereKey($rows->pluck('user_id'))->get()->keyBy('id');
 
         return new ReportDataset($this->columns('wage_cost', ['staff_name', 'total']),
@@ -197,8 +197,7 @@ final readonly class ReportDataBuilder
     /** @param array<string, mixed> $options */
     private function profit(array $options, User $requester): ReportDataset
     {
-        [$year, $month] = $this->month($options);
-        $totals = $this->profit->forMonth($year, $month);
+        $totals = $this->profit->forMonths($this->monthRange($options));
 
         return new ReportDataset($this->columns('profit', ['revenue', 'wage_cost', 'profit']), [[
             'carrier_id' => $requester->getKey(),
@@ -264,21 +263,23 @@ final readonly class ReportDataBuilder
     }
 
     /** @param array<string, mixed> $options
-     * @return array{int, int}
      */
-    private function month(array $options): array
+    private function monthRange(array $options): MonthRange
     {
-        $value = $this->requiredString($options, 'month');
+        [$fromYear, $fromMonth] = $this->monthParts($this->requiredString($options, 'from'));
+        [$toYear, $toMonth] = $this->monthParts($this->requiredString($options, 'to'));
 
+        return MonthRange::between($fromYear, $fromMonth, $toYear, $toMonth);
+    }
+
+    /** @return array{int, int} */
+    private function monthParts(string $value): array
+    {
         if (preg_match('/^(?<year>\d{4})-(?<month>\d{2})$/D', $value, $matches) !== 1) {
             throw new InvalidArgumentException("Not a report month: [{$value}].");
         }
 
-        $year = (int) $matches['year'];
-        $month = (int) $matches['month'];
-        ReportPeriod::month($year, $month);
-
-        return [$year, $month];
+        return [(int) $matches['year'], (int) $matches['month']];
     }
 
     /** @param array<string, mixed> $options */

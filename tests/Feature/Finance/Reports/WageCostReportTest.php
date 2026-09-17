@@ -5,8 +5,11 @@ declare(strict_types=1);
 use App\Domain\Finance\Models\PayrollLine;
 use App\Domain\Finance\Models\PayrollLineAdjustment;
 use App\Domain\Finance\Reports\WageCostReport;
+use App\Domain\Finance\Support\MonthRange;
 use App\Models\User;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 
 /*
 |--------------------------------------------------------------------------
@@ -40,6 +43,34 @@ uses(RefreshDatabase::class);
 beforeEach(function () {
     $this->report = app(WageCostReport::class);
 });
+
+/*
+|--------------------------------------------------------------------------
+| MonthRange — one validated local calendar range for whole-month reports
+|--------------------------------------------------------------------------
+|
+| Catches a production mutation that accepts impossible or reversed months,
+| or calculates either boundary from the wrong month.
+*/
+
+it('validates whole calendar months and publishes their inclusive and exclusive local boundaries', function () {
+    $range = MonthRange::between(2025, 12, 2026, 1);
+
+    expect($range->firstLocalDate())->toBe('2025-12-01')
+        ->and($range->lastLocalDate())->toBe('2026-01-31')
+        ->and($range->exclusiveEndLocalDate())->toBe('2026-02-01')
+        ->and(MonthRange::single(2026, 2)->firstLocalDate())->toBe('2026-02-01')
+        ->and(MonthRange::single(2026, 2)->lastLocalDate())->toBe('2026-02-28');
+});
+
+it('refuses impossible or reversed whole-month ranges', function (int $fromMonth, int $toMonth, string $message) {
+    expect(fn () => MonthRange::between(2026, $fromMonth, 2026, $toMonth))
+        ->toThrow(InvalidArgumentException::class, $message);
+})->with([
+    'zero month' => [0, 1, 'Not a calendar month'],
+    'thirteenth month' => [1, 13, 'Not a calendar month'],
+    'reversed range' => [2, 1, 'ends before it starts'],
+]);
 
 /*
 |--------------------------------------------------------------------------
@@ -280,3 +311,113 @@ it('refuses an impossible calendar month', function (int $month) {
     'thirteen' => [13],
     'negative' => [-1],
 ]);
+
+/*
+|--------------------------------------------------------------------------
+| Whole month ranges — set-based aggregates, never one query per month
+|--------------------------------------------------------------------------
+|
+| Catches a production mutation that applies only one endpoint, loops over
+| months, or sends the date column through ReportPeriod's instant boundaries.
+*/
+
+it('aggregates a December-to-January range per person and preserves the one-month contract by delegation', function () {
+    $employee = User::factory()->create();
+    $december = PayrollLine::factory()->create([
+        'user_id' => $employee->getKey(),
+        'computed_amount' => '1000.000',
+        'segment_start' => '2025-12-01',
+        'segment_end' => '2025-12-31',
+        'frozen_days' => 31,
+        'frozen_days_in_month' => 31,
+        'posting_period_start' => '2025-12-01',
+        'finalized_at' => '2025-12-31 09:00:00',
+    ]);
+    $january = PayrollLine::factory()->create([
+        'user_id' => $employee->getKey(),
+        'computed_amount' => '500.000',
+        'segment_start' => '2026-01-01',
+        'segment_end' => '2026-01-31',
+        'frozen_days' => 31,
+        'frozen_days_in_month' => 31,
+        'posting_period_start' => '2026-01-01',
+        'finalized_at' => '2026-01-31 09:00:00',
+    ]);
+    PayrollLine::factory()->create([
+        'user_id' => $employee->getKey(),
+        'computed_amount' => '999.000',
+        'segment_start' => '2025-11-01',
+        'segment_end' => '2025-11-30',
+        'frozen_days' => 30,
+        'frozen_days_in_month' => 30,
+        'posting_period_start' => '2025-11-01',
+        'finalized_at' => '2025-11-30 09:00:00',
+    ]);
+    PayrollLineAdjustment::factory()->create(['payroll_line_id' => $december->getKey(), 'amount' => '25.000']);
+    PayrollLineAdjustment::factory()->create(['payroll_line_id' => $january->getKey(), 'amount' => '-25.000']);
+
+    $range = MonthRange::between(2025, 12, 2026, 1);
+    $row = $this->report->forMonths($range)->sole();
+
+    expect($row['user_id'])->toBe($employee->getKey())
+        ->and($row['total']->toDecimal())->toBe('1500.000')
+        ->and($this->report->totalForMonths($range)->toDecimal())->toBe('1500.000')
+        ->and($this->report->forMonth(2026, 1)->all())
+        ->toEqual($this->report->forMonths(MonthRange::single(2026, 1))->all())
+        ->and($this->report->totalForMonth(2026, 1)->toDecimal())
+        ->toBe($this->report->totalForMonths(MonthRange::single(2026, 1))->toDecimal());
+});
+
+it('uses the same two payroll aggregates for one month and one hundred twenty months', function () {
+    $employee = User::factory()->create();
+    PayrollLine::factory()->create([
+        'user_id' => $employee->getKey(),
+        'computed_amount' => '100.000',
+        'posting_period_start' => '2016-01-01',
+        'finalized_at' => '2016-01-31 09:00:00',
+    ]);
+
+    $queries = [];
+    DB::listen(function (QueryExecuted $query) use (&$queries): void {
+        if (str_contains(strtolower($query->sql), 'sum(') && str_contains($query->sql, 'payroll_lines')) {
+            $queries[] = $query->sql;
+        }
+    });
+
+    $this->report->forMonths(MonthRange::single(2016, 1));
+    $oneMonthQueries = $queries;
+    $queries = [];
+
+    $this->report->forMonths(MonthRange::between(2016, 1, 2025, 12));
+    $longRangeQueries = $queries;
+
+    expect($oneMonthQueries)->toHaveCount(2)
+        ->and($longRangeQueries)->toHaveCount(2)
+        ->and($longRangeQueries)->toBe($oneMonthQueries);
+});
+
+it('compares posting periods as bare local dates without applying an instant reporting period', function () {
+    $employee = User::factory()->create();
+    PayrollLine::factory()->create([
+        'user_id' => $employee->getKey(),
+        'computed_amount' => '100.000',
+        'posting_period_start' => '2026-03-01',
+        'finalized_at' => '2026-03-31 09:00:00',
+    ]);
+
+    $queries = [];
+    DB::listen(function (QueryExecuted $query) use (&$queries): void {
+        if (str_contains($query->sql, 'posting_period_start')) {
+            $queries[] = $query;
+        }
+    });
+
+    $this->report->totalForMonths(MonthRange::single(2026, 3));
+
+    expect($queries)->toHaveCount(2);
+
+    foreach ($queries as $query) {
+        expect($query->bindings)->toContain('2026-03-01')
+            ->toContain('2026-04-01');
+    }
+});
