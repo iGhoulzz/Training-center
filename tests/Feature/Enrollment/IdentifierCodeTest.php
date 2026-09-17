@@ -503,7 +503,28 @@ it('shows exhausted generation on the batch page as a field error', function () 
         ->and(Batch::query()->count())->toBe(1);
 });
 
-it('shows a quick-create refusal in Enrol & Collect as an error on the modal field', function (string $case) {
+it('generates a code through the real Enrol & Collect quick-create modal when nothing is typed', function () {
+    /*
+     * Through the modal, not createStudent() directly: the modal's own field
+     * rules run first, so a `required()` restored on its student_code field
+     * fails here — and nowhere else, because every direct call skips them.
+     */
+    $component = Livewire::actingAs(identifierCodeRoleUser('admin'))
+        ->test(EnrollAndCollect::class)
+        ->callAction(TestAction::make('createOption')->schemaComponent('student_id'), data: [
+            'first_name' => 'Blank',
+            'last_name' => 'Walkin',
+        ])
+        ->assertHasNoActionErrors();
+
+    $student = Student::query()->sole();
+
+    expect($student->student_code)->toMatch(IDENTIFIER_CODE_STUDENT_PATTERN)
+        // Livewire state carries the Select's key as a string.
+        ->and($component->get('data.student_id'))->toBe((string) $student->getKey());
+});
+
+it('shows a quick-create refusal in Enrol & Collect on the modal field, with the shared message', function (string $case, string $message) {
     identifierCodeSentinelLines();
     $this->travelTo(CarbonImmutable::parse('2026-07-01 09:00:00', 'UTC'));
 
@@ -517,13 +538,22 @@ it('shows a quick-create refusal in Enrol & Collect as an error on the modal fie
         identifierCodeAlwaysColliding();
     }
 
-    Livewire::actingAs(identifierCodeRoleUser('admin'))
+    $component = Livewire::actingAs(identifierCodeRoleUser('admin'))
         ->test(EnrollAndCollect::class)
         ->callAction(TestAction::make('createOption')->schemaComponent('student_id'), data: $data)
         ->assertHasActionErrors(['student_code']);
 
-    expect(Student::query()->where('first_name', 'Typed')->exists())->toBeFalse();
-})->with(['typed race', 'exhausted generation']);
+    /*
+     * The message, not merely the key: a `required` error lands on the same
+     * field, so a key-only assertion passes for the wrong reason whenever
+     * the field stops accepting a blank.
+     */
+    expect($component->instance()->getErrorBag()->first('mountedActions.0.data.student_code'))->toBe($message)
+        ->and(Student::query()->where('first_name', 'Typed')->exists())->toBeFalse();
+})->with([
+    'typed race' => ['typed race', 'SENTINEL-ALREADY-USED'],
+    'exhausted generation' => ['exhausted generation', 'SENTINEL-EXHAUSTED'],
+]);
 
 it('still requires the code when editing, so a blank edit cannot reach the NOT NULL column', function () {
     $admin = identifierCodeRoleUser('admin');
@@ -543,7 +573,7 @@ it('still requires the code when editing, so a blank edit cannot reach the NOT N
         ->assertHasFormErrors(['code' => 'required']);
 });
 
-it('tells the operator a blank code is generated, on every creation form', function () {
+it('tells the operator a blank code is generated, on all three creation forms', function () {
     identifierCodeSentinelLines();
     $admin = identifierCodeRoleUser('admin');
 
@@ -551,6 +581,10 @@ it('tells the operator a blank code is generated, on every creation form', funct
 
     Livewire::actingAs($admin)->test(CreateStudent::class)->assertFormFieldExists('student_code', $hint);
     Livewire::actingAs($admin)->test(CreateBatch::class)->assertFormFieldExists('code', $hint);
+    Livewire::actingAs($admin)
+        ->test(EnrollAndCollect::class)
+        ->mountAction(TestAction::make('createOption')->schemaComponent('student_id'))
+        ->assertFormFieldExists('student_code', 'mountedActionSchema0', $hint);
 });
 
 it('suggests a course code shape without ever filling one in', function () {

@@ -343,9 +343,10 @@ class EnrollAndCollect extends Page
                      * granted enrolment but not student creation would
                      * otherwise be handed a create form they may not use.
                      *
-                     * Hiding it is the courtesy; `createStudent()`'s own
-                     * `Gate::authorize()` is the refusal, and a bespoke-role
-                     * test drives both halves.
+                     * Hiding it is the courtesy; the refusal is the create
+                     * authorization inside CreateWithIdentifierCodeAction,
+                     * which `createStudent()` calls before anything is
+                     * written, and a bespoke-role test drives both halves.
                      */
                     ->createOptionForm(fn (): ?array => auth()->user()?->can('create', Student::class)
                         ? [
@@ -1197,8 +1198,11 @@ class EnrollAndCollect extends Page
      * the id the Select field stores as its state.
      *
      * PUBLIC AND STATIC for the same testability reason as searchStudents()
-     * above, and because it is the exact closure `createOptionUsing()`
-     * registers — testing it directly tests the real behaviour.
+     * above. It is the body of what `createOptionUsing()` registers, less one
+     * thing: createStudentFromQuickCreate() wraps it to put a code refusal on
+     * the modal's own field. Calling this directly tests the write; the
+     * wrapper and the modal's field rules are tested through the real modal
+     * in IdentifierCodeTest.
      *
      * Always Prospective: a walk-in captured here has not yet been placed on
      * a batch, which is what step 2 is for. StudentFactory's own default is

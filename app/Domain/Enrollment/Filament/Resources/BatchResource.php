@@ -50,11 +50,12 @@ use Illuminate\Database\Eloquent\Builder;
  *
  * FULL PAGES, NOT MODAL ACTIONS
  * -----------------------------
- * List, create, view and edit are all real pages. Nothing here has a save hook
- * today, but Filament's modal CreateAction/EditAction persist with a bare
- * create()/update() that never runs a page hook, so a resource built on modals
- * quietly breaks the moment one is added — and P1-T10 adds instructor assignment
- * through an Action. The list page's create button is a plain link Action for
+ * List, create, view and edit are all real pages. CreateBatch hands its insert to
+ * CreateWithIdentifierCodeAction through handleRecordCreation() (P35-T09) and writes
+ * the price in afterCreate(). Neither would run from a modal: Filament's modal
+ * CreateAction/EditAction persist with a bare create()/update() that never runs a
+ * page method, so a modal create would skip code generation and pricing alike —
+ * and P1-T10 adds instructor assignment through an Action. The list page's create button is a plain link Action for
  * the same reason as StudentResource's: CreateAction keeps a mountable
  * server-side handler even when ->url() is set.
  *

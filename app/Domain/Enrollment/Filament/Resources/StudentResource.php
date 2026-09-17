@@ -38,10 +38,11 @@ use Illuminate\Auth\Access\AuthorizationException;
  *
  * FULL PAGES, NOT MODAL ACTIONS
  * -----------------------------
- * List, create, view and edit are all real pages. Nothing here has a save hook
- * today, but Filament's modal CreateAction/EditAction persist with a bare
- * create()/update() that never runs a page hook, so a resource built on modals
- * quietly breaks the moment one is added. The list page's create button is a
+ * List, create, view and edit are all real pages. CreateStudent hands its insert
+ * to CreateWithIdentifierCodeAction through handleRecordCreation() (P35-T09), and
+ * Filament's modal CreateAction/EditAction persist with a bare create()/update()
+ * that never runs a page method — a modal create would skip code generation and
+ * reach the NOT NULL column with nothing. The list page's create button is a
  * plain link Action for the same reason as UserResource's: CreateAction keeps a
  * mountable server-side handler even when ->url() is set.
  *

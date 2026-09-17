@@ -37,10 +37,10 @@ use Filament\Tables\Table;
  *
  * FULL PAGES, NOT MODAL ACTIONS
  * -----------------------------
- * List, create, view and edit are all real pages. Nothing here has a save hook
- * today, but Filament's modal CreateAction/EditAction persist with a bare
- * create()/update() that never runs a page hook, so a resource built on modals
- * quietly breaks the moment one is added. The list page's create button is a
+ * List, create, view and edit are all real pages. CreateCourse writes the price
+ * in afterCreate(), and Filament's modal CreateAction/EditAction persist with a
+ * bare create()/update() that never runs a page hook, so a modal would silently
+ * skip it. The list page's create button is a
  * plain link Action for the same reason as StudentResource's: CreateAction keeps
  * a mountable server-side handler even when ->url() is set.
  *

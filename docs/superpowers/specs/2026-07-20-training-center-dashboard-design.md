@@ -214,9 +214,10 @@ The nullable `user_id` is deliberate: a student exists whether or not they ever 
 - **Alphabet.** The six characters are drawn from the certificate alphabet — uppercase without `0`/`O` and `1`/`I`/`L` — because these codes are read off paper and typed back. They are random, not sequential, and not derived from the row id; they need to be unambiguous, not secret.
 - **Year.** The centre-local year of the row's own `created_at`. One instant is captured before the insert and used for both, so a record created just after local midnight on 1 January carries that year in its code and in its timestamp.
 - **Override.** The field stays editable. Left blank on create, it is generated; typed, the typed value stands, still unique — importing an existing centre's records is the one case where a manual code is right. A typed code is never silently replaced: losing a race for it is a field error, not a redraw. On edit the code is required, because the column is `NOT NULL`.
-- **One insert boundary.** `CreateWithIdentifierCodeAction` creates every student and batch — the two create pages and Enrol & Collect's quick-create all delegate to it. It retries only a generated code that collides on its own unique index, at most five times, and rethrows any other constraint violation unchanged.
+- **One insert boundary.** `CreateWithIdentifierCodeAction` creates every student and batch — the two create pages and Enrol & Collect's quick-create all delegate to it. It redraws only a generated code that collides on its own unique index, within five attempts in all, and rethrows any other constraint violation unchanged.
 - **No placeholder, no migration.** Finance's placeholder-then-replace pattern does not fit: a placeholder is longer than either column, and both codes are audited attributes, so a placeholder would be written into the append-only activity log. A random code is known before the insert, so the row is written once and the log records only the real code. Existing rows are untouched.
 - **Course codes stay manual**, with an example shape shown as a placeholder that never fills the field.
+
 **`courses`** — catalog template
 `id, code (unique), name_en, name_ar, description_en, description_ar, total_hours, default_price, is_active, timestamps`
 
