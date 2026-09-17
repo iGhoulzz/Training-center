@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Finance\Support;
 
+use DateTimeImmutable;
 use InvalidArgumentException;
 
 /** A validated, inclusive range of whole local calendar months. */
@@ -46,11 +47,13 @@ final readonly class MonthRange
     /** The final local date in the range, inclusive. */
     public function lastLocalDate(): string
     {
+        $lastDay = (new DateTimeImmutable(self::monthStart($this->toYear, $this->toMonth)))->format('t');
+
         return sprintf(
             '%04d-%02d-%02d',
             $this->toYear,
             $this->toMonth,
-            cal_days_in_month(CAL_GREGORIAN, $this->toMonth, $this->toYear),
+            $lastDay,
         );
     }
 

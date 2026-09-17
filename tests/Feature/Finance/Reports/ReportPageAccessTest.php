@@ -186,3 +186,17 @@ it('applies from and to whole-month filters and freezes their displayed range in
     ])->and($snapshot->dataset->carrierIds())->toBe([$employee->getKey()])
         ->and($snapshot->dataset->cell($employee->getKey(), 'total'))->toBe('375.000');
 });
+
+it('rejects a reversed whole-month range before replacing the applied report snapshot', function () {
+    $component = Livewire::actingAs($this->admin)->test(WageCostReportPage::class);
+    $originalAppliedFilters = $component->get('appliedFilters');
+
+    $component
+        ->fillForm([
+            'from' => '2026-02',
+            'to' => '2026-01',
+        ])
+        ->call('applyFilters')
+        ->assertHasFormErrors(['to'])
+        ->assertSet('appliedFilters', $originalAppliedFilters);
+});
