@@ -408,6 +408,21 @@ function identifierCodeStageStudentRace(string $code): void
     });
 }
 
+/** Commit $code to another batch row just before the next batch insert. */
+function identifierCodeStageBatchRace(string $code, int $courseId): void
+{
+    Batch::creating(function () use ($code, $courseId): void {
+        DB::table('batches')->insert([
+            'course_id' => $courseId,
+            'code' => $code,
+            'status' => 'planned',
+            'capacity' => 0,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    });
+}
+
 /** Every generated draw is the alphabet's first character, forever. */
 function identifierCodeAlwaysColliding(): void
 {
@@ -469,39 +484,73 @@ it('generates a code for a walk-in created from Enrol & Collect', function () {
         ->and($student->status)->toBe(StudentStatus::Prospective);
 });
 
-it('shows a lost typed-code race on the student page as a field error', function () {
+it('shows both code refusals on the student create page as a field error', function (string $case, string $message) {
+    /*
+     * BOTH CASES ON EACH PAGE. The page catches two exceptions; testing one
+     * per page left the other catch removable with the suite green (Codex's
+     * review of #62). Each case below fails if its own exception is dropped
+     * from CreateStudent::handleRecordCreation().
+     */
     identifierCodeSentinelLines();
-    identifierCodeStageStudentRace('IMPORT-0042');
+    $this->travelTo(CarbonImmutable::parse('2026-07-01 09:00:00', 'UTC'));
+    $data = ['first_name' => 'Typed', 'last_name' => 'Import'];
+
+    if ($case === 'typed race') {
+        identifierCodeStageStudentRace('IMPORT-0042');
+        $data['student_code'] = 'IMPORT-0042';
+    } else {
+        Student::factory()->create(['student_code' => 'STU-2026-222222']);
+        identifierCodeAlwaysColliding();
+    }
 
     $component = Livewire::actingAs(identifierCodeRoleUser('staff'))
         ->test(CreateStudent::class)
-        ->fillForm(['student_code' => 'IMPORT-0042', 'first_name' => 'Typed', 'last_name' => 'Import'])
+        ->fillForm($data)
         ->call('create')
         ->assertHasFormErrors(['student_code']);
 
-    expect($component->instance()->getErrorBag()->first('data.student_code'))->toBe('SENTINEL-ALREADY-USED')
+    expect($component->instance()->getErrorBag()->first('data.student_code'))->toBe($message)
         ->and(Student::query()->where('first_name', 'Typed')->exists())->toBeFalse();
-});
+})->with([
+    'typed race' => ['typed race', 'SENTINEL-ALREADY-USED'],
+    'exhausted generation' => ['exhausted generation', 'SENTINEL-EXHAUSTED'],
+]);
 
-it('shows exhausted generation on the batch page as a field error', function () {
+it('shows both code refusals on the batch create page as a field error', function (string $case, string $message) {
     identifierCodeSentinelLines();
     $this->travelTo(CarbonImmutable::parse('2026-07-01 09:00:00', 'UTC'));
-    Batch::factory()->create(['code' => 'BAT-2026-222222']);
-    identifierCodeAlwaysColliding();
+    $course = Course::factory()->create();
+    $data = [
+        'course_id' => $course->getKey(),
+        'status' => BatchStatus::Planned->value,
+        'capacity' => 20,
+    ];
+
+    if ($case === 'typed race') {
+        identifierCodeStageBatchRace('ENG-B1-JAN27', (int) $course->getKey());
+        $data['code'] = 'ENG-B1-JAN27';
+    } else {
+        Batch::factory()->for($course)->create(['code' => 'BAT-2026-222222', 'capacity' => 0]);
+        identifierCodeAlwaysColliding();
+    }
 
     $component = Livewire::actingAs(identifierCodeRoleUser('admin'))
         ->test(CreateBatch::class)
-        ->fillForm([
-            'course_id' => Course::factory()->create()->getKey(),
-            'status' => BatchStatus::Planned->value,
-            'capacity' => 20,
-        ])
+        ->fillForm($data)
         ->call('create')
         ->assertHasFormErrors(['code']);
 
-    expect($component->instance()->getErrorBag()->first('data.code'))->toBe('SENTINEL-EXHAUSTED')
-        ->and(Batch::query()->count())->toBe(1);
-});
+    /*
+     * The attempted batch — the only one with capacity 20 — was not created.
+     * Not a row count: the staged race inserts on this same connection inside
+     * the page's transaction, so the page's rollback removes it too.
+     */
+    expect($component->instance()->getErrorBag()->first('data.code'))->toBe($message)
+        ->and(Batch::query()->where('capacity', 20)->exists())->toBeFalse();
+})->with([
+    'typed race' => ['typed race', 'SENTINEL-ALREADY-USED'],
+    'exhausted generation' => ['exhausted generation', 'SENTINEL-EXHAUSTED'],
+]);
 
 it('generates a code through the real Enrol & Collect quick-create modal when nothing is typed', function () {
     /*
