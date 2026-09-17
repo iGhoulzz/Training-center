@@ -6,6 +6,7 @@ namespace App\Domain\Finance\Reports;
 
 use App\Domain\Finance\Models\PayrollLine;
 use App\Domain\Finance\Support\Money;
+use App\Domain\Finance\Support\MonthRange;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -50,13 +51,11 @@ use InvalidArgumentException;
  * the kind that survives review and fails on relocation, so this class does
  * not build one.
  *
- * So this class does not take a `ReportPeriod` at all. `forMonth()` and
- * `totalForMonth()` take the local calendar month directly, and every filter
- * below is a plain equality against `posting_period_start` — never a range,
- * and never `MONTH()`/`YEAR()`, either of which would also make the column's
- * own index unusable. Equality against `'2026-03-01'` is the honest
- * comparison for a column that is already normalised to the first of the
- * month.
+ * So this class does not take a `ReportPeriod` at all. Its one-month methods
+ * delegate to `MonthRange::single()`, and its range methods compare
+ * `posting_period_start` directly with bare local `Y-m-01` boundaries — never
+ * `MONTH()`/`YEAR()` or an instant boundary, either of which would make the
+ * column's own index unusable or conflate two kinds of date.
  *
  * ALL THREE RUN TYPES CONTRIBUTE, WITH NO FURTHER FILTER BY TYPE
  * ------------------------------------------------------------------
@@ -72,10 +71,10 @@ use InvalidArgumentException;
  * ----------------------------------
  * `PayrollLine::scopeFinalized()` — `finalized_at IS NOT NULL` — is used
  * wherever the query starts from the model, per that scope's own docblock.
- * `adjustmentsInPeriod()` is the exception and spells the condition out by
+ * `adjustmentsInRange()` is the exception and spells the condition out by
  * hand, because it starts from `DB::table()` and cannot reach a local scope;
  * that filter is in fact redundant there, since a draft line's
- * `posting_period_start` is NULL by CHECK and the period equality already
+ * `posting_period_start` is NULL by CHECK and the range comparison already
  * excludes it. Both halves are stated because a scope that later grows a
  * second condition would be followed by one and not the other. Cost is
  * incurred at
@@ -95,8 +94,8 @@ use InvalidArgumentException;
  * count the line's own amount once per adjustment row rather than once — a
  * line of `1000.000` with two `+10.000` adjustments would report `2020.000`
  * instead of `1020.000`. This class never runs that query.
- * `finalizedLinesInPeriod()` sums `computed_amount` alone;
- * `adjustmentsInPeriod()` sums `payroll_line_adjustments.amount` alone — two
+ * `finalizedLinesInRange()` sums `computed_amount` alone;
+ * `adjustmentsInRange()` sums `payroll_line_adjustments.amount` alone — two
  * independent `SUM()` aggregates, each exact because each scans a query
  * where the row being summed does not repeat — and the two totals are
  * combined with `Money::add()`, which is safe integer arithmetic performed
@@ -124,16 +123,25 @@ final class WageCostReport
      */
     public function forMonth(int $year, int $month): Collection
     {
-        $period = $this->localMonthStart($year, $month);
+        return $this->forMonths(MonthRange::single($year, $month));
+    }
 
+    /**
+     * Wage cost per person over whole local calendar months, one row per user
+     * who has any finalized cost in the range.
+     *
+     * @return Collection<int, array{user_id: int, total: Money}>
+     */
+    public function forMonths(MonthRange $range): Collection
+    {
         $lineTotals = $this->groupedTotals(
-            $this->finalizedLinesInPeriod($period),
+            $this->finalizedLinesInRange($range),
             'user_id',
             'SUM(computed_amount)',
         );
 
         $adjustmentTotals = $this->groupedTotals(
-            $this->adjustmentsInPeriod($period),
+            $this->adjustmentsInRange($range),
             'payroll_lines.user_id',
             'SUM(payroll_line_adjustments.amount)',
         );
@@ -155,11 +163,15 @@ final class WageCostReport
      */
     public function totalForMonth(int $year, int $month): Money
     {
-        $period = $this->localMonthStart($year, $month);
+        return $this->totalForMonths(MonthRange::single($year, $month));
+    }
 
-        $lineTotal = $this->scalarTotal($this->finalizedLinesInPeriod($period), 'SUM(computed_amount)');
+    /** The total wage cost across every person over whole local calendar months. */
+    public function totalForMonths(MonthRange $range): Money
+    {
+        $lineTotal = $this->scalarTotal($this->finalizedLinesInRange($range), 'SUM(computed_amount)');
         $adjustmentTotal = $this->scalarTotal(
-            $this->adjustmentsInPeriod($period),
+            $this->adjustmentsInRange($range),
             'SUM(payroll_line_adjustments.amount)',
         );
 
@@ -167,7 +179,7 @@ final class WageCostReport
     }
 
     /**
-     * Finalized payroll lines posting to $period, of any of the three run
+     * Finalized payroll lines posting inside $range, of any of the three run
      * shapes — every row this report needs and nothing selected yet.
      *
      * `PayrollLine::scopeFinalized()` is an Eloquent local scope, so this
@@ -176,28 +188,30 @@ final class WageCostReport
      * `ReportPeriod::applyTo()`'s own docblock describes for a caller that
      * starts from a model.
      */
-    private function finalizedLinesInPeriod(string $period): Builder
+    private function finalizedLinesInRange(MonthRange $range): Builder
     {
         return PayrollLine::query()
             ->finalized()
-            ->where('posting_period_start', $period)
+            ->where('posting_period_start', '>=', $range->firstLocalDate())
+            ->where('posting_period_start', '<', $range->exclusiveEndLocalDate())
             ->toBase();
     }
 
     /**
      * Draft-time adjustments belonging to a finalized line posting to
-     * $period — joined only to reach `finalized_at` and
+     * $range — joined only to reach `finalized_at` and
      * `posting_period_start`, both of which live on the line, never to sum
      * `computed_amount` alongside them. See the class docblock for why
-     * keeping this query separate from {@see finalizedLinesInPeriod()} is
+     * keeping this query separate from {@see finalizedLinesInRange()} is
      * the whole point.
      */
-    private function adjustmentsInPeriod(string $period): Builder
+    private function adjustmentsInRange(MonthRange $range): Builder
     {
         return DB::table('payroll_line_adjustments')
             ->join('payroll_lines', 'payroll_lines.id', '=', 'payroll_line_adjustments.payroll_line_id')
             ->whereNotNull('payroll_lines.finalized_at')
-            ->where('payroll_lines.posting_period_start', $period);
+            ->where('payroll_lines.posting_period_start', '>=', $range->firstLocalDate())
+            ->where('payroll_lines.posting_period_start', '<', $range->exclusiveEndLocalDate());
     }
 
     /**
@@ -232,26 +246,5 @@ final class WageCostReport
         $value = $row?->total;
 
         return Money::fromDecimal($value === null ? '0' : (string) $value);
-    }
-
-    /**
-     * The first day of the local calendar month, as the bare `Y-m-01` string
-     * `posting_period_start` itself already normalises to.
-     *
-     * Deliberately never built through `CarbonImmutable`/`CentreCalendar`:
-     * nothing here converts a local wall-clock moment to a UTC instant, so
-     * there is no timezone to consult. See the class docblock — this column
-     * is a calendar fact, not a moment, and treating it as one is the entire
-     * trap this class exists to avoid.
-     *
-     * @throws InvalidArgumentException if $month is not 1-12.
-     */
-    private function localMonthStart(int $year, int $month): string
-    {
-        if ($month < 1 || $month > 12) {
-            throw new InvalidArgumentException("Not a calendar month: [{$month}]. Expected 1-12.");
-        }
-
-        return sprintf('%04d-%02d-01', $year, $month);
     }
 }

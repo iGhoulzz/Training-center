@@ -11,6 +11,7 @@ use App\Domain\Finance\Exports\OutstandingAgedReportExporter;
 use App\Domain\Finance\Exports\PaymentMethodReportExporter;
 use App\Domain\Finance\Exports\PrepareReportCsvExport;
 use App\Domain\Finance\Exports\ProfitReportExporter;
+use App\Domain\Finance\Exports\ReportDataBuilder;
 use App\Domain\Finance\Exports\ReportDataset;
 use App\Domain\Finance\Exports\ReportExporter;
 use App\Domain\Finance\Exports\ReportKind;
@@ -24,6 +25,7 @@ use App\Domain\Finance\Models\Charge;
 use App\Domain\Finance\Models\Payment;
 use App\Domain\Finance\Models\PaymentAllocation;
 use App\Domain\Finance\Models\PaymentTender;
+use App\Domain\Finance\Models\PayrollLine;
 use App\Domain\Staff\Actions\SystemRoleWriter;
 use App\Models\Role;
 use App\Models\User;
@@ -432,6 +434,47 @@ it('abandons a queued pdf after its requester loses panel access', function () {
         "financial-reports/{$this->admin->getKey()}/{$job->reference}.pdf",
     );
     expect(DatabaseNotification::query()->where('notifiable_id', $this->admin->getKey())->exists())->toBeFalse();
+});
+
+/*
+|--------------------------------------------------------------------------
+| Range export data — ReportDataBuilder consumes the same frozen months
+|--------------------------------------------------------------------------
+|
+| Catches a production mutation that still reads the removed single `month`
+| option or silently exports just one endpoint of the selected range.
+*/
+
+it('builds wage-cost export data over the selected whole-month range', function () {
+    $employee = User::factory()->create();
+    PayrollLine::factory()->create([
+        'user_id' => $employee->getKey(),
+        'computed_amount' => '250.000',
+        'segment_start' => '2025-12-01',
+        'segment_end' => '2025-12-31',
+        'frozen_days' => 31,
+        'frozen_days_in_month' => 31,
+        'posting_period_start' => '2025-12-01',
+        'finalized_at' => '2025-12-31 09:00:00',
+    ]);
+    PayrollLine::factory()->create([
+        'user_id' => $employee->getKey(),
+        'computed_amount' => '125.000',
+        'segment_start' => '2026-01-01',
+        'segment_end' => '2026-01-31',
+        'frozen_days' => 31,
+        'frozen_days_in_month' => 31,
+        'posting_period_start' => '2026-01-01',
+        'finalized_at' => '2026-01-31 09:00:00',
+    ]);
+
+    $dataset = app(ReportDataBuilder::class)->build(ReportKind::WageCost, [
+        'from' => '2025-12',
+        'to' => '2026-01',
+    ], $this->admin);
+
+    expect($dataset->carrierIds())->toBe([$employee->getKey()])
+        ->and($dataset->cell($employee->getKey(), 'total'))->toBe('375.000');
 });
 
 /**

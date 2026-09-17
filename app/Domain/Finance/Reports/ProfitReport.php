@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Domain\Finance\Reports;
 
 use App\Domain\Finance\Support\Money;
+use App\Domain\Finance\Support\MonthRange;
 use App\Domain\Finance\Support\ReportPeriod;
 
 /**
@@ -13,7 +14,7 @@ use App\Domain\Finance\Support\ReportPeriod;
  * Design §8: "Profit | Collected revenue minus finalized wage cost for a
  * period."
  *
- * THE SIGNATURE IS `forMonth(int $year, int $month)`, NOT A `ReportPeriod`,
+ * THE PUBLIC METHODS TAKE LOCAL CALENDAR VALUES, NEVER A `ReportPeriod`,
  * BECAUSE THE TWO HALVES ALIGN THEMSELVES BY CONSTRUCTION
  * ------------------------------------------------------------------------
  * Revenue and wage cost are read off two columns of different kinds — see
@@ -26,12 +27,12 @@ use App\Domain\Finance\Support\ReportPeriod;
  * local calendar month from `ReportPeriod`'s UTC instants (re-deriving
  * exactly the value this class already has for free) or a caller would have
  * to pass the month twice, once as a `ReportPeriod` and once as raw
- * integers, and trust that both stayed in step. Taking `(int $year, int
- * $month)` once, building `ReportPeriod::month($year, $month)` for the
- * revenue half internally, and passing the same two integers straight
- * through to `WageCostReport::totalForMonth()` for the wage half makes the
- * two sides describe the same month **by construction** — there is no seam
- * where a caller could pass March to one side and February to the other.
+ * integers, and trust that both stayed in step. `forMonth()` delegates to
+ * `MonthRange::single()`, while `forMonths()` builds the one UTC period its
+ * revenue half needs from the range's local endpoints and gives that same
+ * range to wage cost. The two sides therefore describe the same months **by
+ * construction** — there is no seam where a caller could pass different
+ * boundaries to one side and the other.
  *
  * BOTH FIGURES ARE COMPOSED FROM THE EXISTING REPORTS, NEVER RE-DERIVED
  * ------------------------------------------------------------------------
@@ -41,11 +42,11 @@ use App\Domain\Finance\Support\ReportPeriod;
  * same "collected, cash basis, non-reversed" total `RevenueReport`'s own
  * docblock defines and asserts, read through its published grouping rather
  * than reconstructed from `payment_allocations` a second time. Wage cost is
- * `WageCostReport::totalForMonth()`, unmodified. Injecting both reports
+ * `WageCostReport::totalForMonths()`, unmodified. Injecting both reports
  * through the constructor — the house pattern for composing existing
  * reports rather than re-querying — is what guarantees this class and
  * `WageCostReport` can never quietly disagree about what a person's wage
- * cost was for the month: there is only one method that computes it.
+ * cost was for any selected range: there is only one method that computes it.
  *
  * PROFIT MAY BE NEGATIVE, AND IS NEVER CLAMPED
  * ------------------------------------------------
@@ -68,8 +69,20 @@ final class ProfitReport
      */
     public function forMonth(int $year, int $month): array
     {
-        $revenue = $this->collectedRevenueFor(ReportPeriod::month($year, $month));
-        $wageCost = $this->wageCost->totalForMonth($year, $month);
+        return $this->forMonths(MonthRange::single($year, $month));
+    }
+
+    /**
+     * Revenue, wage cost and profit over whole local calendar months, all Money.
+     *
+     * @return array{revenue: Money, wageCost: Money, profit: Money}
+     */
+    public function forMonths(MonthRange $range): array
+    {
+        $revenue = $this->collectedRevenueFor(
+            ReportPeriod::between($range->firstLocalDate(), $range->lastLocalDate()),
+        );
+        $wageCost = $this->wageCost->totalForMonths($range);
 
         return [
             'revenue' => $revenue,

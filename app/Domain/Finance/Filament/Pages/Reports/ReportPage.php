@@ -159,12 +159,19 @@ abstract class ReportPage extends Page
                     ->required(),
             ],
             ReportKind::WageCost, ReportKind::Profit => [
-                TextInput::make('month')
-                    ->label(__('reports.filters.month'))
+                TextInput::make('from')
+                    ->label(__('reports.filters.from'))
                     ->type('month')
                     ->default($today->format('Y-m'))
                     ->rules(['date_format:Y-m'])
                     ->required(),
+                TextInput::make('to')
+                    ->label(__('reports.filters.to'))
+                    ->type('month')
+                    ->default($today->format('Y-m'))
+                    ->rules(['date_format:Y-m'])
+                    ->required()
+                    ->afterOrEqual('from'),
             ],
             ReportKind::StudentPaymentHistory => [
                 Select::make('student_id')

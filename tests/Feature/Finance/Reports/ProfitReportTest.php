@@ -11,8 +11,11 @@ use App\Domain\Finance\Models\PaymentAllocation;
 use App\Domain\Finance\Models\PayrollLine;
 use App\Domain\Finance\Reports\ProfitReport;
 use App\Domain\Finance\Reports\WageCostReport;
+use App\Domain\Finance\Support\MonthRange;
 use App\Models\User;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 
 /*
 |--------------------------------------------------------------------------
@@ -160,4 +163,66 @@ it('reports a loss as a negative figure, not clamped to zero', function () {
         ->and($result['wageCost']->toDecimal())->toBe('500.000')
         ->and($result['profit']->isNegative())->toBeTrue()
         ->and($result['profit']->toDecimal())->toBe('-500.000');
+});
+
+/*
+|--------------------------------------------------------------------------
+| Whole month ranges — compose exactly one revenue aggregate and two wages
+|--------------------------------------------------------------------------
+|
+| Catches a production mutation that loops through months, applies a range to
+| only one report half, or stops forMonth() from delegating to a single range.
+*/
+
+it('reports December-to-January revenue, wage cost and profit over one whole local range', function () {
+    $charge = ($this->chargeFixture)();
+    ($this->payAgainst)($charge, '1000.000', '2025-12-15 10:00:00');
+    ($this->payAgainst)($charge, '500.000', '2026-01-15 10:00:00');
+    ($this->wageCostFixture)('400.000', 2025, 12);
+    ($this->wageCostFixture)('100.000', 2026, 1);
+
+    $result = $this->profit->forMonths(MonthRange::between(2025, 12, 2026, 1));
+
+    expect($result['revenue']->toDecimal())->toBe('1500.000')
+        ->and($result['wageCost']->toDecimal())->toBe('500.000')
+        ->and($result['profit']->toDecimal())->toBe('1000.000');
+});
+
+it('keeps forMonth equivalent to a one-month range', function () {
+    $charge = ($this->chargeFixture)();
+    ($this->payAgainst)($charge, '1000.000', '2026-02-15 10:00:00');
+    ($this->wageCostFixture)('400.000', 2026, 2);
+
+    $month = $this->profit->forMonth(2026, 2);
+    $range = $this->profit->forMonths(MonthRange::single(2026, 2));
+
+    expect($month['revenue']->toDecimal())->toBe($range['revenue']->toDecimal())
+        ->and($month['wageCost']->toDecimal())->toBe($range['wageCost']->toDecimal())
+        ->and($month['profit']->toDecimal())->toBe($range['profit']->toDecimal());
+});
+
+it('uses the same three report aggregates for one month and one hundred twenty months', function () {
+    $charge = ($this->chargeFixture)();
+    ($this->payAgainst)($charge, '100.000', '2016-01-15 10:00:00');
+    ($this->wageCostFixture)('25.000', 2016, 1);
+
+    $queries = [];
+    DB::listen(function (QueryExecuted $query) use (&$queries): void {
+        $sql = strtolower($query->sql);
+
+        if (str_contains($sql, 'sum(') && (str_contains($sql, 'payment_allocations') || str_contains($sql, 'payroll_lines'))) {
+            $queries[] = $query->sql;
+        }
+    });
+
+    $this->profit->forMonths(MonthRange::single(2016, 1));
+    $oneMonthQueries = $queries;
+    $queries = [];
+
+    $this->profit->forMonths(MonthRange::between(2016, 1, 2025, 12));
+    $longRangeQueries = $queries;
+
+    expect($oneMonthQueries)->toHaveCount(3)
+        ->and($longRangeQueries)->toHaveCount(3)
+        ->and($longRangeQueries)->toBe($oneMonthQueries);
 });
