@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 namespace App\Domain\Finance\Filament\Pages;
 
+use App\Domain\Enrollment\Actions\CreateWithIdentifierCodeAction;
 use App\Domain\Enrollment\Enums\StudentStatus;
 use App\Domain\Enrollment\Exceptions\BatchClosedException;
 use App\Domain\Enrollment\Exceptions\DuplicateEnrollmentException;
+use App\Domain\Enrollment\Exceptions\IdentifierCodeAlreadyUsedException;
+use App\Domain\Enrollment\Exceptions\IdentifierCodeExhaustedException;
 use App\Domain\Enrollment\Exceptions\StudentNotEnrollableException;
 use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Enrollment;
@@ -45,6 +48,7 @@ use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 
 /**
@@ -312,11 +316,11 @@ class EnrollAndCollect extends Page
      * CREATE: a quick-create form, not the whole StudentResource form —
      * this is a guided flow, not a CRUD screen the operator assembles, and
      * these four fields are what the desk actually needs to identify a
-     * walk-in. `Student::create()` is a plain write with no Action of its
-     * own: CreateStudent's own docblock states "a student record is
-     * ordinary data with no Action-owned write behaviour", so calling it
-     * directly here bypasses no write boundary — unlike `enrollments`,
-     * `students` carries no such boundary to bypass.
+     * walk-in. The insert goes through CreateWithIdentifierCodeAction, the
+     * same boundary CreateStudent uses (P35-T09): a blank code is generated
+     * there, and a typed one stands. This page used to call
+     * `Student::create()` directly on the grounds that students had no
+     * write boundary to bypass; generated codes gave them one.
      */
     private function studentStep(): Step
     {
@@ -339,15 +343,18 @@ class EnrollAndCollect extends Page
                      * granted enrolment but not student creation would
                      * otherwise be handed a create form they may not use.
                      *
-                     * Hiding it is the courtesy; `createStudent()`'s own
-                     * `Gate::authorize()` is the refusal, and a bespoke-role
-                     * test drives both halves.
+                     * Hiding it is the courtesy; the refusal is the create
+                     * authorization inside CreateWithIdentifierCodeAction,
+                     * which `createStudent()` calls before anything is
+                     * written, and a bespoke-role test drives both halves.
                      */
                     ->createOptionForm(fn (): ?array => auth()->user()?->can('create', Student::class)
                         ? [
                             TextInput::make('student_code')
                                 ->label(__('collect.student_code'))
-                                ->required()
+                                // Blank is generated; the hint is the one
+                                // StudentResource shows, from the same key.
+                                ->placeholder(__('enrollment.identifier_code_hint'))
                                 ->maxLength(30)
                                 ->unique('students', 'student_code'),
 
@@ -367,7 +374,7 @@ class EnrollAndCollect extends Page
                                 ->maxLength(30),
                         ]
                         : null)
-                    ->createOptionUsing(fn (array $data): int => self::createStudent($data)),
+                    ->createOptionUsing(fn (array $data, Schema $schema): int => self::createStudentFromQuickCreate($data, $schema)),
             ]);
     }
 
@@ -1191,8 +1198,11 @@ class EnrollAndCollect extends Page
      * the id the Select field stores as its state.
      *
      * PUBLIC AND STATIC for the same testability reason as searchStudents()
-     * above, and because it is the exact closure `createOptionUsing()`
-     * registers — testing it directly tests the real behaviour.
+     * above. It is the body of what `createOptionUsing()` registers, less one
+     * thing: createStudentFromQuickCreate() wraps it to put a code refusal on
+     * the modal's own field. Calling this directly tests the write; the
+     * wrapper and the modal's field rules are tested through the real modal
+     * in IdentifierCodeTest.
      *
      * Always Prospective: a walk-in captured here has not yet been placed on
      * a batch, which is what step 2 is for. StudentFactory's own default is
@@ -1207,27 +1217,47 @@ class EnrollAndCollect extends Page
         $actor = auth()->user();
 
         /*
-         * `create_student` IS ITS OWN ABILITY AND IS AUTHORIZED HERE.
+         * `create_student` IS ITS OWN ABILITY, AND IT IS STILL AUTHORIZED.
          *
          * `canAccess()` gates this page on `create_enrollment`, and
          * `StudentPolicy::create()` gates student creation on
-         * `create_student` — deliberately independent abilities. Without this
-         * check an actor holding the first but not the second could create
-         * students through the quick-create form, because this method writes
-         * `students` directly rather than through an Action that would
-         * authorize for it.
+         * `create_student` — deliberately independent abilities. This method
+         * once wrote `students` directly and carried its own Gate check, found
+         * by cross-review; the Action below now authorizes `create` for the
+         * actor itself, before anything is written, so the refusal did not
+         * move — it went with the write.
          *
          * The picker above hides quick-create for such an actor, but that is
-         * a courtesy: this line is the refusal. Found by cross-review.
+         * a courtesy: the Action is the refusal.
          */
-        Gate::forUser($actor)->authorize('create', Student::class);
-
-        $student = Student::create([
+        $student = app(CreateWithIdentifierCodeAction::class)->createStudent($actor, [
             ...$data,
             'status' => StudentStatus::Prospective,
         ]);
 
         return (int) $student->getKey();
+    }
+
+    /**
+     * createStudent(), with a code refusal landing on the modal's own field.
+     *
+     * createStudent() stays the plain, directly testable closure body and
+     * throws the typed exceptions; this is the one place that knows where the
+     * quick-create form lives. The shared translated message is the Action's.
+     *
+     * @param  array<string, mixed>  $data
+     *
+     * @throws ValidationException when the typed code is taken or generation is exhausted.
+     */
+    private static function createStudentFromQuickCreate(array $data, Schema $schema): int
+    {
+        try {
+            return self::createStudent($data);
+        } catch (IdentifierCodeAlreadyUsedException|IdentifierCodeExhaustedException $exception) {
+            throw ValidationException::withMessages([
+                $schema->getStatePath().'.student_code' => $exception->getMessage(),
+            ]);
+        }
     }
 
     /** Include code and name, so two students with the same name stay distinguishable. */
