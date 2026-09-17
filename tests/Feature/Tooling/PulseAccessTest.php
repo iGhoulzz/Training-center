@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Domain\Staff\Actions\SystemRoleWriter;
+use App\Models\Role;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -17,16 +18,40 @@ use Laravel\Pulse\Storage\DatabaseStorage;
 
 uses(RefreshDatabase::class);
 
-it('allows users with the activity log read permission to view the Pulse dashboard', function (string $role): void {
+it('allows an active roleless user holding only the activity log read permission to view the Pulse dashboard', function (): void {
     $this->seed(RolePermissionSeeder::class);
 
     $actor = User::factory()->create();
-    app(SystemRoleWriter::class)->assignRoles($actor, $role);
+    $actor->givePermissionTo('view_any_activity');
 
-    $this->actingAs($actor)
+    expect($actor->fresh()?->roles)->toBeEmpty();
+
+    $this->actingAs($actor->fresh())
         ->get('/pulse')
         ->assertSuccessful();
-})->with(['super admin' => 'super_admin', 'admin' => 'admin']);
+});
+
+it('forbids an administrator after the activity log read permission is removed from the role', function (): void {
+    $this->seed(RolePermissionSeeder::class);
+
+    $admin = Role::findByName('admin', 'web');
+    $permissionsWithoutActivityRead = $admin->permissions
+        ->pluck('name')
+        ->reject(fn (string $permission): bool => $permission === 'view_any_activity')
+        ->all();
+
+    app(SystemRoleWriter::class)->syncRolePermissions($admin, $permissionsWithoutActivityRead);
+
+    $actor = User::factory()->create();
+    app(SystemRoleWriter::class)->assignRoles($actor, 'admin');
+
+    expect($admin->refresh()->permissions()->where('name', 'view_any_activity')->exists())->toBeFalse()
+        ->and($actor->fresh()?->can('view_any_activity'))->toBeFalse();
+
+    $this->actingAs($actor->fresh())
+        ->get('/pulse')
+        ->assertForbidden();
+});
 
 it('forbids an authenticated staff user from viewing the Pulse dashboard', function (): void {
     $this->seed(RolePermissionSeeder::class);
