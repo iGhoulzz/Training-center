@@ -1,0 +1,95 @@
+# The Linux development target (P35-T14). See ../../docs/LINUX-DEV-TARGET.md.
+#
+# Run every command from this directory:
+#
+#   docker compose up -d --build
+#   docker compose exec app bash /host-repo/docker/dev-linux/setup.sh
+#   docker compose exec app composer verify
+#
+# THIS MYSQL IS ITS OWN SERVER, AND THAT IS THE WHOLE POINT
+# ---------------------------------------------------------
+# tests/bootstrap.php takes a machine-wide lock so two suites never rebuild one
+# schema at once — and that lock DOES NOT CROSS THE OS BOUNDARY: the lock file
+# lives in sys_get_temp_dir() (%TEMP% on Windows, /tmp here) and its key hashes
+# a path that is spelled differently on each side. Two suites would therefore
+# never see each other. The database below is a separate server inside this
+# compose project, and DB_DATABASE names it distinctly as well, so a mistake in
+# either direction still cannot make a Windows run and a Linux run meet.
+#
+# NEVER point DB_HOST at host.docker.internal. That is the one configuration
+# that would undo it.
+services:
+    app:
+        build:
+            context: .
+        image: training-center-dev-linux
+        container_name: training_center_dev_app
+        environment:
+            APP_ENV: local
+            # The suite's own database, distinct from the Windows one. It must be
+            # a REAL environment variable: phpunit.xml pins
+            # DB_DATABASE=training_center_test, and PHPUnit's <env> does not
+            # override a variable that already exists — which is exactly how CI
+            # selects training_center_ci.
+            DB_CONNECTION: mysql
+            DB_HOST: mysql
+            DB_PORT: 3306
+            DB_DATABASE: training_center_linux
+            DB_USERNAME: root
+            DB_PASSWORD: secret
+            REDIS_HOST: redis
+            REDIS_PORT: 6379
+            REDIS_CLIENT: phpredis
+            QUEUE_CONNECTION: redis
+            # config/backup validates this address while Laravel boots, so
+            # composer install fails without it. CI sets the same pair.
+            BACKUP_ALERT_EMAIL: dev@example.test
+            MAIL_FROM_ADDRESS: dev@example.test
+        volumes:
+            # The working copy, on the Linux filesystem: fast.
+            - workspace:/workspace
+            # The Windows repository, read-only, as the clone source only.
+            #
+            # HOST_REPO MUST NAME A REAL CHECKOUT, NOT A LINKED WORKTREE. A
+            # worktree's .git is a file holding a Windows path into the main
+            # repository, which does not exist inside this container, so a clone
+            # from one fails. The default is this file's own repository root,
+            # which is right once this lands on main; while the task itself is
+            # still on a branch, run compose with HOST_REPO set to the main
+            # checkout — setup.sh refuses with that instruction either way.
+            - ${HOST_REPO:-../..}:/host-repo:ro
+        depends_on:
+            mysql:
+                condition: service_healthy
+            redis:
+                condition: service_healthy
+
+    mysql:
+        image: mysql:8.4
+        container_name: training_center_dev_mysql
+        environment:
+            MYSQL_ROOT_PASSWORD: secret
+            MYSQL_DATABASE: training_center_linux
+        volumes:
+            - mysql-data:/var/lib/mysql
+        # No published port: nothing outside this compose project should reach
+        # it, and leaving 3306 unpublished keeps it off the Windows MySQL's toes.
+        healthcheck:
+            test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost', '-psecret']
+            interval: 10s
+            timeout: 5s
+            retries: 10
+            start_period: 30s
+
+    redis:
+        image: redis:alpine
+        container_name: training_center_dev_redis
+        healthcheck:
+            test: ['CMD', 'redis-cli', 'ping']
+            interval: 10s
+            timeout: 5s
+            retries: 5
+
+volumes:
+    workspace:
+    mysql-data:
