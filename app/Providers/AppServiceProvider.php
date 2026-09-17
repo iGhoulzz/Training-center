@@ -222,6 +222,13 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(Activity::class, ActivityPolicy::class);
 
         /*
+         * Pulse exposes SQL text and user activity, so its dashboard follows
+         * the activity log's existing read permission. Recording remains
+         * independent of this dashboard-only authorization boundary.
+         */
+        Gate::define('viewPulse', fn (?User $user): bool => $user?->can('view_any_activity') ?? false);
+
+        /*
          * THE FIRST NAMED LIMITER IN THIS FILE, AND IT IS REFERENCED (P3-T08).
          *
          * `routes/web.php`'s public verifier group applies this by name —
