@@ -36,6 +36,19 @@ it('allows an active roleless user holding only the activity log read permission
         ->assertSuccessful();
 });
 
+it('forbids an inactive user holding the activity log read permission from viewing the Pulse dashboard', function (): void {
+    $this->seed(RolePermissionSeeder::class);
+
+    $actor = User::factory()->create(['is_active' => false]);
+    $actor->givePermissionTo('view_any_activity');
+
+    expect($actor->fresh()?->can('view_any_activity'))->toBeTrue();
+
+    $this->actingAs($actor->fresh())
+        ->get('/pulse')
+        ->assertForbidden();
+});
+
 it('forbids an administrator after the activity log read permission is removed from the role', function (): void {
     $this->seed(RolePermissionSeeder::class);
 

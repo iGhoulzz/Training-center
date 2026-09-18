@@ -223,10 +223,13 @@ class AppServiceProvider extends ServiceProvider
 
         /*
          * Pulse exposes SQL text and user activity, so its dashboard follows
-         * the activity log's existing read permission. Recording remains
+         * the activity log's existing read permission. Deactivation revokes
+         * access even while an existing session remains valid. Recording stays
          * independent of this dashboard-only authorization boundary.
          */
-        Gate::define('viewPulse', fn (?User $user): bool => $user?->can('view_any_activity') ?? false);
+        Gate::define('viewPulse', fn (?User $user): bool => $user !== null
+            && $user->is_active
+            && $user->can('view_any_activity'));
 
         /*
          * THE FIRST NAMED LIMITER IN THIS FILE, AND IT IS REFERENCED (P3-T08).
