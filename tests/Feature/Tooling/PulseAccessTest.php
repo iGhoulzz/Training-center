@@ -15,8 +15,13 @@ use Laravel\Pulse\Contracts\Storage;
 use Laravel\Pulse\Ingests\StorageIngest;
 use Laravel\Pulse\Recorders;
 use Laravel\Pulse\Storage\DatabaseStorage;
+use Livewire\Livewire;
 
 uses(RefreshDatabase::class);
+
+afterEach(function (): void {
+    Livewire::flushState();
+});
 
 it('allows an active roleless user holding only the activity log read permission to view the Pulse dashboard', function (): void {
     $this->seed(RolePermissionSeeder::class);
