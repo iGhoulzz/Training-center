@@ -49,15 +49,20 @@ if [ ! -f .env ]; then
     cp .env.example .env
 fi
 
-# The compose file already exports DB_*, REDIS_* and the mail addresses as real
-# environment variables, which win over .env. These lines only keep a human
-# reading .env from being misled about what this container talks to — appended
-# once, so re-running this script does not grow the file.
+# Two kinds of line, appended once so re-running this script does not grow .env:
+#
+#   - DB_* and REDIS_* are also real environment variables from compose.yaml,
+#     which win over .env. Written here only so a human reading .env is not
+#     misled about what this container talks to.
+#   - QUEUE_CONNECTION=redis lives ONLY here, on purpose. As a compose variable
+#     it overrode phpunit.xml's `sync` and broke the suite; in .env it applies to
+#     Horizon and the load tests while PHPUnit's <env> still outranks it for
+#     tests. See the environment block in compose.yaml.
 if ! grep -q 'P35-T14 Linux target' .env; then
     echo '==> Recording the container settings in .env'
     {
         echo
-        echo '# P35-T14 Linux target - the real values come from compose.yaml.'
+        echo '# P35-T14 Linux target - DB and Redis also come from compose.yaml; the queue only from here.'
         echo 'DB_HOST=mysql'
         echo 'DB_DATABASE=training_center_linux'
         echo 'DB_USERNAME=root'

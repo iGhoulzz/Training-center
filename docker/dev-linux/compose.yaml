@@ -24,23 +24,31 @@ services:
             context: .
         image: training-center-dev-linux
         container_name: training_center_dev_app
+        # SET NOTHING HERE THAT phpunit.xml PINS — EXCEPT DB_DATABASE, ON PURPOSE.
+        #
+        # PHPUnit's <env> does not override a variable that already exists. That
+        # is the mechanism DB_DATABASE relies on below, and it cuts both ways: the
+        # first Linux gate ran with APP_ENV=local and QUEUE_CONNECTION=redis set
+        # here, so the whole suite silently ran outside the `testing` environment
+        # — CSRF enforced, jobs sent to Redis instead of run — and 157 tests
+        # failed for no reason in the code. APP_ENV, QUEUE_CONNECTION,
+        # CACHE_STORE, SESSION_DRIVER, MAIL_MAILER and DB_CONNECTION are
+        # phpunit.xml's to decide. The Redis queue this target exists for lives in
+        # the container's .env (setup.sh), which PHPUnit's <env> does outrank.
         environment:
-            APP_ENV: local
             # The suite's own database, distinct from the Windows one. It must be
-            # a REAL environment variable: phpunit.xml pins
-            # DB_DATABASE=training_center_test, and PHPUnit's <env> does not
-            # override a variable that already exists — which is exactly how CI
-            # selects training_center_ci.
-            DB_CONNECTION: mysql
+            # a REAL environment variable, because phpunit.xml pins
+            # DB_DATABASE=training_center_test and <env> does not override an
+            # existing one — exactly how CI selects training_center_ci.
+            DB_DATABASE: training_center_linux
+            # Not pinned by phpunit.xml, so these are safe here.
             DB_HOST: mysql
             DB_PORT: 3306
-            DB_DATABASE: training_center_linux
             DB_USERNAME: root
             DB_PASSWORD: secret
             REDIS_HOST: redis
             REDIS_PORT: 6379
             REDIS_CLIENT: phpredis
-            QUEUE_CONNECTION: redis
             # config/backup validates this address while Laravel boots, so
             # composer install fails without it. CI sets the same pair.
             BACKUP_ALERT_EMAIL: dev@example.test

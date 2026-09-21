@@ -53,6 +53,7 @@ it('allowlists exactly the approved disposable databases', function () {
     expect(config('performance.allowed_databases'))->toBe([
         'training_center_test',
         'training_center_ci',
+        'training_center_linux',
         'training_center_performance',
     ]);
 });
