@@ -411,6 +411,10 @@ Feature tests are the priority, because the risk in this system is in how the pi
 
 `RefreshDatabase` on every feature test. Factories with states for test data. `Mail::fake()`, `Queue::fake()`, and `Event::fake()` — never hit real external services.
 
+**The gate has two supported environments (P35-T14).** Windows is where development, the Git hooks and the pre-push gate run. A Linux target in Docker (`docker/dev-linux/`, runbook `docs/LINUX-DEV-TARGET.md`) exists for work Windows PHP cannot host — Horizon, and the load and stress runs — because `pcntl`, `posix` and `redis` have no Windows build. CI on Ubuntu remains the arbiter when the two disagree: a change is green when CI is green.
+
+**Each environment owns its own test database, and must.** Windows uses `training_center_test`, CI `training_center_ci`, the Linux target `training_center_linux` on its own MySQL server. The suite lock in `tests/bootstrap.php` does not cross the OS boundary — its file lives in `sys_get_temp_dir()` and its key hashes a path spelled differently on each side — so two environments sharing one schema would rebuild it underneath each other. The Linux target must also leave every variable `phpunit.xml` pins alone except `DB_DATABASE`: PHPUnit's `<env>` never overrides an existing variable, which is how the target selects its database and also how a stray `APP_ENV` once ran its whole suite outside the testing environment.
+
 ---
 
 ## 11. Operations
