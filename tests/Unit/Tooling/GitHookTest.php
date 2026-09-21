@@ -52,12 +52,14 @@ function runHook(array $environment): array
     /*
      * STDIN IS GIVEN, AND CLOSED, EXPLICITLY (found by the P35-T14 Linux run).
      *
-     * The hook's first act is `tuples=$(cat)`, which reads stdin to EOF. With no
-     * descriptor 0 here the hook inherited the test runner's own stdin: empty on
-     * Windows and in CI, so the omission was invisible, but a terminal under
-     * `docker compose exec`, where `cat` waits for keyboard input forever and the
-     * whole suite hangs on this file. An empty, closed pipe is what git itself
-     * hands the hook when there are no refs to push.
+     * Early on, the hook runs `tuples=$(cat)`, which reads stdin to EOF. With no
+     * descriptor 0 here the hook inherited the test runner's own stdin. Under
+     * `php artisan test` without a live terminal — on Windows as the gate runs,
+     * and in CI — that is already closed, so the omission was invisible. Under
+     * an interactive `docker compose exec` it is the terminal, where `cat` waits
+     * for keyboard input forever and the whole suite hangs on this file. An
+     * empty, closed pipe is what git itself hands the hook when there are no
+     * refs to push.
      */
     $process = proc_open(
         [gitHookShell(), Repo::root().'/.githooks/pre-push'],

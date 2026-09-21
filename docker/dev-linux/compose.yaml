@@ -3,8 +3,13 @@
 # Run every command from this directory:
 #
 #   docker compose up -d --build
-#   docker compose exec app bash /bootstrap/setup.sh
-#   docker compose exec app composer verify
+#   docker compose exec app bash /bootstrap/setup.sh [branch-or-commit]
+#   docker compose exec -T app composer verify
+#
+# Load runs and Horizon use training_center_performance, never the test
+# database; setup.sh creates it. Select it per command:
+#
+#   docker compose exec -e DB_DATABASE=training_center_performance app php artisan ...
 #
 # THIS MYSQL IS ITS OWN SERVER, AND THAT IS THE WHOLE POINT
 # ---------------------------------------------------------
@@ -36,10 +41,14 @@ services:
         # phpunit.xml's to decide. The Redis queue this target exists for lives in
         # the container's .env (setup.sh), which PHPUnit's <env> does outrank.
         environment:
-            # The suite's own database, distinct from the Windows one. It must be
+            # The SUITE's own database, distinct from the Windows one. It must be
             # a REAL environment variable, because phpunit.xml pins
             # DB_DATABASE=training_center_test and <env> does not override an
             # existing one — exactly how CI selects training_center_ci.
+            #
+            # Every composer verify rebuilds it with migrate:fresh, and the suite
+            # lock covers test processes only. Load runs and Horizon therefore
+            # override this per command with training_center_performance.
             DB_DATABASE: training_center_linux
             # Not pinned by phpunit.xml, so these are safe here.
             DB_HOST: mysql
@@ -49,8 +58,9 @@ services:
             REDIS_HOST: redis
             REDIS_PORT: 6379
             REDIS_CLIENT: phpredis
-            # config/backup validates this address while Laravel boots, so
-            # composer install fails without it. CI sets the same pair.
+            # The same pair CI sets. .env.example supplies addresses too, so these
+            # are not what makes the app boot; they keep the container's mail and
+            # backup-alert settings obviously fake whatever .env holds.
             BACKUP_ALERT_EMAIL: dev@example.test
             MAIL_FROM_ADDRESS: dev@example.test
         volumes:

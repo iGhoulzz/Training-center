@@ -1,7 +1,17 @@
 #!/usr/bin/env bash
-# Prepare the Linux working copy (P35-T14). Idempotent: safe to re-run.
+# Prepare the Linux working copy (P35-T14). Safe to re-run.
 #
-#   docker compose exec app bash /bootstrap/setup.sh
+#   docker compose exec app bash /bootstrap/setup.sh [ref]
+#
+# `ref` is the branch or commit to test, as it exists in the Windows checkout
+# named by HOST_REPO. Without it, a first run clones whatever that checkout has
+# checked out, and a later run only fetches — it does NOT move the working copy.
+# To test anything else, name it:
+#
+#   docker compose exec app bash /bootstrap/setup.sh p35/t10b-horizon
+#
+# Only COMMITTED work can be tested: the working copy is a clone, so uncommitted
+# edits on Windows are invisible to it.
 #
 # WHY IT CLONES INSTEAD OF USING THE MOUNT
 # ----------------------------------------
@@ -18,10 +28,7 @@ set -euo pipefail
 
 WORKSPACE=/workspace
 SOURCE=/host-repo
-
-# The clone is owned by root here while /host-repo carries Windows ownership;
-# git refuses to read a repository it considers someone else's without this.
-git config --global --add safe.directory '*'
+REF="${1:-}"
 
 # A linked worktree carries a .git FILE pointing at a Windows path, which does
 # not resolve here; git would fail with "not a git repository" a few steps later
@@ -37,12 +44,19 @@ fi
 if [ ! -d "${WORKSPACE}/.git" ]; then
     echo '==> Cloning the working copy into the Linux volume'
     git clone --no-hardlinks "${SOURCE}" "${WORKSPACE}"
-else
-    echo '==> Working copy already present; fetching from the Windows checkout'
-    git -C "${WORKSPACE}" fetch origin
 fi
 
 cd "${WORKSPACE}"
+
+if [ -n "${REF}" ]; then
+    echo "==> Checking out ${REF} from the Windows checkout"
+    git fetch --quiet origin "${REF}"
+    git checkout --quiet --detach FETCH_HEAD
+else
+    git fetch --quiet origin
+fi
+
+echo "==> Code under test: $(git log --oneline -1)"
 
 if [ ! -f .env ]; then
     echo '==> Creating .env from .env.example'
@@ -73,13 +87,31 @@ if ! grep -q 'P35-T14 Linux target' .env; then
     } >> .env
 fi
 
+# Every run: a different ref can carry a different composer.lock (Horizon's does).
 echo '==> Installing PHP dependencies'
 composer install --no-interaction
 
-echo '==> Generating an application key for this container'
-php artisan key:generate --force
+# Once only. Regenerating on every run would rotate APP_KEY underneath anything
+# already encrypted with the old one.
+if ! grep -qE '^APP_KEY=.+' .env; then
+    echo '==> Generating an application key for this container'
+    php artisan key:generate --force
+fi
 
-echo '==> Proving the four capabilities this target exists for'
+# THE TEST DATABASE IS NOT FOR LOAD RUNS OR HORIZON.
+# training_center_linux is rebuilt with migrate:fresh by every `composer verify`,
+# and the suite lock covers test processes only — a load run or a seeded
+# performance dataset sharing it would be wiped mid-run. Load work gets its own
+# database on this same server; T05's allowlist already names it. Select it per
+# command with `-e DB_DATABASE=training_center_performance` (see the runbook).
+echo '==> Ensuring the separate database for load runs exists'
+php -r '
+    $pdo = new PDO("mysql:host=" . getenv("DB_HOST") . ";port=" . getenv("DB_PORT"), getenv("DB_USERNAME"), getenv("DB_PASSWORD"));
+    $pdo->exec("CREATE DATABASE IF NOT EXISTS training_center_performance");
+    echo "training_center_performance: present", PHP_EOL;
+'
+
+echo '==> Proving the capabilities this target exists for'
 php -m | grep -E '^(pcntl|posix|redis)$'
 php -r '$redis = new Redis(); $redis->connect(getenv("REDIS_HOST"), 6379); echo "redis: ", $redis->ping(), PHP_EOL;'
 php artisan db:show --json | head -c 400
@@ -87,11 +119,12 @@ echo
 
 cat <<'NEXT'
 
-==> Ready. The evidence T14 asks for is the gate itself:
+==> Ready. Run the gate inside the target with:
 
-      docker compose exec app composer verify
+      docker compose exec -T app composer verify
 
-    Paste what actually happens — including anything that fails first — into
-    docs/LINUX-DEV-TARGET.md. A runbook assembled from upstream documentation
-    rather than from a real run is the defect this task exists to avoid.
+    -T gives the command no terminal, which is how the recorded green run was
+    made. Load runs and Horizon use their own database:
+
+      docker compose exec -e DB_DATABASE=training_center_performance app php artisan ...
 NEXT

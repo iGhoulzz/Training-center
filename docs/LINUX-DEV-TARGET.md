@@ -17,9 +17,11 @@ The failures are the most useful part: the next person hits the same steps.
 
 ## Why it exists
 
-Three PHP extensions the last four phase-3.5 tasks need have **no Windows build
-at all** — `pcntl`, `posix` and `redis`. Measured, not assumed: `php -m` on the
-development machine's PHP 8.4.13 (NTS, Visual C++ x64) lists none of them.
+Horizon needs two PHP extensions that have **no Windows build at all**: `pcntl`
+and `posix`. It supervises its workers by forking and signalling them. The
+third, `redis`, does have an official Windows build but is not installed on the
+development machine. `php -m` on its PHP 8.4.13 (NTS, Visual C++ x64) lists none
+of the three.
 
 | Task | Needs the Linux target because |
 |---|---|
@@ -28,8 +30,10 @@ development machine's PHP 8.4.13 (NTS, Visual C++ x64) lists none of them.
 | T12 SLO targets | Built from T11's numbers |
 | T13 Stress cycle | Built on T11 and T12 |
 
-A Redis container alone does not unblock any of them. What is missing is PHP
-running on Linux.
+A Redis container alone does not unblock Horizon: what is missing is PHP
+running on Linux. For the load runs the reason is fidelity rather than
+possibility — they should measure the queue driver and platform production will
+run.
 
 ## What was actually used
 
@@ -83,30 +87,60 @@ Only the first run builds. Afterwards `docker compose up -d` starts them in
 seconds. The app container has no health check, so compose prints only the
 database and Redis as `Healthy` — `docker compose ps` shows all three.
 
-**4. Prepare the Linux working copy** (safe to re-run)
+**4. Prepare the Linux working copy, and choose what it tests** (safe to re-run)
 
 ```powershell
 docker compose exec app bash /bootstrap/setup.sh
 ```
 
-It clones the checkout into a Linux volume, writes `.env`, installs
-dependencies, and prints the proof below.
+The first run clones the checkout into a Linux volume, writes `.env`, installs
+dependencies, creates the separate load-run database, and prints the proof
+below. **A later run does not move the working copy on its own.** To test a
+particular branch or commit, name it — as it exists in the `HOST_REPO`
+checkout:
+
+```powershell
+docker compose exec app bash /bootstrap/setup.sh p35/t10b-horizon
+```
+
+Only **committed** work can be tested: the working copy is a clone, so edits not
+yet committed on Windows are invisible to it. The script prints
+`==> Code under test: <commit>` — check it before trusting a green result.
+Dependencies are reinstalled every run, because another branch can carry a
+different `composer.lock`.
 
 **5. Run the gate inside Linux**
 
 ```powershell
-docker compose exec app composer verify
+docker compose exec -T app composer verify
+```
+
+`-T` gives the command no terminal, which matches the recorded green run below.
+Without it, `docker compose exec` supplies an interactive terminal; the one test
+known to hang in that case is fixed (see the log), but the interactive form has
+not itself been run end to end.
+
+**Load runs and Horizon use a different database.** `training_center_linux` is
+rebuilt with `migrate:fresh` by every gate run, and the suite lock covers test
+processes only, so anything that seeds data and expects to keep it must not
+share it. `setup.sh` creates `training_center_performance` on the same server —
+already on T05's allowlist — and each such command selects it:
+
+```powershell
+docker compose exec -e DB_DATABASE=training_center_performance app php artisan migrate --force
 ```
 
 **Stopping:** `docker compose stop`. **Starting again later:** steps 0–2, then
-`docker compose up -d`. **Throwing it all away:** `docker compose down -v` —
-this deletes the working copy and the database volume.
+`docker compose up -d`; the working copy and both databases survive, including
+a container being recreated. **Throwing it all away:** `docker compose down -v`
+— this deletes the working copy and every database in the target.
 
 ---
 
 ## The four capabilities, proved
 
-Pasted from `setup.sh` on the owner's machine, 2026-09-21:
+Pasted from `setup.sh` on the owner's machine, 2026-09-21 (the version current
+then; it has since gained the load-run database and the `ref` argument):
 
 ```
 ==> Proving the four capabilities this target exists for
@@ -120,7 +154,7 @@ redis: 1
 | Capability | Evidence |
 |---|---|
 | PHP with `pcntl`, `posix` and `redis` | the three `php -m` lines above |
-| A reachable Redis server | `redis: 1` — `PING` answered from PHP through phpredis |
+| A reachable Redis server | `redis-cli ping` in the Redis container answered `PONG` (2026-09-21); and `redis: 1` above is the same `PING` from PHP through phpredis, the path Horizon uses |
 | `composer install` completes | step 4 ran to `==> Ready`, including the key generation after it |
 | Its **own** test database | host `mysql`, database `training_center_linux` |
 
@@ -213,8 +247,9 @@ application.** The compose file had set `APP_ENV=local` and
 overrides a variable that already exists — the same rule the database name
 relies on — so the whole suite ran outside the `testing` environment: CSRF
 enforced (HTTP 419), jobs sent to Redis instead of run. Removing those two
-variables took one sample file from 4 failed to 9 passed, and all 40 failing
-files from 152 failures to 5.
+variables took one sample file from 4 failed to 9 passed, and re-running all 40
+failing files that way left 5 failures of 632 tests — the 157 minus the 152 this
+cause accounted for.
 *Fixed* in `compose.yaml`: it now sets **nothing `phpunit.xml` pins except
 `DB_DATABASE`**, and says why. The Redis queue this target exists for is set in
 the container's `.env`, which PHPUnit's `<env>` does outrank.

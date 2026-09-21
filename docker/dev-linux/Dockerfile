@@ -4,10 +4,11 @@
 # ------------------------------------
 # This is a test bench, not a deployment artifact. The application is NOT
 # dockerised: nothing in the code, the spec or the hosting decision depends on
-# this file. It exists because three PHP extensions the last four phase-3.5
-# tasks need — pcntl, posix and redis — have no Windows build at all, so
-# Horizon cannot be installed there and a load baseline against the database
-# queue driver would measure the wrong thing.
+# this file. It exists because Horizon needs pcntl and posix, which have no
+# Windows build at all — it supervises workers by forking and signalling them.
+# The third extension, redis, does have a Windows build but is not installed on
+# the development machine; the load baseline wants Linux for a different reason,
+# to measure the queue driver and platform production will actually run.
 #
 # Everyday work, and the pre-push gate, stay on Windows. CI stays on Ubuntu.
 #
