@@ -11,6 +11,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Notifications\AnonymousNotifiable;
 use Illuminate\Support\Facades\Notification;
 use Laravel\Horizon\Events\LongWaitDetected as LongWaitDetectedEvent;
+use Laravel\Horizon\Listeners\SendNotification;
 use Laravel\Horizon\Lock;
 use Laravel\Horizon\Notifications\LongWaitDetected;
 
@@ -69,7 +70,7 @@ it('routes long wait alerts by mail to the configured operations address', funct
     $lock->shouldReceive('get')->once()->andReturnTrue();
     $this->app->instance(Lock::class, $lock);
 
-    event(new LongWaitDetectedEvent('redis', 'default', 61));
+    app(SendNotification::class)->handle(new LongWaitDetectedEvent('redis', 'default', 61));
 
     Notification::assertSentOnDemand(
         LongWaitDetected::class,
@@ -105,7 +106,7 @@ it('uses the agreed Redis wait threshold and worker topology', function (): void
 
 it('takes a Horizon metrics snapshot every five minutes', function (): void {
     $event = collect(app(Schedule::class)->events())
-        ->first(fn ($event): bool => str_contains($event->command, "'horizon:snapshot'"));
+        ->first(fn ($event): bool => str_contains($event->command, 'horizon:snapshot'));
 
     expect($event)->not->toBeNull()
         ->and($event->expression)->toBe('*/5 * * * *');
