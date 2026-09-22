@@ -49,9 +49,21 @@ function runHook(array $environment): array
         throw new RuntimeException('Unable to create the hook output buffer.');
     }
 
+    /*
+     * STDIN IS GIVEN, AND CLOSED, EXPLICITLY (found by the P35-T14 Linux run).
+     *
+     * Early on, the hook runs `tuples=$(cat)`, which reads stdin to EOF. With no
+     * descriptor 0 here the hook inherited the test runner's own stdin. Under
+     * `php artisan test` without a live terminal — on Windows as the gate runs,
+     * and in CI — that is already closed, so the omission was invisible. Under
+     * an interactive `docker compose exec` it is the terminal, where `cat` waits
+     * for keyboard input forever and the whole suite hangs on this file. An
+     * empty, closed pipe is what git itself hands the hook when there are no
+     * refs to push.
+     */
     $process = proc_open(
         [gitHookShell(), Repo::root().'/.githooks/pre-push'],
-        [1 => $buffer, 2 => $buffer],
+        [0 => ['pipe', 'r'], 1 => $buffer, 2 => $buffer],
         $pipes,
         Repo::root(),
         [...getenv(), ...$environment],
@@ -62,6 +74,8 @@ function runHook(array $environment): array
 
         throw new RuntimeException('Unable to execute the pre-push hook.');
     }
+
+    fclose($pipes[0]);
 
     $status = proc_close($process);
     rewind($buffer);
