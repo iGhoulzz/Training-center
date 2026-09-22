@@ -75,7 +75,7 @@ it('routes long wait alerts by mail to the configured operations address', funct
     Notification::assertSentOnDemand(
         LongWaitDetected::class,
         function (LongWaitDetected $notification, array $channels, AnonymousNotifiable $notifiable): bool {
-            return $channels === ['mail']
+            return array_values($channels) === ['mail']
                 && $notifiable->routeNotificationFor('mail') === 'queue-alerts@example.com';
         },
     );
