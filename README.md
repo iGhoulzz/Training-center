@@ -25,19 +25,19 @@ only public feature so far.
 
 ## Local setup
 
-You need PHP 8.4, Composer, Node and a MySQL server. Create `.env` first, then
-set its `DB_*` values; `.env.example` expects a database and a user both named
-`training_center`.
+You need PHP 8.4, Composer, Node and a MySQL server. `.env.example` expects a
+database and a user both named `training_center`; create them first, or copy
+`.env.example` to `.env` and set your own `DB_*` values before running setup.
 
 ```bash
-cp .env.example .env
 composer setup
 ```
 
-**`.env` has to exist first.** `composer setup` begins with `composer install`,
-whose package-discovery step boots the application. Without `.env` the
-environment falls back to `production`, where the backup guard refuses to boot
-and the install exits 1. Verified on a fresh clone.
+That creates `.env` from `.env.example` if it is missing, installs the PHP and
+Node dependencies, generates the application key, migrates and builds the
+frontend. It copies `.env` **before** installing, deliberately: the install
+boots the application through package discovery, and with no `.env` the
+environment falls back to `production`, where the backup guard refuses to boot.
 
 For a local database, seed the roles and one super admin account:
 
