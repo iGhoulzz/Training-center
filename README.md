@@ -1,58 +1,79 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Training Center
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+A management system for a single training center: students, courses and
+batches, enrollments, staff accounts, finances, and a student portal with
+certificates.
 
-## About Laravel
+Laravel 13 and Filament 5 on PHP 8.4, with MySQL 8.4 and Redis queues. It is
+built for a root Linux VPS; the hosting provider is not chosen yet (system
+design §2). The staff panel is at `/admin` and the student portal at `/portal`.
+The public site planned for `/` is not built yet: `/` still serves Laravel's
+placeholder page, and certificate verification at `/verify/certificates` is the
+only public feature so far.
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+## Documentation
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+| Document | What it holds |
+|---|---|
+| [System design](docs/superpowers/specs/2026-07-20-training-center-dashboard-design.md) | Scope, data model and permissions. For phase 2, the [finance design](docs/superpowers/specs/2026-08-09-phase-2-financials-design.md) supersedes it where the two disagree. All designs are in [`docs/superpowers/specs/`](docs/superpowers/specs/) |
+| [`docs/ENGINEERING.md`](docs/ENGINEERING.md) | How code is written here |
+| [`docs/WORKFLOW.md`](docs/WORKFLOW.md) | How Claude and Codex divide, isolate and cross-review work |
+| [`docs/superpowers/plans/`](docs/superpowers/plans/) | One plan per milestone; the newest is the current one |
+| [`docs/CHANGELOG.md`](docs/CHANGELOG.md) | Release notes, currently for phases 1 and 2 |
+| [`docs/RESTORE.md`](docs/RESTORE.md) | Restoring from a backup |
+| [`CLAUDE.md`](CLAUDE.md), [`AGENTS.md`](AGENTS.md) | Instructions for the two coding agents |
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+## Local setup
 
-## Learning Laravel
-
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
-
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
-
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
-
-## Agentic Development
-
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
+You need PHP 8.4, Composer, Node and a MySQL server. Create `.env` first, then
+set its `DB_*` values; `.env.example` expects a database and a user both named
+`training_center`.
 
 ```bash
-composer require laravel/boost --dev
-
-php artisan boost:install
+cp .env.example .env
+composer setup
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+**`.env` has to exist first.** `composer setup` begins with `composer install`,
+whose package-discovery step boots the application. Without `.env` the
+environment falls back to `production`, where the backup guard refuses to boot
+and the install exits 1. Verified on a fresh clone.
 
-## Contributing
+For a local database, seed the roles and one super admin account:
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+```bash
+php artisan db:seed
+```
 
-## Code of Conduct
+The account is in `database/seeders/UserSeeder.php` and must change its password
+at first sign-in. Do not seed a production database with it.
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+Queued work — receipts and report PDFs — goes to Redis, so a local machine needs
+Redis and the `phpredis` extension. Without them, set `QUEUE_CONNECTION=database`
+in `.env`, which `.env.example` allows for development and never for production.
+`composer dev` runs the development server, a queue worker and the log viewer
+together.
 
-## Security Vulnerabilities
+The suite needs a second database, `training_center_test`, reachable by the same
+user. See the gate below.
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+## The gate
 
-## License
+```bash
+composer verify
+```
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+This runs Composer validation, formatting, static analysis and the full test
+suite. The suite uses its own database, `training_center_test`, which is set in
+`phpunit.xml`. Every worktree of one clone shares a lock, so two runs from the
+same clone wait for each other rather than collide. A second clone on the same
+machine gets its own lock but the same database, so do not run two clones'
+suites at once.
+
+Enable the Git hooks once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+After that, `pre-push` runs `composer verify`, and CI runs the same command.

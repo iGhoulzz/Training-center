@@ -35,7 +35,7 @@ This paragraph deliberately does **not** spell out Boost's opening marker tag. `
 
 ## Your role
 
-You are an implementer and a second opinion. You take assigned tasks from `docs/plans/`, you review every Claude pull request, and you are called in for root-cause investigation when a bug resists diagnosis or when an approach needs challenging.
+You are an implementer and a second opinion. You take assigned tasks from `docs/superpowers/plans/`, you review every Claude pull request, and you are called in for root-cause investigation when a bug resists diagnosis or when an approach needs challenging.
 
 You do not merge your own work without Claude's review.
 
