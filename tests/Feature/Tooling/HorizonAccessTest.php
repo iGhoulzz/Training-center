@@ -64,6 +64,8 @@ it('routes long wait alerts by mail to the configured operations address', funct
     Notification::fake();
 
     config()->set('horizon.alert_email', 'queue-alerts@example.com');
+    config()->set('mail.default', 'smtp');
+    app()->detectEnvironment(fn (): string => 'production');
     (new HorizonServiceProvider($this->app))->boot();
 
     $lock = Mockery::mock(Lock::class);
@@ -95,6 +97,23 @@ it('requires a Horizon alert recipient in production', function (): void {
     expect(fn () => (new HorizonServiceProvider($this->app))->boot())
         ->toThrow(InvalidArgumentException::class, 'HORIZON_ALERT_EMAIL');
 });
+
+it('treats a blank Horizon alert recipient as unset outside production', function (): void {
+    config()->set('horizon.alert_email', '');
+
+    expect(fn () => (new HorizonServiceProvider($this->app))->boot())
+        ->not->toThrow(InvalidArgumentException::class);
+});
+
+it('refuses a non-delivering Horizon alert mailer in production', function (string $transport): void {
+    config()->set('horizon.alert_email', 'queue-alerts@example.com');
+    config()->set('mail.default', 'alerts');
+    config()->set('mail.mailers.alerts', ['transport' => $transport]);
+    app()->detectEnvironment(fn (): string => 'production');
+
+    expect(fn () => (new HorizonServiceProvider($this->app))->boot())
+        ->toThrow(InvalidArgumentException::class, 'MAIL_MAILER');
+})->with(['log', 'array']);
 
 it('uses the agreed Redis wait threshold and worker topology', function (): void {
     expect(config('horizon.waits.redis:default'))->toBe(60)
