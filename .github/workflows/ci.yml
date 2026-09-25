@@ -48,6 +48,7 @@ jobs:
       # is not a valid email address" — which is the config guard doing its job,
       # not a CI bug. Found on this workflow's first real run.
       BACKUP_ALERT_EMAIL: ci@example.com
+      HORIZON_ALERT_EMAIL: ci@example.com
       MAIL_FROM_ADDRESS: ci@example.com
 
     services:
@@ -60,6 +61,15 @@ jobs:
           - 3306:3306
         options: >-
           --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
           --health-interval=10s
           --health-timeout=5s
           --health-retries=10
@@ -95,9 +105,13 @@ jobs:
           # platform config. That floor exists to pin dependency resolution;
           # pinning CI to it would test an old patch release nobody runs.
           php-version: '8.4'
-          extensions: mbstring, pdo_mysql, zip, intl, bcmath, gd
+          extensions: mbstring, pdo_mysql, zip, intl, bcmath, gd, redis
           coverage: none
           tools: composer:v2
+
+      - name: Confirm the Horizon platform extensions
+        run: |
+          php -r 'foreach (["redis", "pcntl", "posix"] as $extension) { if (! extension_loaded($extension)) { fwrite(STDERR, "Missing required PHP extension: {$extension}\n"); exit(1); } }'
 
       - name: Cache Composer packages
         uses: actions/cache@v4
