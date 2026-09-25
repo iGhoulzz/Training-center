@@ -68,6 +68,9 @@ return [
     | This prefix will be used when storing all Horizon data in Redis. You
     | may modify the prefix when you are running multiple installations
     | of Horizon on the same server so that they don't have problems.
+    | Because the default derives from APP_NAME, renaming the application
+    | changes Horizon's Redis namespace. Set a stable HORIZON_PREFIX in
+    | deployed environments before changing APP_NAME.
     |
     */
 

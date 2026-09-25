@@ -66,6 +66,9 @@ it('forbids an inactive user holding the activity log read permission from the H
 it('forbids guests from every Horizon route outside local environments', function (): void {
     app()->detectEnvironment(fn (): string => 'production');
 
+    $csrfToken = 'horizon-guest-route-test';
+    $this->withSession(['_token' => $csrfToken]);
+
     $horizonPath = trim((string) config('horizon.path'), '/');
     $horizonRoutes = collect(RouteFacade::getRoutes()->getRoutes())
         ->filter(fn (Route $route): bool => Str::startsWith(trim($route->uri(), '/'), $horizonPath));
@@ -73,7 +76,7 @@ it('forbids guests from every Horizon route outside local environments', functio
     expect($horizonRoutes)->not->toBeEmpty();
 
     $horizonRoutes->each(function (Route $route): void {
-        $this->call($route->methods()[0], '/'.trim($route->uri(), '/'))
+        $this->call($route->methods()[0], '/'.trim($route->uri(), '/'), ['_token' => 'horizon-guest-route-test'])
             ->assertForbidden();
     });
 });
@@ -133,20 +136,24 @@ it('refuses a non-delivering Horizon alert mailer in production', function (stri
         ->toThrow(InvalidArgumentException::class, 'MAIL_MAILER');
 })->with(['log', 'array']);
 
-it('refuses a composite Horizon alert mailer containing a non-delivering member in production', function (string $transport, string $member): void {
+it('refuses a composite Horizon alert mailer containing a non-delivering member in production', function (string $mailer, ?array $configuration): void {
     config()->set('horizon.alert_email', 'queue-alerts@example.com');
-    config()->set('mail.default', 'alerts');
-    config()->set('mail.mailers.alerts', [
-        'transport' => $transport,
-        'mailers' => ['smtp', $member],
-    ]);
+    config()->set('mail.default', $mailer);
+
+    if ($configuration !== null) {
+        config()->set("mail.mailers.{$mailer}", $configuration);
+    }
+
     app()->detectEnvironment(fn (): string => 'production');
 
     expect(fn () => (new HorizonServiceProvider($this->app))->boot())
         ->toThrow(InvalidArgumentException::class, 'MAIL_MAILER');
 })->with([
-    'failover with log fallback' => ['failover', 'log'],
-    'round robin with array member' => ['roundrobin', 'array'],
+    'default failover with log fallback' => ['failover', null],
+    'round robin with array member' => ['roundrobin', [
+        'transport' => 'roundrobin',
+        'mailers' => ['smtp', 'array'],
+    ]],
 ]);
 
 it('uses the agreed Redis wait threshold and worker topology', function (): void {

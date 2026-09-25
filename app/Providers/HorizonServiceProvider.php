@@ -31,14 +31,56 @@ class HorizonServiceProvider extends HorizonApplicationServiceProvider
 
         if (app()->isProduction()) {
             $mailer = config('mail.default');
-            $transport = is_string($mailer) ? config("mail.mailers.{$mailer}.transport") : null;
 
-            if (in_array($transport, ['array', 'log'], true)) {
+            if (is_string($mailer) && $this->usesNonDeliveringTransport($mailer)) {
                 throw new InvalidArgumentException('MAIL_MAILER must use a delivering transport for Horizon alerts in production.');
             }
         }
 
         Horizon::routeMailNotificationsTo($alertEmail);
+    }
+
+    /**
+     * Determine whether a mailer or any composite member cannot deliver mail.
+     *
+     * @param  array<string, true>  $visited
+     */
+    private function usesNonDeliveringTransport(string $mailer, array $visited = []): bool
+    {
+        if (isset($visited[$mailer])) {
+            return false;
+        }
+
+        $visited[$mailer] = true;
+        $configuration = config("mail.mailers.{$mailer}");
+
+        if (! is_array($configuration)) {
+            return false;
+        }
+
+        $transport = $configuration['transport'] ?? null;
+
+        if (in_array($transport, ['array', 'log'], true)) {
+            return true;
+        }
+
+        if (! in_array($transport, ['failover', 'roundrobin'], true)) {
+            return false;
+        }
+
+        $members = $configuration['mailers'] ?? [];
+
+        if (! is_array($members)) {
+            return false;
+        }
+
+        foreach ($members as $member) {
+            if (is_string($member) && $this->usesNonDeliveringTransport($member, $visited)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
