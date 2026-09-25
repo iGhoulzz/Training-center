@@ -1,9 +1,9 @@
 {
     "$schema": "https://getcomposer.org/schema.json",
-    "name": "laravel/laravel",
+    "name": "ighoulzz/training-center",
     "type": "project",
-    "description": "The skeleton application for the Laravel framework.",
-    "keywords": ["laravel", "framework"],
+    "description": "Management system for a single training center: students, courses and batches, enrollments, staff accounts, finances, and a student portal.",
+    "keywords": ["training-center", "laravel", "filament"],
     "license": "MIT",
     "require": {
         "php": "^8.4.1",
@@ -46,8 +46,8 @@
     },
     "scripts": {
         "setup": [
+            "@php -r \"file_exists('.env') || copy('.env.example', '.env') || exit(1);\"",
             "composer install",
-            "@php -r \"file_exists('.env') || copy('.env.example', '.env');\"",
             "@php artisan key:generate",
             "@php artisan migrate --force",
             "npm install --ignore-scripts",
