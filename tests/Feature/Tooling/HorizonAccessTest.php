@@ -9,7 +9,10 @@ use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Notifications\AnonymousNotifiable;
+use Illuminate\Routing\Route;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Route as RouteFacade;
+use Illuminate\Support\Str;
 use Laravel\Horizon\Events\LongWaitDetected as LongWaitDetectedEvent;
 use Laravel\Horizon\Listeners\SendNotification;
 use Laravel\Horizon\Lock;
@@ -58,6 +61,21 @@ it('forbids an inactive user holding the activity log read permission from the H
     $this->actingAs($actor->fresh())
         ->get('/horizon')
         ->assertForbidden();
+});
+
+it('forbids guests from every Horizon route outside local environments', function (): void {
+    app()->detectEnvironment(fn (): string => 'production');
+
+    $horizonPath = trim((string) config('horizon.path'), '/');
+    $horizonRoutes = collect(RouteFacade::getRoutes()->getRoutes())
+        ->filter(fn (Route $route): bool => Str::startsWith(trim($route->uri(), '/'), $horizonPath));
+
+    expect($horizonRoutes)->not->toBeEmpty();
+
+    $horizonRoutes->each(function (Route $route): void {
+        $this->call($route->methods()[0], '/'.trim($route->uri(), '/'))
+            ->assertForbidden();
+    });
 });
 
 it('routes long wait alerts by mail to the configured operations address', function (): void {
@@ -114,6 +132,22 @@ it('refuses a non-delivering Horizon alert mailer in production', function (stri
     expect(fn () => (new HorizonServiceProvider($this->app))->boot())
         ->toThrow(InvalidArgumentException::class, 'MAIL_MAILER');
 })->with(['log', 'array']);
+
+it('refuses a composite Horizon alert mailer containing a non-delivering member in production', function (string $transport, string $member): void {
+    config()->set('horizon.alert_email', 'queue-alerts@example.com');
+    config()->set('mail.default', 'alerts');
+    config()->set('mail.mailers.alerts', [
+        'transport' => $transport,
+        'mailers' => ['smtp', $member],
+    ]);
+    app()->detectEnvironment(fn (): string => 'production');
+
+    expect(fn () => (new HorizonServiceProvider($this->app))->boot())
+        ->toThrow(InvalidArgumentException::class, 'MAIL_MAILER');
+})->with([
+    'failover with log fallback' => ['failover', 'log'],
+    'round robin with array member' => ['roundrobin', 'array'],
+]);
 
 it('uses the agreed Redis wait threshold and worker topology', function (): void {
     expect(config('horizon.waits.redis:default'))->toBe(60)
