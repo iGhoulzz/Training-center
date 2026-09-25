@@ -33,11 +33,15 @@ database and a user both named `training_center`; create them first, or copy
 composer setup
 ```
 
-That creates `.env` from `.env.example` if it is missing, installs the PHP and
-Node dependencies, generates the application key, migrates and builds the
-frontend. It copies `.env` **before** installing, deliberately: the install
-boots the application through package discovery, and with no `.env` the
-environment falls back to `production`, where the backup guard refuses to boot.
+In that order, that creates `.env` from `.env.example` if it is missing,
+installs the PHP dependencies, generates the application key, migrates, and
+then installs the Node dependencies and builds the frontend. It copies `.env`
+**before** installing, deliberately: the install boots the application through
+package discovery, and with no `.env` the environment falls back to
+`production`, where the backup guard refuses to boot.
+
+It is a fresh-install command. Running it again regenerates `APP_KEY`, which
+invalidates existing sessions and anything else encrypted with the old key.
 
 For a local database, seed the roles and one super admin account:
 

@@ -218,6 +218,48 @@ it('creates the CI .env before anything that boots Laravel', function () {
     expect($envStep)->toBeLessThan($verify);
 });
 
+it('creates the setup script .env before anything that boots Laravel', function () {
+    /*
+     * THE SAME ORDERING BUG, IN THE OTHER PLACE A CLONE GETS INSTALLED.
+     *
+     * `composer setup` used to run `composer install` first and copy `.env`
+     * second. On a fresh clone that fails outright rather than merely warning:
+     * the install's package discovery boots Laravel, no .env means APP_ENV
+     * falls back to production, and AppServiceProvider's backup assertion
+     * throws. Nothing else catches it — no gate runs `composer setup`, so the
+     * reordered script would silently regress with every check still green.
+     */
+    $composer = json_decode(
+        (string) file_get_contents(Repo::root().'/composer.json'),
+        true,
+        flags: JSON_THROW_ON_ERROR,
+    );
+
+    $setup = $composer['scripts']['setup'] ?? null;
+
+    expect($setup)->toBeArray('composer.json no longer defines a setup script.');
+
+    $envStep = null;
+    $composerInstall = null;
+
+    foreach ($setup as $index => $step) {
+        if (str_contains($step, '.env.example') && $envStep === null) {
+            $envStep = $index;
+        }
+
+        if (str_starts_with($step, 'composer install') && $composerInstall === null) {
+            $composerInstall = $index;
+        }
+    }
+
+    expect($envStep)->not->toBeNull('The setup script no longer creates .env from .env.example.')
+        ->and($composerInstall)->not->toBeNull('The setup script no longer installs dependencies.')
+        ->and($envStep)->toBeLessThan(
+            $composerInstall,
+            'The .env step must precede composer install, which boots Laravel through package discovery.',
+        );
+});
+
 /*
 |--------------------------------------------------------------------------
 | The gate, watched failing and watched not failing
