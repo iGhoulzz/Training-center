@@ -135,11 +135,34 @@ git worktree add ../Training-center-worktrees/P1-T04 -b p1/t04-activity-log
 **Branch naming:** `p{phase}/t{number}-{slug}` — e.g. `p1/t04-activity-log`.
 **Worktree location:** `../Training-center-worktrees/{TASK-ID}` — outside the main repo, so it never appears in the project tree.
 
-Cleanup after merge:
+### Each worktree gets its own test database
+
+A linked worktree runs its suite against `training_center_test_<8 hex of its path>`, created on first run, while the main checkout keeps `training_center_test`. Nothing to configure: `tests/bootstrap.php` resolves the name and prints it.
+
+**This is what lets two agents run gates at the same time.** The suite lock is keyed on the database, so different databases no longer take turns — measured at roughly 18 seconds of genuine overlap on two worktrees rebuilding their schemas — while two runs against *one* database still queue, which is the case the lock exists for.
+
+A machine needs the grant once, from a MySQL administrator. The escaped underscores are load-bearing: a bare `_` is a wildcard in a grant, so without them this would also cover `training_center` itself.
+
+```sql
+GRANT ALL PRIVILEGES ON `training\_center\_test\_%`.* TO 'training_center'@'127.0.0.1';
+GRANT ALL PRIVILEGES ON `training\_center\_test\_%`.* TO 'training_center'@'localhost';
+FLUSH PRIVILEGES;
+```
+
+Without it the first run stops with the exact grant to paste, rather than failing somewhere inside the first test.
+
+CI and the Linux target select their own database through a real environment variable, which PHPUnit's `<env>` does not override, so neither is touched by any of this.
+
+Cleanup after merge — the database goes with the worktree, or it accumulates:
 
 ```bash
 git worktree remove ../Training-center-worktrees/P1-T04
 git branch -d p1/t04-activity-log
+```
+
+```sql
+-- The name the removed worktree printed on every run.
+DROP DATABASE `training_center_test_<its 8 hex>`;
 ```
 
 ---

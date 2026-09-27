@@ -68,11 +68,14 @@ composer verify
 ```
 
 This runs Composer validation, formatting, static analysis and the full test
-suite. The suite uses its own database, `training_center_test`, which is set in
-`phpunit.xml`. Every worktree of one clone shares a lock, so two runs from the
-same clone wait for each other rather than collide. A second clone on the same
-machine gets its own lock but the same database, so do not run two clones'
-suites at once.
+suite. The suite uses its own database: `training_center_test` in this checkout,
+which `phpunit.xml` pins, and a generated `training_center_test_<8 hex>` in each
+linked worktree, which `tests/bootstrap.php` creates and announces.
+
+The suite takes a lock on **the database it resolved**, so two runs against one
+database wait for each other while two worktrees run at the same time. See
+`docs/WORKFLOW.md` for the one MySQL grant a machine needs before a worktree can
+create its own.
 
 Enable the Git hooks once per clone:
 
