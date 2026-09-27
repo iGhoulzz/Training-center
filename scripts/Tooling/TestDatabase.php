@@ -186,17 +186,6 @@ final class TestDatabase
     }
 
     /**
-     * The connection details the creation above needs, read from `.env`.
-     *
-     * `phpunit.xml` pins the database and the driver, not the host or the
-     * credentials: those reach the application through `.env`, which Laravel has
-     * not loaded yet when the bootstrap runs. Parsed array-backed, deliberately —
-     * it answers one question and puts nothing into the environment, so it cannot
-     * change what the suite under test sees.
-     *
-     * @return array{host: string, port: string, username: string, password: string}
-     */
-    /**
      * The environment file Laravel will load.
      *
      * It reads `.env.{APP_ENV}` when that file exists and `.env` otherwise, so
