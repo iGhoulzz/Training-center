@@ -13,7 +13,10 @@ use RuntimeException;
  * A disposable name is not enough protection for a command that runs
  * migrate:fresh and writes thousands of append-only finance facts. Every caller
  * must pass all three independent checks here: never production, an exact
- * operator confirmation of the connected database, and a literal allowlist.
+ * operator confirmation of the connected database, and an allowlist — the
+ * literal list, plus one narrowly anchored pattern for the generated per-checkout
+ * test databases, which cannot be listed literally because they are named from a
+ * hash of the checkout's path.
  * T11's performance-session tooling reuses this class rather than recreating a
  * weaker version of any check.
  */
@@ -43,7 +46,26 @@ final class PerformanceDatabaseGuard
 
         $allowedDatabases = config('performance.allowed_databases');
 
-        if (! is_array($allowedDatabases) || ! in_array($connectedDatabase, $allowedDatabases, true)) {
+        $isAllowedLiteral = is_array($allowedDatabases)
+            && in_array($connectedDatabase, $allowedDatabases, true);
+
+        /*
+         * The one non-literal branch, and why it is not a loophole.
+         *
+         * A linked worktree's test database is named by Tooling\TestDatabase so
+         * that two worktrees can run at once, so its name cannot appear in the
+         * list above. The pattern in config/performance.php matches exactly what
+         * that generator produces — nothing a person would type, and nothing
+         * production-shaped. It is checked in addition to the list, never instead
+         * of it, and a null pattern turns this branch off entirely.
+         */
+        $allowedPattern = config('performance.allowed_database_pattern');
+
+        $isAllowedGeneratedName = is_string($allowedPattern)
+            && $allowedPattern !== ''
+            && preg_match($allowedPattern, $connectedDatabase) === 1;
+
+        if (! $isAllowedLiteral && ! $isAllowedGeneratedName) {
             throw new RuntimeException(
                 "Connected database [{$connectedDatabase}] is not allowlisted for performance tooling.",
             );

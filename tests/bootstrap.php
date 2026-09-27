@@ -3,12 +3,17 @@
 declare(strict_types=1);
 
 /*
- * THE SAFETY BOUNDARY FOR THE SHARED TEST DATABASE.
+ * THE SAFETY BOUNDARY FOR THE TEST DATABASE, AND WHICH DATABASE THAT IS.
  *
- * Every worktree of this repository runs against one MySQL database,
- * `training_center_test`, and every suite begins by rebuilding it. Two suites at
- * once means two `migrate:fresh` calls into one schema; the loser fails in a way
- * that reads as a real defect and has cost real time.
+ * Every suite begins by rebuilding its database. Two suites rebuilding ONE
+ * database means two `migrate:fresh` calls into one schema; the loser fails in a
+ * way that reads as a real defect and has cost real time.
+ *
+ * The boundary is therefore per database, not per machine: every checkout — the
+ * main one included — resolves `training_center_test_<hash of its path>`, and the
+ * lock is keyed on whichever database this run resolved. Two checkouts run at the
+ * same time; two runs against one database still take turns. `Tooling\TestDatabase`
+ * holds the naming rule, and why the main checkout is generated too.
  *
  * The lock is taken HERE, in the test process, rather than in a wrapper script
  * that spawns it. A wrapper cannot hold this safely on Windows: lock ownership
@@ -23,7 +28,9 @@ declare(strict_types=1);
  * not the boundary.
  */
 
+use Tooling\Repo;
 use Tooling\SerialLock;
+use Tooling\TestDatabase;
 
 require __DIR__.'/../vendor/autoload.php';
 
@@ -50,9 +57,10 @@ if ($parallel || getenv('LARAVEL_PARALLEL_TESTING') !== false) {
 
     Parallel testing is not supported in this repository.
 
-    All worktrees share one test database, and this bootstrap serialises access
-    to it. Under --parallel every worker would simply queue behind that lock, so
-    the run would be slower than a serial one while appearing to be faster.
+    Every worker of one run would resolve the same database and queue behind the
+    same lock, so a --parallel run would be slower than a serial one while
+    appearing to be faster. Separate CHECKOUTS do run in parallel, because each
+    resolves a database of its own.
 
     Run the suite without --parallel.
 
@@ -61,4 +69,100 @@ if ($parallel || getenv('LARAVEL_PARALLEL_TESTING') !== false) {
     exit(1);
 }
 
-SerialLock::acquireForProcess();
+/*
+ * Resolve the database BEFORE the lock, because the lock is keyed on it, and
+ * before Laravel boots, because the framework reads the environment once.
+ *
+ * CI and the Linux target select their database through a real environment
+ * variable and keep it; every other checkout gets a generated name. So `putenv`
+ * below runs exactly when a name was generated — never over a deliberate
+ * selection.
+ */
+$configured = getenv('DB_DATABASE');
+$configured = is_string($configured) ? $configured : '';
+
+/*
+ * Two configurations would let this process create and lock one database while
+ * Laravel connected to another, and both are caught here rather than three
+ * hundred tests later.
+ *
+ * An absent DB_DATABASE means an entry point that did not read phpunit.xml. The
+ * resolver would hand back an empty name, the lock would be keyed on nothing, and
+ * Laravel would fall back to config/database.php's `laravel` default.
+ *
+ * A DB_URL outranks DB_DATABASE inside Laravel's MySQL connection, so the suite
+ * would rebuild whatever that URL names while the lock protected the name below.
+ */
+if ($configured === '') {
+    fwrite(STDERR, "DB_DATABASE is not set, so this run has no test database to lock.\nRun the suite through phpunit.xml, or set DB_DATABASE explicitly.\n");
+
+    exit(1);
+}
+
+/*
+ * A cached configuration outranks everything decided here.
+ *
+ * `php artisan config:cache` writes the file, and a Laravel boot that finds it
+ * never calls env() again — so the connection details are whatever was cached,
+ * while the name resolved below is whatever the environment says now. The suite
+ * would then migrate one database while holding the lock for another, and the
+ * database it migrated could be `training_center` itself.
+ *
+ * The path is asked of TestDatabase rather than assumed, because `APP_CONFIG_CACHE`
+ * moves it: checking only `bootstrap/cache/config.php` would leave that
+ * configuration unguarded while looking guarded.
+ *
+ * And the override is resolved the way Laravel resolves it — process environment
+ * first, then the env FILE Laravel will load — because a value living in
+ * `.env.testing` is invisible to `getenv()` at this point, and would be honoured
+ * by Laravel a moment later.
+ *
+ * `composer verify` clears it first, which is why this has never bitten; a direct
+ * `php artisan test` or `vendor/bin/pest` does not.
+ */
+$cachedConfiguration = TestDatabase::cachedConfigPath(
+    __DIR__.'/..',
+    TestDatabase::environmentValue(__DIR__.'/..', 'APP_CONFIG_CACHE'),
+);
+
+if (file_exists($cachedConfiguration)) {
+    fwrite(STDERR, <<<TXT
+
+    A cached configuration is present, and it outranks the test environment.
+
+    {$cachedConfiguration}
+
+    The suite would connect using the cached credentials while locking the
+    database named by the environment — possibly rebuilding a database nothing
+    here protects.
+
+    Run `php artisan config:clear` and try again.
+
+    TXT);
+
+    exit(1);
+}
+
+$url = getenv('DB_URL');
+
+if (is_string($url) && $url !== '') {
+    fwrite(STDERR, "DB_URL is set, and it outranks DB_DATABASE.\nThe suite would rebuild the database in that URL while the lock protected another.\nUnset DB_URL for test runs.\n");
+
+    exit(1);
+}
+
+$database = TestDatabase::resolve($configured, TestDatabase::worktreeKey());
+
+if ($database !== $configured) {
+    putenv("DB_DATABASE={$database}");
+    $_ENV['DB_DATABASE'] = $database;
+    $_SERVER['DB_DATABASE'] = $database;
+
+    TestDatabase::ensureExists($database, TestDatabase::connectionFromEnvironment(__DIR__.'/..'));
+
+    // On stderr, not stdout: a machine-readable reporter must not be disturbed,
+    // and a run must always be able to say which database it just rebuilt.
+    fwrite(STDERR, "Test database for this checkout: {$database}\n");
+}
+
+SerialLock::acquireForProcess(SerialLock::pathFor(Repo::lockKeyForDatabase($database)));

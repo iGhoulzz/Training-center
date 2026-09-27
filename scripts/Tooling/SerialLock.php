@@ -7,11 +7,13 @@ namespace Tooling;
 use RuntimeException;
 
 /**
- * One machine-wide lock around the shared test database.
+ * One machine-wide lock around a test database.
  *
- * Every worktree of this repository runs its suite against `training_center_test`.
- * Two suites at once means two `migrate:fresh` calls into one schema, and the
- * loser fails in a way that looks like a real defect.
+ * Two suites rebuilding ONE database means two `migrate:fresh` calls into one
+ * schema, and the loser fails in a way that looks like a real defect. Which
+ * database a run owns is `Tooling\TestDatabase`'s decision — every checkout gets
+ * its own — and the caller passes the lock path for it, so two checkouts no
+ * longer queue behind each other.
  *
  * THE LOCK IS TAKEN BY THE TEST PROCESS ITSELF, from `tests/bootstrap.php`.
  *
@@ -41,19 +43,48 @@ final class SerialLock
     private static $handle = null;
 
     /**
+     * The path actually held, so callers can be told apart rather than assumed
+     * to agree. See the refusal in acquireForProcess().
+     */
+    private static ?string $heldPath = null;
+
+    /**
      * Take the lock for this process, once.
      *
      * Idempotent by design: `tests/bootstrap.php` may be included more than once
      * across PHPUnit and Pest entry points, and a second acquisition attempt must
      * be a no-op rather than a second wait.
+     *
+     * THE PATH IS REQUIRED, AND THAT IS THE POINT. It used to default to a key
+     * derived from the checkout, which quietly decided what this class protects.
+     * The database is the thing at risk, only the caller knows which one this run
+     * resolved, and a default here would be a second answer to that question —
+     * free to drift from the real one and impossible to see drifting.
      */
-    public static function acquireForProcess(?string $path = null): void
+    public static function acquireForProcess(string $path): void
     {
         if (self::$handle !== null) {
+            /*
+             * IDEMPOTENT MEANS "THE SAME LOCK AGAIN", NOT "NEVER MIND".
+             *
+             * This used to return on any second call, so asking for a DIFFERENT
+             * path silently proceeded holding the wrong lock — and the caller
+             * that does that is SeedPerformanceDatasetCommand, immediately before
+             * migrate:fresh. One process, two databases, one lock: exactly the
+             * shape this class exists to refuse. Today the command and the
+             * bootstrap agree, and that agreement is now enforced rather than
+             * assumed.
+             */
+            if (self::$heldPath !== $path) {
+                throw new RuntimeException(
+                    'This process already holds the suite lock for '.self::$heldPath
+                    .", so it cannot also take {$path}. Two databases in one process is not a "
+                    .'configuration this lock can protect.'
+                );
+            }
+
             return;
         }
-
-        $path ??= self::pathFor(Repo::lockKey());
 
         $handle = fopen($path, 'c');
 
@@ -64,6 +95,20 @@ final class SerialLock
         self::takeExclusiveLock($handle, $path);
 
         self::$handle = $handle;
+        self::$heldPath = $path;
+    }
+
+    /**
+     * Which lock this process holds, if any.
+     *
+     * Exists so a test can assert the lock matches the database in use. The
+     * obvious alternative — checking the lock FILE exists — proves nothing: the
+     * file is created on first acquisition and never removed, so a stale one from
+     * a previous run satisfies it while the process holds something else entirely.
+     */
+    public static function heldPath(): ?string
+    {
+        return self::$heldPath;
     }
 
     /**
@@ -126,6 +171,7 @@ final class SerialLock
         flock(self::$handle, LOCK_UN);
         fclose(self::$handle);
         self::$handle = null;
+        self::$heldPath = null;
     }
 
     public static function pathFor(string $key): string

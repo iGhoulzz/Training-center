@@ -7,40 +7,54 @@ use Tooling\Repo;
 use Tooling\SerialLock;
 
 /*
- * The lock key must be identical for every worktree of one repository, and
- * different for different repositories. Getting this wrong is invisible: every
- * worktree takes its own lock, every lock is granted immediately, and two
- * suites run into one database while the guard reports success.
+ * The lock key must be identical for every run against ONE database, and
+ * different for different databases. Getting this wrong is invisible in the
+ * dangerous direction: every run takes its own lock, every lock is granted
+ * immediately, and two suites rebuild one schema while the guard reports success.
  *
- * This is not hypothetical. `git rev-parse --git-common-dir` returns `.git` in
- * the main checkout and an absolute path in a linked worktree, so hashing it
- * directly produced exactly that failure. `--path-format=absolute` is the fix,
- * and these tests pin the canonicalisation that follows it.
+ * IT USED TO KEY ON THE CHECKOUT, which was wrong twice over — see
+ * Repo::lockKeyForDatabase. Two worktrees of one clone queued needlessly, and two
+ * separate clones on one machine did NOT queue while sharing
+ * `training_center_test`. The name is the thing that decides.
  */
 
-it('derives one key for the same repository spelled different ways', function () {
-    $key = SerialLock::pathFor(Repo::lockKeyFor('C:/Users/User/Desktop/Training-center/.git'));
+it('derives one key for one database, whatever ran the suite', function () {
+    expect(Repo::lockKeyForDatabase('training_center_test'))
+        ->toBe(Repo::lockKeyForDatabase('training_center_test'));
+});
 
-    expect(SerialLock::pathFor(Repo::lockKeyFor('C:\\Users\\User\\Desktop\\Training-center\\.git')))->toBe($key)
-        ->and(SerialLock::pathFor(Repo::lockKeyFor('C:/Users/User/Desktop/Training-center/.git/')))->toBe($key);
+it('gives different databases different keys', function () {
+    $shared = Repo::lockKeyForDatabase('training_center_test');
+
+    expect(Repo::lockKeyForDatabase('training_center_test_deadbeef'))->not->toBe($shared)
+        ->and(Repo::lockKeyForDatabase('training_center_ci'))->not->toBe($shared)
+        ->and(SerialLock::pathFor(Repo::lockKeyForDatabase('training_center_test_deadbeef')))
+        ->not->toBe(SerialLock::pathFor($shared));
+});
+
+/*
+ * Canonicalisation no longer feeds the lock key, but it still decides a
+ * worktree's identity, so the spellings that used to break the key are pinned
+ * where they now matter.
+ */
+it('reduces one directory spelled several ways to one worktree identity', function () {
+    $canonical = Repo::canonicalize('C:/Users/User/Desktop/Training-center');
+
+    expect(Repo::canonicalize('C:\\Users\\User\\Desktop\\Training-center'))->toBe($canonical)
+        ->and(Repo::canonicalize('C:/Users/User/Desktop/Training-center/'))->toBe($canonical);
 });
 
 it('folds case only where the filesystem does', function () {
-    $lower = Repo::lockKeyFor('c:/users/user/desktop/training-center/.git');
-    $upper = Repo::lockKeyFor('C:/Users/User/Desktop/Training-center/.git');
+    $lower = Repo::canonicalize('c:/users/user/desktop/training-center');
+    $upper = Repo::canonicalize('C:/Users/User/Desktop/Training-center');
 
     Repo::isWindows()
-        // Windows reaches one directory through many spellings; two keys there
-        // means two locks on one database.
+        // Windows reaches one directory through many spellings; two identities
+        // there would give one worktree two databases.
         ? expect($lower)->toBe($upper)
         // Linux paths differing only in case are genuinely different
-        // directories, and folding them would serialise unrelated repositories.
+        // directories, and folding them would give two worktrees one database.
         : expect($lower)->not->toBe($upper);
-});
-
-it('gives different repositories different keys', function () {
-    expect(Repo::lockKeyFor('/srv/training-center/.git'))
-        ->not->toBe(Repo::lockKeyFor('/srv/other-project/.git'));
 });
 
 it('puts the lock outside the repository', function () {
@@ -80,6 +94,31 @@ it('refuses to run when the lock cannot be taken at all', function () {
 
     expect(fn () => SerialLock::takeExclusiveLock($unlockable, '/tmp/unlockable.lock'))
         ->toThrow(RuntimeException::class, 'Refusing to run');
+});
+
+/*
+ * IDEMPOTENT MEANS "THE SAME LOCK AGAIN", NOT "NEVER MIND".
+ *
+ * acquireForProcess() returned on any second call, so asking for a DIFFERENT
+ * path proceeded holding the wrong lock. The caller that does that is
+ * SeedPerformanceDatasetCommand, immediately before migrate:fresh — one process,
+ * two databases, one lock.
+ *
+ * The suite already holds its own lock, so these exercise the second-call path
+ * exactly as production hits it.
+ */
+it('accepts a second acquire for the path it already holds', function () {
+    SerialLock::acquireForProcess((string) SerialLock::heldPath());
+})->throwsNoExceptions();
+
+it('refuses a second acquire for a different path', function () {
+    $other = SerialLock::pathFor(Repo::lockKeyForDatabase('a_database_this_process_does_not_hold'));
+
+    expect(fn () => SerialLock::acquireForProcess($other))
+        ->toThrow(RuntimeException::class, 'already holds the suite lock')
+        // The lock it holds is unchanged by the refusal; a throw that released or
+        // replaced it would be worse than the bug.
+        ->and(SerialLock::heldPath())->not->toBe($other);
 });
 
 it('returns quietly when the lock is free', function () {

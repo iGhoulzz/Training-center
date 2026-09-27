@@ -7,7 +7,9 @@ namespace App\Console\Commands;
 use App\Support\PerformanceDatabaseGuard;
 use Database\Seeders\PerformanceDatasetSeeder;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
 use RuntimeException;
+use Tooling\Repo;
 use Tooling\SerialLock;
 
 /**
@@ -52,12 +54,19 @@ final class SeedPerformanceDatasetCommand extends Command
 
         /*
          * Standalone Artisan commands do not load tests/bootstrap.php. Acquire
-         * the same repository-wide process lock here before migrate:fresh; its
-         * static handle stays alive through every migration and seed write.
-         * In-process Pest calls are idempotent because the test process already
-         * owns this exact lock.
+         * the same process lock here before migrate:fresh; its static handle stays
+         * alive through every migration and seed write. In-process Pest calls are
+         * idempotent because the test process already owns this exact lock.
+         *
+         * The lock is named after the database this command is about to rebuild,
+         * which is also how tests/bootstrap.php names it. Asking the connection
+         * rather than the environment matters: they are the same value only while
+         * nothing has repointed the connection, and the row-destroying command is
+         * the wrong place to assume that.
          */
-        SerialLock::acquireForProcess();
+        SerialLock::acquireForProcess(
+            SerialLock::pathFor(Repo::lockKeyForDatabase(DB::connection()->getDatabaseName())),
+        );
 
         $migrationExitCode = $this->call('migrate:fresh', ['--force' => true]);
 

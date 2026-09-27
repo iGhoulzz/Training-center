@@ -447,9 +447,9 @@ git config core.hooksPath .githooks
 
 No hook migrates, seeds, cleans backups, updates dependencies, commits, pushes, or touches history.
 
-### The suite serialises
+### The suite serialises per database
 
-Every worktree shares one MySQL database, so `tests/bootstrap.php` takes a machine-wide lock before any test runs. A run reporting that it is waiting is correct, not hung. `--parallel` is refused: every worker would queue behind the same lock, making a "parallel" run slower than a serial one.
+Each checkout runs against its own MySQL database — `tests/bootstrap.php` resolves the name, creates it if missing, and announces it — and takes a machine-wide lock on *that database* before any test runs. Two checkouts therefore run at the same time, while two runs against one database still take turns; a run reporting that it is waiting is correct, not hung. `--parallel` is refused: every worker of one run resolves the same database and would queue behind the same lock, making a "parallel" run slower than a serial one.
 
 The lock is taken by the **test process**, not by a wrapper. A wrapper cannot hold it safely on Windows, where lock ownership belongs to the acquiring process — killing the wrapper frees the lock while its suite is still connected. Measured, not assumed.
 

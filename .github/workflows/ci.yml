@@ -37,8 +37,11 @@ jobs:
       DB_HOST: 127.0.0.1
       DB_PORT: 3306
       # NOT training_center_test. That name belongs to the developer machine,
-      # where every worktree shares it and tests/bootstrap.php serialises access.
-      # CI gets its own database on its own server so the two can never interact.
+      # where tests/bootstrap.php generates a database per checkout from it. Set
+      # here as a real environment variable, which PHPUnit's <env> does not
+      # override and which the bootstrap treats as a deliberate selection and
+      # leaves alone. CI gets its own database on its own server, so the two can
+      # never interact.
       DB_DATABASE: training_center_ci
       DB_USERNAME: root
       DB_PASSWORD: root
@@ -143,6 +146,21 @@ jobs:
         # definition of the gate, free to drift from the one the agents and the
         # Git hooks use — which is the failure this whole task exists to remove.
         run: composer verify
+
+      - name: Confirm a checkout resolves and creates its own test database
+        # THE ONE PATH THE GATE ABOVE CANNOT REACH.
+        #
+        # CI selects DB_DATABASE deliberately, and tests/bootstrap.php leaves a
+        # deliberate selection alone — correctly, or CI would run against a
+        # database nothing provisioned. So the generate-create-rewrite path that
+        # every developer checkout depends on is exercised nowhere in CI, and a
+        # regression in it would reach main with this workflow green.
+        #
+        # `env -u` unsets the variable for this step only, so phpunit.xml's pinned
+        # value applies, the bootstrap generates a name from this checkout's path,
+        # creates that database on CI's own MySQL, and the test then asserts the
+        # application really is connected to it and holds its lock.
+        run: env -u DB_DATABASE php artisan test tests/Feature/Tooling/TestDatabaseConnectionTest.php
 
       - name: Build frontend assets
         # Always, never conditional on the diff. A detector would have to parse

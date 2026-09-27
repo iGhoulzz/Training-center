@@ -23,30 +23,29 @@ final class Repo
     }
 
     /**
-     * A key identifying the repository as a whole, shared by every worktree of it.
+     * A key identifying the thing the suite lock actually protects: the database.
      *
-     * `--path-format=absolute` IS LOAD-BEARING. Measured on this repo:
+     * IT USED TO KEY ON THE CHECKOUT, AND THAT WAS BOTH TOO BROAD AND TOO NARROW.
      *
-     *   main checkout   `git rev-parse --git-common-dir` -> `.git`
-     *   linked worktree `git rev-parse --git-common-dir` -> C:/…/Training-center/.git
+     * Too broad: every worktree of one clone shared a key, so a second worktree's
+     * suite waited on the first even though nothing forced them onto one schema.
+     * That queue is what `Tooling\TestDatabase` removes by giving each worktree its
+     * own database.
      *
-     * Hashing that raw value gives every worktree its own lock, so the guard
-     * would be satisfied while two suites ran into the same database — the exact
-     * failure it exists to prevent. With `--path-format=absolute` the main
-     * checkout and every linked worktree agree.
+     * Too narrow: two separate CLONES on one machine hashed different common
+     * directories, so they took different locks — while both ran `migrate:fresh`
+     * against `training_center_test`. The guard reported success in exactly the
+     * case it exists to prevent. Keying on the database closes that as a side
+     * effect: same name, same lock, whatever checkout it came from.
+     *
+     * The name is the whole key on purpose. Including the host would let two
+     * servers holding a same-named database run at once, which is correct in
+     * theory and unverifiable from here — `.env` names one server, and a suite
+     * pointed at another is a configuration question, not a locking one.
      */
-    public static function lockKey(): string
+    public static function lockKeyForDatabase(string $database): string
     {
-        return self::lockKeyFor(self::git(['rev-parse', '--path-format=absolute', '--git-common-dir']));
-    }
-
-    /**
-     * Split out from lockKey() so it can be tested without a second worktree:
-     * the canonicalisation is the part that has to be right.
-     */
-    public static function lockKeyFor(string $commonDir): string
-    {
-        return hash('sha256', self::canonicalize($commonDir));
+        return hash('sha256', 'database:'.$database);
     }
 
     /**

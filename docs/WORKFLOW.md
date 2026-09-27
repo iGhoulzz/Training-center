@@ -135,11 +135,36 @@ git worktree add ../Training-center-worktrees/P1-T04 -b p1/t04-activity-log
 **Branch naming:** `p{phase}/t{number}-{slug}` — e.g. `p1/t04-activity-log`.
 **Worktree location:** `../Training-center-worktrees/{TASK-ID}` — outside the main repo, so it never appears in the project tree.
 
-Cleanup after merge:
+### Every checkout gets its own test database
+
+Each checkout — the main one included — runs its suite against `training_center_test_<8 hex of its path>`, created on first run. Nothing to configure: `tests/bootstrap.php` resolves the name and prints it.
+
+**This is what lets two agents run gates at the same time.** The suite lock is keyed on the database, so different databases no longer take turns — measured at roughly 19 seconds of genuine overlap on two checkouts rebuilding their schemas — while two runs against *one* database still queue, which is the case the lock exists for.
+
+**The main checkout is generated too, and that is deliberate.** A checkout still on older code locks a key derived from its git directory, against the bare `training_center_test`. If a checkout on current code used that name it would hold a *different* lock over the same schema. Generating everywhere means no run on this code touches that name, so the two can never meet.
+
+A machine needs the grant once, from a MySQL administrator. The escaped underscores are load-bearing: a bare `_` is a wildcard in a grant, so without them this would also cover `training_center` itself.
+
+```sql
+GRANT ALL PRIVILEGES ON `training\_center\_test\_%`.* TO 'training_center'@'127.0.0.1';
+GRANT ALL PRIVILEGES ON `training\_center\_test\_%`.* TO 'training_center'@'localhost';
+FLUSH PRIVILEGES;
+```
+
+Without it the first run stops with the exact grant to paste, rather than failing somewhere inside the first test.
+
+CI and the Linux target select their own database through a real environment variable, which PHPUnit's `<env>` does not override, so neither is touched by any of this.
+
+Cleanup after merge — the database goes with the worktree, or it accumulates:
 
 ```bash
 git worktree remove ../Training-center-worktrees/P1-T04
 git branch -d p1/t04-activity-log
+```
+
+```sql
+-- The name the removed worktree printed on every run.
+DROP DATABASE `training_center_test_<its 8 hex>`;
 ```
 
 ---
@@ -173,7 +198,7 @@ git branch -d p1/t04-activity-log
 
    Enable the Git hooks once per clone: `git config core.hooksPath .githooks`.
 
-   The suite serialises across worktrees — they share one MySQL database. A run that says it is waiting is correct, not hung.
+   Each worktree runs against its own MySQL database, so two worktrees' suites run at the same time. Two runs against one database still serialise; a run that says it is waiting is correct, not hung.
 5. **Open a PR** against `main`, describing what changed, why, and how it was verified.
 6. **Cross-review.** The *other* agent reviews. See the review contract below.
 7. **Resolve.** The author addresses findings. Disagreement is legitimate — a reviewer can be wrong, and the author should say so with reasoning rather than complying reflexively.

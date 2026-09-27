@@ -358,12 +358,17 @@ condition.
 The Windows suite and the Linux suite must **never share a database**.
 
 `tests/bootstrap.php` serialises suites with a machine-wide lock, and that lock
-**does not cross the OS boundary, twice over**: its file lives in
-`sys_get_temp_dir()` (`%TEMP%` on Windows, `/tmp` in Linux), and its key hashes
-`git rev-parse --git-common-dir`, spelled differently on each side. A Windows
-run and a Linux run therefore never see each other. Pointed at one schema, they
-would `migrate:fresh` it underneath each other, and the failures would read as
+**does not cross the OS boundary**: its file lives in `sys_get_temp_dir()`,
+which is `%TEMP%` on Windows and `/tmp` in Linux. A Windows run and a Linux run
+therefore never see each other. Pointed at one schema, they would
+`migrate:fresh` it underneath each other, and the failures would read as
 flakiness for days.
+
+This used to hold *twice over*, the second reason being that the key hashed a
+git path spelled differently on each side. That reason is gone: the key now
+hashes the database NAME, so the two sides would compute the same key for one
+name and only the temp directory keeps them apart. Which makes the rule below
+load-bearing rather than belt-and-braces.
 
 Two independent measures keep them apart:
 

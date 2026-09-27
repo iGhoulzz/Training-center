@@ -75,7 +75,9 @@ composer verify
 
 That is `composer validate --strict`, then formatting and static analysis, then the full suite. `composer verify:fast` is the same without the suite, for use while working. Your Stop hook, the Git hooks and CI all reach the same definition — so a local pass and a CI failure now means something genuinely differs, not that the commands drifted.
 
-**The suite serialises across worktrees.** They share one MySQL database, so `tests/bootstrap.php` takes a machine-wide lock. A run that reports it is waiting is correct, not hung. Parallel testing is refused.
+**The suite serialises per database, not per machine.** Every checkout runs against its own — `training_center_test_<8 hex of its path>`, which `tests/bootstrap.php` resolves, creates if missing, and announces — and the lock is keyed on that database. So two worktrees run their gates at the same time, while two runs against one database still take turns: a run that reports it is waiting is correct, not hung. Parallel testing *within* one run is still refused, because its workers would all resolve the same database.
+
+A machine needs one MySQL grant before a checkout can create its database; `docs/WORKFLOW.md` has it, and a run without it stops with the exact SQL to paste.
 
 **Hooks are inert until enabled:** `git config core.hooksPath .githooks`.
 

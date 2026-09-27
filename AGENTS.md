@@ -71,7 +71,9 @@ That is `composer validate --strict`, then formatting and static analysis, then 
 
 **Do not restate these as separate commands.** The previous version of this section listed three, and one of them — `vendor/bin/phpstan analyse` — was missing `--memory-limit=1G` and had been exhausting PHP's default limit, reporting a crash rather than an analysis. A single shared definition is what stops that recurring.
 
-**The suite serialises across worktrees.** All of them share one MySQL database, so `tests/bootstrap.php` takes a machine-wide lock. If a run reports that it is waiting, another worktree is testing; that is correct behaviour, not a hang. Parallel testing is refused for the same reason.
+**The suite serialises per database, not per machine.** Every checkout runs against its own — `training_center_test_<8 hex of its path>`, which `tests/bootstrap.php` resolves, creates if missing, and announces — and the lock is keyed on that database. Your worktree and Claude's therefore run their gates at the same time instead of queueing. Two runs against *one* database still take turns: a run reporting that it is waiting means something else is using that same database, which is correct behaviour and not a hang. Parallel testing *within* one run is still refused, because its workers would all resolve the same database.
+
+A machine needs one MySQL grant before a checkout can create its database; `docs/WORKFLOW.md` has it, and a run without it stops with the exact SQL to paste. **A worktree created before this landed keeps the old lock key until it is rebased on `main`.**
 
 **Hooks are inert until you enable them:**
 
