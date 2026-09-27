@@ -9,11 +9,11 @@ declare(strict_types=1);
  * database means two `migrate:fresh` calls into one schema; the loser fails in a
  * way that reads as a real defect and has cost real time.
  *
- * The boundary is therefore per database, not per machine: the main checkout
- * keeps `training_center_test`, a linked worktree gets a name of its own, and the
- * lock is keyed on whichever database this run resolved. Two worktrees run at the
+ * The boundary is therefore per database, not per machine: every checkout — the
+ * main one included — resolves `training_center_test_<hash of its path>`, and the
+ * lock is keyed on whichever database this run resolved. Two checkouts run at the
  * same time; two runs against one database still take turns. `Tooling\TestDatabase`
- * holds the naming rule and the measurement that decided it.
+ * holds the naming rule, and why the main checkout is generated too.
  *
  * The lock is taken HERE, in the test process, rather than in a wrapper script
  * that spawns it. A wrapper cannot hold this safely on Windows: lock ownership
@@ -73,9 +73,10 @@ if ($parallel || getenv('LARAVEL_PARALLEL_TESTING') !== false) {
  * Resolve the database BEFORE the lock, because the lock is keyed on it, and
  * before Laravel boots, because the framework reads the environment once.
  *
- * Only a linked worktree changes anything here. The main checkout, CI and the
- * Linux target all keep the name they already had, so `putenv` below runs exactly
- * when a name was generated — never over a deliberate selection.
+ * CI and the Linux target select their database through a real environment
+ * variable and keep it; every other checkout gets a generated name. So `putenv`
+ * below runs exactly when a name was generated — never over a deliberate
+ * selection.
  */
 $configured = getenv('DB_DATABASE');
 $configured = is_string($configured) ? $configured : '';
@@ -101,16 +102,20 @@ if ($configured === '') {
 /*
  * A cached configuration outranks everything decided here.
  *
- * `php artisan config:cache` writes bootstrap/cache/config.php, and a Laravel
- * boot that finds it never calls env() again — so the connection details are
- * whatever was cached, while the name resolved below is whatever the environment
- * says now. The suite would then migrate one database while holding the lock for
- * another, and the database it migrated could be `training_center` itself.
+ * `php artisan config:cache` writes the file, and a Laravel boot that finds it
+ * never calls env() again — so the connection details are whatever was cached,
+ * while the name resolved below is whatever the environment says now. The suite
+ * would then migrate one database while holding the lock for another, and the
+ * database it migrated could be `training_center` itself.
+ *
+ * The path is asked of TestDatabase rather than assumed, because `APP_CONFIG_CACHE`
+ * moves it: checking only `bootstrap/cache/config.php` would leave that
+ * configuration unguarded while looking guarded.
  *
  * `composer verify` clears it first, which is why this has never bitten; a direct
  * `php artisan test` or `vendor/bin/pest` does not.
  */
-$cachedConfiguration = __DIR__.'/../bootstrap/cache/config.php';
+$cachedConfiguration = TestDatabase::cachedConfigPath(__DIR__.'/..', getenv('APP_CONFIG_CACHE'));
 
 if (file_exists($cachedConfiguration)) {
     fwrite(STDERR, <<<TXT

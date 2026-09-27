@@ -37,7 +37,8 @@ use RuntimeException;
 final class TestDatabase
 {
     /**
-     * The database `phpunit.xml` pins, and the one the main checkout keeps.
+     * The database `phpunit.xml` pins, and the stem every generated name is built
+     * from. No checkout connects to this name itself; see resolve().
      *
      * Pinned against the real file by tests/Unit/Tooling/TestDatabaseTest.php
      * rather than trusted: a copy that drifts from phpunit.xml would send every
@@ -153,6 +154,35 @@ final class TestDatabase
         if (preg_match('/^[A-Za-z0-9_]{1,64}\z/', $database) !== 1) {
             throw new RuntimeException("Refusing to use [{$database}] as a database name.");
         }
+    }
+
+    /**
+     * The config cache file Laravel will actually read, override included.
+     *
+     * A cached configuration outranks everything the bootstrap decides: a boot
+     * that finds one never calls env() again, so the suite would connect with
+     * cached credentials while locking the name the environment resolved. Checking
+     * only `bootstrap/cache/config.php` misses the case where `APP_CONFIG_CACHE`
+     * moves it somewhere else, which is a supported Laravel configuration.
+     *
+     * MIRRORS Illuminate\Foundation\Application::normalizeCachePath(), including
+     * its quirk: only a leading `/` or `\` counts as absolute, so `C:\…` is
+     * treated as relative to the project root. Reproducing the quirk is the point
+     * — this must name the file Laravel will read, not the file it ought to.
+     */
+    public static function cachedConfigPath(string $root, string|false|null $override): string
+    {
+        $root = rtrim(str_replace('\\', '/', $root), '/');
+
+        if (! is_string($override) || $override === '') {
+            return $root.'/bootstrap/cache/config.php';
+        }
+
+        if (str_starts_with($override, '/') || str_starts_with($override, '\\')) {
+            return $override;
+        }
+
+        return $root.'/'.$override;
     }
 
     /**

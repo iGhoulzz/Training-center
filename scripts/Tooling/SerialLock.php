@@ -11,9 +11,9 @@ use RuntimeException;
  *
  * Two suites rebuilding ONE database means two `migrate:fresh` calls into one
  * schema, and the loser fails in a way that looks like a real defect. Which
- * database a run owns is `Tooling\TestDatabase`'s decision — the main checkout
- * keeps `training_center_test`, a linked worktree gets its own — and the caller
- * passes the lock path for it, so two worktrees no longer queue behind each other.
+ * database a run owns is `Tooling\TestDatabase`'s decision — every checkout gets
+ * its own — and the caller passes the lock path for it, so two checkouts no
+ * longer queue behind each other.
  *
  * THE LOCK IS TAKEN BY THE TEST PROCESS ITSELF, from `tests/bootstrap.php`.
  *
