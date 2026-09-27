@@ -145,3 +145,5 @@ Schedule::command('files:sweep-pending-deletions')
 Schedule::command('receipts:reconcile-pending')
     ->everyFiveMinutes()
     ->withoutOverlapping(15);
+
+Schedule::command('horizon:snapshot')->everyFiveMinutes();
