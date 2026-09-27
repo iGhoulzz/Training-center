@@ -112,10 +112,18 @@ if ($configured === '') {
  * moves it: checking only `bootstrap/cache/config.php` would leave that
  * configuration unguarded while looking guarded.
  *
+ * And the override is resolved the way Laravel resolves it — process environment
+ * first, then the env FILE Laravel will load — because a value living in
+ * `.env.testing` is invisible to `getenv()` at this point, and would be honoured
+ * by Laravel a moment later.
+ *
  * `composer verify` clears it first, which is why this has never bitten; a direct
  * `php artisan test` or `vendor/bin/pest` does not.
  */
-$cachedConfiguration = TestDatabase::cachedConfigPath(__DIR__.'/..', getenv('APP_CONFIG_CACHE'));
+$cachedConfiguration = TestDatabase::cachedConfigPath(
+    __DIR__.'/..',
+    TestDatabase::environmentValue(__DIR__.'/..', 'APP_CONFIG_CACHE'),
+);
 
 if (file_exists($cachedConfiguration)) {
     fwrite(STDERR, <<<TXT

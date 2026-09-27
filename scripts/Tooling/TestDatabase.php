@@ -196,38 +196,66 @@ final class TestDatabase
      *
      * @return array{host: string, port: string, username: string, password: string}
      */
-    public static function connectionFromEnvironment(string $root): array
+    /**
+     * The environment file Laravel will load.
+     *
+     * It reads `.env.{APP_ENV}` when that file exists and `.env` otherwise, so
+     * anything decided from `.env` alone can be decided from the wrong file.
+     */
+    public static function environmentFile(string $root): string
     {
-        /*
-         * THE SAME FILE LARAVEL WILL READ, NOT JUST `.env`.
-         *
-         * Laravel loads `.env.{APP_ENV}` when that file exists, and APP_ENV is
-         * `testing` here. Reading only `.env` would let this create a database on
-         * one server while the suite connected to another — the failure is a
-         * green creation followed by tests against something else entirely, which
-         * is why TestDatabaseConnectionTest asks the server `select database()`
-         * rather than trusting configuration.
-         */
         $environment = getenv('APP_ENV');
-        $file = '.env';
 
         if (is_string($environment) && $environment !== '' && file_exists($root.'/.env.'.$environment)) {
-            $file = '.env.'.$environment;
+            return '.env.'.$environment;
         }
 
-        $values = Dotenv::createArrayBacked($root, $file)->safeLoad();
+        return '.env';
+    }
 
-        $read = static function (string $key, string $default) use ($values): string {
-            $fromProcess = getenv($key);
+    /**
+     * One environment value, resolved the way Laravel resolves it.
+     *
+     * A real environment variable wins, because Laravel's repository is immutable
+     * and will not overwrite one. Otherwise the value comes from the file above.
+     *
+     * READING ONLY getenv() IS WHAT MAKES A GUARD LOOK CLOSED WHILE IT IS OPEN:
+     * a key set in `.env.testing` is invisible to this process until Laravel
+     * loads that file, which happens after the bootstrap has already decided.
+     * APP_CONFIG_CACHE is exactly such a key, and a cached configuration
+     * outranks every decision made here.
+     *
+     * Parsed array-backed, deliberately: it answers a question and puts nothing
+     * into the environment, so it cannot change what the suite under test sees.
+     */
+    public static function environmentValue(string $root, string $key): ?string
+    {
+        $fromProcess = getenv($key);
 
-            if (is_string($fromProcess) && $fromProcess !== '') {
-                return $fromProcess;
-            }
+        if (is_string($fromProcess) && $fromProcess !== '') {
+            return $fromProcess;
+        }
 
-            $fromFile = $values[$key] ?? null;
+        $values = Dotenv::createArrayBacked($root, self::environmentFile($root))->safeLoad();
+        $fromFile = $values[$key] ?? null;
 
-            return is_string($fromFile) && $fromFile !== '' ? $fromFile : $default;
-        };
+        return is_string($fromFile) && $fromFile !== '' ? $fromFile : null;
+    }
+
+    /**
+     * The connection details the creation above needs.
+     *
+     * Read from the same file Laravel will read: creating a database on one
+     * server while the suite connects to another is a green creation followed by
+     * tests against something else entirely, which is why
+     * TestDatabaseConnectionTest asks the server `select database()` rather than
+     * trusting configuration.
+     *
+     * @return array{host: string, port: string, username: string, password: string}
+     */
+    public static function connectionFromEnvironment(string $root): array
+    {
+        $read = static fn (string $key, string $default): string => self::environmentValue($root, $key) ?? $default;
 
         return [
             'host' => $read('DB_HOST', '127.0.0.1'),

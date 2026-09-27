@@ -100,6 +100,45 @@ it('refuses to run when a cached configuration would outrank the environment', f
     }
 });
 
+it('refuses to run when the cache path comes from the env file rather than the environment', function () {
+    /*
+     * THE ENTRY PATH getenv() CANNOT SEE.
+     *
+     * Laravel resolves APP_CONFIG_CACHE through its env repository, which holds
+     * the contents of the env file it loads — so a value written there is honoured
+     * by Laravel while being invisible to getenv() at bootstrap time. A guard that
+     * reads only the process environment is open on exactly this path and looks
+     * closed.
+     *
+     * The child is given its own APP_ENV so it loads a file of this test's making
+     * rather than `.env.testing`, which belongs to whoever is running the suite.
+     */
+    $suffix = bin2hex(random_bytes(6));
+    $relative = 'storage/framework/testing/config-cache-'.$suffix.'.php';
+    $cache = Repo::root().'/'.$relative;
+    $environmentName = 'probe'.$suffix;
+    $environmentFile = Repo::root().'/.env.'.$environmentName;
+
+    if (! is_dir(dirname($cache))) {
+        mkdir(dirname($cache), recursive: true);
+    }
+
+    file_put_contents($cache, '<?php return [];');
+    file_put_contents($environmentFile, "APP_CONFIG_CACHE={$relative}\n");
+
+    try {
+        // APP_CONFIG_CACHE is deliberately NOT passed here; the only place it
+        // exists is the file above.
+        $result = runBootstrapWith(['APP_ENV' => $environmentName]);
+
+        expect($result['status'])->not->toBe(0)
+            ->and($result['output'])->toContain('A cached configuration is present');
+    } finally {
+        @unlink($cache);
+        @unlink($environmentFile);
+    }
+});
+
 it('refuses to run when DB_URL would outrank the resolved database', function () {
     $result = runBootstrapWith(['DB_URL' => 'mysql://root@127.0.0.1:3306/some_other_database']);
 
