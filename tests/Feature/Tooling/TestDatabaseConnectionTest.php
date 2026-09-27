@@ -22,7 +22,21 @@ use Tooling\TestDatabase;
 */
 
 it('is connected to the database the bootstrap resolved', function () {
-    expect(DB::connection()->getDatabaseName())->toBe(getenv('DB_DATABASE'));
+    /*
+     * ASKED OF THE SERVER, NOT OF THE CONFIGURATION.
+     *
+     * `getDatabaseName()` returns what config says, which is the same value this
+     * would compare it against — two readings of one variable agreeing with each
+     * other. It cannot catch the case that matters: the bootstrap creating a
+     * database on one server while Laravel connects to another, which is possible
+     * because the two read their credentials from different places.
+     *
+     * `select database()` is answered by the connection itself.
+     */
+    $live = DB::selectOne('select database() as name');
+
+    expect($live?->name)->toBe(getenv('DB_DATABASE'))
+        ->and($live?->name)->toBe(DB::connection()->getDatabaseName());
 });
 
 it('holds the lock belonging to that database', function () {

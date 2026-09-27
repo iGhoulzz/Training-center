@@ -66,6 +66,12 @@ const READ_ONLY_FEATURE_TESTS = [
     'Staff/ActionBoundaryArchTest.php',
     'Staff/FileLifecycleConfigurationTest.php',
     'Tooling/ProductionDefaultsTest.php',
+    // Asserts which database this run resolved, holds the lock for, and is
+    // connected to. It opens a connection and asks it one read-only question;
+    // it creates no model, writes no row, and runs no migration. Reviewed onto
+    // this list rather than given RefreshDatabase, which would have it rebuild a
+    // schema to prove it was talking to the right one.
+    'Tooling/TestDatabaseConnectionTest.php',
 ];
 
 /**

@@ -98,6 +98,38 @@ if ($configured === '') {
     exit(1);
 }
 
+/*
+ * A cached configuration outranks everything decided here.
+ *
+ * `php artisan config:cache` writes bootstrap/cache/config.php, and a Laravel
+ * boot that finds it never calls env() again — so the connection details are
+ * whatever was cached, while the name resolved below is whatever the environment
+ * says now. The suite would then migrate one database while holding the lock for
+ * another, and the database it migrated could be `training_center` itself.
+ *
+ * `composer verify` clears it first, which is why this has never bitten; a direct
+ * `php artisan test` or `vendor/bin/pest` does not.
+ */
+$cachedConfiguration = __DIR__.'/../bootstrap/cache/config.php';
+
+if (file_exists($cachedConfiguration)) {
+    fwrite(STDERR, <<<TXT
+
+    A cached configuration is present, and it outranks the test environment.
+
+    {$cachedConfiguration}
+
+    The suite would connect using the cached credentials while locking the
+    database named by the environment — possibly rebuilding a database nothing
+    here protects.
+
+    Run `php artisan config:clear` and try again.
+
+    TXT);
+
+    exit(1);
+}
+
 $url = getenv('DB_URL');
 
 if (is_string($url) && $url !== '') {

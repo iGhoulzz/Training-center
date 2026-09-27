@@ -68,9 +68,9 @@ composer verify
 ```
 
 This runs Composer validation, formatting, static analysis and the full test
-suite. The suite uses its own database: `training_center_test` in this checkout,
-which `phpunit.xml` pins, and a generated `training_center_test_<8 hex>` in each
-linked worktree, which `tests/bootstrap.php` creates and announces.
+suite. **Every checkout runs against its own database**, named
+`training_center_test_<8 hex of its path>` from the value `phpunit.xml` pins.
+`tests/bootstrap.php` resolves it, creates it if missing, and announces it.
 
 The suite takes a lock on **the database it resolved**, so two runs against one
 database wait for each other while two worktrees run at the same time. See

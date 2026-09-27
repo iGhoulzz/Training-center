@@ -168,7 +168,24 @@ final class TestDatabase
      */
     public static function connectionFromEnvironment(string $root): array
     {
-        $values = Dotenv::createArrayBacked($root)->safeLoad();
+        /*
+         * THE SAME FILE LARAVEL WILL READ, NOT JUST `.env`.
+         *
+         * Laravel loads `.env.{APP_ENV}` when that file exists, and APP_ENV is
+         * `testing` here. Reading only `.env` would let this create a database on
+         * one server while the suite connected to another — the failure is a
+         * green creation followed by tests against something else entirely, which
+         * is why TestDatabaseConnectionTest asks the server `select database()`
+         * rather than trusting configuration.
+         */
+        $environment = getenv('APP_ENV');
+        $file = '.env';
+
+        if (is_string($environment) && $environment !== '' && file_exists($root.'/.env.'.$environment)) {
+            $file = '.env.'.$environment;
+        }
+
+        $values = Dotenv::createArrayBacked($root, $file)->safeLoad();
 
         $read = static function (string $key, string $default) use ($values): string {
             $fromProcess = getenv($key);

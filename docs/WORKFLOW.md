@@ -135,11 +135,13 @@ git worktree add ../Training-center-worktrees/P1-T04 -b p1/t04-activity-log
 **Branch naming:** `p{phase}/t{number}-{slug}` — e.g. `p1/t04-activity-log`.
 **Worktree location:** `../Training-center-worktrees/{TASK-ID}` — outside the main repo, so it never appears in the project tree.
 
-### Each worktree gets its own test database
+### Every checkout gets its own test database
 
-A linked worktree runs its suite against `training_center_test_<8 hex of its path>`, created on first run, while the main checkout keeps `training_center_test`. Nothing to configure: `tests/bootstrap.php` resolves the name and prints it.
+Each checkout — the main one included — runs its suite against `training_center_test_<8 hex of its path>`, created on first run. Nothing to configure: `tests/bootstrap.php` resolves the name and prints it.
 
-**This is what lets two agents run gates at the same time.** The suite lock is keyed on the database, so different databases no longer take turns — measured at roughly 18 seconds of genuine overlap on two worktrees rebuilding their schemas — while two runs against *one* database still queue, which is the case the lock exists for.
+**This is what lets two agents run gates at the same time.** The suite lock is keyed on the database, so different databases no longer take turns — measured at roughly 19 seconds of genuine overlap on two checkouts rebuilding their schemas — while two runs against *one* database still queue, which is the case the lock exists for.
+
+**The main checkout is generated too, and that is deliberate.** A checkout still on older code locks a key derived from its git directory, against the bare `training_center_test`. If a checkout on current code used that name it would hold a *different* lock over the same schema. Generating everywhere means no run on this code touches that name, so the two can never meet.
 
 A machine needs the grant once, from a MySQL administrator. The escaped underscores are load-bearing: a bare `_` is a wildcard in a grant, so without them this would also cover `training_center` itself.
 

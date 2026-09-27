@@ -96,6 +96,31 @@ it('refuses to run when the lock cannot be taken at all', function () {
         ->toThrow(RuntimeException::class, 'Refusing to run');
 });
 
+/*
+ * IDEMPOTENT MEANS "THE SAME LOCK AGAIN", NOT "NEVER MIND".
+ *
+ * acquireForProcess() returned on any second call, so asking for a DIFFERENT
+ * path proceeded holding the wrong lock. The caller that does that is
+ * SeedPerformanceDatasetCommand, immediately before migrate:fresh — one process,
+ * two databases, one lock.
+ *
+ * The suite already holds its own lock, so these exercise the second-call path
+ * exactly as production hits it.
+ */
+it('accepts a second acquire for the path it already holds', function () {
+    SerialLock::acquireForProcess((string) SerialLock::heldPath());
+})->throwsNoExceptions();
+
+it('refuses a second acquire for a different path', function () {
+    $other = SerialLock::pathFor(Repo::lockKeyForDatabase('a_database_this_process_does_not_hold'));
+
+    expect(fn () => SerialLock::acquireForProcess($other))
+        ->toThrow(RuntimeException::class, 'already holds the suite lock')
+        // The lock it holds is unchanged by the refusal; a throw that released or
+        // replaced it would be worse than the bug.
+        ->and(SerialLock::heldPath())->not->toBe($other);
+});
+
 it('returns quietly when the lock is free', function () {
     $path = sys_get_temp_dir().'/lock-free-'.bin2hex(random_bytes(6)).'.lock';
     $handle = fopen($path, 'c');
