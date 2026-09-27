@@ -46,14 +46,18 @@ final class SerialLock
      * Idempotent by design: `tests/bootstrap.php` may be included more than once
      * across PHPUnit and Pest entry points, and a second acquisition attempt must
      * be a no-op rather than a second wait.
+     *
+     * THE PATH IS REQUIRED, AND THAT IS THE POINT. It used to default to a key
+     * derived from the checkout, which quietly decided what this class protects.
+     * The database is the thing at risk, only the caller knows which one this run
+     * resolved, and a default here would be a second answer to that question —
+     * free to drift from the real one and impossible to see drifting.
      */
-    public static function acquireForProcess(?string $path = null): void
+    public static function acquireForProcess(string $path): void
     {
         if (self::$handle !== null) {
             return;
         }
-
-        $path ??= self::pathFor(Repo::lockKey());
 
         $handle = fopen($path, 'c');
 

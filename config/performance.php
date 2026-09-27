@@ -25,4 +25,24 @@ return [
         'training_center_linux',
         'training_center_performance',
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Per-worktree test databases
+    |--------------------------------------------------------------------------
+    |
+    | A linked worktree runs against a database whose name is GENERATED, so that
+    | two worktrees' suites no longer queue behind one schema — see
+    | Tooling\TestDatabase and tests/bootstrap.php. Generated names cannot be
+    | listed literally, which is why this one exception to the rule above exists.
+    |
+    | IT IS AS NARROW AS THE GENERATOR: the shared test name, one underscore, and
+    | exactly eight lowercase hex characters. It cannot match `training_center`,
+    | any production-shaped name, or a name a person would pick by hand. Widening
+    | it is the same decision as adding a literal above, and wants the same review.
+    |
+    | Null disables the exception, which is how a test can prove the literal
+    | allowlist still refuses on its own.
+    */
+    'allowed_database_pattern' => '/^training_center_test_[0-9a-f]{8}$/',
 ];

@@ -94,7 +94,16 @@ it('refuses a confirmation that does not exactly name the connected database bef
 it('refuses a connected database absent from the allowlist before reset', function () {
     insertPerformanceResetSentinel();
 
-    config(['performance.allowed_databases' => ['some-other-disposable-database']]);
+    /*
+     * The generated-name pattern is switched off here deliberately. In a linked
+     * worktree the connected database IS a generated name, so leaving the pattern
+     * in place would let this case through it, and the test would stop saying
+     * anything about the literal list it exists to pin.
+     */
+    config([
+        'performance.allowed_databases' => ['some-other-disposable-database'],
+        'performance.allowed_database_pattern' => null,
+    ]);
 
     $this->artisan('seed:performance-dataset', [
         '--profile' => 'small',
@@ -102,6 +111,34 @@ it('refuses a connected database absent from the allowlist before reset', functi
     ])->assertFailed();
 
     expectPerformanceResetWasNotAttempted();
+});
+
+it('refuses a database the generated-name pattern does not produce', function (string $database) {
+    /*
+     * The pattern is the one non-literal branch in the guard, so what it must NOT
+     * match is the part worth pinning. Each of these is a name somebody could
+     * plausibly end up connected to, and none of them is a generated worktree
+     * database.
+     */
+    expect(preg_match((string) config('performance.allowed_database_pattern'), $database))->toBe(0);
+})->with([
+    'production' => ['training_center'],
+    'a person-picked suffix' => ['training_center_test_mine'],
+    'the wrong suffix length' => ['training_center_test_deadbee'],
+    'non-hex characters' => ['training_center_test_deadbeeg'],
+    'a prefixed impostor' => ['nottraining_center_test_deadbeef'],
+    'a suffixed impostor' => ['training_center_test_deadbeef_live'],
+]);
+
+it('accepts the generated name this worktree would use', function () {
+    /*
+     * The complement of the case above, and it must not derive its expectation
+     * from the same place the guard reads: the name is built here from the shape
+     * the generator promises, then matched against the shipped pattern.
+     */
+    $generated = 'training_center_test_'.substr(hash('sha256', 'any-worktree-path'), 0, 8);
+
+    expect(preg_match((string) config('performance.allowed_database_pattern'), $generated))->toBe(1);
 });
 
 it('refuses a missing or unknown profile before reset', function (?string $profile) {
