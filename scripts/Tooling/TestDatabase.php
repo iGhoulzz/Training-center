@@ -56,8 +56,23 @@ final class TestDatabase
      *
      * Pure, and injected with everything it depends on, so the decision can be
      * tested without a second worktree, a second machine, or a database.
+     *
+     * EVERY CHECKOUT GETS A GENERATED NAME, INCLUDING THE MAIN ONE, AND THAT IS
+     * A DELIBERATE REVERSAL.
+     *
+     * The first version kept `training_center_test` in the main checkout because
+     * every document names it. Review found what that costs: while a worktree
+     * somewhere still runs the OLD code, it locks a key derived from the git
+     * directory, and a main-checkout run on the new code locks a key derived from
+     * the name — two different locks against one schema, silent, and in the free
+     * direction. Measured on this machine: `bb3c1d0c…` against `8f576955…`.
+     *
+     * Generating everywhere removes the overlap instead of documenting it. No run
+     * on this code ever connects to the bare shared name, so an un-rebased
+     * worktree can only collide with another un-rebased worktree — on the old key,
+     * which still serialises them correctly.
      */
-    public static function resolve(string $configured, bool $isLinkedWorktree, string $worktreeKey): string
+    public static function resolve(string $configured, string $worktreeKey): string
     {
         // A value other than the shared literal was chosen on purpose, by CI, by
         // the Linux target, or by an operator naming a load database. Not ours to
@@ -66,30 +81,7 @@ final class TestDatabase
             return $configured;
         }
 
-        // The main checkout keeps the documented name. Everything written about
-        // this project's suite — the spec, the README, the runbook — names it,
-        // and there is no second suite inside one checkout to conflict with.
-        if (! $isLinkedWorktree) {
-            return $configured;
-        }
-
         return self::SHARED.'_'.substr($worktreeKey, 0, self::SUFFIX_LENGTH);
-    }
-
-    /**
-     * Is this a linked worktree rather than the main checkout?
-     *
-     * `--git-dir` and `--git-common-dir` are the same directory in the main
-     * checkout and differ in a linked worktree, which is exactly the distinction
-     * the naming rule needs. Both are canonicalised, because Windows spells one
-     * directory several ways.
-     */
-    public static function isLinkedWorktree(): bool
-    {
-        $gitDir = Repo::canonicalize(Repo::git(['rev-parse', '--path-format=absolute', '--git-dir']));
-        $commonDir = Repo::canonicalize(Repo::git(['rev-parse', '--path-format=absolute', '--git-common-dir']));
-
-        return $gitDir !== $commonDir;
     }
 
     /**
@@ -154,7 +146,11 @@ final class TestDatabase
      */
     public static function assertSafeIdentifier(string $database): void
     {
-        if (preg_match('/^[A-Za-z0-9_]{1,64}$/', $database) !== 1) {
+        // \z, not $: PCRE's $ also matches before a trailing newline, so "name\n"
+        // would pass this and reach CREATE DATABASE `name\n`. Nothing here can
+        // introduce a backtick, but this method is what makes the interpolation
+        // defensible, and "mostly anchored" is not a defence.
+        if (preg_match('/^[A-Za-z0-9_]{1,64}\z/', $database) !== 1) {
             throw new RuntimeException("Refusing to use [{$database}] as a database name.");
         }
     }

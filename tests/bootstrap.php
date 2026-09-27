@@ -57,9 +57,10 @@ if ($parallel || getenv('LARAVEL_PARALLEL_TESTING') !== false) {
 
     Parallel testing is not supported in this repository.
 
-    All worktrees share one test database, and this bootstrap serialises access
-    to it. Under --parallel every worker would simply queue behind that lock, so
-    the run would be slower than a serial one while appearing to be faster.
+    Every worker of one run would resolve the same database and queue behind the
+    same lock, so a --parallel run would be slower than a serial one while
+    appearing to be faster. Separate CHECKOUTS do run in parallel, because each
+    resolves a database of its own.
 
     Run the suite without --parallel.
 
@@ -79,11 +80,33 @@ if ($parallel || getenv('LARAVEL_PARALLEL_TESTING') !== false) {
 $configured = getenv('DB_DATABASE');
 $configured = is_string($configured) ? $configured : '';
 
-$database = TestDatabase::resolve(
-    $configured,
-    TestDatabase::isLinkedWorktree(),
-    TestDatabase::worktreeKey(),
-);
+/*
+ * Two configurations would let this process create and lock one database while
+ * Laravel connected to another, and both are caught here rather than three
+ * hundred tests later.
+ *
+ * An absent DB_DATABASE means an entry point that did not read phpunit.xml. The
+ * resolver would hand back an empty name, the lock would be keyed on nothing, and
+ * Laravel would fall back to config/database.php's `laravel` default.
+ *
+ * A DB_URL outranks DB_DATABASE inside Laravel's MySQL connection, so the suite
+ * would rebuild whatever that URL names while the lock protected the name below.
+ */
+if ($configured === '') {
+    fwrite(STDERR, "DB_DATABASE is not set, so this run has no test database to lock.\nRun the suite through phpunit.xml, or set DB_DATABASE explicitly.\n");
+
+    exit(1);
+}
+
+$url = getenv('DB_URL');
+
+if (is_string($url) && $url !== '') {
+    fwrite(STDERR, "DB_URL is set, and it outranks DB_DATABASE.\nThe suite would rebuild the database in that URL while the lock protected another.\nUnset DB_URL for test runs.\n");
+
+    exit(1);
+}
+
+$database = TestDatabase::resolve($configured, TestDatabase::worktreeKey());
 
 if ($database !== $configured) {
     putenv("DB_DATABASE={$database}");
@@ -92,10 +115,9 @@ if ($database !== $configured) {
 
     TestDatabase::ensureExists($database, TestDatabase::connectionFromEnvironment(__DIR__.'/..'));
 
-    // On stderr, and only when the name is not the documented one: a run against
-    // an unexpected database must say so, and a machine-readable reporter on
-    // stdout must not be disturbed by it.
-    fwrite(STDERR, "Test database for this worktree: {$database}\n");
+    // On stderr, not stdout: a machine-readable reporter must not be disturbed,
+    // and a run must always be able to say which database it just rebuilt.
+    fwrite(STDERR, "Test database for this checkout: {$database}\n");
 }
 
 SerialLock::acquireForProcess(SerialLock::pathFor(Repo::lockKeyForDatabase($database)));

@@ -27,35 +27,35 @@ it('is connected to the database the bootstrap resolved', function () {
 
 it('holds the lock belonging to that database', function () {
     /*
-     * Derived from the connection rather than from the environment, so a
-     * mismatch between the two cannot pass: this asserts the lock file the
-     * running process holds is the one named by the database it is talking to.
+     * ASSERTED AGAINST THE PATH ACTUALLY HELD, NOT AGAINST A FILE EXISTING.
+     *
+     * The first version of this test checked file_exists() on the expected path,
+     * which cannot fail: lock files are created on first use and never deleted,
+     * so one from any earlier run satisfies it while this process holds something
+     * else entirely. Review caught it, and a retired key's file from six days
+     * earlier was still sitting in the temp directory as proof.
+     *
+     * The expectation is built from the live CONNECTION, so a bootstrap that
+     * resolved one database and locked another fails here.
      */
     $expected = SerialLock::pathFor(Repo::lockKeyForDatabase(DB::connection()->getDatabaseName()));
 
     expect(SerialLock::isHeld())->toBeTrue()
-        ->and(file_exists($expected))->toBeTrue(
-            "The suite holds a lock, but not the one for [{$expected}].",
-        );
+        ->and(SerialLock::heldPath())->toBe($expected);
 });
 
-it('runs a linked worktree against its own database, and the main checkout against the shared one', function () {
+it('never runs a checkout against the bare shared database', function () {
     /*
-     * Whichever side this suite is on, the other must be untrue. Asserted as a
-     * biconditional rather than as one case, because a rule that returned the
-     * generated name everywhere would satisfy a single-sided test while breaking
-     * CI and the Linux target.
+     * The transition hazard, asserted where it would actually bite. While any
+     * worktree still runs the pre-change code, it locks a key derived from the
+     * git directory against `training_center_test`. A checkout on this code that
+     * connected to that same name would hold a different lock over one schema.
+     *
+     * This asserts the connection, not the rule, so it fails if resolution is
+     * correct but never reaches Laravel.
      */
-    $database = DB::connection()->getDatabaseName();
-
-    TestDatabase::isLinkedWorktree()
-        ? expect($database)->not->toBe(TestDatabase::SHARED)
-        : expect($database)->toBe(TestDatabase::SHARED);
+    expect(DB::connection()->getDatabaseName())->not->toBe(TestDatabase::SHARED);
 })->skip(
-    fn (): bool => ! in_array(
-        getenv('DB_DATABASE'),
-        [TestDatabase::SHARED, TestDatabase::SHARED.'_'.substr(TestDatabase::worktreeKey(), 0, 8)],
-        true,
-    ),
+    fn (): bool => getenv('DB_DATABASE') !== TestDatabase::SHARED.'_'.substr(TestDatabase::worktreeKey(), 0, 8),
     'CI and the Linux target select their own database, which this rule leaves alone.',
 );

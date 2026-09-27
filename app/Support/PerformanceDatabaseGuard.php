@@ -13,7 +13,10 @@ use RuntimeException;
  * A disposable name is not enough protection for a command that runs
  * migrate:fresh and writes thousands of append-only finance facts. Every caller
  * must pass all three independent checks here: never production, an exact
- * operator confirmation of the connected database, and a literal allowlist.
+ * operator confirmation of the connected database, and an allowlist — the
+ * literal list, plus one narrowly anchored pattern for the generated per-checkout
+ * test databases, which cannot be listed literally because they are named from a
+ * hash of the checkout's path.
  * T11's performance-session tooling reuses this class rather than recreating a
  * weaker version of any check.
  */

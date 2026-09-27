@@ -20,9 +20,11 @@
 #
 # GIT IS NOT OPTIONAL
 # -------------------
-# tests/bootstrap.php serialises suites with a lock whose key comes from
-# `git rev-parse --path-format=absolute --git-common-dir` (scripts/Tooling/Repo.php).
-# Without git installed, every test run here dies before the first test.
+# tests/bootstrap.php names each checkout's test database from `git rev-parse
+# --show-toplevel` (Tooling\TestDatabase, via Tooling\Repo), before anything else
+# runs. Without git installed, every test run here dies before the first test.
+# The container sets DB_DATABASE itself, so that name is left alone — but the
+# lookup still runs, and still needs git.
 FROM php:8.4-cli
 
 # Build inputs for the PHP extensions below, plus git and unzip for Composer.

@@ -196,7 +196,7 @@ DROP DATABASE `training_center_test_<its 8 hex>`;
 
    Enable the Git hooks once per clone: `git config core.hooksPath .githooks`.
 
-   The suite serialises across worktrees — they share one MySQL database. A run that says it is waiting is correct, not hung.
+   Each worktree runs against its own MySQL database, so two worktrees' suites run at the same time. Two runs against one database still serialise; a run that says it is waiting is correct, not hung.
 5. **Open a PR** against `main`, describing what changed, why, and how it was verified.
 6. **Cross-review.** The *other* agent reviews. See the review contract below.
 7. **Resolve.** The author addresses findings. Disagreement is legitimate — a reviewer can be wrong, and the author should say so with reasoning rather than complying reflexively.
