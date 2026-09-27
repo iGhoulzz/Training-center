@@ -1,4 +1,5 @@
 import http from 'k6/http';
+import { sleep } from 'k6';
 import { headers, recordFlow, selectedSession } from './student-search.js';
 
 export const options = { vus: 20, duration: '5m' };
@@ -25,5 +26,6 @@ export default function () {
     if (!succeeded) throw new Error(`Receipt download returned ${response.status}`);
   } finally {
     recordFlow(start, succeeded);
+    sleep(25);
   }
 }

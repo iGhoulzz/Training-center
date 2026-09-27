@@ -2,12 +2,25 @@
 
 declare(strict_types=1);
 
+use App\Domain\Enrollment\Models\Batch;
+use App\Domain\Enrollment\Models\Course;
+use App\Domain\Enrollment\Models\Enrollment;
+use App\Domain\Enrollment\Models\Student;
+use App\Domain\Finance\Filament\Pages\Reports\OutstandingAgedReportPage;
+use App\Domain\Finance\Filament\Pages\Reports\PaymentMethodReportPage;
+use App\Domain\Finance\Filament\Pages\Reports\RevenueReportPage;
+use App\Domain\Finance\Filament\Pages\Reports\StudentPaymentHistoryPage;
+use App\Domain\Finance\Models\Charge;
+use App\Domain\Finance\Models\Payment;
+use App\Domain\Finance\Models\PaymentAllocation;
+use App\Domain\Finance\Models\PaymentTender;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Cookie\CookieValuePrefix;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Testing\PendingCommand;
 use Livewire\Mechanisms\HandleRequests\HandleRequests;
 
@@ -53,6 +66,20 @@ function mintLoadSessions(User $user, string $path, ?string $database = null): P
     ]);
 }
 
+function loadComponentSnapshot(string $html, string $component): ?string
+{
+    preg_match_all('/wire:snapshot="([^"]*)"/', $html, $matches);
+
+    foreach ($matches[1] as $raw) {
+        $candidate = html_entity_decode($raw, ENT_QUOTES);
+        if ((json_decode($candidate, true)['memo']['name'] ?? null) === $component) {
+            return $candidate;
+        }
+    }
+
+    return null;
+}
+
 it('mints distinct authenticated database sessions with encrypted cookies and matching CSRF tokens', function (): void {
     $user = eligibleLoadUser();
     mintLoadSessions($user, $this->manifest)->assertSuccessful();
@@ -91,6 +118,8 @@ it('mints distinct authenticated database sessions with encrypted cookies and ma
 
 it('authenticates a real staff panel request using a minted cookie', function (): void {
     $user = eligibleLoadUser();
+    Student::factory()->create(['student_code' => 'PERF-000100']);
+    Student::factory()->create(['student_code' => 'OTHER-001']);
     mintLoadSessions($user, $this->manifest)->assertSuccessful();
     $manifest = json_decode(file_get_contents($this->manifest), true, flags: JSON_THROW_ON_ERROR);
     app('auth')->forgetGuards();
@@ -102,25 +131,97 @@ it('authenticates a real staff panel request using a minted cookie', function ()
     expect(auth('web')->user()?->getKey())->toBe($user->getKey());
     $response->assertSuccessful();
 
-    preg_match_all('/wire:snapshot="([^"]*)"/', (string) $response->getContent(), $matches);
-    $snapshot = null;
-    foreach ($matches[1] as $raw) {
-        $candidate = html_entity_decode($raw, ENT_QUOTES);
-        if ((json_decode($candidate, true)['memo']['name'] ?? null) === 'App\\Domain\\Enrollment\\Filament\\Resources\\StudentResource\\Pages\\ListStudents') {
-            $snapshot = $candidate;
-            break;
-        }
-    }
+    $snapshot = loadComponentSnapshot((string) $response->getContent(), 'App\\Domain\\Enrollment\\Filament\\Resources\\StudentResource\\Pages\\ListStudents');
     expect($snapshot)->not->toBeNull();
 
-    $this->withHeaders(['X-Livewire' => 'true', 'X-CSRF-TOKEN' => $manifest['sessions'][0]['csrf']])
+    $searchResponse = $this->withHeaders(['X-Livewire' => 'true', 'X-CSRF-TOKEN' => $manifest['sessions'][0]['csrf']])
         ->postJson(app(HandleRequests::class)->getUpdateUri(), [
             'components' => [[
                 'snapshot' => $snapshot,
-                'updates' => ['tableSearch' => 'PERF'],
+                'updates' => ['tableSearch' => 'PERF-000100'],
                 'calls' => [],
             ]],
         ])->assertSuccessful();
+
+    $searchHtml = $searchResponse->json('components.0.effects.html');
+    $searchSnapshot = json_decode($searchResponse->json('components.0.snapshot'), true);
+    expect($searchHtml)->toContain('PERF-000100')
+        ->not->toContain('OTHER-001')
+        ->and($searchSnapshot['data']['tableSearch'])->toBe('PERF-000100');
+});
+
+it('renders applied report filters and fixture-backed rows through real Livewire updates', function (): void {
+    $user = eligibleLoadUser();
+    $student = Student::factory()->create(['student_code' => 'PERF-000001']);
+    $course = Course::factory()->create(['code' => 'PERF-COURSE']);
+    $batch = Batch::factory()->for($course)->create(['code' => 'PERF-BATCH']);
+    $enrollment = Enrollment::factory()->for($batch)->for($student)->create();
+    $charge = Charge::factory()->create([
+        'enrollment_id' => $enrollment->getKey(),
+        'list_price' => '1000.000',
+        'amount' => '1000.000',
+        'due_date' => '2026-06-01',
+    ]);
+    $payment = Payment::factory()->create([
+        'student_id' => $student->getKey(),
+        'received_at' => '2026-06-30 08:00:00',
+    ]);
+    PaymentAllocation::factory()->create(['charge_id' => $charge->getKey(), 'payment_id' => $payment->getKey(), 'amount' => '400.000']);
+    PaymentTender::factory()->create(['payment_id' => $payment->getKey(), 'amount' => '400.000']);
+
+    mintLoadSessions($user, $this->manifest)->assertSuccessful();
+    $manifest = json_decode(file_get_contents($this->manifest), true, flags: JSON_THROW_ON_ERROR);
+    app('auth')->forgetGuards();
+    $this->withUnencryptedCookie($manifest['cookie_name'], $manifest['sessions'][0]['cookie']);
+
+    $cases = [
+        [RevenueReportPage::class, ['from' => '2026-01-01', 'to' => '2026-12-31'], ['PERF-BATCH', '400.000']],
+        [PaymentMethodReportPage::class, ['from' => '2026-01-01', 'to' => '2026-12-31'], ['Cash', '400.000']],
+        [OutstandingAgedReportPage::class, ['date' => '2026-06-30'], ['PERF-000001', '600.000']],
+        [StudentPaymentHistoryPage::class, ['student_id' => $student->getKey()], ['PERF-000001', '400.000']],
+    ];
+
+    foreach ($cases as [$page, $filters, $markers]) {
+        $response = $this->get($page::getUrl())->assertSuccessful();
+        $snapshot = loadComponentSnapshot((string) $response->getContent(), $page);
+        expect($snapshot)->not->toBeNull();
+
+        $updates = [];
+        foreach ($filters as $field => $value) {
+            $updates['filters.'.$field] = $value;
+        }
+        $updated = $this->withHeaders(['X-Livewire' => 'true', 'X-CSRF-TOKEN' => $manifest['sessions'][0]['csrf']])
+            ->postJson(app(HandleRequests::class)->getUpdateUri(), [
+                'components' => [[
+                    'snapshot' => $snapshot,
+                    'updates' => $updates,
+                    'calls' => [['path' => '', 'method' => 'applyFilters', 'params' => []]],
+                ]],
+            ])->assertSuccessful();
+
+        $updatedSnapshot = json_decode($updated->json('components.0.snapshot'), true);
+        $applied = $updatedSnapshot['data']['appliedFilters'][0] ?? $updatedSnapshot['data']['appliedFilters'];
+        $html = $updated->json('components.0.effects.html');
+        foreach ($filters as $field => $value) {
+            expect((string) $applied[$field])->toBe((string) $value);
+        }
+        foreach ($markers as $marker) {
+            expect($html)->toContain($marker);
+        }
+    }
+});
+
+it('rejects a minted session if the password changes before its first request', function (): void {
+    $user = eligibleLoadUser();
+    mintLoadSessions($user, $this->manifest)->assertSuccessful();
+    $manifest = json_decode(file_get_contents($this->manifest), true, flags: JSON_THROW_ON_ERROR);
+
+    $user->forceFill(['password' => Hash::make('changed-after-mint')])->save();
+    app('auth')->forgetGuards();
+
+    $this->withUnencryptedCookie($manifest['cookie_name'], $manifest['sessions'][0]['cookie'])
+        ->get('/admin/students')
+        ->assertRedirect('/admin/login');
 });
 
 it('prints the manifest path without printing any credential', function (): void {

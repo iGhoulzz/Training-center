@@ -74,7 +74,11 @@ final class MintLoadTestSessionsCommand extends Command
             for ($index = 0; $index < $count; $index++) {
                 $id = Str::random(40);
                 $csrf = Str::random(40);
-                $attributes = [$authKey => $user->getAuthIdentifier(), '_token' => $csrf];
+                $attributes = [
+                    $authKey => $user->getAuthIdentifier(),
+                    'password_hash_web' => $webGuard->hashPasswordForCookie($user->getAuthPassword()),
+                    '_token' => $csrf,
+                ];
                 $serialized = config('session.serialization', 'php') === 'json'
                     ? json_encode($attributes, JSON_THROW_ON_ERROR)
                     : serialize($attributes);

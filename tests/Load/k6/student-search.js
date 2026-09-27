@@ -76,8 +76,13 @@ export default function () {
   try {
     const session = selectedSession();
     const context = page('/admin/students', 'App\\Domain\\Enrollment\\Filament\\Resources\\StudentResource\\Pages\\ListStudents', session);
-    const search = __ENV.K6_STUDENT_SEARCH || 'PERF-0001';
-    update(context, session, { tableSearch: search }, []);
+    const search = __ENV.K6_STUDENT_SEARCH || 'PERF-000100';
+    const expectedHit = __ENV.K6_STUDENT_HIT || search;
+    const result = update(context, session, { tableSearch: search }, []);
+    if (JSON.parse(result.snapshot).data.tableSearch !== search ||
+        !result.effects.html.includes(expectedHit)) {
+      throw new Error('Student search did not render the expected seeded student');
+    }
     succeeded = true;
   } finally {
     recordFlow(start, succeeded);
