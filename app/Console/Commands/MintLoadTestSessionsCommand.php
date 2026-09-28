@@ -12,6 +12,7 @@ use Illuminate\Console\Command;
 use Illuminate\Cookie\CookieValuePrefix;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Session;
 use Illuminate\Support\Str;
 use RuntimeException;
 use Throwable;
@@ -118,8 +119,8 @@ final class MintLoadTestSessionsCommand extends Command
 
             return self::SUCCESS;
         } catch (Throwable $exception) {
-            if ($sessionIds !== []) {
-                $this->sessionConnection()->table((string) config('session.table', 'sessions'))->whereIn('id', $sessionIds)->delete();
+            foreach ($sessionIds as $sessionId) {
+                Session::getHandler()->destroy($sessionId);
             }
 
             $this->components->error($exception instanceof RuntimeException ? $exception->getMessage() : 'Session minting failed.');

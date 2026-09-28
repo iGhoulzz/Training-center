@@ -7,6 +7,7 @@ namespace App\Console\Commands;
 use App\Support\PerformanceDatabaseGuard;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Session;
 use RuntimeException;
 use Throwable;
 
@@ -67,7 +68,9 @@ final class RevokeLoadTestSessionsCommand extends Command
                 throw new RuntimeException('Duplicate session ID in manifest.');
             }
 
-            $connection->table((string) config('session.table', 'sessions'))->whereIn('id', $ids)->delete();
+            foreach ($ids as $id) {
+                Session::getHandler()->destroy($id);
+            }
 
             if (! unlink($path)) {
                 throw new RuntimeException('Sessions were revoked, but the manifest could not be removed.');
