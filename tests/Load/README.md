@@ -6,16 +6,17 @@ The target is the disposable Linux container in `docker/dev-linux/`, with its ow
 
 ## Prepare the target
 
-Use PowerShell from this task worktree's `docker/dev-linux/`, so the script mount below resolves to this branch. Set `HOST_REPO` to the main checkout containing the committed `p35/t11-load-baseline` branch, as `docs/LINUX-DEV-TARGET.md` explains; a worktree's `.git` file cannot be cloned inside the container. Run `docker compose up -d`, then:
+Use PowerShell from `docker/dev-linux/` in a current checkout containing these scripts (for example, updated `main` after this task merges), so the script mount below resolves to that checkout. Set `HOST_REPO` to the main checkout, as `docs/LINUX-DEV-TARGET.md` explains; a linked worktree's `.git` file cannot be cloned inside the container. Make sure the ref you select exists in `HOST_REPO` and contains the same version of the load scripts as your current checkout. Run `docker compose up -d`, then:
 
 ```powershell
-docker compose exec -T app bash /bootstrap/setup.sh p35/t11-load-baseline
+$loadRef = 'main' # Or another existing branch or commit in HOST_REPO.
+docker compose exec -T app bash /bootstrap/setup.sh $loadRef
 docker compose exec -T -e DB_DATABASE=training_center_performance app php artisan seed:performance-dataset --profile=medium --confirm-database=training_center_performance
 ```
 
 The seed command rebuilds **only** the explicitly confirmed, allowlisted performance database and loads 4,000 charges with 8,000 allocations. It is destructive. Re-run it before another baseline cycle. Do not use `training_center_linux`, which the test suite rebuilds independently.
 
-The seeded owner starts with a forced password change. Complete that once through the normal staff-panel password-change flow on this disposable target, or select another active staff-panel account. Use an account with English locale: the bill and payment-method assertions match rendered English labels. The account must have `view_any_student`, `create_enrollment`, `create_payment`, `view_financial_report`, and `view_payment`; the enrol-and-collect script also uses the desk's quick-create student action and therefore needs `create_student`. The mint command checks the first five permissions, panel access, active state, and that no password change is pending. Permissions, rather than role names, determine eligibility.
+The seeded owner starts with a forced password change. Complete that once through the normal staff-panel password-change flow on this disposable target, or select another active staff-panel account. Use an account with English locale: the bill and payment-method assertions match rendered English labels. The account must have `view_any_student`, `create_student`, `create_enrollment`, `create_payment`, `view_financial_report`, and `view_payment`; the enrol-and-collect script uses the desk's quick-create student action. The mint command checks all six permissions, panel access, active state, and that no password change is pending. Permissions, rather than role names, determine eligibility.
 
 From the target, record the actual selected queue, cache, and session drivers; do not infer them from `.env.example`:
 

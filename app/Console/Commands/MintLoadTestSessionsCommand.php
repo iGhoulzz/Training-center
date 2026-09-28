@@ -51,7 +51,7 @@ final class MintLoadTestSessionsCommand extends Command
             $this->assertSafePath($output);
 
             $user = User::query()->find((int) $userId);
-            $permissions = ['view_any_student', 'create_enrollment', 'create_payment', 'view_financial_report', 'view_payment'];
+            $permissions = ['view_any_student', 'create_student', 'create_enrollment', 'create_payment', 'view_financial_report', 'view_payment'];
 
             if (! $user || ! $user->is_active || $user->must_change_password || ! $user->canAccessPanel(Filament::getPanel('admin'))) {
                 throw new RuntimeException('The user is not an active, ready staff-panel account.');

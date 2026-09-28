@@ -49,7 +49,7 @@ function eligibleLoadUser(): User
 {
     $user = User::factory()->create(['is_active' => true, 'must_change_password' => false]);
 
-    foreach (['access_admin_panel', 'view_any_student', 'create_enrollment', 'create_payment', 'view_financial_report', 'view_payment'] as $permission) {
+    foreach (['access_admin_panel', 'view_any_student', 'create_student', 'create_enrollment', 'create_payment', 'view_financial_report', 'view_payment'] as $permission) {
         $user->givePermissionTo($permission);
     }
 
@@ -284,6 +284,16 @@ it('refuses missing permissions, inactive accounts, and forced password changes'
     expect(file_exists($this->manifest))->toBeFalse()
         ->and(DB::table('sessions')->count())->toBe(0);
 })->with(['permission', 'inactive', 'password-change']);
+
+it('refuses a user without the quick-create student permission needed by the load flow', function (): void {
+    $user = eligibleLoadUser();
+    $user->revokePermissionTo('create_student');
+
+    mintLoadSessions($user, $this->manifest)->assertFailed();
+
+    expect(file_exists($this->manifest))->toBeFalse()
+        ->and(DB::table('sessions')->count())->toBe(0);
+});
 
 it('refuses output inside the repository and does not overwrite a manifest', function (): void {
     $user = eligibleLoadUser();
