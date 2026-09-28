@@ -135,6 +135,31 @@ docker compose exec -e DB_DATABASE=training_center_performance app php artisan m
 a container being recreated. **Throwing it all away:** `docker compose down -v`
 — this deletes the working copy and every database in the target.
 
+### There is one target, and both agents share it
+
+Unlike worktrees and test databases, this is a **single shared resource**.
+Anything that recreates the app container — `docker compose up -d` after editing
+`compose.yaml`, a `down`, a rebuild — kills every process inside it and wipes
+everything outside the `workspace` volume, including files written to `/tmp`.
+
+**Ask the other agent before recreating it.** Not hypothetical: on 2026-09-28 the
+port mapping above was added and applied while a load baseline was being measured
+in the same container. The run was invalidated, and its session manifest, written
+inside the container, was destroyed — the minted sessions survived in the database
+with nothing left to say which they were, so they could not be revoked by
+manifest and the whole database had to be rebuilt.
+
+Checking for running processes first is worth doing, but is not sufficient on its
+own: a load generator driving the container from Windows leaves nothing visible
+inside it. This image has no `ps`, so read `/proc`:
+
+```powershell
+docker exec training_center_dev_app sh -c 'for d in /proc/[0-9]*; do tr "\0" " " < $d/cmdline 2>/dev/null; echo; done'
+```
+
+Anything a run must survive on — a manifest, a result file — belongs under
+`/workspace`, which is a volume, rather than in `/tmp`.
+
 ---
 
 ## Seeing the dashboards
@@ -160,11 +185,18 @@ docker compose exec -e DB_DATABASE=training_center_performance app php artisan m
 docker compose exec -e DB_DATABASE=training_center_performance app php artisan db:seed
 ```
 
-The seeder creates the roles and the super admin the README names. Both
-dashboards need an **active** account holding `view_any_activity`: `viewPulse`
-and `viewHorizon` each check that permission and `is_active` themselves, so a
-deactivated account loses access on its next request rather than at the end of
-its session.
+The seeder creates the roles and the super admin the README names. You need that
+account to reach `/admin` and `/pulse`.
+
+**`/pulse` needs an active account holding `view_any_activity`.** The `viewPulse`
+gate checks that permission and `is_active` itself, so a deactivated account
+loses the dashboard on its next request rather than at the end of its session.
+
+**`/horizon` is not gated in this container at all** — Horizon's own middleware
+admits any visitor while the application is in the `local` environment, so no
+account is needed here. Its `viewHorizon` gate, which applies the same active
+account and `view_any_activity` rule, only runs outside local. The measurement
+and what it means for the published port are below.
 
 **2. Serve the application**
 
