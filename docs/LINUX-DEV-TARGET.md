@@ -137,6 +137,79 @@ a container being recreated. **Throwing it all away:** `docker compose down -v`
 
 ---
 
+## Seeing the dashboards
+
+Horizon **cannot run on Windows at all**, so its dashboard can only be opened
+from inside this target. Pulse runs fine on Windows, but it is worth watching
+beside Horizon while queued work moves.
+
+The app container publishes port 8000, and `php artisan serve` is enough to look
+at a dashboard. There is deliberately no Nginx or FPM here: adding one would make
+this look like the deployment shape it is not.
+
+**Use the load-run database, not the suite's.** Everything below sets
+`DB_DATABASE=training_center_performance`, because `training_center_linux` is
+rebuilt by every `composer verify` — sign in, start a gate run, and your account
+is gone mid-session. The commands are separate `docker compose exec` calls so
+each keeps running; use three terminals, or add `-d`.
+
+**1. Prepare that database, once**
+
+```powershell
+docker compose exec -e DB_DATABASE=training_center_performance app php artisan migrate --force
+docker compose exec -e DB_DATABASE=training_center_performance app php artisan db:seed
+```
+
+The seeder creates the roles and the super admin the README names. Both
+dashboards need an **active** account holding `view_any_activity`: `viewPulse`
+and `viewHorizon` each check that permission and `is_active` themselves, so a
+deactivated account loses access on its next request rather than at the end of
+its session.
+
+**2. Serve the application**
+
+```powershell
+docker compose exec -e DB_DATABASE=training_center_performance app php artisan serve --host=0.0.0.0 --port=8000
+```
+
+`--host=0.0.0.0` is not optional. Without it the server listens on the
+container's own loopback and nothing from Windows ever reaches it, which looks
+exactly like a broken port mapping.
+
+Then open `http://localhost:8000/admin` and sign in, `http://localhost:8000/pulse`,
+and `http://localhost:8000/horizon`.
+
+**`/horizon` is not gated in this container, and that is upstream behaviour.**
+Horizon's own middleware admits any visitor while the application is in the
+`local` environment — which this container is — so the `viewHorizon` gate never
+runs here. Measured, not assumed: an unauthenticated request returned **HTTP
+200** for `/horizon` and **HTTP 403** for `/pulse`, whose gate has no such
+bypass.
+
+That makes the published port the only boundary, which is why `compose.yaml`
+binds it to `127.0.0.1` rather than every interface. Leave it that way: with a
+plain `8000:8000` the dashboard answers anyone who can reach this machine.
+
+**3. Run Horizon, in another terminal**
+
+```powershell
+docker compose exec -e DB_DATABASE=training_center_performance app php artisan horizon
+```
+
+This is the part that exists only here: Horizon supervises its workers by
+forking and signalling them, which needs `pcntl` and `posix`. The dashboard
+shows supervisors, throughput and failures as jobs move; queue work in the panel
+and watch it drain. `Ctrl+C` stops it, and `php artisan horizon:terminate` is
+what a deploy would use.
+
+Pulse fills in as requests arrive, so click around the panel first — an empty
+dashboard usually means no traffic rather than a broken recorder. Its
+server-health card stays empty unless `php artisan pulse:check` is also running,
+which is a third long-lived process and only worth starting if that card is what
+you are checking.
+
+---
+
 ## The four capabilities, proved
 
 Pasted from the owner's machine on 2026-09-21 and 22, all on commit `63f7c19`.

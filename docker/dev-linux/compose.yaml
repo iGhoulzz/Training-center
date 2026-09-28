@@ -63,6 +63,32 @@ services:
             # backup-alert settings obviously fake whatever .env holds.
             BACKUP_ALERT_EMAIL: dev@example.test
             MAIL_FROM_ADDRESS: dev@example.test
+        # ONE PORT, FOR LOOKING AT HORIZON AND PULSE.
+        #
+        # Nothing here serves traffic on its own: this is php:8.4-cli, with no
+        # Nginx and no FPM, and the gate needs none. But Horizon cannot run on
+        # Windows at all — pcntl and posix have no Windows build — so its
+        # dashboard can only be seen from inside this target, and Pulse's is
+        # worth watching beside it while Horizon works.
+        #
+        # The port is published rather than the image changed: `php artisan serve`
+        # is enough to look at a dashboard, and adding a web server would make
+        # this look like the deployment shape it deliberately is not. See
+        # "Seeing the dashboards" in docs/LINUX-DEV-TARGET.md; it must be started
+        # with --host=0.0.0.0, or it listens on the container's loopback only and
+        # nothing reaches it from Windows.
+        # BOUND TO 127.0.0.1, NOT 0.0.0.0, AND THAT MATTERS MORE HERE THAN USUAL.
+        #
+        # Measured: with `8000:8000` the dashboards answered on every interface,
+        # and `/horizon` returned 200 to an unauthenticated request — Horizon's
+        # own middleware allows any visitor when the application is in the `local`
+        # environment, which this container is. The `viewHorizon` gate only
+        # applies outside local. So the open port, not the gate, was the boundary,
+        # and it was open to the whole network.
+        #
+        # This form publishes to the host loopback only.
+        ports:
+            - '127.0.0.1:8000:8000'
         volumes:
             # The working copy, on the Linux filesystem: fast.
             - workspace:/workspace
