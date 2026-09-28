@@ -12,7 +12,7 @@ export default function () {
     const context = page('/admin/enroll-and-collect', 'App\\Domain\\Finance\\Filament\\Pages\\EnrollAndCollect', session);
 
     // Filament's Select createOption action is the real quick-create boundary.
-    update(context, session, {}, [{ method: 'mountAction', params: ['createOption', {}, { schemaComponent: 'data.student_id' }] }]);
+    update(context, session, {}, [{ method: 'mountAction', params: ['createOption', {}, { schemaComponent: 'form.student_id' }] }]);
     const code = `LOAD-${__VU}-${__ITER}-${Date.now()}`;
     const created = update(context, session, {
       'mountedActions.0.data.student_code': code,

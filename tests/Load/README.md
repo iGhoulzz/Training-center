@@ -29,7 +29,7 @@ docker compose exec -T -e DB_DATABASE=training_center_performance -e SESSION_LIF
 Use Redis for the queue, a database session driver, and `SESSION_LIFETIME=480` for the eight-hour idle expiry fallback. The command refuses other session drivers or lifetimes. Start a temporary app listener in a separate terminal; this CLI image publishes no HTTP port. `PHP_CLI_SERVER_WORKERS=8` gives PHP's development server eight workers, avoiding a single-worker ceiling. Record the actual worker count and that this is a development server in the results. Keep that terminal open for the run:
 
 ```powershell
-docker compose exec -T -e DB_DATABASE=training_center_performance -e SESSION_LIFETIME=480 -e PHP_CLI_SERVER_WORKERS=8 app php artisan serve --host=0.0.0.0 --port=8000
+docker compose exec -T -e DB_DATABASE=training_center_performance -e SESSION_LIFETIME=480 -e PHP_CLI_SERVER_WORKERS=8 app php artisan serve --no-reload --host=0.0.0.0 --port=8000
 ```
 
 The app container is reachable as `http://app:8000` from an ephemeral k6 container on `dev-linux_default`. Queue work, including receipt generation, needs a running Redis worker. Start the target's normal worker or Horizon in another terminal before enrol-and-collect. Confirm that `QUEUE_CONNECTION=redis` is the **running** configuration.

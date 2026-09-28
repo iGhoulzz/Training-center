@@ -30,7 +30,6 @@ export function headers(session) {
   return {
     Cookie: `${manifest.cookie_name}=${session.cookie}`,
     'X-CSRF-TOKEN': session.csrf,
-    'X-Livewire': 'true',
     Accept: 'application/json',
     'Content-Type': 'application/json',
   };
@@ -51,9 +50,10 @@ export function page(path, componentName, session) {
 }
 
 export function update(context, session, updates, calls) {
-  const response = http.post(`${base}${context.uri}`, JSON.stringify({
+  const updateUrl = /^https?:\/\//.test(context.uri) ? context.uri : `${base}${context.uri}`;
+  const response = http.post(updateUrl, JSON.stringify({
     components: [{ snapshot: context.snapshot, updates, calls: calls.map((call) => ({ path: '', ...call })) }],
-  }), { headers: headers(session), redirects: 0 });
+  }), { headers: { ...headers(session), 'X-Livewire': 'true' }, redirects: 0 });
 
   if (response.status !== 200) throw new Error(`Livewire update returned ${response.status}`);
   const payload = response.json();
