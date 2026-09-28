@@ -1,4 +1,5 @@
 import http from 'k6/http';
+import { sleep } from 'k6';
 import { Counter, Rate, Trend } from 'k6/metrics';
 
 export const options = { vus: 20, duration: '5m' };
@@ -68,6 +69,7 @@ export function recordFlow(start, succeeded) {
   flowDuration.add(Date.now() - start);
   flowErrors.add(!succeeded);
   if (succeeded) flowCompleted.add(1);
+  if (!succeeded) sleep(2);
 }
 
 export default function () {
