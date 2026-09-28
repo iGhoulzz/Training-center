@@ -140,6 +140,24 @@ jobs:
       - name: Install JavaScript dependencies
         run: npm ci
 
+      - name: Audit the locked JavaScript dependencies
+        # The missing half of `composer audit --locked` above. `npm ci` installs
+        # exactly what package-lock.json pins, so this audits the tree that was
+        # actually built, not what the ranges in package.json would allow today.
+        #
+        # HIGH AND CRITICAL FAIL; moderate and low do not. Every JavaScript
+        # dependency here is build tooling — Vite, Tailwind, and what they pull in
+        # — and none of it is served to a user: `npm run build` emits compiled
+        # assets and node_modules never reaches the VPS. Failing on a moderate
+        # advisory in a dev-only package would stop unrelated work for an exposure
+        # that ends at this runner. High and above is worth the interruption.
+        #
+        # WHEN AN ADVISORY HAS NO FIX YET, the answer is a decision, not a quieter
+        # threshold: take the update if one exists, and if none does, say here why
+        # the exposure is acceptable and when to look again. Lowering this line to
+        # make a build green is how an audit becomes decoration.
+        run: npm audit --audit-level=high
+
       - name: Verify
         # ONE COMMAND, and deliberately not a restatement of Pint, PHPStan and
         # Pest as separate steps. Listing them here would create a second
