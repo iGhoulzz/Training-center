@@ -252,7 +252,10 @@ it('refuses an unsafe database before creating a manifest or session', function 
     if ($unsafe === 'production') {
         $this->app->instance('env', 'production');
     } elseif ($unsafe === 'allowlist') {
-        config(['performance.allowed_databases' => ['other_database']]);
+        config([
+            'performance.allowed_databases' => ['other_database'],
+            'performance.allowed_database_pattern' => null,
+        ]);
     }
 
     try {
@@ -331,7 +334,10 @@ it('refuses revoked or tampered manifests before deleting any session', function
     } elseif ($unsafe === 'production') {
         $this->app->instance('env', 'production');
     } elseif ($unsafe === 'allowlist') {
-        config(['performance.allowed_databases' => ['other_database']]);
+        config([
+            'performance.allowed_databases' => ['other_database'],
+            'performance.allowed_database_pattern' => null,
+        ]);
     }
 
     try {
