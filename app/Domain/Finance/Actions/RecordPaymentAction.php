@@ -43,6 +43,65 @@ use Spatie\Activitylog\Support\CauserResolver;
  * That ordering also gives the settled-bill replay for free — see
  * `replayOrConflict()`.
  *
+ * THE TRANSACTION IS RETRIED ON A DEADLOCK, AND THE INSERT-FIRST KEY IS WHY
+ * THAT IS SAFE
+ * -------------------------------------------------------------------------
+ * T11's load baseline (P3.5) measured **51 HTTP 500s in 2,821 enrol-and-collect
+ * flows — 1.80%** — every one a MySQL 1213 on the `payment_allocations` insert
+ * below, and every one between tills working on DIFFERENT bills.
+ * `SHOW ENGINE INNODB STATUS` named the mechanism: `ChargeBalance`'s locking sum
+ * matches NO rows on a bill nobody has paid yet, so InnoDB gap-locks the
+ * SUPREMUM of `payment_allocations_charge_id_index`. Two collections both hold X
+ * on that one gap — gap locks are purely inhibitive, so they coexist — and each
+ * then needs an insert-intention lock on it for its own allocation row. Neither
+ * can have it while the other holds the gap. Enrol-and-collect bills a new
+ * charge every time, so every flow locks that same empty range.
+ *
+ * NOTHING CHEAPER REMOVES IT. The gap lock protects nothing here —
+ * `ChargeBalance::outstandingForUpdate()` says in its own docblock that the
+ * charge row lock is what serialises two tills on ONE bill — but it cannot be
+ * dropped without dropping the locking read, and a plain read is exactly the
+ * stale snapshot that read exists to defeat. A better index does not help: the
+ * range is empty, so there is nothing to index. Caching an allocated total on
+ * the charge is forbidden outright (non-negotiable 2). What is left is to let
+ * InnoDB pick a victim and run the loser again.
+ *
+ * WHY RE-RUNNING THIS CLOSURE IS SAFE, AND NOT MERELY CONVENIENT. MySQL rolls
+ * the WHOLE transaction back when it names a victim, so a retry does not re-enter
+ * partially applied state — and every effect inside the closure is either a
+ * database write in that transaction or nothing at all:
+ *
+ * - the Gate check and the two reads have no effect to repeat;
+ * - `received_at` is regenerated, so a retried receipt is dated when it actually
+ *   succeeded rather than when it first tried;
+ * - the activity-log rows roll back with the writes they describe, because
+ *   `config/activitylog.php` hard-disables buffering for that exact reason;
+ * - the receipt job is dispatched `afterCommit()`, and Laravel's transaction
+ *   manager drops a rolled-back transaction's pending callbacks — so a losing
+ *   attempt queues no PDF.
+ *
+ * AND IF A RETRY EVER DID RUN AGAINST A COMMITTED FIRST ATTEMPT, the insert-first
+ * key above is what catches it: `idempotencyKey` is the caller's and does not
+ * change between attempts, so the second insert collides on
+ * `payments_idempotency_key_unique` and `replayOrConflict()` returns the original
+ * payment. That is what makes a retry on THIS Action different from a retry on an
+ * arbitrary transaction, and it is the reason a blind retry would not have been
+ * an acceptable fix on its own.
+ *
+ * BOUNDED AT THREE, NOT UNBOUNDED. A retry takes the same gap lock again and can
+ * lose again; at T11's measured 1.80% per attempt, three attempts put a genuine
+ * failure at roughly one flow in 170,000, while an unbounded loop would hold a
+ * request open indefinitely under sustained contention instead of failing where
+ * somebody can see it.
+ *
+ * IT ONLY ENGAGES AT THE OUTERMOST TRANSACTION. `Connection::handleTransactionException()`
+ * rethrows without retrying when this Action is nested inside another
+ * transaction, because MySQL has already destroyed that outer transaction too and
+ * re-running the closure inside it would be re-running inside something that no
+ * longer exists. The HTTP path does not nest; `PaymentConcurrencyTest`'s deadlock
+ * case therefore races tills that do not open a transaction of their own, and
+ * says so where it passes `primeSnapshot: false`.
+ *
  * THE STUDENT IS DERIVED, NEVER SUPPLIED
  * ----------------------------------------
  * `RecordPaymentData` carries no student field — see its own docblock.
@@ -105,6 +164,16 @@ final class RecordPaymentAction
 {
     /** MySQL ER_DUP_ENTRY. */
     private const DUPLICATE_ENTRY = 1062;
+
+    /**
+     * How many times a collection is run before a deadlock is allowed to reach
+     * the operator.
+     *
+     * Three, for the arithmetic in the class docblock — not a number chosen for
+     * feeling safe. Raising it trades a louder failure for a longer wait, and
+     * lowering it to 1 restores the 1.80% of collections T11 measured failing.
+     */
+    private const DEADLOCK_ATTEMPTS = 3;
 
     /**
      * The index that carries "one payment per idempotency key".
@@ -222,7 +291,7 @@ final class RecordPaymentAction
 
                 return $payment;
             });
-        });
+        }, self::DEADLOCK_ATTEMPTS);
     }
 
     /**
