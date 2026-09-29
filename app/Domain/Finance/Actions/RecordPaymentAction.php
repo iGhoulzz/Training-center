@@ -88,11 +88,20 @@ use Spatie\Activitylog\Support\CauserResolver;
  * arbitrary transaction, and it is the reason a blind retry would not have been
  * an acceptable fix on its own.
  *
- * BOUNDED AT THREE, NOT UNBOUNDED. A retry takes the same gap lock again and can
- * lose again; at T11's measured 1.80% per attempt, three attempts put a genuine
- * failure at roughly one flow in 170,000, while an unbounded loop would hold a
- * request open indefinitely under sustained contention instead of failing where
- * somebody can see it.
+ * BOUNDED, AND RARE IS NOT THE SAME WORD AS IMPOSSIBLE. A retry takes the same
+ * gap lock again and can lose again, so this makes the failure rare rather than
+ * unreachable — see DEADLOCK_ATTEMPTS for the measurement that sized the bound,
+ * and note that it was sized DOWNWARD from optimism, not upward from caution.
+ * An unbounded loop is not the answer either: it would hold a request open
+ * indefinitely under sustained contention instead of failing where somebody can
+ * see it.
+ *
+ * The only construction that would remove the gap conflict outright is to run
+ * this transaction under READ COMMITTED, where InnoDB takes no gap locks and
+ * each statement reads the latest committed row — which would also make the
+ * locking reads above unnecessary. That is a change to the isolation level of
+ * the money path, and it belongs to the owner rather than to a bug fix; nothing
+ * measured so far requires it.
  *
  * IT ONLY ENGAGES AT THE OUTERMOST TRANSACTION. `Connection::handleTransactionException()`
  * rethrows without retrying when this Action is nested inside another
@@ -169,11 +178,22 @@ final class RecordPaymentAction
      * How many times a collection is run before a deadlock is allowed to reach
      * the operator.
      *
-     * Three, for the arithmetic in the class docblock — not a number chosen for
-     * feeling safe. Raising it trades a louder failure for a longer wait, and
-     * lowering it to 1 restores the 1.80% of collections T11 measured failing.
+     * FIVE, AND THE NUMBER WAS MEASURED RATHER THAN CHOSEN. Three was the first
+     * value, on the arithmetic that 1.80% per attempt cubed is one flow in
+     * 170,000. The rerun refuted it: 1 failure in 2,657 flows, when independent
+     * attempts predicted 0.015. Attempts are correlated, because Laravel retries
+     * immediately and the loser restarts into the same hot gap — so the
+     * conditional loss per RETRY is about 14%, not 1.80%. Five attempts puts the
+     * residual near one flow in 128,000 at that profile.
+     *
+     * Lowering it to 1 restores the 1.80% T11 measured. Raising it further buys
+     * less than it costs: every attempt re-runs the whole transaction, and the
+     * failure it prevents is already rarer than the operator errors around it.
+     *
+     * It does not reach zero, and the class docblock says why that is a property
+     * of retrying rather than of this number.
      */
-    private const DEADLOCK_ATTEMPTS = 3;
+    private const DEADLOCK_ATTEMPTS = 5;
 
     /**
      * The index that carries "one payment per idempotency key".
