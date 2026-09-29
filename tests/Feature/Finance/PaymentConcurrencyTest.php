@@ -68,17 +68,57 @@ function paymentWorkerEnvironment(): array
  * One till, recording 300 on card and 700 in cash against the given bill.
  *
  * The tender split is fixed in the script and the KEY is the only thing that
- * varies, because the two tests differ in exactly that: the same key is a
- * replay, two keys are two people paying the same bill at once.
+ * varies, because the same-bill tests differ in exactly that: the same key is
+ * a replay, two keys are two people paying the same bill at once.
+ *
+ * `$primeSnapshot` decides whether the till wraps the Action in a transaction
+ * of its own. See the priming comment inside the script, and `raceTills()`'s
+ * parameter of the same name for why the deadlock case must not.
  */
-function paymentWorker(int $actorId, int $chargeId, string $key, string $readyPath, string $resultPath): Process
-{
+function paymentWorker(
+    int $actorId,
+    int $chargeId,
+    string $key,
+    string $readyPath,
+    string $resultPath,
+    bool $primeSnapshot = true,
+): Process {
     $script = <<<'PHP'
         require 'vendor/autoload.php';
         $app = require 'bootstrap/app.php';
         $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
-        [$script, $actorId, $chargeId, $key, $readyPath, $resultPath] = $_SERVER['argv'];
+        [$script, $actorId, $chargeId, $key, $readyPath, $resultPath, $primeSnapshot] = $_SERVER['argv'];
+
+        $collect = static function () use ($actorId, $chargeId, $key, $readyPath): array {
+            file_put_contents($readyPath, 'ready');
+
+            $payment = app(App\Domain\Finance\Actions\RecordPaymentAction::class)->execute(
+                App\Models\User::query()->findOrFail((int) $actorId),
+                new App\Domain\Finance\Data\RecordPaymentData(
+                    chargeId: (int) $chargeId,
+                    allocation: '1000.000',
+                    tenders: [
+                        new App\Domain\Finance\Data\TenderData(
+                            App\Domain\Finance\Enums\TenderMethod::Card,
+                            '300.000',
+                            'AUTH-1234567890',
+                        ),
+                        new App\Domain\Finance\Data\TenderData(
+                            App\Domain\Finance\Enums\TenderMethod::Cash,
+                            '700.000',
+                        ),
+                    ],
+                    idempotencyKey: $key,
+                ),
+            );
+
+            return [
+                'outcome' => 'recorded',
+                'id' => (int) $payment->getKey(),
+                'charge_id' => (int) $chargeId,
+            ];
+        };
 
         /*
          * OPEN THE TRANSACTION AND TAKE A STALE SNAPSHOT BEFORE SIGNALLING READY.
@@ -101,37 +141,24 @@ function paymentWorker(int $actorId, int $chargeId, string $key, string $readyPa
          * The Action opens its own transaction inside this one, so that becomes
          * a savepoint — the snapshot belongs to this outer transaction, which is
          * the point.
+         *
+         * WHICH IS ALSO WHY THE DEADLOCK CASE TURNS IT OFF. Wrapping the Action
+         * makes its own transaction a savepoint, and MySQL rolls the WHOLE
+         * transaction back on a deadlock — so Laravel deliberately rethrows
+         * instead of retrying when it is not at the outermost level. A till that
+         * primes here would therefore be measuring a nesting the HTTP path does
+         * not have.
          */
         $result = null;
 
         try {
-            $result = Illuminate\Support\Facades\DB::transaction(static function () use ($actorId, $chargeId, $key, $readyPath) {
-                App\Domain\Finance\Models\Payment::query()->count();
+            $result = $primeSnapshot === '1'
+                ? Illuminate\Support\Facades\DB::transaction(static function () use ($collect): array {
+                    App\Domain\Finance\Models\Payment::query()->count();
 
-                file_put_contents($readyPath, 'ready');
-
-                $payment = app(App\Domain\Finance\Actions\RecordPaymentAction::class)->execute(
-                    App\Models\User::query()->findOrFail((int) $actorId),
-                    new App\Domain\Finance\Data\RecordPaymentData(
-                        chargeId: (int) $chargeId,
-                        allocation: '1000.000',
-                        tenders: [
-                            new App\Domain\Finance\Data\TenderData(
-                                App\Domain\Finance\Enums\TenderMethod::Card,
-                                '300.000',
-                                'AUTH-1234567890',
-                            ),
-                            new App\Domain\Finance\Data\TenderData(
-                                App\Domain\Finance\Enums\TenderMethod::Cash,
-                                '700.000',
-                            ),
-                        ],
-                        idempotencyKey: $key,
-                    ),
-                );
-
-                return ['outcome' => 'recorded', 'id' => (int) $payment->getKey()];
-            });
+                    return $collect();
+                })
+                : $collect();
         } catch (App\Domain\Finance\Exceptions\PaymentExceedsOutstandingException) {
             $result = ['outcome' => 'exceeds_outstanding'];
         } catch (App\Domain\Finance\Exceptions\IdempotencyConflictException) {
@@ -144,31 +171,51 @@ function paymentWorker(int $actorId, int $chargeId, string $key, string $readyPa
         PHP;
 
     return new Process(
-        [PHP_BINARY, '-r', $script, (string) $actorId, (string) $chargeId, $key, $readyPath, $resultPath],
+        [
+            PHP_BINARY,
+            '-r',
+            $script,
+            (string) $actorId,
+            (string) $chargeId,
+            $key,
+            $readyPath,
+            $resultPath,
+            $primeSnapshot ? '1' : '0',
+        ],
         base_path(),
         paymentWorkerEnvironment(),
     );
 }
 
 /**
- * Run two tills against one bill, releasing them together.
+ * A staff account allowed to collect money.
  *
- * The parent holds the charge row so both workers block inside
- * `PaymentInvariantService::lockCharge()` — proving on the way past that the
- * lock is real — and then commits, so the two race from the same instant.
- *
- * @param  array{0: string, 1: string}  $keys
- * @return array{outcomes: array<int, array<string, mixed>>, chargeId: int}
+ * Hoisted out of raceTwoTills() so a test that races several rounds pays the
+ * permission seeder once instead of once per round.
  */
-function raceTwoTills(array $keys): array
+function paymentTillActor(): User
 {
     test()->seed(RolePermissionSeeder::class);
 
     $actor = User::factory()->create(['is_active' => true]);
     app(SystemRoleWriter::class)->assignRoles($actor, 'admin');
 
-    $charge = Charge::factory()->create(['amount' => '1000.000']);
+    return $actor;
+}
 
+/**
+ * Run two tills against the given bills, releasing them together.
+ *
+ * The parent holds every charge row named here, so both workers block inside
+ * `PaymentInvariantService::lockCharge()` — proving on the way past that the
+ * lock is real — and then commits, so the two race from the same instant.
+ *
+ * @param  array{0: string, 1: string}  $keys
+ * @param  array{0: int, 1: int}  $chargeIds  the same id twice for one bill, two ids for a bill each
+ * @return array<int, array<string, mixed>>
+ */
+function raceTills(int $actorId, array $keys, array $chargeIds, bool $primeSnapshot = true): array
+{
     $token = (string) Str::uuid();
     $paths = collect(['a-ready', 'a-result', 'b-ready', 'b-result'])
         ->mapWithKeys(fn (string $name): array => [
@@ -176,8 +223,8 @@ function raceTwoTills(array $keys): array
         ]);
 
     $workers = [
-        paymentWorker((int) $actor->getKey(), (int) $charge->getKey(), $keys[0], $paths['a-ready'], $paths['a-result']),
-        paymentWorker((int) $actor->getKey(), (int) $charge->getKey(), $keys[1], $paths['b-ready'], $paths['b-result']),
+        paymentWorker($actorId, $chargeIds[0], $keys[0], $paths['a-ready'], $paths['a-result'], $primeSnapshot),
+        paymentWorker($actorId, $chargeIds[1], $keys[1], $paths['b-ready'], $paths['b-result'], $primeSnapshot),
     ];
 
     $connection = DB::connection();
@@ -185,7 +232,9 @@ function raceTwoTills(array $keys): array
     $chargeLockReleased = false;
 
     try {
-        Charge::query()->whereKey($charge->getKey())->lockForUpdate()->firstOrFail();
+        foreach (array_unique($chargeIds) as $chargeId) {
+            Charge::query()->whereKey($chargeId)->lockForUpdate()->firstOrFail();
+        }
 
         foreach ($workers as $worker) {
             $worker->start();
@@ -195,9 +244,12 @@ function raceTwoTills(array $keys): array
         $deadline = hrtime(true) + 60_000_000_000;
 
         while ((! File::exists($paths['a-ready']) || ! File::exists($paths['b-ready'])) && hrtime(true) < $deadline) {
-            if (! $worker->isRunning()) {
-                Assert::fail('Worker died unexpectedly: '.$worker->getErrorOutput());
+            foreach ($workers as $worker) {
+                if ($worker->isStarted() && ! $worker->isRunning()) {
+                    Assert::fail('Worker died unexpectedly: '.$worker->getErrorOutput());
+                }
             }
+
             usleep(25_000);
         }
 
@@ -225,11 +277,9 @@ function raceTwoTills(array $keys): array
             expect($worker->isSuccessful())->toBeTrue($worker->getErrorOutput());
         }
 
-        $outcomes = collect([$paths['a-result'], $paths['b-result']])
+        return collect([$paths['a-result'], $paths['b-result']])
             ->map(fn (string $path): array => json_decode((string) File::get($path), true, flags: JSON_THROW_ON_ERROR))
             ->all();
-
-        return ['outcomes' => $outcomes, 'chargeId' => (int) $charge->getKey()];
     } finally {
         if (! $chargeLockReleased && $connection->transactionLevel() > 0) {
             $connection->rollBack();
@@ -245,6 +295,28 @@ function raceTwoTills(array $keys): array
             File::delete($path);
         }
     }
+}
+
+/**
+ * Two tills, ONE bill: the fixture the same-bill proofs below are written
+ * against.
+ *
+ * @param  array{0: string, 1: string}  $keys
+ * @return array{outcomes: array<int, array<string, mixed>>, chargeId: int}
+ */
+function raceTwoTills(array $keys): array
+{
+    $actor = paymentTillActor();
+    $charge = Charge::factory()->create(['amount' => '1000.000']);
+
+    return [
+        'outcomes' => raceTills(
+            (int) $actor->getKey(),
+            $keys,
+            [(int) $charge->getKey(), (int) $charge->getKey()],
+        ),
+        'chargeId' => (int) $charge->getKey(),
+    ];
 }
 
 /*
@@ -314,4 +386,98 @@ it('lets one of two concurrent payments settle the bill and refuses the other', 
     );
 
     expect(DB::table('payments')->count())->toBe(1);
+})->group('finance');
+
+/*
+|--------------------------------------------------------------------------
+| Two tills, two DIFFERENT bills — the deadlock T11 measured
+|--------------------------------------------------------------------------
+|
+| T11's load baseline recorded 51 HTTP 500s in 2,821 enrol-and-collect flows
+| (1.80%), every one a MySQL 1213 while inserting into `payment_allocations`.
+| The two cases above cannot see it: the charge row lock serialises tills on
+| ONE bill, so a deadlock at that rate has to be coming from transactions that
+| never touch the same charge.
+|
+| The mechanism, read from `SHOW ENGINE INNODB STATUS` on the Linux target
+| because the Windows dev account lacks PROCESS: `ChargeBalance`'s
+| `FOR UPDATE` sum matches NO rows on a bill nobody has paid yet, so InnoDB
+| gap-locks the SUPREMUM of `payment_allocations_charge_id_index`. Two tills on
+| two new bills both hold X on that one gap — gap locks are purely inhibitive,
+| so they coexist — and each then needs an insert-intention lock on it for its
+| own allocation row. Neither can have it while the other holds the gap.
+|
+| Every flow bills a brand new charge, which is why T11 saw this on the write
+| path and nowhere else, and why a cheaper or better index would not touch it:
+| the empty range is the whole cause.
+*/
+
+it('records both payments when two tills collect on different bills at once', function () {
+    /*
+     * SIX ROUNDS, AND THE NUMBER IS PART OF THE FIX.
+     *
+     * The reproduction is highly repeatable but not per-round certain: 11 of 12
+     * rounds deadlocked on Windows and 6 of 6 in the Linux target. At p ≈ 0.92
+     * a single round would let an unfixed Action pass 8% of the time, which is
+     * a test that fails in CI and nowhere a developer is looking. Six rounds
+     * put that at 0.08^6 ≈ 3 in ten million.
+     *
+     * The environment variable can only RAISE the count — it exists so the
+     * Linux target can be run harder, not so a red suite can be talked down.
+     */
+    $rounds = max(6, (int) getenv('PAYMENT_DEADLOCK_ROUNDS'));
+
+    $actor = paymentTillActor();
+    $charges = [];
+
+    for ($round = 1; $round <= $rounds; $round++) {
+        $bills = [
+            Charge::factory()->create(['amount' => '1000.000']),
+            Charge::factory()->create(['amount' => '1000.000']),
+        ];
+
+        $charges = [...$charges, ...$bills];
+
+        /*
+         * primeSnapshot: false. The priming read needs a transaction of the
+         * till's own, and MySQL rolls the whole transaction back on a deadlock —
+         * so Laravel rethrows rather than retries when the Action is not the
+         * outermost transaction. Priming here would test a nesting the HTTP
+         * path does not have. Staleness is the two cases above; this one is
+         * about the lock sets.
+         */
+        $outcomes = raceTills(
+            (int) $actor->getKey(),
+            [(string) Str::uuid(), (string) Str::uuid()],
+            [(int) $bills[0]->getKey(), (int) $bills[1]->getKey()],
+            primeSnapshot: false,
+        );
+
+        $failures = collect($outcomes)->where('outcome', '!=', 'recorded')->all();
+
+        expect($failures)->toBe(
+            [],
+            "Round {$round} of {$rounds}: two tills collecting on different bills did not both "
+            .'record. A 1213 here is the deadlock itself; anything else is a different fault: '
+            .json_encode($outcomes),
+        );
+    }
+
+    /*
+     * NOTHING WAS RECORDED TWICE. A deadlock retry re-runs a transaction MySQL
+     * has already rolled back, so the counts are what prove the retry did not
+     * turn one handover of cash into two rows — and the idempotency key is what
+     * would refuse the second insert if it ever tried.
+     */
+    expect(DB::table('payments')->count())->toBe(2 * $rounds)
+        ->and(DB::table('payment_allocations')->count())->toBe(2 * $rounds)
+        ->and(DB::table('payment_tenders')->count())->toBe(4 * $rounds)
+        ->and(DB::table('payment_receipt_snapshots')->count())->toBe(2 * $rounds);
+
+    foreach ($charges as $charge) {
+        expect(ChargeBalance::outstandingFor((int) $charge->getKey())->equals(Money::zero()))->toBeTrue(
+            "Charge [{$charge->getKey()}] did not end exactly settled: "
+            .ChargeBalance::outstandingFor((int) $charge->getKey())->toDecimal(),
+        );
+    }
 })->group('finance');
