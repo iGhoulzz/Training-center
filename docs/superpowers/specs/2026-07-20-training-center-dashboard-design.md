@@ -434,18 +434,25 @@ Feature tests are the priority, because the risk in this system is in how the pi
 
 | Flow | Measured p95 (T11) | p95 target | Observed by |
 |---|---:|---:|---|
-| Student search | 544 ms | **680 ms** | `tests/Load/k6/student-search.js` only |
-| Four reports, rotated | 3,024 ms | **3,780 ms** | `tests/Load/k6/reports.js`; Pulse corroborates |
-| Enrol and collect | 11,001 ms | **13,750 ms** | `tests/Load/k6/enrol-and-collect.js`; Pulse corroborates |
-| Receipt download | 151 ms | **190 ms** | `tests/Load/k6/receipt-download.js` only |
+| Student search | 544 ms | **680 ms** | `tests/Load/k6/student-search.js` |
+| Four reports, rotated | 3,024 ms | **3,780 ms** | `tests/Load/k6/reports.js` |
+| Enrol and collect | 11,001 ms | **13,750 ms** | `tests/Load/k6/enrol-and-collect.js` |
+| Receipt download | 151 ms | **190 ms** | `tests/Load/k6/receipt-download.js` |
 
 Each target is its measured p95 plus 25%, rounded to the nearest 10 ms. That makes them **regression detectors traceable to an observation**, which is the only kind of number this section will carry; none of them is an assertion about what the software ought to achieve.
 
-**The k6 harness is the observer of record, and Pulse cannot replace it for two of the four.** Pulse records a slow request only above its **1,000 ms** threshold, set above — so a student search breaching 680 ms, or a receipt download breaching 190 ms, never reaches Pulse at all. Pulse corroborates the two slower flows and provides production visibility once a production baseline exists; it does not police these targets. Lowering its threshold to cover them is not taken here: student search was by far the highest-volume flow in the baseline — 10,673 flows against the next flow's 3,948 — so a threshold low enough to catch a 680 ms search would ingest a row for a large share of the busiest page's traffic.
+**The k6 harness is the sole observer of these targets, and Pulse cannot corroborate any of them.** Two reasons, and the second applies to all four rows:
+
+- Pulse records a slow request only above its **1,000 ms** threshold, set above, so a student search breaching 680 ms or a receipt download breaching 190 ms never reaches it at all. Even on the slowest flow it would see little: T11's HTTP p95 for enrol and collect was **388 ms**, so Pulse surfaces that flow's outliers rather than its typical requests.
+- More fundamentally, **these targets are flow durations and Pulse times individual requests.** One measured flow is two HTTP requests for search and reports, and six for enrol and collect. A per-request timer cannot reconstruct an end-to-end flow p95, so Pulse cannot confirm or refute a 3,780 ms or 13,750 ms threshold even where its own threshold would let it see the requests.
+
+What Pulse does provide is production visibility into slow *constituent* requests once a production baseline exists — a different measurement, useful for diagnosis and not a substitute for the run. Lowering its threshold is not taken here: student search was by far the highest-volume flow in the baseline — 10,673 flows against the next flow's 3,948 — so a threshold low enough to catch a 680 ms search would ingest a row for a large share of the busiest page's traffic.
 
 **The receipt-download target covers the request, not the throughput.** That script is limiter-shaped by design — 60 requests per minute per user, with all twenty sessions belonging to one user and a 25-second sleep per iteration — so its throughput measures the limiter and not the endpoint. The 190 ms target is about how fast a permitted download is served.
 
-**Enrol and collect's 11 s is recorded, not endorsed.** Its median was 1,440 ms, so the p95 is a tail rather than typical behaviour, and the tail is lock queueing: twenty sessions serialise on charge row locks and on the `payment_allocations` gap described in P3.5-T15. A target of 13,750 ms therefore promises nothing about the experience of collecting money — it says the tail has not got worse. Improving it is not scoped; it would need its own measurement first, because the cause is contention and not a slow query.
+**Enrol and collect's 11 s is recorded, not endorsed — and its cause is not known.** Its median was 1,440 ms against a p95 of 11,001 ms, so the number in the table is a tail rather than typical behaviour. That much is measured. **What produces the tail was not measured**: T11 timed flows and requests, not lock waits, and nothing has traced a slow iteration. Contention is a hypothesis, not a finding, and the obvious candidates have not been separated — the eight PHP development-server workers serving twenty virtual users, the insert-intention waits on the `payment_allocations` gap that P3.5-T15 characterised, and the retries T15 added, which convert some deadlocks into longer requests by design.
+
+An earlier draft of this section said the tail *is* lock queueing and that twenty sessions serialise on charge row locks. Both were wrong: the load flow quick-creates a student, enrolment and charge per iteration, so **no two iterations contend for the same charge row**, and no timing evidence was ever taken. A target of 13,750 ms therefore promises nothing about the experience of collecting money — it says the tail has not got worse. Improving it needs a diagnosis first, and that diagnosis is not scoped.
 
 **Error rate: 0.5% of flows, per flow, and the reason it is not tighter is statistical rather than tolerant.** The collection flow is what set the number. T11 measured **1.80%** there (51 HTTP 500s in 2,821 flows) before P3.5-T15; the rerun after it measured **zero in 2,764**, which establishes only that the rate is below roughly **0.11%** (rule of three, one-sided 95%) — a zero count cannot separate rare from never. One repeatable run is about 2,700 collection flows, so a 0.5% objective expects roughly thirteen failures and a breach is unmistakable, while a 0.1% objective expects under three and could not be told from noise by the run that is supposed to police it. **0.5% is an alarm threshold, not a description of current behaviour**, and the two are recorded separately here so nobody later reads the threshold as the measurement.
 
