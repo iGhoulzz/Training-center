@@ -212,7 +212,73 @@ return [
             'maxProcesses' => 1,
             'maxTime' => 0,
             'maxJobs' => 0,
-            'memory' => 128,
+
+            /*
+             * NINETY-SIX, BECAUSE 128 HERE COULD NEVER FIRE AGAINST PHP'S 128
+             * (P3.5-T17)
+             * ---------------------------------------------------------------
+             * This was 128, the same number as PHP's default `memory_limit`,
+             * and that coincidence disabled the recycle entirely. Laravel
+             * checks this ceiling AFTER a job returns (`Worker::runJob()` then
+             * `stopIfNecessary()`), so a graceful restart requires a worker to
+             * FINISH a job already holding 128 MiB — which the identical PHP
+             * limit makes impossible. The allocation that would cross the line
+             * throws `Allowed memory size of 134217728 bytes exhausted` inside
+             * the render instead, and the check is never reached.
+             *
+             * That is what T11 and T13 both logged during the receipt drain,
+             * in mPDF's TTFontFile.php. Every PDF still arrived, because the
+             * job retries — so the cost was wasted renders and noise, not lost
+             * documents.
+             *
+             * MEASURED, NOT ESTIMATED. Twenty-five receipts rendered back to
+             * back in one process: the worker starts near 42 MiB, the first
+             * render adds 22 MiB as mPDF loads and subsets its fonts, and
+             * every render after that adds about 2 MiB which is never
+             * released. At render 25 the process held 114 MiB and was still
+             * climbing linearly, so exhaustion arrives near render 32 — about
+             * what a 2,770-receipt drain over three workers would hit roughly
+             * thirty times each.
+             *
+             * SO THE RENDER'S COST IS NOT THE DEFECT; THE UNREACHABLE CEILING
+             * IS — AND EITHER SIDE OF THE PAIR CAN MOVE TO FIX IT. An earlier
+             * version of this comment said raising PHP's limit alone would only
+             * postpone a worker's death. That was wrong, and the review caught
+             * it: with PHP above 128 a job could FINISH past 128, and the
+             * post-job check would then see the ceiling exceeded and recycle
+             * the worker. Raising PHP's limit is a real alternative fix, not a
+             * delay.
+             *
+             * LOWERING IS CHOSEN FOR TWO REASONS, BOTH TRADE-OFFS RATHER THAN
+             * NECESSITIES. This repository configures Horizon but not the
+             * production `php.ini`, so a fix that depends on raising
+             * `memory_limit` is not enforceable from here — it would be an
+             * instruction to a deployment rather than a change. And a worker
+             * recycled at 96 MiB holds flat memory, where a higher PHP limit
+             * buys longer worker lives at the cost of more resident memory per
+             * process, multiplied by ten in production.
+             *
+             * 96 leaves 32 MiB beneath PHP's default. The probe recorded
+             * `memory_get_peak_usage(true)` beside the allocation after each
+             * render, and the two were equal at every sample — so no render's
+             * transient rose above where it ended, and the 22 MiB cold start
+             * bounds the dearest single render, at the real allocator's ~2 MiB
+             * resolution. A worker at the ceiling can therefore finish the job
+             * in hand and be recycled before the next. Roughly seventeen
+             * receipts per worker lifetime.
+             *
+             * THE INVARIANT, NOT THE NUMBER, IS WHAT MATTERS: this must stay
+             * below the `memory_limit` the workers actually run under, with
+             * room for one more render. `ReceiptGenerationTest` asserts it.
+             * `maxJobs` was the alternative and is deliberately left at 0 — a
+             * job count would hardcode today's per-render cost, while this
+             * adapts if the render gets cheaper or dearer.
+             *
+             * Measured on Windows PHP 8.4. The Linux per-render peak and the
+             * same-load drain are recorded with the rerun in the baseline
+             * report.
+             */
+            'memory' => 96,
             'tries' => 1,
             'timeout' => 60,
             'nice' => 0,
