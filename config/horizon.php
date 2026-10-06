@@ -212,7 +212,53 @@ return [
             'maxProcesses' => 1,
             'maxTime' => 0,
             'maxJobs' => 0,
-            'memory' => 128,
+
+            /*
+             * NINETY-SIX, BECAUSE 128 HERE COULD NEVER FIRE AGAINST PHP'S 128
+             * (P3.5-T17)
+             * ---------------------------------------------------------------
+             * This was 128, the same number as PHP's default `memory_limit`,
+             * and that coincidence disabled the recycle entirely. Laravel
+             * checks this ceiling AFTER a job returns (`Worker::runJob()` then
+             * `stopIfNecessary()`), so a graceful restart requires a worker to
+             * FINISH a job already holding 128 MiB — which the identical PHP
+             * limit makes impossible. The allocation that would cross the line
+             * throws `Allowed memory size of 134217728 bytes exhausted` inside
+             * the render instead, and the check is never reached.
+             *
+             * That is what T11 and T13 both logged during the receipt drain,
+             * in mPDF's TTFontFile.php. Every PDF still arrived, because the
+             * job retries — so the cost was wasted renders and noise, not lost
+             * documents.
+             *
+             * MEASURED, NOT ESTIMATED. Twenty-five receipts rendered back to
+             * back in one process: the worker starts near 42 MiB, the first
+             * render adds 22 MiB as mPDF loads and subsets its fonts, and
+             * every render after that adds about 2 MiB which is never
+             * released. At render 25 the process held 114 MiB and was still
+             * climbing linearly, so exhaustion arrives near render 32 — about
+             * what a 2,770-receipt drain over three workers would hit roughly
+             * thirty times each.
+             *
+             * SO THE RENDER'S COST IS NOT THE DEFECT; THE UNREACHABLE CEILING
+             * IS. Raising PHP's limit alone would only move the render at
+             * which a worker dies, because the growth is accumulation rather
+             * than one expensive render.
+             *
+             * 96 leaves 32 MiB beneath PHP's default — more than the largest
+             * single-render cost ever observed here (the 22 MiB cold start),
+             * so a worker that reaches the ceiling can still finish the job in
+             * hand and be recycled before the next one. It yields roughly
+             * seventeen receipts per worker lifetime.
+             *
+             * THE INVARIANT, NOT THE NUMBER, IS WHAT MATTERS: this must stay
+             * below the `memory_limit` the workers actually run under, with
+             * room for one more render. `ReceiptGenerationTest` asserts it.
+             * `maxJobs` was the alternative and is deliberately left at 0 — a
+             * job count would hardcode today's per-render cost, while this
+             * adapts if the render gets cheaper or dearer.
+             */
+            'memory' => 96,
             'tries' => 1,
             'timeout' => 60,
             'nice' => 0,
