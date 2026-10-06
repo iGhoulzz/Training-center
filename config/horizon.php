@@ -241,15 +241,31 @@ return [
              * thirty times each.
              *
              * SO THE RENDER'S COST IS NOT THE DEFECT; THE UNREACHABLE CEILING
-             * IS. Raising PHP's limit alone would only move the render at
-             * which a worker dies, because the growth is accumulation rather
-             * than one expensive render.
+             * IS — AND EITHER SIDE OF THE PAIR CAN MOVE TO FIX IT. An earlier
+             * version of this comment said raising PHP's limit alone would only
+             * postpone a worker's death. That was wrong, and the review caught
+             * it: with PHP above 128 a job could FINISH past 128, and the
+             * post-job check would then see the ceiling exceeded and recycle
+             * the worker. Raising PHP's limit is a real alternative fix, not a
+             * delay.
              *
-             * 96 leaves 32 MiB beneath PHP's default — more than the largest
-             * single-render cost ever observed here (the 22 MiB cold start),
-             * so a worker that reaches the ceiling can still finish the job in
-             * hand and be recycled before the next one. It yields roughly
-             * seventeen receipts per worker lifetime.
+             * LOWERING IS CHOSEN FOR TWO REASONS, BOTH TRADE-OFFS RATHER THAN
+             * NECESSITIES. This repository configures Horizon but not the
+             * production `php.ini`, so a fix that depends on raising
+             * `memory_limit` is not enforceable from here — it would be an
+             * instruction to a deployment rather than a change. And a worker
+             * recycled at 96 MiB holds flat memory, where a higher PHP limit
+             * buys longer worker lives at the cost of more resident memory per
+             * process, multiplied by ten in production.
+             *
+             * 96 leaves 32 MiB beneath PHP's default. The probe recorded
+             * `memory_get_peak_usage(true)` beside the allocation after each
+             * render, and the two were equal at every sample — so no render's
+             * transient rose above where it ended, and the 22 MiB cold start
+             * bounds the dearest single render, at the real allocator's ~2 MiB
+             * resolution. A worker at the ceiling can therefore finish the job
+             * in hand and be recycled before the next. Roughly seventeen
+             * receipts per worker lifetime.
              *
              * THE INVARIANT, NOT THE NUMBER, IS WHAT MATTERS: this must stay
              * below the `memory_limit` the workers actually run under, with
@@ -257,6 +273,10 @@ return [
              * `maxJobs` was the alternative and is deliberately left at 0 — a
              * job count would hardcode today's per-render cost, while this
              * adapts if the render gets cheaper or dearer.
+             *
+             * Measured on Windows PHP 8.4. The Linux per-render peak and the
+             * same-load drain are recorded with the rerun in the baseline
+             * report.
              */
             'memory' => 96,
             'tries' => 1,
