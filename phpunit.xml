@@ -84,6 +84,15 @@
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="BROADCAST_CONNECTION" value="null"/>
         <env name="CACHE_STORE" value="array"/>
+        <!--
+            The rate limiter has its own store (P3.5-T16). Pinned beside
+            CACHE_STORE so the suite needs no Redis: config/cache.php sets
+            the limiter to redis for real environments, and without this the
+            suite would require a Redis server to exercise any throttled
+            route. Pinning it to the database store would reintroduce the
+            deadlock T16 removed.
+        -->
+        <env name="CACHE_LIMITER" value="array"/>
         <env name="DB_CONNECTION" value="mysql"/>
         <env name="DB_DATABASE" value="training_center_test"/>
         <env name="DB_URL" value=""/>

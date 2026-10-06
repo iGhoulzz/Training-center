@@ -21,6 +21,47 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Rate Limiter Store (P3.5-T16)
+    |--------------------------------------------------------------------------
+    |
+    | THE LIMITER DOES NOT RUN ON THE DATABASE STORE, AND THE REASON IS MEASURED.
+    |
+    | Laravel binds the RateLimiter to this store rather than the default one
+    | (CacheServiceProvider), and leaving it unset makes it inherit `default`,
+    | which here is `database`. That is what T11 measured failing: two HTTP 500s
+    | in 240 receipt downloads, both MySQL 1213 deadlocks inside
+    | Illuminate\Cache\RateLimiter.
+    |
+    | InnoDB's own report, read from the Linux target, names the cycle: two
+    | concurrent `insert ignore into cache` statements for one key each take a
+    | shared record lock during the duplicate-key check and then each needs an
+    | exclusive one on that same record — "locks rec but not gap" on all four
+    | sides, so no gap lock is involved and a different isolation level would
+    | not help. The record they collide on is delete-marked, left by the expiry
+    | DELETE that `DatabaseStore::many()` issues during a READ: every
+    | `RateLimiter::attempts()` call can therefore write, and at the decay
+    | boundary one request deletes while others insert. Reproduced in the
+    | container at 63 deadlocks in 182,327 attempts.
+    |
+    | Redis is chosen because its INCR is atomic, which is what a limiter needs,
+    | and because production already requires Redis for queues (design §11), so
+    | this adds no infrastructure. The `file` store was rejected on correctness,
+    | not taste: `FileStore::increment()` is a read-modify-write with no lock, so
+    | concurrent hits lose increments and the throttle admits more than it says.
+    |
+    | §11 records the narrowing: this moves the LIMITER only. The application
+    | cache and sessions stay database-backed, which is the decision §11 makes
+    | and this does not reopen.
+    |
+    | Tests pin this to `array` in phpunit.xml, beside the `CACHE_STORE` pin, so
+    | the suite needs no Redis.
+    |
+    */
+
+    'limiter' => env('CACHE_LIMITER', 'redis'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Cache Stores
     |--------------------------------------------------------------------------
     |
