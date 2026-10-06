@@ -1064,3 +1064,48 @@ it('renders every receipt field into a private PDF and is retry-safe', function 
         ->where('event', 'receipt_generated')
         ->count())->toBe(1);
 });
+
+/*
+|--------------------------------------------------------------------------
+| Worker memory: the ceiling that could never fire (P3.5-T17)
+|--------------------------------------------------------------------------
+|
+| T11 and T13 both logged PHP's 128 MiB exhaustion inside mPDF during the
+| receipt drain. The cause was not the render's cost: Horizon's supervisor
+| ceiling was ALSO 128, and Laravel checks it only after a job returns, so a
+| graceful restart needed a worker to finish a job already holding PHP's whole
+| limit. The two numbers cancelled, and `config/horizon.php` carries the
+| measurement that set the new one.
+*/
+
+it('keeps the worker recycle reachable below the PHP memory limit', function (): void {
+    $ceiling = (int) config('horizon.defaults.supervisor-1.memory');
+
+    /*
+     * PHP's own default, which is what the workers ran under: no memory_limit
+     * is set in docker/dev-linux/Dockerfile or in CI, so the stock 128M
+     * applies and is the number that threw.
+     */
+    $phpDefaultLimitMib = 128;
+
+    /*
+     * THE PROPERTY, NOT THE VALUE. Asserting the ceiling equals 96 would only
+     * agree with whoever wrote 96. What has to hold is that a worker sitting
+     * AT the ceiling can still complete one more render and be recycled on the
+     * check that follows it — so the gap must cover the dearest single render
+     * measured, which is the 22 MiB cold start where mPDF loads its fonts.
+     * 24 gives that a little margin.
+     *
+     * Set the ceiling back to 128 and this fails, which is the regression it
+     * exists for.
+     */
+    $headroomForOneRender = 24;
+
+    expect($ceiling)->toBeGreaterThan(0)
+        ->and($phpDefaultLimitMib - $ceiling)->toBeGreaterThanOrEqual(
+            $headroomForOneRender,
+            "Horizon's worker ceiling of {$ceiling} MiB leaves less than {$headroomForOneRender} MiB "
+            ."beneath PHP's {$phpDefaultLimitMib} MiB default. A worker cannot finish the render that "
+            .'takes it past the ceiling, so it dies on PHP\'s limit instead of being recycled.',
+        );
+})->group('finance');
