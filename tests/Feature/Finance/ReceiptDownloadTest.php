@@ -218,13 +218,25 @@ it('keeps the rate limiter off the database cache store', function (): void {
     preg_match('/^CACHE_LIMITER=(\S+)\R/m', $envExample, $matches);
 
     expect($matches)->not->toBeEmpty('.env.example does not set CACHE_LIMITER at all, so a deployment '
-        .'built from it leaves the limiter inheriting CACHE_STORE — the database.')
-        ->and($matches[1])->not->toBe(
-            'database',
-            '.env.example hands deployments the database store for the rate limiter, which is the '
-            .'configuration P3.5-T16 measured deadlocking.',
-        );
+        .'built from it leaves the limiter inheriting CACHE_STORE — the database.');
 
-    // The suite's own pin must not reintroduce it either.
+    /*
+     * `redis` SPECIFICALLY, not merely "something other than database".
+     *
+     * A looser assertion would pass for `file`, and this task rejected the file
+     * store on correctness: `FileStore::increment()` is an unlocked
+     * read-modify-write, so concurrent hits lose increments and the throttle
+     * admits more than it states. `.env.example` is what a deployment is built
+     * from, so what it hands over has to be the store that is actually safe
+     * under concurrency — `file` is documented there as a local fallback only.
+     */
+    expect($matches[1])->toBe(
+        'redis',
+        '.env.example must hand deployments the redis limiter store. `database` is what '
+        .'P3.5-T16 measured deadlocking, and `file` loses increments under concurrent hits, '
+        .'so it is a documented local fallback rather than something to ship.',
+    );
+
+    // The suite's own pin must not reintroduce the deadlocking store either.
     expect(config('cache.limiter'))->not->toBe('database');
 })->group('finance');
