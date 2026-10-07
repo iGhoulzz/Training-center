@@ -163,3 +163,80 @@ it('keeps a reversed payment receipt available for authorized re-download', func
     $response->assertOk();
     expect($response->streamedContent())->toBe($this->bytes);
 });
+
+/*
+|--------------------------------------------------------------------------
+| The limiter's store, and why it is not the database one (P3.5-T16)
+|--------------------------------------------------------------------------
+|
+| T11 measured 2 HTTP 500s in 240 downloads of this receipt route, both MySQL
+| 1213 deadlocks inside Illuminate\Cache\RateLimiter. Laravel binds the limiter
+| to `cache.limiter` rather than to the default store, and that key did not
+| exist — so the limiter inherited `cache.default`, which is the database.
+|
+| InnoDB's report, read from the Linux target, names the cycle: two concurrent
+| `insert ignore into cache` statements for one key each take a shared record
+| lock during the duplicate-key check, then each needs an exclusive one on that
+| same record. All four sides read "locks rec but not gap", so no gap lock is
+| involved and an isolation-level change would not help. The record is
+| delete-marked, left by the expiry DELETE that `DatabaseStore::many()` issues
+| during a READ.
+|
+| THIS GUARD CHECKS THE SHIPPED CONFIGURATION, NOT THIS PROCESS'S.
+| `phpunit.xml` pins the suite to array stores, so asserting
+| `config('cache.limiter')` alone would read `array` and pass whether or not
+| the fix exists — it would agree with the test environment rather than with
+| the deployment. What has to hold is that the shipped config names a limiter
+| store at all, and that the value a deployment is handed is not the database.
+*/
+
+it('keeps the rate limiter off the database cache store', function (): void {
+    /*
+     * The key must EXIST. Without it the limiter silently inherits
+     * `cache.default`, which is exactly how this defect arrived, and no value
+     * anywhere would look wrong.
+     */
+    $cacheConfig = require base_path('config/cache.php');
+
+    expect(array_key_exists('limiter', $cacheConfig))->toBeTrue(
+        'config/cache.php declares no `limiter` store, so the rate limiter inherits `cache.default` '
+        .'— the database store, whose concurrent inserts deadlock (P3.5-T16).',
+    );
+
+    /*
+     * And the value a real deployment is handed must not be the database
+     * store. `.env.example` is what a deployment is built from, so that is the
+     * artefact to assert on; this process reads the array pin from phpunit.xml.
+     */
+    $envExample = (string) file_get_contents(base_path('.env.example'));
+
+    /*
+     * `\R` rather than `$`: this file is checked out with CRLF endings on
+     * Windows, and `\S+$` cannot match past the carriage return. The same
+     * anchoring trap has bitten this repository before.
+     */
+    preg_match('/^CACHE_LIMITER=(\S+)\R/m', $envExample, $matches);
+
+    expect($matches)->not->toBeEmpty('.env.example does not set CACHE_LIMITER at all, so a deployment '
+        .'built from it leaves the limiter inheriting CACHE_STORE — the database.');
+
+    /*
+     * `redis` SPECIFICALLY, not merely "something other than database".
+     *
+     * A looser assertion would pass for `file`, and this task rejected the file
+     * store on correctness: `FileStore::increment()` is an unlocked
+     * read-modify-write, so concurrent hits lose increments and the throttle
+     * admits more than it states. `.env.example` is what a deployment is built
+     * from, so what it hands over has to be the store that is actually safe
+     * under concurrency — `file` is documented there as a local fallback only.
+     */
+    expect($matches[1])->toBe(
+        'redis',
+        '.env.example must hand deployments the redis limiter store. `database` is what '
+        .'P3.5-T16 measured deadlocking, and `file` loses increments under concurrent hits, '
+        .'so it is a documented local fallback rather than something to ship.',
+    );
+
+    // The suite's own pin must not reintroduce the deadlocking store either.
+    expect(config('cache.limiter'))->not->toBe('database');
+})->group('finance');
