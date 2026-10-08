@@ -328,6 +328,44 @@ the rendered HTML — a value never displayed to anyone still passes. Strip the 
 asserting presence. `assertDontSee()` over the raw body is the stricter direction and is fine as
 it stands, because it proves the value never reached the payload at all.
 
+## Measuring, and guarding what can regress (phase 3.5)
+
+**Measure before scoping the fix, and let the measurement refute the scope.**
+Three tasks in this phase were written against a mechanism that turned out to be
+wrong, and in each the measurement won: a payment deadlock that was a gap lock on
+an index supremum rather than row contention, a limiter deadlock that was *not*
+that shape and so could not be fixed the same way, and a worker dying on PHP's
+memory limit because the supervisor ceiling beside it was set to the same number.
+An entry that says "fix X if the cause is Y" is a hypothesis; when the evidence
+says otherwise, correct the entry rather than the evidence.
+
+**A guard asserts the property, not the value.** Asserting that a setting equals
+the number just written agrees with whoever wrote it and catches nothing. Assert
+what has to remain true: that a worker recycle ceiling leaves room beneath PHP's
+limit for one more job, not that it equals 96; that the rate limiter's store is
+one whose increment is atomic, not that it reads `redis` in this process.
+
+**When the fix is configuration, the guard asserts the SHIPPED configuration.**
+`phpunit.xml` pins stores to `array` for hermeticity, so reading `config()` in a
+test reports the test environment and passes whether or not the fix exists. Assert
+the artefact a deployment is built from — the config file's declaration and
+`.env.example`'s value — or the guard only agrees with the suite.
+
+**A probe and a committed test are different things, and both have a place.** A
+probe establishes a mechanism and its evidence belongs in `docs/reviews/` with the
+lock sets, attempt counts and the conditions it ran under. A committed test guards
+what can regress. Where a fix changes configuration rather than code, a subprocess
+reproduction cannot be red-before-green-after, and saying so is better than
+committing a test that passes either way.
+
+**Bounds and thresholds are measured, never derived.** A retry bound calculated
+from an assumed-independent failure rate was wrong by two orders of magnitude,
+because an immediate retry re-enters the same contention. Size the bound from a
+run, and say what the run does not establish: a zero count bounds a rate from
+above and cannot distinguish rare from never.
+
+---
+
 ## Error handling
 
 - Typed custom exceptions carrying context, not generic `\Exception`.

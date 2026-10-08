@@ -19,7 +19,7 @@ only public feature so far.
 | [`docs/ENGINEERING.md`](docs/ENGINEERING.md) | How code is written here |
 | [`docs/WORKFLOW.md`](docs/WORKFLOW.md) | How Claude and Codex divide, isolate and cross-review work |
 | [`docs/superpowers/plans/`](docs/superpowers/plans/) | One plan per milestone; the newest is the current one |
-| [`docs/CHANGELOG.md`](docs/CHANGELOG.md) | Release notes, currently for phases 1 and 2 |
+| [`docs/CHANGELOG.md`](docs/CHANGELOG.md) | Release notes, in plain language, through phase 3.5 |
 | [`docs/RESTORE.md`](docs/RESTORE.md) | Restoring from a backup |
 | [`CLAUDE.md`](CLAUDE.md), [`AGENTS.md`](AGENTS.md) | Instructions for the two coding agents |
 

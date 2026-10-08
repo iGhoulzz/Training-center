@@ -1,5 +1,93 @@
 # Changelog
 
+## Phase 3.5 — Hardening and owner feedback (completed 2026-10-08)
+
+Nothing in this phase adds a feature anyone asked for. It exists because the
+system was about to be trusted with a centre's money and documents, and nobody
+had yet measured what it does when twenty people use it at once. Three of the
+eighteen tasks were written only after that measurement, to fix what it found.
+
+### What the measurement found, and what it cost to fix
+
+The load baseline ran four staff flows at twenty concurrent sessions for five
+minutes each, against a four-thousand-student fixture. Three things broke.
+
+- **One collection in fifty-five failed.** 51 of 2,821 enrol-and-collect flows
+  returned an error, every one a database deadlock while recording the payment.
+  On that screen, cash has usually changed hands before the request is sent, so
+  a failure leaves a person holding money the system has no record of. The cause
+  was two tills billing *different* students colliding on a lock neither needed.
+  The rerun after the fix recorded **zero failures in 2,764 collections**.
+- **Receipt downloads failed about one time in a hundred and twenty**, for an
+  unrelated reason: the counter that throttles downloads was kept in the
+  database, and two requests arriving together could deadlock while writing it.
+  The counter now lives in Redis, where incrementing is atomic. The application's
+  own cache stays where it was.
+- **Receipt PDFs exhausted their worker's memory repeatedly.** Every receipt
+  still arrived, because the job retries, so this cost wasted work and a noisy
+  log rather than lost documents. The cause was two limits set to the same
+  number: the worker was supposed to be recycled at 128 MB, but PHP's own ceiling
+  was also 128 MB, so the worker always died before the recycle could happen.
+  Rendering accumulates about 2 MB per receipt that is never released, so the
+  recycle is what keeps a long run alive. The drain after the fix rendered
+  **2,358 receipts with no exhaustion at all**.
+
+### What else changed that you can see
+
+- **Receipts are now downloadable from the payment screen.** They were being
+  generated and stored, and nothing in the interface linked to them.
+- **Student and batch codes are generated** in a fixed readable format instead of
+  being typed. Course codes stay manual, with suggestions.
+- **Reports cover a range of months**, and the period filters behave the same way
+  across all of them.
+- **The one refusal that can explain itself now does.** Trying to pay more than a
+  bill is owed says how much was attempted and how much remained, instead of a
+  bare refusal.
+
+### What changed underneath
+
+Queues moved to Redis with Horizon supervising them, and Pulse records slow
+queries and runtime health. Service level objectives now exist for the four
+measured flows, written as regression detectors against a measured baseline
+rather than as promises — and recorded as describing the development harness,
+not a production host, because no production host has been chosen. Queue delay
+deliberately has no target: nothing has measured it.
+
+Three findings from the final stress cycle are recorded as deferred measurements
+rather than quietly dropped: student search and the reports both drifted past
+their new latency targets, and the receipt queue's drain profile is unmeasured.
+
+## Phase 3 — Student portal and certificates (completed 2026-09-06)
+
+Students can sign in and see their own enrolments, bills and payments, and the
+centre can record the physical certificates it issues and let anyone verify one
+from a printed reference.
+
+### What works
+
+- **A student portal**, separate from the staff dashboard and with its own login.
+  A student sees their enrolments, what each cost, what they have paid and what
+  is outstanding — and nothing belonging to anybody else.
+- **Portal credentials are issued by staff**, not self-registered. There is no
+  public sign-up, deliberately.
+- **Completion marking**: an enrolment can be marked complete, which is what makes
+  a certificate issuable.
+- **Certificate records.** The centre prints certificates outside the system; what
+  this records is that one was issued, to whom, for which enrolment, and under
+  which reference. Deleting an enrolment that carries a certificate is refused.
+- **A public verifier.** Anyone holding a printed reference can check it on a page
+  that needs no account. A reference the centre issued is answered honestly,
+  including one that has been revoked — that says so, with the date it was
+  revoked, because somebody holding a worthless certificate needs to know which.
+  What the page will not do is let anyone *probe* it: a blank box, a malformed
+  reference and one that was never issued all produce the identical not-found
+  result, so no sequence of guesses reveals which references exist. The answer
+  also carries only what is printed on the certificate — no contact details, no
+  national ID, no balance.
+- **Export retention**: generated exports are cleaned up on a schedule rather than
+  accumulating for ever.
+
+
 ## Phase 2 — Finances (completed 2026-08-26)
 
 The centre can now price a course, enrol a student and raise the bill in one
