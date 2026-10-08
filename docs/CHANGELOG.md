@@ -4,7 +4,7 @@
 
 Nothing in this phase adds a feature anyone asked for. It exists because the
 system was about to be trusted with a centre's money and documents, and nobody
-had yet measured what it does when twenty people use it at once. Four of the
+had yet measured what it does when twenty people use it at once. Three of the
 eighteen tasks were written only after that measurement, to fix what it found.
 
 ### What the measurement found, and what it cost to fix
@@ -76,9 +76,14 @@ from a printed reference.
   this records is that one was issued, to whom, for which enrolment, and under
   which reference. Deleting an enrolment that carries a certificate is refused.
 - **A public verifier.** Anyone holding a printed reference can check it on a page
-  that needs no account. It answers identically for every kind of miss — a wrong
-  reference, a revoked one and one that never existed look the same from outside,
-  so the page cannot be used to discover which references exist.
+  that needs no account. A reference the centre issued is answered honestly,
+  including one that has been revoked — that says so, with the date it was
+  revoked, because somebody holding a worthless certificate needs to know which.
+  What the page will not do is let anyone *probe* it: a blank box, a malformed
+  reference and one that was never issued all produce the identical not-found
+  result, so no sequence of guesses reveals which references exist. The answer
+  also carries only what is printed on the certificate — no contact details, no
+  national ID, no balance.
 - **Export retention**: generated exports are cleaned up on a schedule rather than
   accumulating for ever.
 
