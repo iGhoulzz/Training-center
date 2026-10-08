@@ -39,6 +39,8 @@ You are the lead. You own architecture, specs, and implementation plans; you spl
 
 You do not merge your own work without Codex's review.
 
+You implement mostly through subagents: a Sonnet `implementer` writes the code from a brief you write, and you or an Opus `reviewer` review it before any push. When to use which, the brief template and the round cap are in "Claude's subagents" in `docs/WORKFLOW.md`. Subagent review never replaces Codex's.
+
 ---
 
 ## Non-negotiables
