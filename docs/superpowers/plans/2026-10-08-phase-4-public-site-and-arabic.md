@@ -1,8 +1,29 @@
 # Phase 4 — Public site, Publications, the design revamp and Arabic/RTL
 
-**Status: DRAFT, round 1. No task may begin until this merges green.** The rule
+**Status: DRAFT, round 2. No task may begin until this merges green.** The rule
 that has held since phase 2: a plan-level architecture error cost five
 remediation rounds, so Codex reviews the plan before any implementation starts.
+
+## Round 2 — what changed, and where
+
+Codex's round-1 review of `0511fe6` requested changes before Wave 1. Each finding
+is answered in the body; this table only says where.
+
+| Finding | Answer |
+|---|---|
+| P1 — T01 amends the wrong sections; the expense period basis is undecided | T01 now amends §3, §5, §6, §8 and §12, and is the **only** task that edits the spec. The owner decided the basis: **an expense counts in the month it was paid**. T03 and T04 no longer touch the spec |
+| P1 — a public-disk PDF cannot honour unpublish; the anonymous counter has no actor | Articles live on the existing **private** disk. Every download goes through a route that re-reads the published state per request (T13), and the counter is an explicitly actor-less Action with its own guard (T03) |
+| P1 — T07–T18 lack scope and Done-when; T16 is unreviewable; undeclared seams | Every task now names its files and tests. T16 is split into **T16a–T16e**. `RolePermissionSeeder.php`, `AdminPanelProvider.php`, `AppServiceProvider.php`, `resources/css/` and `vite.config.js` are declared seams with an order |
+| P1 — the design handoff is untracked, so no worktree or reviewer can see it | New **T19**, in Wave 1: a cleaned copy is committed, reviewed by the owner before it is pushed, because this repository is public |
+| P2 — "certificates due this month" has no rule | **Dropped from phase 4** by the owner. T09 builds the one queue the data can define |
+| P2 — "no session for anonymous visitors" against the `web` group | T11 specifies which routes are sessionless and how, and leaves the verifier and every sign-in path on the full `web` stack |
+| P2 — which Batch a programme card shows | The owner decided: **the next upcoming batch**, with a defined fallback (T05, T12) |
+| Wording — the verifier cannot make enumeration impossible | Corrected below |
+
+Task numbers are kept from round 1 so the review's references stay valid; the new
+task is T19 for that reason, not because it runs last.
+
+---
 
 ## What this phase is, and why it is one phase rather than two
 
@@ -33,39 +54,33 @@ assumption.
 |---|---|---|
 | **Phase 4 is unified** — design revamp, public site and bilingual pass in one phase | 2026-10-08 | Requires a §3 amendment; §3 as written contains no admin redesign |
 | **Expenses: a managed list** admins maintain | 2026-10-08 | A categories table and a small admin screen, so adding "Insurance" needs no developer. Requires a §12 amendment: expense tracking is currently listed out of scope |
-| **Publications: in** | 2026-10-08 | A public PDF library. Genuinely new domain scope — a model, uploads, public file serving, a download counter. Requires a §12 amendment |
+| **An expense counts in the month it was paid** | 2026-10-08 | One local calendar date per expense, `paid_on`. Rent paid on 1 October for the quarter counts wholly in October. No incurred date, no spreading across months. Matches revenue, which is already cash basis (§8) |
+| **Publications: in** | 2026-10-08 | A public PDF library. Genuinely new domain scope — a model, uploads, public file serving, a download counter. Requires amendments to §5, §6 and §12 |
 | **The public programme cards show price, start date, hours and description** | 2026-10-08 | **Not seats remaining.** The owner confirmed all four fields and then reversed on seats the same day: a quiet batch showing 2 of 20 taken broadcasts how full the centre is. The prototype's "seats left" pill is not built |
-| **All four new admin surfaces are in** | 2026-10-08 | Finance hub, export history, report charts, certificate work queues |
+| **A programme card shows the course's next upcoming batch** | 2026-10-08 | Rule in T05. With no upcoming batch the card shows the course without a date or price, and a contact call to action |
+| **Three new admin surfaces are in** | 2026-10-08 | Finance hub, export history, report charts, and **one** certificate queue — completed but not yet issued |
+| **"Certificates due this month" is out of phase 4** | 2026-10-08 | Nothing in the data defines when a certificate falls due, and inventing a rule for a queue was not worth it. Recorded so it does not return as an assumption |
 | **The verifier keeps its identical not-found response** | 2026-10-08 | The design's distinct "enter a reference" message is handled **client-side**, before anything is submitted |
 | **Contact hours come off the certificate result** | 2026-10-08 | The design shows them; the closed public projection does not carry them, and widening what a public page reveals was not worth a detail nobody asked for |
+| **The design handoff is committed as a cleaned copy** | 2026-10-08 | The repository is public. Real logo, contact details and third-party material come out, and the owner reviews the copy before it is pushed (T19) |
 
 ### One precision this plan must not lose
 
 **A revoked certificate is not a miss, and the two must never be described as
 alike.** `VerifyCertificateController::show()` renders a known certificate's real
 status, and design §7.3 *requires* a revoked one to say so **with its revocation
-date** — somebody holding a worthless certificate needs to know which. What is
-uniform is the miss: a blank box, a malformed reference and one that was never
-issued all return the identical not-found result, so no sequence of guesses
-reveals which references exist.
+date** — somebody holding a worthless certificate needs to know which.
 
-This is written out because the phase 3.5 close-out shipped the wrong version of
-it and Codex caught it in review (#81). Anyone restyling the verifier inherits
-both properties, not one.
+What is uniform is the miss: a blank box, a malformed reference and one that was
+never issued all return the identical not-found result. That does not make
+enumeration impossible — a correctly guessed reference necessarily returns a
+result. The uniform miss, the random reference alphabet and the named rate
+limiter make guessing expensive and uninformative; none of them makes it
+impossible, and no document in this repository should say otherwise.
 
----
-
-## Prerequisites — amendments before any task
-
-These are not tasks that can run in parallel with the work they authorise. §12
-exists precisely so that out-of-scope items do not reappear as assumptions, and
-widening it quietly would be the defect that rule was written against.
-
-- **System design §3, Phasing** — phase 4 gains the admin revamp. As written it
-  is public site, landing pages, course listings, contact and the bilingual pass.
-- **System design §12, Explicitly out of scope** — expense tracking beyond staff
-  wages comes out of the list, bounded to the managed-list shape the owner chose.
-  Publications is added to the design as new scope rather than assumed in.
+The phase 3.5 close-out shipped the wrong version of the first point and Codex
+caught it (#81); round 1 of this plan overclaimed the second. Anyone restyling
+the verifier inherits both properties, stated this precisely.
 
 ---
 
@@ -73,8 +88,8 @@ widening it quietly would be the defect that rule was written against.
 
 The handoff ships `BACKEND_CONTRACT.md`, which was checked against this
 repository before it was written. **Its central claim holds: nothing in the
-bundle needs new business logic.** The only new write in the whole design is the
-Publications download counter.
+bundle needs new business logic** beyond the two pieces of new scope the owner
+added — Publications and expenses.
 
 Two of its entries are **already obsolete** and must not be scoped as work — it
 predates P35-T07 and T09:
@@ -83,61 +98,129 @@ predates P35-T07 and T09:
   through `CreateWithIdentifierCodeAction`.
 - "Suggesting the next free student code" is moot. Codes are generated.
 
-The remaining gaps are read queries and N+1 fixes, and they are scoped as tasks
-below rather than left for whoever notices them first.
+The remaining gaps are read queries and N+1 fixes, scoped as tasks below rather
+than left for whoever notices them first.
 
 ---
 
 ## Declared seams
 
-| File or surface | Tasks | Rule |
+A file shared by two tasks appears here with an order. A task that finds it needs
+a file outside its own scope stops and raises it; an approved expansion is
+recorded in **both** the task's File scope and this table in the same pass — the
+phase 3.5 lesson, where four approved expansions each missed this table on the
+first attempt.
+
+| File or surface | Tasks, in order | Rule |
 |---|---|---|
-| `docs/superpowers/specs/2026-07-20-training-center-dashboard-design.md` | T01, and **conditionally T03 and T04** | **T01 first, and alone, for §3 and §12.** T03 may touch §4's data model for the article, T04 for expenses — each only in the section its own entry names, and neither reopens §3 or §12 |
-| `routes/web.php` | T11, then T13, T14, T15 | **Sequenced: T11 establishes the public group and its middleware**; the other three add routes inside it and may not alter the group. The existing verifier routes and their named rate limiter are T14's and nobody else's |
-| `lang/en/*`, `lang/ar/*` | **Every task adds English keys; T17 writes Arabic** | No task ships a user-facing string without an English key, as from commit one. `lang/ar/` counterparts stay empty until T17, which is the only task that writes them |
-| The Filament theme and shared layout | T16, then T18 | **Sequenced: T16 → T18.** T16 restyles; T18 makes it directional. A screen restyled after T18 has not been RTL-checked, which is the whole reason the bilingual pass runs last |
-| `app/Domain/Finance/Reports/ProfitReport.php` | T04, then T10 | **Sequenced.** T04 teaches it expenses; T10 charts what it returns. T10 must not change what the figure means |
-| `config/filesystems.php` and the private disk | T03 | Publications introduce a **public** document surface for the first time. Receipts and staff certificates are private and stay private; the seam is that one disk configuration now serves both |
+| `docs/superpowers/specs/2026-07-20-training-center-dashboard-design.md` | **T01 only** | No other task edits the spec. A task that finds the spec wrong stops and raises it; the fix is a spec amendment, not a quiet edit inside a feature PR |
+| `docs/design/design_handoff_training_centre/` | **T19 only** | Read-only reference for every other task |
+| `database/seeders/RolePermissionSeeder.php` | **T03 → T04** | T03 adds the article permissions, T04 the expense and category permissions. T04 rebases on T03 and must not reorder T03's rows |
+| `app/Providers/Filament/AdminPanelProvider.php` | **T03 → T09 → T16a** | T03 adds `discoverResources` for `Domain/Publications`; T09 adds `discoverPages` for `Domain/Enrollment/Filament/Pages`; T16a owns the theme, colours and navigation. Each adds its own lines and edits no other task's |
+| `app/Providers/AppServiceProvider.php` | **T11 → T13** | T11 registers the `public-site` rate limiter, T13 the `publication-download` limiter. Nothing else in the file is touched |
+| `routes/web.php` | **T11 → T12 → T13 → T15** | T11 creates the sessionless public group; the others add routes inside it and may not alter the group or its middleware. **The verifier group and the private-file group are not touched by any phase 4 task** |
+| `resources/css/app.css`, `vite.config.js` | **T11 → T16a → T18** | T11 adds the public site's stylesheet entry; T16a the Filament theme entry; T18 the direction work over both |
+| `resources/views/layouts/public.blade.php` | **T11 → T14 → T18** | T11 creates it; T14 moves the verifier onto it; T18 makes it directional |
+| `app/Domain/Enrollment/Models/Batch.php` | **T05 only** | Scopes beside the existing predicates |
+| `app/Domain/Finance/Reports/ProfitReport.php` | **T04 → T10** | T04 teaches it expenses; T10 charts what it returns and must not change what the figure means |
+| `app/Domain/Finance/Filament/Pages/Reports/*` | **T10 → T16d** | T10 adds the charts; T16d restyles. T16d must not change what a chart plots |
+| `lang/en/*` | Every task, each in its own catalogue | No task ships a user-facing string without an English key. A task adding to an existing catalogue appends its own keys and edits nobody else's |
+| `lang/ar/*` | **T17 only** | Stay empty until T17, so an untranslated string stays visible |
 
 ---
 
-## Task 0 — Scope inventory
-
-Before implementation, each task records the exact files it will touch in its own
-File scope, and any file shared with another task appears in the seams table
-above. A scope expansion is approved by the owner and recorded in **both** the
-task's File scope and the seam row, in the same pass — the phase 3.5 lesson, where
-four approved expansions each missed the seam table on the first attempt.
-
----
-
-## Wave 1 — Amendments and carried debt
+## Wave 1 — Amendments, the design contract, carried debt
 
 ### Task 1 — The spec amendments
-**Owner: Claude · `p4/t01-spec-amendments` · blocks every other task**
+**Owner: Claude · `p4/t01-spec-amendments` · blocks every other task except T19**
 
 **File scope**
-- `docs/superpowers/specs/2026-07-20-training-center-dashboard-design.md` — §3 and §12 only
+- `docs/superpowers/specs/2026-07-20-training-center-dashboard-design.md` — §3, §5, §6, §8, §12
 
 **Does**
 
-§3 records that phase 4 includes the admin revamp, and why the bilingual pass runs
-last. §12 loses expense tracking, bounded to the managed-list shape, and gains
-nothing silently — Publications is written in as scope with its own sentence.
+- **§3 Phasing.** Phase 4 includes the admin revamp, and says why the bilingual
+  pass runs last.
+- **§5 Roles and permissions.** The permission matrix gains rows for articles,
+  expenses and expense categories, with Shield's `{action}_{model}` names and the
+  role that holds each. Proposed: super admin and admin manage both; staff
+  neither. **The owner confirms the matrix rows in review** — a permission is not
+  something this plan guesses.
+- **§6 Data model.** Three tables, written as the existing ones are:
+  - `articles` — `id, title_en, title_ar, slug (unique), description_en,
+    description_ar, topic, authors, issued_on, original_filename, disk, path,
+    download_count (unsigned, default 0), published_at (nullable), timestamps`.
+    `published_at` null is unpublished; there is no separate flag to disagree
+    with it.
+  - `expense_categories` — `id, name_en, name_ar, is_active, timestamps`. A
+    category with expenses is deactivated, never deleted.
+  - `expenses` — `id, expense_category_id (FK restrictOnDelete), amount
+    decimal(12,3), paid_on (date), description, recorded_by (FK users),
+    timestamps`.
+  - **§6 File storage gains one sentence**: a published article is the first file
+    served to anonymous visitors, and it is still stored on the private disk.
+    Its route checks publication state on every request, which is the
+    per-request check the rule already demands, applied to a public reader.
+- **§8 Financial reporting.** Profit becomes *collected revenue minus finalized
+  wage cost minus expenses paid in the period*. `paid_on` is a **centre-local
+  calendar date**, matched to a month by equality on its year and month like
+  `payroll_lines.posting_period_start`, never through `ReportPeriod`'s UTC
+  instants. The section records that the definition changed, when, and that a
+  month before the first expense row reads exactly as it did.
+- **§12 Out of scope.** Expense tracking comes out of the list, bounded to the
+  managed-list shape. Publications is written in as scope with its own sentence.
+  "Certificates due this month" is **not** added anywhere.
 
 **Done when**
 
-§3 describes the phase that is actually being built · §12 no longer lists what
-this phase ships, and records who decided it and when · no other section is
-touched · `composer verify` green.
+Every section above describes what the phase builds, and nothing else changes ·
+the §5 rows are confirmed by the owner in the PR · §8's definition names its date
+basis · `composer verify` green.
+
+### Task 19 — The design contract, cleaned and committed
+**Owner: Claude · `p4/t19-design-contract` · blocks T11–T16e · may run beside T01**
+
+**File scope**
+- `docs/design/design_handoff_training_centre/` — the nine files, cleaned
+- `docs/design/README.md` — new: what was removed, why, and that the copy is
+  reference, not specification
+
+**Does**
+
+The handoff exists only in the owner's main checkout, untracked. A worktree
+cannot see it and neither can a reviewer, so a task that says "match the design"
+is unreproducible. This commits it, after removing:
+
+- the real logo (`assets/asclst-logo.jpg`) and anything embedding it, including
+  base64 copies inside the two `.dc.html` prototypes, replaced with a neutral
+  placeholder;
+- real contact details — addresses, telephone numbers, email addresses, social
+  links;
+- third-party material whose licence does not allow publishing, including any
+  bundled script whose origin cannot be established (`support.js` and
+  `image-slot.js` are checked, not assumed).
+
+**Where the spec and the handoff disagree, the spec wins**, and the README says
+which known conflicts were already decided: seats, contact hours, the verifier's
+empty submit.
+
+**The owner reviews the cleaned copy locally before it is pushed.** Pushing
+publishes it; there is no recall.
+
+**Done when**
+
+A grep for the removed logo's bytes, every real telephone number and email
+address in the original, and the centre's real name in image alt text finds
+nothing · both prototypes still open and render with the placeholder · the owner
+has approved the diff · `composer verify` green.
 
 ### Task 2 — Relax the two carried pins
-**Owner: Claude · `p4/t02-dependency-pins` · depends on T01 only for sequencing**
+**Owner: Claude · `p4/t02-dependency-pins` · after T01, for sequencing only**
 
 **File scope**
 - `composer.json`, `composer.lock` — the Filament constraint
 - `package.json`, `package-lock.json` — the `shell-quote` override
-- `tests/Load/README.md` — the smoke-run note, if the harness needs one
+- `tests/Load/README.md` — the smoke-run record
 
 **Does**
 
@@ -148,12 +231,11 @@ measurement harness was mid-flight.
 
 **The harness is the reason this is a task rather than a chore.**
 `tests/Load/README.md` requires every k6 script to be smoke-run after a Filament
-or Livewire change, because the scripts drive Livewire's update endpoint. Phase
-3.5's figures were taken on 5.7.8 and 5.8.4.
+or Livewire change, because the scripts drive Livewire's update endpoint.
 
 **Done when**
 
-The Filament constraint is a caret again, or the plan records why it is not ·
+The Filament constraint is a caret again, or the README records why it is not ·
 the `shell-quote` override is removed if `concurrently` has shipped a patched
 dependency, and kept with a dated reason if not · all four k6 scripts are
 smoke-run on the new version and the result recorded · `composer audit --locked`
@@ -167,253 +249,599 @@ and `npm audit --audit-level=high` both clean · `composer verify` green.
 **Owner: Claude · `p4/t03-publications-domain` · depends on T01**
 
 **File scope**
-- A migration for `articles`
-- `app/Domain/Publications/` — the model, its Action for the one new write, and the Filament resource
-- `database/factories/`, `database/seeders/RolePermissionSeeder.php` — the permissions
-- `config/filesystems.php` — the public document disk
+- `database/migrations/*_create_articles_table.php`
+- `app/Domain/Publications/Models/Article.php`
+- `app/Domain/Publications/Actions/` — `CreateArticleAction`, `UpdateArticleAction`,
+  `PublishArticleAction`, `UnpublishArticleAction`, `RecordArticleDownloadAction`
+- `app/Domain/Publications/Policies/ArticlePolicy.php`
+- `app/Domain/Publications/Filament/Resources/ArticleResource.php` and its `Pages/`
+- `app/Providers/Filament/AdminPanelProvider.php` — **one `discoverResources` call** (seam)
+- `database/seeders/RolePermissionSeeder.php` — the article permissions (seam, before T04)
+- `database/factories/ArticleFactory.php`
 - `lang/en/publications.php`
-- `tests/Feature/Publications/`
+- `tests/Feature/Publications/ArticleActionsTest.php`,
+  `ArticleResourceTest.php`, `ArticleStorageTest.php`,
+  `RecordArticleDownloadActionTest.php`, `ArticleWriteBoundaryArchTest.php`
 
 **Does**
 
-An `Article`: title in English and Arabic, slug, description, topic, PDF file,
-issue date, authors, download counter, published flag. A Filament resource for
-the administration to upload and publish.
+The model, the staff side and the one anonymous write.
 
-**The download counter is the only new write in the whole design bundle**, and it
-goes through an Action like every other write — thin model, actor-aware Action,
-the architecture test already enforces it.
-
-**This introduces the first public document surface.** Receipts and staff
-certificates are private and served through signed, authorised routes; a
-published article is deliberately world-readable. The seam is the disk
-configuration, and the rule is that nothing already private moves to satisfy it.
+- **Storage.** The PDF goes on the existing `private` disk under `publications/`,
+  through the same lifecycle the staff certificates use, so it is backed up with
+  the rest of that disk and has no URL of its own. `config/filesystems.php` is
+  **not** changed, and no file is ever placed on the `public` disk.
+- **Staff writes** — create, update, publish, unpublish — are actor-aware Actions
+  that write the activity log, like every other staff write.
+- **The download counter is an actor-less write, and says so.** An anonymous
+  reader has no user to attribute. `RecordArticleDownloadAction` takes the
+  article and nothing else, performs one atomic
+  `UPDATE articles SET download_count = download_count + 1 WHERE id = ? AND
+  published_at IS NOT NULL`, and writes **no** activity-log entry — logging every
+  anonymous download would flood an append-only log with rows nobody can
+  attribute. Because the existing boundary test is about staff writes and does
+  not cover this one, T03 adds its own rule: **no file under `app/` other than
+  that Action writes `download_count`**, proved by a probe that must fail.
+- The count is approximate by nature: rate-limited, not deduplicated per reader.
+  "Most downloaded" sorts on it and is labelled as a count, not a ranking anyone
+  should rely on.
 
 **Done when**
 
-Uploading, publishing and unpublishing are Actions with permissions · an
-unpublished article is invisible to the public surface and a test proves it ·
-the counter increments through an Action and cannot be driven negative · the
-public disk serves only what was deliberately put on it · `composer verify` green.
+Create, update, publish and unpublish are Actions behind permissions, tested with
+an actor holding exactly the needed permission and one holding one fewer — never
+as super admin · the stored file's path is on the private disk and no
+`Storage::disk('public')` call exists in the domain · the counter increments
+atomically, does not increment an unpublished article, and two concurrent calls
+add two · the arch rule fails on a planted second writer, then passes with it
+removed · `composer verify` green.
 
 ### Task 4 — Expenses, and what Profit means
-**Owner: Claude · `p4/t04-expenses` · depends on T01 · blocks T10's profit chart**
+**Owner: Claude · `p4/t04-expenses` · depends on T01 and T03 (seeder seam) · blocks T10's profit chart**
 
 **File scope**
-- Migrations for `expense_categories` and `expenses`
-- `app/Domain/Finance/` — models, Actions, and `ProfitReport`
-- `database/seeders/RolePermissionSeeder.php`
-- `lang/en/finance.php` or a new catalogue
-- `docs/superpowers/specs/2026-07-20-training-center-dashboard-design.md` — **§4 only**, the data model
-- `tests/Feature/Finance/`
+- `database/migrations/*_create_expense_categories_table.php`, `*_create_expenses_table.php`
+- `app/Domain/Finance/Models/ExpenseCategory.php`, `Expense.php`
+- `app/Domain/Finance/Actions/` — `CreateExpenseCategoryAction`,
+  `UpdateExpenseCategoryAction`, `RecordExpenseAction`, `CorrectExpenseAction`
+- `app/Domain/Finance/Policies/ExpenseCategoryPolicy.php`, `ExpensePolicy.php`
+- `app/Domain/Finance/Reports/ExpenseReport.php` — new
+- `app/Domain/Finance/Reports/ProfitReport.php` (seam, before T10)
+- `app/Domain/Finance/Exports/ProfitReportExporter.php` — the new column
+- `app/Domain/Finance/Filament/Resources/ExpenseCategoryResource.php`,
+  `ExpenseResource.php`, and their `Pages/`
+- `database/seeders/RolePermissionSeeder.php` (seam, after T03)
+- `database/factories/ExpenseCategoryFactory.php`, `ExpenseFactory.php`
+- `lang/en/expenses.php`; `lang/en/reports.php` — the profit definition keys only
+- `tests/Feature/Finance/Expenses/` — `ExpenseActionsTest.php`,
+  `ExpenseReportTest.php`, `ProfitWithExpensesTest.php`, `ExpenseResourceTest.php`
 
 **Does**
 
-A managed list of categories an admin maintains, and expenses recorded against
-them. `ProfitReport` today is literally revenue minus wages; it becomes revenue
-minus wages minus expenses.
+A managed list of categories and expenses recorded against them, and the change
+to Profit that §8 (T01) now defines.
 
-**This changes what a published figure means, which is the risk.** The owner's
-standing objection to the finance reports is that figures are not traceable to
-the rows behind them and the terms are undefined on screen. A Profit number that
-silently changes definition between two months is exactly that complaint made
-worse. The report states its own definition on screen, and the period boundary
-for an expense is decided and written down rather than assumed.
-
-Money stays `decimal(12,3)`, through the existing `Money` cast. No derived total
-is stored.
+- `ProfitReport` composes a third report, `ExpenseReport::totalForMonths()`,
+  exactly as it composes revenue and wages today — it runs no SQL of its own.
+  `paid_on` is filtered by local calendar month, never through `ReportPeriod`.
+- **This changes what a published figure means, which is the risk.** The report
+  states its definition on screen, and a month before the first expense row
+  reads identically to the figure the report showed before this task.
+- Money stays `decimal(12,3)` through the existing `Money` cast; no total is
+  stored. An expense is corrected, not deleted, so a closed month's profit does
+  not silently move.
 
 **Done when**
 
-Categories are managed without a developer · an expense cannot exist without a
-category · `ProfitReport` states its definition where it is read · the period
-rule is explicit and tested at both boundaries · no float appears in the path,
-and the existing architecture test proves it · `composer verify` green.
+Categories are managed without a developer, and a category in use cannot be
+deleted · an expense cannot exist without a category · an expense paid on the
+last day of a month counts in that month and one paid on the first day of the
+next does not, in the centre's timezone, with `setTestNow` placing "now" on the
+other side of UTC midnight · a month with no expenses returns the same profit
+as the pre-T04 formula, asserted against an expected value computed by hand,
+not by calling the report · `MoneyCastArchTest` covers the new columns ·
+`composer verify` green.
 
 ### Task 5 — The read queries the design needs
 **Owner: Claude · `p4/t05-read-queries` · depends on T01**
 
 **File scope**
-- `app/Domain/Enrollment/Models/Batch.php` — scopes only, beside the existing predicates
-- `app/Domain/Finance/` and `app/Domain/Enrollment/` query services — new read methods
-- `tests/Feature/` beside the existing cases for each
+- `app/Domain/Enrollment/Models/Batch.php` — scopes only (seam)
+- `app/Domain/Enrollment/Queries/NextUpcomingBatch.php` — new
+- `app/Domain/Enrollment/Queries/CertificateIssuanceQueue.php` — new
+- `app/Domain/Finance/Queries/BatchOutstanding.php`, `StudentsOwingMoney.php`,
+  `RevenuePerCourse.php`, `ChargeAgeing.php` — new
+- `app/Domain/Staff/Queries/AssignedHoursPerUser.php` — new
+- `tests/Feature/Enrollment/Queries/` and `tests/Feature/Finance/Queries/`, one
+  test file per query, named after it
 
 **Does**
 
-Seven read queries the design's screens need and the backend does not have. None
-introduces business logic; the rule already lives in a model or an enum, and only
-the selection is new.
+Read queries the design's screens need. None introduces business logic: the rule
+already lives in a model, an enum or a service, and only the selection is new.
 
-- `Batch::isOverCapacity()` and `hasHourMismatch()` are **PHP predicates evaluated
-  after rows load**, so they cannot filter in SQL. Add scopes expressing the same
-  comparison in the query. **The predicate stays the single definition of the
-  rule** — a scope that drifts from it is two sources of truth, and this codebase
-  has already paid for that shape once.
-- Batch-level outstanding total; an "owes money" filter for the students list; the
-  ageing chip per charge row; revenue per course on the catalogue; assigned
-  batches and hours per user; course and batch names on portal balance rows.
+- **`Batch::isOverCapacity()` and `hasHourMismatch()`** are PHP predicates
+  evaluated after rows load. Add scopes expressing the same comparison in SQL.
+  **The predicate stays the single definition** — a test runs both over the same
+  fixture, so a drift fails.
+- **The next upcoming batch for each course** (the owner's rule for T12): among
+  the course's batches with status `planned` and `start_date` on or after the
+  centre-local today, the earliest `start_date`, ties broken by lowest `id`.
+  An inactive course has no card. Price comes from
+  `PricingService::priceForBatch()` and hours from `effective_total_hours` —
+  **neither is re-derived**. One query for every card, not one per card. With no
+  qualifying batch the result is null, and T12 renders the fallback.
+- **The certificate issuance queue**: enrollments with status completed and no
+  current certificate. An outstanding balance does not exclude a row.
+- Batch-level outstanding total; an "owes money" filter for the students list;
+  the ageing chip per charge row; revenue per course; assigned batches and hours
+  per user; course and batch names on portal balance rows.
 
 **Done when**
 
-Every scope is tested against its predicate on the same fixture, so a drift
-fails · no new business rule is introduced, and the review can see that · each
-query is exercised by the screen that needs it · `composer verify` green.
+Every scope is tested against its predicate on one fixture · the next-batch rule
+is tested at its edges — a batch starting today counts, one that started
+yesterday does not, a cancelled or active batch never counts, two on one date
+pick the lower id, and the day boundary is the centre's, with "now" set across
+UTC midnight · each query's statement count does not grow with row count ·
+`composer verify` green.
 
 ### Task 6 — The N+1s the design would otherwise ship
 **Owner: Claude · `p4/t06-batching` · depends on T01**
 
 **File scope**
-- The Filament resources and relation managers named by the contract
-- `tests/Feature/Tooling/LazyLoadingGuardTest.php` if the guard needs a case
+- `app/Domain/Enrollment/Filament/Resources/StudentResource.php`
+- `app/Domain/Enrollment/Filament/Resources/BatchResource/RelationManagers/EnrollmentsRelationManager.php`
+- `app/Domain/Enrollment/Filament/Resources/CourseResource.php`
+- `app/Domain/Finance/Filament/Resources/PaymentResource.php`
+- `tests/Feature/Performance/ListQueryCountTest.php` — new
 
 **Does**
 
-Four per-row calls the design's lists would make once per row: per-student
-balance in the students list and the batch roster, tender chips per payment,
-enrolled-student and batch counts per course.
+Four per-row calls the lists would make once per row: per-student balance in the
+students list and the batch roster, tender chips per payment, enrolled-student
+and batch counts per course. **Data loading only** — no column is restyled here;
+T16b and T16c own the look.
 
-P3.5-T04 installed a lazy-loading guard, and P3.5-T05 established that the query
-plan is measured rather than assumed. **The guard only arms on multi-row
-hydrations**, so a test that loads one record proves nothing here.
+P3.5-T04's lazy-loading guard only arms on multi-row hydrations, so a test that
+loads one record proves nothing.
 
 **Done when**
 
-Each list's query count is asserted and does not grow with row count · the
-measurement is recorded, not estimated · `composer verify` green.
+Each list's statement count is asserted at two row counts and does not grow ·
+the measurement is recorded in the PR, not estimated · `composer verify` green.
 
 ---
 
 ## Wave 3 — The new admin surfaces
 
 ### Task 7 — Finance hub
-**Owner: Claude · `p4/t07-finance-hub` · depends on T05**
+**Owner: Claude · `p4/t07-finance-hub` · depends on T04**
 
-A landing page tiling finance screens and reports that already exist. Every tile
-links to something built. **No export is an instant download** — the hub shows
-queued, running, ready and failed, and never offers a partial file.
+**File scope**
+- `app/Domain/Finance/Filament/Pages/FinanceHub.php` — discovered by the existing
+  `discoverPages` line, so the panel provider is not touched
+- `resources/views/filament/finance/finance-hub.blade.php`
+- `lang/en/finance-hub.php`
+- `tests/Feature/Finance/FinanceHubTest.php`
+
+**Does**
+
+A landing page tiling finance screens and reports that already exist, expenses
+included. Every tile links to something built. A tile appears only when the
+viewer may open its destination, using the destination's own authorization, not
+a copy of it.
+
+**Done when**
+
+Each tile's visibility is tested with an actor holding exactly the destination's
+permission and one holding one fewer — never as super admin · a viewer with no
+finance permission cannot open the hub · no tile links to a route that does not
+exist, asserted by resolving every tile's URL · `composer verify` green.
 
 ### Task 8 — Export history
 **Owner: Claude · `p4/t08-export-history` · depends on T07**
 
-Filament already stores `Export` rows and nothing surfaces them. Staff see what
-was queued, what is ready and what failed, instead of relying on a notification
-they may have missed. **Export permission is re-checked at download time**, which
-this list must not imply otherwise.
+**File scope**
+- `app/Domain/Finance/Filament/Pages/ExportHistory.php`
+- `resources/views/filament/finance/export-history.blade.php`
+- `lang/en/export-history.php`
+- `tests/Feature/Finance/ExportHistoryTest.php`
 
-### Task 9 — Certificate work queues
-**Owner: Claude · `p4/t09-certificate-queues` · depends on T05**
+**Does**
 
-Two lists: completed but not yet issued, and due this month. The eligible records
-exist and nothing surfaces them, so today it is a manual check. **An outstanding
-balance never blocks issuing**, and the queue must not imply it does.
+Filament stores `Export` rows for every queued XLSX report, and nothing surfaces
+them. Staff see their own exports — queued, ready, failed — instead of relying on
+a notification they may have missed.
+
+**It lists and links; it does not serve.** Each ready row links to the existing
+`ReportXlsxDownload` route, which already re-checks the export permission on
+every request. The task first records whether a queued PDF leaves a row anywhere:
+if it does, PDFs are listed the same way; if not, the page says it lists
+spreadsheet exports and no new table is added without the owner's approval.
+
+**Done when**
+
+A user sees only their own rows · a ready row's link is refused for a user whose
+export permission was removed after queueing, proving the re-check is the
+download route's and not the list's · a failed row offers no link ·
+`composer verify` green.
+
+### Task 9 — The certificate issuance queue
+**Owner: Claude · `p4/t09-certificate-queue` · depends on T05**
+
+**File scope**
+- `app/Domain/Enrollment/Filament/Pages/CertificateIssuanceQueue.php`
+- `app/Providers/Filament/AdminPanelProvider.php` — **one `discoverPages` call**
+  for `Domain/Enrollment/Filament/Pages` (seam, after T03)
+- `resources/views/filament/enrollment/certificate-issuance-queue.blade.php`
+- `lang/en/certificates.php` — the queue's keys, appended
+- `tests/Feature/Enrollment/CertificateIssuanceQueueTest.php`
+
+**Does**
+
+One list: completed enrollments with no current certificate, read through T05's
+query. Each row links to the existing issue action. **An outstanding balance
+never blocks issuing**, and the queue must not imply it does — a row with a
+balance looks like any other.
+
+**Done when**
+
+A completed enrollment without a certificate appears, and disappears once one is
+issued · a student owing money appears and is issuable · the page is visible
+only with the issue permission, tested with exact and one-fewer actors ·
+`composer verify` green.
 
 ### Task 10 — Charts on the reports
 **Owner: Claude · `p4/t10-report-charts` · depends on T04 and T05**
 
-The report data exists; no chart widget is registered. **The largest of the four**,
-because each report needs a decision about what its chart actually says — a chart
-that implies a trend the rows do not support is worse than no chart. The profit
-chart depends on T04, and must not restate the definition differently from the
-report it sits on.
+**File scope**
+- `app/Domain/Finance/Filament/Widgets/` — one chart widget per report that gets one
+- `app/Domain/Finance/Filament/Pages/Reports/RevenueReportPage.php`,
+  `ProfitReportPage.php`, `WageCostReportPage.php`, `PaymentMethodReportPage.php`
+  — header widgets only (seam, before T16d)
+- `lang/en/reports.php` — chart keys, appended
+- `tests/Feature/Finance/Charts/`, one file per widget
+
+**Does**
+
+Each chart plots what its report already returns — it calls the report, never a
+query of its own. Four reports get one; the outstanding, daily tender and payment
+history reports do not, because a chart of a single date or one student's rows
+says nothing the table does not. **A chart that implies a trend the rows do not
+support is worse than no chart**: a period with no data plots as zero only when
+zero is true, and the profit chart's series is the report's `profit` key, so it
+cannot restate the definition differently.
+
+**Done when**
+
+Each widget's series equals its report's output for the same period, asserted
+against hand-computed values · a negative profit month plots negative, not
+clamped · `composer verify` green.
 
 ---
 
 ## Wave 4 — The public site
 
 ### Task 11 — Public site foundation
-**Owner: Claude · `p4/t11-public-foundation` · depends on T01**
+**Owner: Claude · `p4/t11-public-foundation` · depends on T01 and T19**
 
-Layout, navigation, theme, the route group and its middleware, and the caching
-strategy. **The programme cards carry no derived count** — the owner's reversal on
-seats removed the only one — so this surface is near-static and should be served
-that way.
+**File scope**
+- `routes/web.php` — the public group (seam, first); `/` moves into it and
+  `welcome.blade.php` is replaced
+- `app/Providers/AppServiceProvider.php` — the `public-site` rate limiter (seam, first)
+- `resources/views/layouts/public.blade.php` — new (seam, first)
+- `resources/views/public/partials/` — header, footer, navigation
+- `resources/views/welcome.blade.php` — deleted
+- `resources/css/public.css`, `vite.config.js` (seam, first)
+- `lang/en/public.php`
+- `tests/Feature/Public/PublicGroupTest.php`, `PublicSessionlessTest.php`
 
-A public surface is the first thing in this system that serves the open internet
-other than the verifier. Rate limiting, no session for anonymous visitors, and
-nothing that reads a student record.
+**Does**
+
+The layout, the route group and its middleware.
+
+**Which routes are sessionless, and how.** Every route in `routes/web.php`
+receives the `web` group today, so "no session for anonymous visitors" is a
+property to be built, not assumed:
+
+- **The public group** — home, about, programmes, contact, the publications index,
+  an article page and an article download — runs `withoutMiddleware()` for
+  `StartSession`, `ShareErrorsFromSession`, `PreventRequestForgery` and
+  `AddQueuedCookiesToResponse`. These are **GET-only** pages. They contain no
+  form, no `@csrf` and no `session()` or `old()` call; a test asserts every route
+  in the group is GET, and that a response from it carries no `Set-Cookie`.
+- **Not sessionless, and untouched:** the verifier group (its form posts and
+  needs CSRF), the private-file group, both Filament panels and their login
+  pages. A test asserts each of them still issues a session cookie and still
+  refuses a POST without a CSRF token — the other side of the same property.
+- **Contact is links, not a form.** A contact form would need a session, CSRF,
+  spam handling and somewhere for messages to go; none of that is scoped.
+- With no session, nothing on these pages can know who is signed in, which is the
+  point: the public surface never varies by visitor, so it can be cached by any
+  layer in front of it. **The application does not add its own response cache
+  in phase 4** — with no host chosen, a cache layer is a deployment decision.
+
+The `public-site` limiter is keyed by IP and applied to the whole group.
+
+**Done when**
+
+The two tests above pass, including the probe that adds a POST route to the
+public group and must fail the GET-only assertion · the layout uses logical CSS
+properties only · `composer verify` green.
 
 ### Task 12 — Home, about, programmes, contact
-**Owner: Claude · `p4/t12-public-pages` · depends on T11**
+**Owner: Claude · `p4/t12-public-pages` · depends on T05 and T11**
 
-Reads `Course` and `Batch` for name, hours, price and start date. **Price, start
-date, hours and description are public; seats are not.**
+**File scope**
+- `app/Http/Controllers/Public/PageController.php`, `ProgrammeController.php`
+- `routes/web.php` — routes inside the public group (seam, after T11)
+- `resources/views/public/home.blade.php`, `about.blade.php`,
+  `programmes/index.blade.php`, `programmes/show.blade.php`, `contact.blade.php`
+- `lang/en/public.php` — appended
+- `tests/Feature/Public/ProgrammesTest.php`, `PublicPagesTest.php`
+
+**Does**
+
+The programme cards read T05's next-upcoming-batch query: name, description,
+hours, price and start date. **Price, start date, hours and description are
+public; seats are not**, and nothing on the page reads capacity or enrollment
+counts. A course with no upcoming batch shows its name, description and hours,
+**no date and no price**, and a contact call to action — a price with no batch
+behind it is a promise the centre has not made.
+
+**Done when**
+
+A card's price and hours equal `PricingService` and `effective_total_hours` for
+the chosen batch, asserted against hand-computed fixtures including a batch that
+inherits the course price · the fallback renders with no price and no date · no
+query on the page touches `enrollments` or reads `capacity`, asserted from the
+query log · an inactive course has no card · `composer verify` green.
 
 ### Task 13 — Publications, public
 **Owner: Claude · `p4/t13-publications-public` · depends on T03 and T11**
 
-The library index with search by title, topic, author and description; topic
-chips; sort by newest or most downloaded; the article page; the download route
-that increments the counter through T03's Action.
+**File scope**
+- `app/Http/Controllers/Public/PublicationController.php`,
+  `PublicationDownloadController.php`
+- `routes/web.php` — routes inside the public group (seam, after T12)
+- `app/Providers/AppServiceProvider.php` — the `publication-download` limiter (seam, after T11)
+- `resources/views/public/publications/index.blade.php`, `show.blade.php`
+- `lang/en/publications.php` — public keys, appended
+- `tests/Feature/Public/PublicationsIndexTest.php`, `PublicationDownloadTest.php`
 
-**Only published articles are reachable**, and the download route is rate-limited
-like every other public one.
+**Does**
+
+The index with search by title, topic, author and description; topic chips;
+sorting by newest or most downloaded; the article page; and the download route.
+
+**Every download re-reads publication state.** The route resolves the article by
+slug **with `published_at` not null in the same query**, streams the file from the
+private disk, and calls `RecordArticleDownloadAction`. An unpublished slug and an
+unknown slug return the same 404. There is no other way to reach the bytes: the
+file has no URL, and the route is the only reader.
+
+**Done when**
+
+A published article downloads; **the same URL returns 404 after the article is
+unpublished**, and the counter does not move · an unknown slug and an unpublished
+one return identical responses · the download limiter refuses past its limit ·
+search matches each of the four fields and nothing unpublished ever appears in
+the index · `composer verify` green.
 
 ### Task 14 — The verifier, restyled
 **Owner: Claude · `p4/t14-verifier-restyle` · depends on T11**
 
-**Two properties are inherited, not re-decided.** A revoked certificate answers
-honestly with its revocation date (§7.3). A blank box, a malformed reference and
-an unknown one return the identical not-found result. The design's "enter a
-reference" helpfulness is **client-side only**, before submission.
+**File scope**
+- `resources/views/verify/form.blade.php`, `show.blade.php`, `not-found.blade.php`
+- `resources/views/layouts/public.blade.php` — only what the verifier needs (seam, after T11)
+- `resources/js/verify-empty-check.js` and its `vite.config.js` entry, if script
+  is the chosen mechanism (seam, after T11)
+- `lang/en/verify.php` — appended
+- `tests/Feature/Verification/VerifierRestyleTest.php`
+
+`VerifyCertificateController.php` and the verifier's routes are **not** in scope.
+
+**Does**
+
+A restyle onto the public layout, inheriting two properties rather than
+re-deciding them, as stated under *One precision this plan must not lose*. The
+"enter a reference" prompt is client-side only, before submission; an empty
+POST that reaches the server still gets the uniform miss. The page stays on the
+full `web` stack because its form posts.
 
 Contact hours come off the result. The projection is named field by field and
-stays that way: whatever the certificates table gains later must not appear here
-by default.
+stays that way.
+
+**Done when**
+
+The existing verifier suite passes unchanged · a blank, a malformed and an
+unknown reference produce byte-identical bodies, asserted directly · a revoked
+certificate shows its revocation date · no contact-hours field renders ·
+`composer verify` green.
 
 ### Task 15 — Portal sign-in from the public site
 **Owner: Claude · `p4/t15-portal-entry` · depends on T11**
 
-A link or form posting to the existing student guard. **A student with no email
-cannot be issued a login**, and the copy says so. No new auth path.
+**File scope**
+- `resources/views/public/partials/header.blade.php` — the link (seam, after T11)
+- `lang/en/public.php` — appended
+- `tests/Feature/Public/PortalEntryTest.php`
+
+**Does**
+
+A link to the student panel's existing login page. **Not a form**: the public
+pages are sessionless, so a form posted from them would carry no CSRF token, and
+a second sign-in path is exactly what this phase should not add. The link's copy
+says a student with no email cannot be issued a login.
+
+**Done when**
+
+The link resolves to the student panel's login route by name · no form exists on
+any public page, asserted across the group · `composer verify` green.
 
 ---
 
 ## Wave 5 — The admin revamp
 
-### Task 16 — The Filament revamp
-**Owner: Claude · `p4/t16-admin-revamp` · depends on every Wave 3 task**
+Round 1 had this as one task over roughly twenty screens. It is five, split by
+domain so each PR is reviewable and each carries the contract rules that belong
+to its screens. **T16a lands first; T16b–T16e then run one at a time**, because
+each restyles against T16a's theme and none may edit it.
 
-Roughly twenty screens, visual only. **The contract's rules to preserve are the
-acceptance criteria**: no export is instant; export permission is re-checked at
-download; over-capacity enrolment is flagged, never blocked; an outstanding
-balance never blocks a certificate; a second installment against one bill is
-refused; tender totals must equal the amount collected; the last super admin
-cannot be deactivated, demoted or deleted; the activity log is append-only; a
-student with no email gets no portal login; pricing is written only through its
-Actions.
+The contract's rules are the acceptance criteria. **A revamp that makes any of
+them read differently has broken the system while passing its own tests**, so
+each sub-task asserts that its screens still say what the code enforces.
 
-**A revamp that makes any of those read differently has broken the system while
-passing its own tests.** Each one gets an assertion that the UI still says what
-the code enforces.
+### Task 16a — Theme and shell
+**Owner: Claude · `p4/t16a-admin-theme` · depends on T07–T10 and T19**
 
-This task is a candidate for splitting at review. Twenty screens in one PR is not
-reviewable, and the phase 3.5 lesson is that a large pass needs its own review
-per revision.
+**File scope**
+- `resources/css/filament/admin/theme.css` — new; `vite.config.js` (seam, after T11)
+- `app/Providers/Filament/AdminPanelProvider.php` — theme, colours, navigation
+  groups (seam, after T09)
+- `app/Filament/Pages/Dashboard.php` — new, replacing the stock dashboard registration
+- `app/Filament/Pages/PasswordChange.php`, `resources/views/filament/pages/password-change.blade.php`
+- `lang/en/navigation.php` — new
+- `tests/Feature/Admin/ThemeShellTest.php`
+
+**Done when**
+
+Every existing resource and page is still reachable from the navigation, asserted
+by listing the panel's registered pages · the theme stylesheet uses logical
+properties only · `composer verify` green.
+
+### Task 16b — Students, courses, batches, enrollments, certificates
+**Owner: Claude · `p4/t16b-admin-enrollment` · depends on T16a**
+
+**File scope**
+- `app/Domain/Enrollment/Filament/Resources/` — all four resources, their `Pages/`
+  and `RelationManagers/`
+- `app/Domain/Enrollment/Filament/Pages/CertificateIssuanceQueue.php` and its view
+- `lang/en/enrollment.php`, `lang/en/certificates.php` — appended
+- `tests/Feature/Admin/EnrollmentRevampContractTest.php`
+
+**Contract rules asserted:** over-capacity enrolment is flagged, never blocked ·
+an outstanding balance never blocks a certificate · a student with no email gets
+no portal login.
+
+### Task 16c — Money screens
+**Owner: Claude · `p4/t16c-admin-finance` · depends on T16a**
+
+**File scope**
+- `app/Domain/Finance/Filament/Resources/` — Charge, Discount, Payment, PayrollRun,
+  StaffCompensation, ExpenseCategory, Expense, with their `Pages/`
+- `app/Domain/Finance/Filament/Pages/EnrollAndCollect.php`,
+  `resources/views/filament/finance/enroll-and-collect.blade.php`
+- `lang/en/` — `charges.php`, `payments.php`, `payroll.php`, `pricing.php`,
+  `collect.php`, `expenses.php`, appended
+- `tests/Feature/Admin/FinanceRevampContractTest.php`
+
+**Contract rules asserted:** a second installment against one bill is refused ·
+tender totals must equal the amount collected · pricing is written only through
+its Actions · no money field uses `->numeric()`, whose float cast this project has
+already paid for.
+
+### Task 16d — Reports, finance hub, export history
+**Owner: Claude · `p4/t16d-admin-reports` · depends on T16a**
+
+**File scope**
+- `app/Domain/Finance/Filament/Pages/Reports/*` (seam, after T10)
+- `app/Domain/Finance/Filament/Pages/FinanceHub.php`, `ExportHistory.php`, their views
+- `resources/views/finance/reports/page.blade.php`
+- `lang/en/reports.php` — appended
+- `tests/Feature/Admin/ReportsRevampContractTest.php`
+
+**Contract rules asserted:** no export is an instant download · export permission
+is re-checked at download · every chart still plots its report's own figures ·
+the profit definition on screen matches §8.
+
+### Task 16e — Staff, roles, activity log
+**Owner: Claude · `p4/t16e-admin-staff` · depends on T16a**
+
+**File scope**
+- `app/Domain/Staff/Filament/Resources/` — Activity, Role, StaffProfile, User, with
+  their `Pages/`, `RelationManagers/` and `Concerns/`
+- `lang/en/staff.php`, `lang/en/activity.php` — appended
+- `tests/Feature/Admin/StaffRevampContractTest.php`
+
+**Contract rules asserted:** the last super admin cannot be deactivated, demoted
+or deleted · the activity log offers no delete or edit action to any role,
+including super admin.
+
+**Done when, for each of T16b–T16e**
+
+Every listed contract rule has an assertion that the restyled screen still
+enforces it, tested with an exact-permission actor and one with one fewer —
+never super admin · the existing suite for those screens passes unchanged · no
+physical CSS property is introduced · `composer verify` green.
 
 ---
 
 ## Wave 6 — Arabic and RTL, last
 
 ### Task 17 — The Arabic catalogues
-**Owner: Claude · `p4/t17-arabic-catalogues` · depends on T16**
+**Owner: Claude · `p4/t17-arabic-catalogues` · depends on T16b–T16e**
+
+**File scope**
+- `lang/ar/*.php` — every catalogue, existing and new
+- `lang/en/activity.php` and `lang/ar/activity.php` — the `activity.field.*` group
+- `tests/Feature/Localisation/CatalogueParityTest.php`
+
+**Does**
 
 Every `lang/ar/` counterpart, which has shipped empty since commit one precisely
 for this. Composite strings go through keys with their own separators and
 ordering — a lesson this project already paid for.
 
-### Task 18 — RTL and locale switching
-**Owner: Claude · `p4/t18-rtl` · depends on T17**
+**It also closes the limitation spec §13 hands to this phase**: audited field
+names render untranslated, because `lang/en/activity.php` interpolates raw column
+names. The `activity.field.*` group covers every audited column and explicit
+property key. §13 is explicit that this closes *as part of* the Arabic work, not
+after it.
 
-Direction, the locale switch, and the conformance check that matters: **logical
-CSS properties have been enforced since commit one, but the handoff's own CSS is
-not this repository's** and must be checked before it is adopted. A `margin-left`
-inherited from the prototype defeats the discipline the whole codebase has kept.
+**The Arabic wording is a translator's decision, not a developer's.** This task
+builds the catalogues and the parity test; the owner arranges review of the
+Arabic itself before T18 merges.
 
 **Done when**
 
-Both directions render every screen · no physical property survives from the
-handoff · the Arabic catalogue has no missing key, and a test proves it rather
-than a reviewer reading them · `composer verify` green.
+`CatalogueParityTest` proves every English key has an Arabic counterpart and
+fails on a planted missing key · every audited column has an `activity.field.*`
+entry, derived from the models' audited attributes rather than a hand list ·
+`composer verify` green.
+
+### Task 18 — RTL and locale switching
+**Owner: Claude · `p4/t18-rtl` · depends on T17**
+
+**File scope**
+- `resources/css/app.css`, `resources/css/public.css`,
+  `resources/css/filament/admin/theme.css` (seam, last)
+- `resources/views/layouts/public.blade.php` (seam, last)
+- `routes/web.php` — the locale prefix on the public group
+- `app/Http/Middleware/SetPublicLocale.php` — new
+- `tests/Feature/Localisation/DirectionTest.php`, `PublicLocaleTest.php`,
+  `LogicalPropertiesTest.php`
+
+**Does**
+
+Direction and the locale switch. **The public site carries its locale in the URL**
+(`/ar/...`), because it is sessionless: there is no session to remember a choice
+in, and a URL is cacheable and indexable. The panels keep `users.locale` and the
+existing `SetLocale`. A guest's portal and admin login pages render in
+`config('app.locale')`, as today.
+
+**The conformance check that matters**: logical CSS properties have been enforced
+since commit one, but the handoff's CSS is not this repository's and must be
+checked before adoption. `LogicalPropertiesTest` scans `resources/css/` and the
+Blade views for physical properties and fails on a planted `margin-left`.
+
+**Done when**
+
+Both directions render every public page and every panel screen with `dir` set
+correctly · an `/ar/` URL renders Arabic and an unprefixed one English, with no
+session involved · the logical-properties scan passes and its planted probe
+fails · `composer verify` green.
 
 ---
 
@@ -421,11 +849,14 @@ than a reviewer reading them · `composer verify` green.
 
 | Item | Why not now |
 |---|---|
-| **Search latency attribution** | P3.5-T13's finding, measurement only. Carried forward unscheduled |
+| **Certificates due this month** | Dropped by the owner, 2026-10-08. No data defines when a certificate falls due |
+| **Contact form** | Needs a session, CSRF, spam handling and a destination; the public pages are sessionless and link instead |
+| **Application response cache** | A deployment decision, waiting on the host |
+| **Search latency attribution** | P3.5-T13's finding, measurement only |
 | **Report latency attribution** | P3.5-T13's finding, measurement only |
 | **Receipt queue-drain profile** | P3.5-T13's finding, measurement only |
-| **Online payment from the portal** | `RecordPaymentAction` is staff-only. The design does not offer it and neither should the build. §12 keeps card payments out |
-| **Production SLO targets** | T12's objectives describe the development harness. Real targets need a chosen host and a measurement on it |
+| **Online payment from the portal** | `RecordPaymentAction` is staff-only. §12 keeps card payments out |
+| **Production SLO targets** | Real targets need a chosen host and a measurement on it |
 
 ---
 
