@@ -1,6 +1,6 @@
 # Phase 4 — Public site, Publications, the design revamp and Arabic/RTL
 
-**Status: DRAFT, round 2. No task may begin until this merges green.** The rule
+**Status: DRAFT, round 3. No task may begin until this merges green.** The rule
 that has held since phase 2: a plan-level architecture error cost five
 remediation rounds, so Codex reviews the plan before any implementation starts.
 
@@ -22,6 +22,20 @@ is answered in the body; this table only says where.
 
 Task numbers are kept from round 1 so the review's references stay valid; the new
 task is T19 for that reason, not because it runs last.
+
+## Round 3 — what changed, and where
+
+Codex's re-review of `2028d82` found five issues that only appear when the plan
+is checked against the code. Three needed the owner, who decided them on
+2026-10-08.
+
+| Finding | Answer |
+|---|---|
+| P1 — an actor-less counter contradicts ENGINEERING's write boundary | **The owner approved a narrow exception**, which T01 writes into `docs/ENGINEERING.md` itself rather than letting the plan assert it. It is not called an Action: `ArticleDownloadCounter` (T03) |
+| P1 — T04 omits `ReportDataBuilder::profit()`, and in-place correction would silently move a past month | `ReportDataBuilder.php` is in T04's scope and a seam. **The owner chose reversal, like payments**: an expense is reversed once and re-recorded, never edited, and a reversed expense leaves its original month traceably |
+| P1 — T17's keys have no code using them; new audited models need record-type labels | `ActivityResource.php` is in T17's scope, with Arabic behavioural assertions. `lang/en/activity.php` is in T03's and T04's scopes and is a seam |
+| P2 — T14's optional script breaks `VerificationDisclosureTest` | **No script.** The empty-box prompt is the input's native `required` attribute. The verifier pages stay standalone and do not adopt the public layout, and the security test is unchanged |
+| P2 — the locale boundary and the routes seam stop short | **The owner chose full coverage**: `/ar/` verifier routes inside the existing verifier group, and a guest locale on both panels' login pages. T18 is in the routes seam, and its Done-when names every surface |
 
 ---
 
@@ -63,6 +77,9 @@ assumption.
 | **The verifier keeps its identical not-found response** | 2026-10-08 | The design's distinct "enter a reference" message is handled **client-side**, before anything is submitted |
 | **Contact hours come off the certificate result** | 2026-10-08 | The design shows them; the closed public projection does not carry them, and widening what a public page reveals was not worth a detail nobody asked for |
 | **The design handoff is committed as a cleaned copy** | 2026-10-08 | The repository is public. Real logo, contact details and third-party material come out, and the owner reviews the copy before it is pushed (T19) |
+| **The download counter is an approved exception to the write boundary** | 2026-10-08 | One column, one class, increment-only, not security-sensitive, no activity-log row, enforced by an architecture test. T01 writes it into `docs/ENGINEERING.md` |
+| **An expense is corrected by reversal, like a payment** | 2026-10-08 | Set-once `reversed_at`, `reversed_by`, `reversal_reason`; never edited or deleted; the correct figure is a new row. A reversed expense leaves every report, including its original month's profit — exactly as a reversed payment already leaves revenue. The month moves, and the reversal is what explains it |
+| **The bilingual pass reaches the verifier and both login pages** | 2026-10-08 | `/ar/` verifier routes in the existing verifier group; the Arabic site's portal link carries the locale, and both panels' login pages honour it for a guest |
 
 ### One precision this plan must not lose
 
@@ -114,17 +131,24 @@ first attempt.
 | File or surface | Tasks, in order | Rule |
 |---|---|---|
 | `docs/superpowers/specs/2026-07-20-training-center-dashboard-design.md` | **T01 only** | No other task edits the spec. A task that finds the spec wrong stops and raises it; the fix is a spec amendment, not a quiet edit inside a feature PR |
+| `docs/ENGINEERING.md` | **T01 only** | The download-counter exception, in the write-boundary section. Nothing else |
+| `lang/en/activity.php` | **T03 → T04 → T17** | T03 adds the `Article` record-type label, T04 `Expense` and `ExpenseCategory`, and T17 the `activity.field.*` group. `LocalizationTest` fails without the labels, so each lands with its model |
+| `app/Domain/Staff/Filament/Resources/ActivityResource.php` | **T16e → T17** | T16e restyles; T17 routes `describeProperties()` and `describeChanges()` through `activity.field.*` |
+| `app/Domain/Finance/Exports/ReportDataBuilder.php` | **T04 only** | `profit()` gains the expenses column |
+| `app/Providers/Filament/StudentPanelProvider.php` | **T18 only** | The guest-locale middleware |
 | `docs/design/design_handoff_training_centre/` | **T19 only** | Read-only reference for every other task |
 | `database/seeders/RolePermissionSeeder.php` | **T03 → T04** | T03 adds the article permissions, T04 the expense and category permissions. T04 rebases on T03 and must not reorder T03's rows |
-| `app/Providers/Filament/AdminPanelProvider.php` | **T03 → T09 → T16a** | T03 adds `discoverResources` for `Domain/Publications`; T09 adds `discoverPages` for `Domain/Enrollment/Filament/Pages`; T16a owns the theme, colours and navigation. Each adds its own lines and edits no other task's |
+| `app/Providers/Filament/AdminPanelProvider.php` | **T03 → T09 → T16a → T18** | T03 adds `discoverResources` for `Domain/Publications`; T09 adds `discoverPages` for `Domain/Enrollment/Filament/Pages`; T16a owns the theme, colours and navigation; T18 adds the guest-locale middleware. Each adds its own lines and edits no other task's |
 | `app/Providers/AppServiceProvider.php` | **T11 → T13** | T11 registers the `public-site` rate limiter, T13 the `publication-download` limiter. Nothing else in the file is touched |
-| `routes/web.php` | **T11 → T12 → T13 → T15** | T11 creates the sessionless public group; the others add routes inside it and may not alter the group or its middleware. **The verifier group and the private-file group are not touched by any phase 4 task** |
+| `routes/web.php` | **T11 → T12 → T13 → T15 → T18** | T11 creates the sessionless public group; T12, T13 and T15 add routes inside it and may not alter the group or its middleware. T18 adds the `/ar` prefix to the public group and the `/ar/` verifier routes **inside the existing verifier group**, under the same middleware and the same named limiter. **No task touches the private-file group** |
 | `resources/css/app.css`, `vite.config.js` | **T11 → T16a → T18** | T11 adds the public site's stylesheet entry; T16a the Filament theme entry; T18 the direction work over both |
-| `resources/views/layouts/public.blade.php` | **T11 → T14 → T18** | T11 creates it; T14 moves the verifier onto it; T18 makes it directional |
+| `resources/views/layouts/public.blade.php` | **T11 → T18** | T11 creates it; T18 makes it directional. The verifier does **not** use it — see T14 |
+| `resources/views/public/partials/header.blade.php` | **T11 → T15 → T18** | T11 creates it; T15 adds the portal link; T18 makes that link carry the locale |
+| `resources/views/verify/*` | **T14 → T18** | T14 restyles; T18 makes them directional. Both keep them standalone and scriptless |
 | `app/Domain/Enrollment/Models/Batch.php` | **T05 only** | Scopes beside the existing predicates |
 | `app/Domain/Finance/Reports/ProfitReport.php` | **T04 → T10** | T04 teaches it expenses; T10 charts what it returns and must not change what the figure means |
 | `app/Domain/Finance/Filament/Pages/Reports/*` | **T10 → T16d** | T10 adds the charts; T16d restyles. T16d must not change what a chart plots |
-| `lang/en/*` | Every task, each in its own catalogue | No task ships a user-facing string without an English key. A task adding to an existing catalogue appends its own keys and edits nobody else's |
+| `lang/en/*` other than `activity.php` | Every task, each in its own catalogue | No task ships a user-facing string without an English key. A task adding to an existing catalogue appends its own keys and edits nobody else's |
 | `lang/ar/*` | **T17 only** | Stay empty until T17, so an untranslated string stays visible |
 
 ---
@@ -136,16 +160,32 @@ first attempt.
 
 **File scope**
 - `docs/superpowers/specs/2026-07-20-training-center-dashboard-design.md` — §3, §5, §6, §8, §12
+- `docs/ENGINEERING.md` — the write-boundary section only
 
 **Does**
 
 - **§3 Phasing.** Phase 4 includes the admin revamp, and says why the bilingual
-  pass runs last.
+  pass runs last. The bilingual pass covers the public site, **the certificate
+  verifier and both panels' login pages**, as well as every panel screen.
 - **§5 Roles and permissions.** The permission matrix gains rows for articles,
   expenses and expense categories, with Shield's `{action}_{model}` names and the
-  role that holds each. Proposed: super admin and admin manage both; staff
-  neither. **The owner confirms the matrix rows in review** — a permission is not
-  something this plan guesses.
+  role that holds each. Proposed: super admin and admin manage articles and
+  categories and record expenses, staff do none of it, and **reversing an expense
+  is super admin only**, mirroring `reverse_payment`. **The owner confirms the
+  matrix rows in review** — a permission is not something this plan guesses.
+- **`docs/ENGINEERING.md`, the write boundary.** Records the owner-approved
+  exception in the section that states the rule (the Actions table and "What the
+  boundary does guarantee"), so the standard and the plan cannot disagree. The
+  wording is deliberately narrow:
+  - **one** column, `articles.download_count`, written by **one** class,
+    `ArticleDownloadCounter`;
+  - increment-only, by a single conditional `UPDATE`, reachable anonymously;
+  - not security-sensitive: it moves no money, grants nothing and exposes
+    nothing;
+  - no activity-log row, because an anonymous count has no actor to attribute;
+  - enforced by an architecture test that fails on a second writer.
+
+  The exception is named as one, so it cannot be cited as precedent for another.
 - **§6 Data model.** Three tables, written as the existing ones are:
   - `articles` — `id, title_en, title_ar, slug (unique), description_en,
     description_ar, topic, authors, issued_on, original_filename, disk, path,
@@ -155,8 +195,11 @@ first attempt.
   - `expense_categories` — `id, name_en, name_ar, is_active, timestamps`. A
     category with expenses is deactivated, never deleted.
   - `expenses` — `id, expense_category_id (FK restrictOnDelete), amount
-    decimal(12,3), paid_on (date), description, recorded_by (FK users),
-    timestamps`.
+    decimal(12,3), paid_on (date), description, recorded_by (FK users
+    restrictOnDelete), reversed_at (nullable), reversed_by (nullable FK users
+    restrictOnDelete), reversal_reason (nullable), timestamps`, with a `CHECK`
+    that the three reversal columns are all null or all present — the shape
+    `payments` already has.
   - **§6 File storage gains one sentence**: a published article is the first file
     served to anonymous visitors, and it is still stored on the private disk.
     Its route checks publication state on every request, which is the
@@ -167,6 +210,15 @@ first attempt.
   `payroll_lines.posting_period_start`, never through `ReportPeriod`'s UTC
   instants. The section records that the definition changed, when, and that a
   month before the first expense row reads exactly as it did.
+
+  **Corrections are reversals.** An expense is never edited or deleted. A wrong
+  one is reversed once — `reversed_at`, `reversed_by` and `reversal_reason` are
+  written together and never unset — and the right figure is recorded as a new
+  row. **Only non-reversed expenses count**, in every report. A reversal
+  therefore changes the profit of the month the expense was paid in, which is
+  the same behaviour a reversed payment already has on revenue. §8 says so
+  plainly rather than claiming that closed months never move: they move only
+  through a recorded, attributed reversal.
 - **§12 Out of scope.** Expense tracking comes out of the list, bounded to the
   managed-list shape. Publications is written in as scope with its own sentence.
   "Certificates due this month" is **not** added anywhere.
@@ -175,7 +227,8 @@ first attempt.
 
 Every section above describes what the phase builds, and nothing else changes ·
 the §5 rows are confirmed by the owner in the PR · §8's definition names its date
-basis · `composer verify` green.
+basis and its reversal rule · ENGINEERING's exception names its column, its
+class and its test · `composer verify` green.
 
 ### Task 19 — The design contract, cleaned and committed
 **Owner: Claude · `p4/t19-design-contract` · blocks T11–T16e · may run beside T01**
@@ -252,16 +305,19 @@ and `npm audit --audit-level=high` both clean · `composer verify` green.
 - `database/migrations/*_create_articles_table.php`
 - `app/Domain/Publications/Models/Article.php`
 - `app/Domain/Publications/Actions/` — `CreateArticleAction`, `UpdateArticleAction`,
-  `PublishArticleAction`, `UnpublishArticleAction`, `RecordArticleDownloadAction`
+  `PublishArticleAction`, `UnpublishArticleAction`
+- `app/Domain/Publications/Support/ArticleDownloadCounter.php` — the approved
+  exception, deliberately not an Action
 - `app/Domain/Publications/Policies/ArticlePolicy.php`
 - `app/Domain/Publications/Filament/Resources/ArticleResource.php` and its `Pages/`
 - `app/Providers/Filament/AdminPanelProvider.php` — **one `discoverResources` call** (seam)
 - `database/seeders/RolePermissionSeeder.php` — the article permissions (seam, before T04)
 - `database/factories/ArticleFactory.php`
 - `lang/en/publications.php`
+- `lang/en/activity.php` — the `Article` record-type label (seam, first)
 - `tests/Feature/Publications/ArticleActionsTest.php`,
   `ArticleResourceTest.php`, `ArticleStorageTest.php`,
-  `RecordArticleDownloadActionTest.php`, `ArticleWriteBoundaryArchTest.php`
+  `ArticleDownloadCounterTest.php`, `ArticleWriteBoundaryArchTest.php`
 
 **Does**
 
@@ -273,15 +329,16 @@ The model, the staff side and the one anonymous write.
   **not** changed, and no file is ever placed on the `public` disk.
 - **Staff writes** — create, update, publish, unpublish — are actor-aware Actions
   that write the activity log, like every other staff write.
-- **The download counter is an actor-less write, and says so.** An anonymous
-  reader has no user to attribute. `RecordArticleDownloadAction` takes the
-  article and nothing else, performs one atomic
+- **The download counter is the owner-approved exception that T01 writes into
+  `docs/ENGINEERING.md`, and is not an Action.** It does not claim to be one: an
+  anonymous reader has no actor to pass and nothing to authorize.
+  `ArticleDownloadCounter::increment(Article)` performs one atomic
   `UPDATE articles SET download_count = download_count + 1 WHERE id = ? AND
-  published_at IS NOT NULL`, and writes **no** activity-log entry — logging every
+  published_at IS NOT NULL` and writes **no** activity-log entry. Logging every
   anonymous download would flood an append-only log with rows nobody can
-  attribute. Because the existing boundary test is about staff writes and does
-  not cover this one, T03 adds its own rule: **no file under `app/` other than
-  that Action writes `download_count`**, proved by a probe that must fail.
+  attribute. T03 adds the guard the exception requires: **no file under `app/`
+  other than that class writes `download_count`**, proved by a probe that must
+  fail. The `Article` model leaves `download_count` out of `$fillable`.
 - The count is approximate by nature: rate-limited, not deduplicated per reader.
   "Most downloaded" sorts on it and is labelled as a count, not a ranking anyone
   should rely on.
@@ -294,7 +351,8 @@ as super admin · the stored file's path is on the private disk and no
 `Storage::disk('public')` call exists in the domain · the counter increments
 atomically, does not increment an unpublished article, and two concurrent calls
 add two · the arch rule fails on a planted second writer, then passes with it
-removed · `composer verify` green.
+removed · `LocalizationTest` passes with `Article` recording activity ·
+`composer verify` green.
 
 ### Task 4 — Expenses, and what Profit means
 **Owner: Claude · `p4/t04-expenses` · depends on T01 and T03 (seeder seam) · blocks T10's profit chart**
@@ -303,18 +361,23 @@ removed · `composer verify` green.
 - `database/migrations/*_create_expense_categories_table.php`, `*_create_expenses_table.php`
 - `app/Domain/Finance/Models/ExpenseCategory.php`, `Expense.php`
 - `app/Domain/Finance/Actions/` — `CreateExpenseCategoryAction`,
-  `UpdateExpenseCategoryAction`, `RecordExpenseAction`, `CorrectExpenseAction`
+  `UpdateExpenseCategoryAction`, `RecordExpenseAction`, `ReverseExpenseAction`
 - `app/Domain/Finance/Policies/ExpenseCategoryPolicy.php`, `ExpensePolicy.php`
 - `app/Domain/Finance/Reports/ExpenseReport.php` — new
 - `app/Domain/Finance/Reports/ProfitReport.php` (seam, before T10)
+- `app/Domain/Finance/Exports/ReportDataBuilder.php` — `profit()` gains the
+  expenses column; this is the one snapshot builder the screen, PDF and XLSX all
+  read (seam)
 - `app/Domain/Finance/Exports/ProfitReportExporter.php` — the new column
 - `app/Domain/Finance/Filament/Resources/ExpenseCategoryResource.php`,
   `ExpenseResource.php`, and their `Pages/`
 - `database/seeders/RolePermissionSeeder.php` (seam, after T03)
 - `database/factories/ExpenseCategoryFactory.php`, `ExpenseFactory.php`
-- `lang/en/expenses.php`; `lang/en/reports.php` — the profit definition keys only
+- `lang/en/expenses.php`; `lang/en/reports.php` — the profit definition and column keys only
+- `lang/en/activity.php` — the `Expense` and `ExpenseCategory` record-type labels (seam, after T03)
 - `tests/Feature/Finance/Expenses/` — `ExpenseActionsTest.php`,
-  `ExpenseReportTest.php`, `ProfitWithExpensesTest.php`, `ExpenseResourceTest.php`
+  `ExpenseReversalTest.php`, `ExpenseReportTest.php`, `ProfitWithExpensesTest.php`,
+  `ProfitExportParityTest.php`, `ExpenseResourceTest.php`
 
 **Does**
 
@@ -328,8 +391,14 @@ to Profit that §8 (T01) now defines.
   states its definition on screen, and a month before the first expense row
   reads identically to the figure the report showed before this task.
 - Money stays `decimal(12,3)` through the existing `Money` cast; no total is
-  stored. An expense is corrected, not deleted, so a closed month's profit does
-  not silently move.
+  stored.
+- **Corrections are reversals, as §8 now says.** `ReverseExpenseAction` writes
+  `reversed_at`, `reversed_by` and `reversal_reason` once, behind the super-admin
+  permission, and logs the reason. No Action, Filament form or bulk action edits
+  `amount`, `paid_on` or `expense_category_id` after creation, and none deletes
+  an expense. A reversed expense is excluded from `ExpenseReport` and therefore
+  from Profit, so its original month moves — traceably, through the reversal,
+  exactly as a reversed payment moves revenue.
 
 **Done when**
 
@@ -339,8 +408,13 @@ last day of a month counts in that month and one paid on the first day of the
 next does not, in the centre's timezone, with `setTestNow` placing "now" on the
 other side of UTC midnight · a month with no expenses returns the same profit
 as the pre-T04 formula, asserted against an expected value computed by hand,
-not by calling the report · `MoneyCastArchTest` covers the new columns ·
-`composer verify` green.
+not by calling the report · a reversed expense is absent from `ExpenseReport`
+and from Profit, asserted per report · reversal is set-once — a second reversal
+is refused, and the `CHECK` rejects a partial reversal at the database · no edit
+or delete path exists, proved behaviourally through the Filament resource ·
+`ReportDataBuilder::profit()`, the PDF and the XLSX carry the same expenses
+figure for one month · `LocalizationTest` passes with both new models recording
+activity · `MoneyCastArchTest` covers the new columns · `composer verify` green.
 
 ### Task 5 — The read queries the design needs
 **Owner: Claude · `p4/t05-read-queries` · depends on T01**
@@ -617,7 +691,7 @@ sorting by newest or most downloaded; the article page; and the download route.
 
 **Every download re-reads publication state.** The route resolves the article by
 slug **with `published_at` not null in the same query**, streams the file from the
-private disk, and calls `RecordArticleDownloadAction`. An unpublished slug and an
+private disk, and calls `ArticleDownloadCounter::increment()`. An unpublished slug and an
 unknown slug return the same 404. There is no other way to reach the bytes: the
 file has no URL, and the route is the only reader.
 
@@ -630,32 +704,40 @@ search matches each of the four fields and nothing unpublished ever appears in
 the index · `composer verify` green.
 
 ### Task 14 — The verifier, restyled
-**Owner: Claude · `p4/t14-verifier-restyle` · depends on T11**
+**Owner: Claude · `p4/t14-verifier-restyle` · depends on T19 (it shares no file with T11)**
 
 **File scope**
-- `resources/views/verify/form.blade.php`, `show.blade.php`, `not-found.blade.php`
-- `resources/views/layouts/public.blade.php` — only what the verifier needs (seam, after T11)
-- `resources/js/verify-empty-check.js` and its `vite.config.js` entry, if script
-  is the chosen mechanism (seam, after T11)
+- `resources/views/verify/form.blade.php`, `show.blade.php`, `not-found.blade.php` (seam, first)
 - `lang/en/verify.php` — appended
 - `tests/Feature/Verification/VerifierRestyleTest.php`
 
-`VerifyCertificateController.php` and the verifier's routes are **not** in scope.
+`VerifyCertificateController.php`, the verifier's routes,
+`VerificationDisclosureTest.php` and the public layout are **not** in scope.
 
 **Does**
 
-A restyle onto the public layout, inheriting two properties rather than
-re-deciding them, as stated under *One precision this plan must not lose*. The
-"enter a reference" prompt is client-side only, before submission; an empty
-POST that reaches the server still gets the uniform miss. The page stays on the
-full `web` stack because its form posts.
+A restyle of the three verifier pages, inheriting two properties rather than
+re-deciding them, as stated under *One precision this plan must not lose*.
+
+**The pages stay standalone Blade with inline CSS and no script**, which design
+§7.4 requires and `VerificationDisclosureTest` enforces: it rejects every
+executable or embedding element, and every external origin, on all three pages.
+So the verifier does **not** adopt T11's public layout or any Vite entry. It
+takes the design's look in its own inline styles, under the logical-property
+rule, and its header links back to the public site by URL.
+
+**The "enter a reference" prompt is the input's native `required` attribute**:
+the browser refuses an empty submit before anything is sent, with no script. A
+client that bypasses it posts an empty form and still gets the uniform miss. The
+page stays on the full `web` stack because its form posts.
 
 Contact hours come off the result. The projection is named field by field and
 stays that way.
 
 **Done when**
 
-The existing verifier suite passes unchanged · a blank, a malformed and an
+The existing verifier suite passes **unchanged, `VerificationDisclosureTest`
+included** · the form's input carries `required` · a blank, a malformed and an
 unknown reference produce byte-identical bodies, asserted directly · a revoked
 certificate shows its revocation date · no contact-hours field renders ·
 `composer verify` green.
@@ -785,8 +867,11 @@ physical CSS property is introduced · `composer verify` green.
 
 **File scope**
 - `lang/ar/*.php` — every catalogue, existing and new
-- `lang/en/activity.php` and `lang/ar/activity.php` — the `activity.field.*` group
-- `tests/Feature/Localisation/CatalogueParityTest.php`
+- `lang/en/activity.php` (seam, last) and `lang/ar/activity.php` — the `activity.field.*` group
+- `app/Domain/Staff/Filament/Resources/ActivityResource.php` — `describeProperties()`
+  and `describeChanges()` only (seam, after T16e)
+- `tests/Feature/Localisation/CatalogueParityTest.php`,
+  `ActivityFieldTranslationTest.php`
 
 **Does**
 
@@ -795,10 +880,13 @@ for this. Composite strings go through keys with their own separators and
 ordering — a lesson this project already paid for.
 
 **It also closes the limitation spec §13 hands to this phase**: audited field
-names render untranslated, because `lang/en/activity.php` interpolates raw column
-names. The `activity.field.*` group covers every audited column and explicit
-property key. §13 is explicit that this closes *as part of* the Arabic work, not
-after it.
+names render untranslated. Keys alone cannot fix that, because the code never
+looks them up — `ActivityResource::describeProperties()` interpolates the raw
+property `$key` and `describeChanges()` the raw `$field`. T17 routes both through
+`activity.field.*`. A field missing from the group falls back to its raw name, as
+today, so a gap shows as a visible English identifier rather than an error.
+
+§13 is explicit that this closes *as part of* the Arabic work, not after it.
 
 **The Arabic wording is a translator's decision, not a developer's.** This task
 builds the catalogues and the parity test; the owner arranges review of the
@@ -809,7 +897,11 @@ Arabic itself before T18 merges.
 `CatalogueParityTest` proves every English key has an Arabic counterpart and
 fails on a planted missing key · every audited column has an `activity.field.*`
 entry, derived from the models' audited attributes rather than a hand list ·
-`composer verify` green.
+**behaviourally**: with the locale set to `ar`, a logged change and a logged
+property render their Arabic field names through both describers, asserted
+against a sentinel Arabic value planted in the test's catalogue, not against the
+real copy, and the assertion fails if either describer goes back to
+interpolating the raw name · `composer verify` green.
 
 ### Task 18 — RTL and locale switching
 **Owner: Claude · `p4/t18-rtl` · depends on T17**
@@ -818,18 +910,38 @@ entry, derived from the models' audited attributes rather than a hand list ·
 - `resources/css/app.css`, `resources/css/public.css`,
   `resources/css/filament/admin/theme.css` (seam, last)
 - `resources/views/layouts/public.blade.php` (seam, last)
-- `routes/web.php` — the locale prefix on the public group
-- `app/Http/Middleware/SetPublicLocale.php` — new
+- `resources/views/verify/*` — direction only (seam, after T14)
+- `resources/views/public/partials/header.blade.php` — the locale-carrying portal link (seam, last)
+- `routes/web.php` — the `/ar` prefix on the public group, and `/ar/` verifier
+  routes inside the existing verifier group (seam, last)
+- `app/Http/Middleware/SetPublicLocale.php`, `SetGuestPanelLocale.php` — new
+- `app/Providers/Filament/AdminPanelProvider.php` (seam, last),
+  `StudentPanelProvider.php` (seam) — the guest-locale middleware
 - `tests/Feature/Localisation/DirectionTest.php`, `PublicLocaleTest.php`,
-  `LogicalPropertiesTest.php`
+  `VerifierLocaleTest.php`, `GuestLoginLocaleTest.php`, `LogicalPropertiesTest.php`
 
 **Does**
 
-Direction and the locale switch. **The public site carries its locale in the URL**
-(`/ar/...`), because it is sessionless: there is no session to remember a choice
-in, and a URL is cacheable and indexable. The panels keep `users.locale` and the
-existing `SetLocale`. A guest's portal and admin login pages render in
-`config('app.locale')`, as today.
+Direction and the locale switch, over every surface the bilingual pass covers.
+
+- **The public site carries its locale in the URL** (`/ar/...`), because it is
+  sessionless: there is no session to remember a choice in, and a URL is
+  cacheable and indexable.
+- **The verifier gets `/ar/verify/certificates` routes inside its existing
+  group**, under the same disclosure headers and the same named limiter, with
+  `SetPublicLocale` and `VerifyCertificateController` unchanged. The `/ar` form
+  posts to the `/ar` submit route, which redirects to the `/ar` result. **One
+  limiter budget covers both prefixes**: the limiter is keyed by client, not by
+  route, so the second language cannot double the guess rate.
+- **Both login pages honour a guest locale.** The Arabic site's portal link adds
+  `?locale=ar`. `SetGuestPanelLocale` runs in both panels' middleware — **not**
+  `authMiddleware`, where the login page would never see it — and acts only for
+  guests. It validates the value against `SetLocale::SUPPORTED`, stores it in
+  the login page's session, and applies it to that page's Livewire update
+  requests as well, so a validation error re-renders in Arabic too. See
+  ENGINEERING's notes on persistent middleware before wiring it. A signed-in user
+  keeps `users.locale` through the existing `SetLocale`, and the guest value
+  never overrides it.
 
 **The conformance check that matters**: logical CSS properties have been enforced
 since commit one, but the handoff's CSS is not this repository's and must be
@@ -838,10 +950,16 @@ Blade views for physical properties and fails on a planted `margin-left`.
 
 **Done when**
 
-Both directions render every public page and every panel screen with `dir` set
-correctly · an `/ar/` URL renders Arabic and an unprefixed one English, with no
-session involved · the logical-properties scan passes and its planted probe
-fails · `composer verify` green.
+Both directions render every public page, all three verifier pages, both login
+pages and every panel screen, with `dir` set correctly · an `/ar/` public URL
+renders Arabic and an unprefixed one English, with no session involved · the
+`/ar` verifier still passes `VerificationDisclosureTest`'s checks, and its blank,
+malformed and unknown misses are byte-identical to each other · requests across
+both prefixes draw on one limiter budget, and the test fails if they do not · a
+guest's `?locale=ar` login renders Arabic, an unsupported value falls back to
+English, and a signed-in user's `users.locale` wins over a guest value · the
+logical-properties scan passes and its planted probe fails · `composer verify`
+green.
 
 ---
 
