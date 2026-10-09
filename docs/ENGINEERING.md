@@ -181,7 +181,37 @@ The proof is behavioural. Where a protection matters, drive the real component a
 
 **Model events do not protect against arbitrary database access, and we no longer claim they do.** Raw SQL, manual `tinker`, query-builder bulk writes (`User::query()->update(...)`), and quiet saves bypass the application layer entirely. These are **trusted administrative operations**. True database-wide enforcement would require MySQL triggers and is deliberately out of scope.
 
-What the boundary does guarantee: every write reachable from the application — HTTP, Filament, Livewire, jobs, commands that use application code — goes through an Action that authorizes the actor, and the architecture tests prevent new code from reaching around it.
+What the boundary does guarantee: every write reachable from the application — HTTP, Filament, Livewire, jobs, commands that use application code — goes through an Action that authorizes the actor, and the architecture tests prevent new code from reaching around it. **With exactly one exception, below.**
+
+### The one exception: the article download counter (owner-approved, 2026-10-08)
+
+A published article (phase 4) can be downloaded by anyone, and each download
+increments `articles.download_count`. An anonymous reader has no actor to pass
+and nothing to authorize, so this write cannot satisfy the rule above. The owner
+approved an exception, and it is written here, in the rule's own section, so the
+standard and the code cannot disagree. Its bounds:
+
+- **One column:** `articles.download_count`, and nothing else on any table.
+- **One class:** `App\Domain\Publications\Support\ArticleDownloadCounter`. It is
+  deliberately **not** named an Action, because it does not do what an Action
+  promises.
+- **Increment only**, by a single conditional statement:
+  `UPDATE articles SET download_count = download_count + 1 WHERE id = ? AND published_at IS NOT NULL`.
+  - No read-modify-write.
+  - No decrement or reset path.
+  - An unpublished article is never counted.
+- **Not security-sensitive.** The counter moves no money, grants no access and
+  exposes nothing. The worst a forged count can do is reorder a "most
+  downloaded" sort, which is labelled as a count, not a ranking.
+- **No activity-log row.** An anonymous count has no actor to attribute, and
+  logging each download would flood an append-only log with rows nobody can
+  explain.
+- **Enforced, not trusted.** An architecture test fails when any other file
+  under `app/` writes `download_count`, and it is proved by a probe that must
+  fail. `download_count` is also absent from `Article::$fillable`.
+
+**This exception is not precedent.** A second actor-less write needs its own
+owner decision and its own entry here. "The counter does it" is not a reason.
 
 ### Super-admin identity is resolved by role id, not by name
 

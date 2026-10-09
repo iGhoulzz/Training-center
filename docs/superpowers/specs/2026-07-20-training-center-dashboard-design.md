@@ -69,7 +69,19 @@ Each phase produces a usable system and gets its own spec and implementation pla
 - **Phase 1 — Foundation.** Auth, four roles, staff account management, activity log, student profiles, course templates, batches with instructor hour allocation, enrollments, automated backups. No money.
 - **Phase 2 — Financials.** Pricing, charges, payments, balances, compensation configuration, payroll, reports, Excel and PDF export.
 - **Phase 3 — Student portal and certificates.** Read-only student login, completion marking, physical-certificate issuance records, and reference verification. Certificate design and printing happen outside the system.
-- **Phase 4 — Public site and Arabic.** Landing pages, course listings, contact, and the full bilingual pass.
+- **Phase 4 — Public site, Publications, the admin revamp and Arabic.**
+  - **The public site:** landing pages, course listings and contact.
+  - **Publications:** a public library of PDF articles.
+  - **Expenses:** a managed list, which joins Profit (section 8).
+  - **The admin revamp:** the staff panel restyled to the owner's design handoff.
+  - **The full bilingual pass:** it covers the public site, the certificate
+    verifier, both panels' login pages and every panel screen.
+
+  *Amended 2026-10-08 (P4-T01).* The revamp and Publications were added by the
+  owner, and expenses moved in from section 12. **The bilingual pass runs last,
+  over the final markup**, because translating and direction-checking screens the
+  revamp is about to change would do that work twice. The task breakdown is
+  `docs/superpowers/plans/2026-10-08-phase-4-public-site-and-arabic.md`.
 
 Internationalization structure is built from the first commit even though translations arrive in phase 4. Every user-facing string goes through `lang/` files, and all layout uses logical CSS properties (`margin-inline-start`, not `margin-left`). Retrofitting RTL onto a completed application is substantially more expensive than accommodating it from the start.
 
@@ -122,6 +134,33 @@ Authorization is **permission-based, never role-based, in code**. Always `$user-
 | Compensation and payroll (P2) | full | view | none | none |
 | Financial reports (P2) | full | view and export | none | own balance (P3) |
 | Student certificates (P3) | full | view, issue, replace, revoke | view | own valid certificate |
+| Publications (P4) | full | view, create, edit, publish, unpublish | none | none |
+| Expense categories (P4) | full | view, create, edit, deactivate | none | none |
+| Expenses (P4) | full | view, record | none | none |
+| Reverse an expense (P4) | full | none | none | none |
+
+**The phase 4 rows (P4-T01, confirmed by the owner on 2026-10-09).** They follow the payment split
+above for the same reason:
+- recording an expense is front-desk work an admin does without a super admin present;
+- correcting one is a reversal, and reversal is the restricted capability that
+  keeps the audit trail meaningful — `reverse_expense` mirrors `reverse_payment`;
+- "full" for the super admin means everything the capability offers. There is
+  still **no delete path** for an article, an expense category, or an expense:
+  - an article is unpublished;
+  - a category is deactivated;
+  - an expense is reversed.
+
+The Shield names are `view_any_article`, `view_article`, `create_article`,
+`update_article`, `publish_article` and `unpublish_article`; then
+`view_any_expense_category`, `view_expense_category`,
+`create_expense_category` and `update_expense_category` (deactivation is an
+update); then `view_any_expense`, `view_expense`, `create_expense` and
+`reverse_expense`. `RolePermissionSeeder` remains the authority once T03 and
+T04 add them.
+
+**Reading or downloading a published article needs no permission**, as with the
+certificate verifier. An anonymous reader is not a role, and nothing in this
+matrix governs the public site.
 
 The students row previously read "view all, edit own batches", which conflated two different things: a student **record**, and the **enrolments** that place a student in a batch. Staff scope applies to the latter. On student records staff hold **view and create** — they register walk-ins and see the whole register — but not update or delete, because correcting or removing an existing record is an administrative act. Create without update is deliberate; the two are separate grants and are tested as such.
 
@@ -150,7 +189,7 @@ Guard 3 was extended during implementation to cover role *removal* as well as de
 
 This replaced an earlier design that enforced the guards by overriding Spatie's write methods on the models. Two review rounds kept finding fresh bypass methods, and the approach contradicted the project's own "no business logic in models" rule. The lesson is recorded because it is easy to re-derive the wrong answer: **a policy only runs when something consults it, and patching each write method is an unbounded game — so the fix is to make one narrow write path and enforce that nothing else exists.**
 
-**Trust boundary, stated plainly.** Model events do not protect against raw SQL, manual `tinker`, or query-builder writes, and the system does not claim they do. Those are trusted administrative operations; database-wide enforcement would require MySQL triggers and is out of scope. What is guaranteed is that every write reachable through application code is authorized.
+**Trust boundary, stated plainly.** Model events do not protect against raw SQL, manual `tinker`, or query-builder writes, and the system does not claim they do. Those are trusted administrative operations; database-wide enforcement would require MySQL triggers and is out of scope. What is guaranteed is that every write reachable through application code is authorized, with one owner-approved exception from phase 4: the anonymous, increment-only article download counter (section 6, and `docs/ENGINEERING.md`, "The one exception").
 
 Guards 1, 2, and 4 are actor-relative and do not apply where there is no actor — seeders and setup use a separately named trusted path (`SystemRoleWriter`). Guard 3 has no exemption and applies to system writes too. `docs/ENGINEERING.md` holds the full detail.
 
@@ -195,6 +234,10 @@ Applies to every file the system stores, now and later.
 - **Binary content never goes in the database.** Rows hold metadata and a path; the bytes live on a filesystem disk.
 - **Uploads go to a private disk**, not a web-served one. Staff certificates carry personal data — full names, national ID numbers, dates of birth — and a public disk gives every file a permanent URL that needs no login and cannot be recalled once it leaks.
 - **Files are served only through policy-authorized downloads or temporary signed URLs.** Authorization is checked per request, at the point of serving.
+- **A published article is the first file served to anonymous readers (P4), and it still lives on the private disk.**
+  - Its download route re-reads the article's publication state on every request: the check is part of the query that finds the file.
+  - Unpublishing therefore withdraws the file at once, with no URL left behind to revoke.
+  - This is the rule above applied to a public reader: the per-request check is "is this published?" rather than a policy.
 - **The private disk is included in backups** (see section 11). A database dump alone would restore rows pointing at files that no longer exist.
 
 Phase 2's payment receipts and generated report PDFs reuse this storage infrastructure. Phase 3 student certificates do **not** create or store a certificate PDF: the physical template, visual design, and printing are handled outside the system. If scanned student-certificate copies are added later, that is a separate feature with its own model, policy, retention rule, and private storage path; it must not reuse `staff_certificates`.
@@ -339,6 +382,38 @@ The public verifier is an exact-reference lookup such as `/verify/certificates/{
 
 Because the reference appears in the URL and unlocks the printed name and course, verification responses send `Cache-Control: private, no-store`, `Referrer-Policy: no-referrer`, and `X-Robots-Tag: noindex, nofollow, noarchive`. The page loads no third-party scripts, fonts, analytics, images, or styles that could receive the reference through a request or referrer; required assets are self-hosted. A QR code may encode this same verification URL for the external printer to place on the physical certificate, but generating the certificate layout remains outside the application.
 
+### Phase 4 tables (designed now, built in phase 4)
+
+Added by P4-T01 (2026-10-08), from the owner's decisions recorded in the phase 4 plan.
+
+**`articles`** — a published document in the public library
+`id, title_en, title_ar, slug (unique), description_en, description_ar, topic, authors, issued_on, original_filename, disk, path, download_count (unsigned, default 0), published_at (nullable), timestamps`
+
+- **`published_at` null means unpublished.** No separate flag exists to disagree with it.
+- The PDF lives on the private disk (see File storage).
+- **Create, update, publish and unpublish** are actor-first Actions, and each is activity-logged.
+- There is **no delete path**: a withdrawn article is unpublished, and its row and file stay.
+- **`download_count` is the one column written outside an actor-first Action.** It is an anonymous counter, written by one class through a single conditional increment that touches only published rows, and never activity-logged. It is the narrow, owner-approved exception described in `docs/ENGINEERING.md`, "The write boundary".
+- The count is approximate: it is rate-limited, not deduplicated per reader.
+
+**`expense_categories`** — the managed list
+`id, name_en, name_ar, is_active, timestamps`
+
+- Admins maintain it, so adding a category like "Insurance" needs no developer.
+- A category is **deactivated, never deleted**: it leaves the picker and stays on its history. The foreign key restricts deletion as a backstop, but no delete path exists to reach it.
+
+**`expenses`** — money paid out, other than wages
+`id, expense_category_id (FK restrictOnDelete), amount decimal(12,3), paid_on (date), description, recorded_by (FK users restrictOnDelete), reversed_at (nullable), reversed_by (nullable FK users restrictOnDelete), reversal_reason (nullable), timestamps`
+
+- **A `CHECK` requires the three reversal columns to be all null or all present**, the same shape `payments` has (phase 2 design §9).
+- **`paid_on` is a centre-local calendar date**, not an instant. It is the date the money left, and it alone decides which month an expense counts in (section 8).
+- **An expense is never edited or deleted.**
+  - A wrong one is reversed once, through `reverse_expense`, with its actor and reason. The reversal fields are set together and never unset.
+  - The correct figure is recorded as a new row.
+  - `amount`, `paid_on` and `expense_category_id` have no write path after creation.
+  - Recording and reversing are activity-logged.
+- Money is `decimal(12,3)`, like every amount in this system. No total is stored.
+
 ### Relationships
 
 ```
@@ -348,6 +423,8 @@ users ──1:N── staff_compensation     (effective-dated)
 courses ──1:N── batches ──1:N── enrollments ──N:1── students
 enrollments ──1:N── student_certificates
 enrollments ──1:N── charges ──M:N── payments  (via payment_allocations)
+expense_categories ──1:N── expenses ──N:1── users  (recorded_by, reversed_by)
+articles                              (standalone; no foreign keys)
 activity_log ──polymorphic── everything auditable
 ```
 
@@ -373,7 +450,7 @@ Reports available to super admin (full) and admin (view and export):
 - Outstanding balances — who owes what, aged
 - Payment method breakdown
 - Wage cost per period, per person and in total
-- Profit: revenue minus wages for a period
+- Profit: collected revenue minus finalized wage cost minus expenses paid, for a period — **amended in phase 4, below**
 - Per-student payment history
 - **Daily tender report** (added 2026-08-09) — finalized, non-reversed cash and card totals for a date
 
@@ -384,6 +461,34 @@ already-installed `openspout/openspout` — **no new dependency**. PDF is `mpdf/
 chosen for native Arabic shaping and RTL with no system dependency, against phase 4.
 **Revenue is cash basis**: a dinar counts in the month it arrived, not the month it
 was billed. See `2026-08-09-phase-2-financials-design.md` §8.
+
+### Profit with expenses (amended 2026-10-08, P4-T01)
+
+**Profit = collected revenue − finalized wage cost − non-reversed expenses
+paid in the period.** This supersedes the phase 2 definition, "collected revenue
+minus finalized wage cost", here and in `2026-08-09-phase-2-financials-design.md`
+§8. That document stays as the record of what phase 2 built.
+
+- **The expense half is cash basis too: an expense counts in the month it was
+  paid.** One date per expense, `paid_on`. Rent paid on 1 October for the
+  quarter counts wholly in October. There is no incurred date and no spreading
+  across months. The owner's decision, matching revenue.
+- **`paid_on` is a centre-local calendar date**, matched to a month by its year
+  and month. It works like `payroll_lines.posting_period_start` and never passes
+  through the UTC instants revenue is filtered by. Profit composes the existing
+  revenue and wage-cost reports with a new expense report. It never re-derives
+  either.
+- **Only non-reversed expenses count, in every report.** An expense is corrected
+  by reversal, never by editing (section 6). So a reversal changes the profit of
+  the month the expense was paid in — the same behaviour a reversed payment
+  already has on revenue. A past month's figure can therefore move. It moves only
+  through a recorded, attributed reversal, which the activity log explains.
+- **A month with no expense rows reads exactly as it did before this amendment.**
+  The definition only gains a term, and for such a month that term is zero.
+- **The report states this definition where it is read**, on screen and in both
+  exports. A figure whose meaning changed between two months without saying so
+  is the traceability complaint the owner raised against the finance reports,
+  made worse.
 
 ---
 
@@ -478,7 +583,17 @@ Recorded so these do not reappear as assumptions:
 - Class scheduling and timetables
 - Staff clock-in, leave management, and payroll disbursement
 - Online card payment processing
-- Expense tracking beyond staff wages
+- **Expense tracking beyond the phase 4 managed list.** Phase 4 records paid
+  expenses against admin-maintained categories and subtracts them in Profit
+  (sections 6 and 8), by the owner's decision of 2026-10-08. This line
+  previously excluded *all* expense tracking beyond staff wages. Still out:
+  budgets, recurring or scheduled expenses, supplier and accounts-payable
+  records, accruals or spreading an expense across months, and attaching receipt
+  scans to expenses.
+- **Publications are in scope from phase 4**: a public library of PDF articles
+  with topics, authors and a download count (sections 3 and 6). Still out:
+  reader accounts, comments, paid or restricted content, and any document that
+  is not deliberately published by staff.
 - A mobile application
 - Public student self-registration
 - Student certificate template design, PDF generation, physical printing, or printer integration
