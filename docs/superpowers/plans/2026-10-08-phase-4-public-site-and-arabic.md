@@ -243,10 +243,20 @@ class and its test · `composer verify` green.
 ### Task 19 — The design contract, cleaned and committed
 **Owner: Claude · `p4/t19-design-contract` · blocks T11–T16e · may run beside T01**
 
-**File scope**
-- `docs/design/design_handoff_training_centre/` — the nine files, cleaned
+**File scope** *(amended 2026-10-10 — see "Owner decision" below)*
+- `docs/design/design_handoff_training_centre/` — `README.md`, `BACKEND_CONTRACT.md`
+  and `TASKS.md`, cleaned, plus `screens/admin/*.jpg` and `screens/public/*.jpg`
 - `docs/design/README.md` — new: what was removed, why, and that the copy is
   reference, not specification
+- this section of the plan, recording the decision below
+
+**Owner decision, 2026-10-09.** `support.js` and `image-slot.js` turned out to be
+the design tool's own runtime, with no licence. The two `.dc.html` prototypes
+cannot render without them. The owner chose to commit screenshots of every screen
+and state instead of the prototypes, scripts, logo and `github.md`. Behaviour the
+screenshots cannot show is in the handoff README's interaction and state
+sections, which are committed. The live prototypes stay with the owner and are
+shared on request.
 
 **Does**
 
@@ -254,7 +264,7 @@ The handoff exists only in the owner's main checkout, untracked. A worktree
 cannot see it and neither can a reviewer, so a task that says "match the design"
 is unreproducible. This commits it, after removing:
 
-- the real logo (`assets/asclst-logo.jpg`) and anything embedding it, including
+- the real logo (the image under `assets/`) and anything embedding it, including
   base64 copies inside the two `.dc.html` prototypes, replaced with a neutral
   placeholder;
 - real contact details — addresses, telephone numbers, email addresses, social
@@ -263,19 +273,24 @@ is unreproducible. This commits it, after removing:
   bundled script whose origin cannot be established (`support.js` and
   `image-slot.js` are checked, not assumed).
 
-**Where the spec and the handoff disagree, the spec wins**, and the README says
-which known conflicts were already decided: seats, contact hours, the verifier's
-empty submit.
+**Where the spec and the handoff disagree, the spec wins.** The README lists every
+known conflict and how it is settled: seats, contact hours, the verifier's empty
+submit, "certificates due", the prototypes' CSS, the portal sign-in (a link, per
+T15), "Request a seat" (a contact link, per §12). Two are open, each with a named
+task: the verifier's sample buttons (T14) and the embedded map (T12).
 
 **The owner reviews the cleaned copy locally before it is pushed.** Pushing
 publishes it; there is no recall.
 
 **Done when**
 
-A grep for the removed logo's bytes, every real telephone number and email
-address in the original, and the centre's real name in image alt text finds
-nothing · both prototypes still open and render with the placeholder · the owner
-has approved the diff · `composer verify` green.
+A grep of the committed text for every real telephone number, email address and
+street address in the original, and for the centre's real name in English and
+Arabic, finds nothing · no `.html`, `.js` or logo file is committed · every screen
+and state the handoff README lists has a screenshot, and the screenshots show the
+placeholder, not the logo · the owner has reviewed every screenshot locally and
+approved the diff · Codex has reviewed it in the worktree · `composer verify` green
+on the implementation PR it rides in.
 
 ### Task 2 — Relax the two carried pins
 **Owner: Claude · `p4/t02-dependency-pins` · after T01, for sequencing only**

@@ -10,8 +10,9 @@ Where anything in here disagrees with
 `docs/superpowers/specs/2026-07-20-training-center-dashboard-design.md` or with
 `docs/superpowers/plans/2026-10-08-phase-4-public-site-and-arabic.md`, the spec
 and the plan win. The handoff describes what the designer drew. They describe what
-the project builds. Five conflicts are already decided, and the screenshots still
-show the drawn version of each:
+the project builds. Nine conflicts are known, and the screenshots still show the
+drawn version of each. Seven are decided; two are open and name the task that
+settles them:
 
 1. Public programme cards show no "seats left" pill. The screenshots show one.
 2. The certificate verifier's result shows no contact hours. The valid-result
@@ -23,6 +24,25 @@ show the drawn version of each:
    card and the queue banner on the certificates screen.
 5. The prototypes' CSS is not copied into the app. It is rewritten as Tailwind with
    logical properties, as `docs/ENGINEERING.md` requires.
+6. **The student portal sign-in is a link, not a form or modal.** The handoff draws
+   an email-and-password modal on the public site (`13-portal-sign-in.jpg`), and
+   `BACKEND_CONTRACT.md`'s "Student portal sign-in" row offers "a link or a sign-in
+   form". The plan's T15 decides on a link to the student panel's own login page.
+   The public pages are sessionless, so a form posted from them would carry no CSRF
+   token, and a second sign-in path is not wanted.
+7. **"Request a seat" is a link to contact, not a form.** Public student
+   self-registration is out of scope (spec section 12). A programme with no upcoming
+   batch shows a contact call to action instead of a date and price (plan, T12).
+8. **Open — the verifier's "Try …" sample buttons (decided in T14).** The verifier
+   section draws two buttons that fill in a sample reference. A sample that
+   resolves would publish a real holder's name and course on the open internet,
+   and one that does not resolve demonstrates only a miss. The default is that they
+   are not built. The owner may decide otherwise in T14.
+9. **Open — the embedded map on the contact section (decided in T12).** The handoff
+   README and `TASKS.md` say to replace the map placeholder with "a real embedded
+   map". No task scopes one, and an embedded map loads a third-party origin into the
+   public pages. The default is the address as text plus a "Get directions" link,
+   which loads nothing. The owner may decide otherwise in T12.
 
 ## What was removed, and why
 
@@ -37,7 +57,13 @@ committed.
 - The two interactive prototypes (the `.dc.html` files) are not committed, and
   neither are the design tool's runtime scripts (`support.js`, `image-slot.js`).
   They carry no licence, so publishing them is not ours to do. The screenshots below
-  stand in for the prototypes.
+  stand in for the prototypes. That is the owner's decision of 2026-10-09.
+- **Screenshots show states, not behaviour.** What the prototypes did on a click,
+  a toggle or a submit is written down in the handoff README's "Interactions &
+  behaviour" and state sections, which are committed. Where a screenshot and that
+  text disagree, the text describes the intent. The live prototypes remain with the
+  owner, and can be shared on request for a task that needs to see an interaction
+  run.
 - `github.md`, the design tool's sync log, is not committed. It only mapped screens
   to source files in an earlier state of the repository.
 
