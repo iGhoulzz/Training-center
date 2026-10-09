@@ -8,7 +8,7 @@
     "require": {
         "php": "^8.4.1",
         "bezhansalleh/filament-shield": "^4.2",
-        "filament/filament": "~5.8.4",
+        "filament/filament": "^5.8.4",
         "laravel/framework": "^13.8",
         "laravel/horizon": "^5.50",
         "laravel/pulse": "^1.8",
