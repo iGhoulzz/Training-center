@@ -1,0 +1,76 @@
+# Design handoff (phase 4 reference)
+
+This folder holds the owner's UI handoff for phase 4: a redesign of the Filament
+admin panel and a new public marketing site. It is reference material for the
+phase 4 tasks that rebuild those screens.
+
+## Reference, not specification
+
+Where anything in here disagrees with
+`docs/superpowers/specs/2026-07-20-training-center-dashboard-design.md` or with
+`docs/superpowers/plans/2026-10-08-phase-4-public-site-and-arabic.md`, the spec
+and the plan win. The handoff describes what the designer drew. They describe what
+the project builds. Five conflicts are already decided, and the screenshots still
+show the drawn version of each:
+
+1. Public programme cards show no "seats left" pill. The screenshots show one.
+2. The certificate verifier's result shows no contact hours. The valid-result
+   screenshot has a "Contact hours" row.
+3. The verifier's "enter a reference" prompt is the input's native `required`
+   attribute, and every miss stays one identical not-found page. The screenshot of
+   the empty submit shows a separate message.
+4. "Certificates due this month" is dropped from phase 4, both the dashboard KPI
+   card and the queue banner on the certificates screen.
+5. The prototypes' CSS is not copied into the app. It is rewritten as Tailwind with
+   logical properties, as `docs/ENGINEERING.md` requires.
+
+## What was removed, and why
+
+The repository is public and MIT licensed, so the handoff was cleaned before it was
+committed.
+
+- The centre's real logo is replaced by a neutral "TC" disc, and the real centre
+  name, in English and Arabic, by "Training Centre".
+- Contact details are replaced with fake ones: the street address, the telephone
+  numbers, the public email address and the staff-style email addresses. The sample
+  people's names in the prototypes are invented and were kept.
+- The two interactive prototypes (the `.dc.html` files) are not committed, and
+  neither are the design tool's runtime scripts (`support.js`, `image-slot.js`).
+  They carry no licence, so publishing them is not ours to do. The screenshots below
+  stand in for the prototypes.
+- `github.md`, the design tool's sync log, is not committed. It only mapped screens
+  to source files in an earlier state of the repository.
+
+The three written documents in `design_handoff_training_centre/` are the owner's
+originals with the same cleaning applied. Each opens with a short note saying what
+changed, and the paths inside `TASKS.md` were corrected to this folder.
+
+## The screenshots
+
+They were rendered on 2026-10-10 from cleaned copies of the two prototypes, in
+Microsoft Edge at a viewport 1440 px wide, as JPEG at quality 85, at full page
+height. The prototypes load their fonts from Google Fonts, so the type is the real
+type.
+
+`design_handoff_training_centre/screens/admin/` holds the admin prototype.
+`NN-<screen>-today.jpg` is the panel as it renders now, and
+`NN-<screen>-proposed.jpg` is the redesign. NN follows the order of the screens
+list in the handoff README. Sub-states are part of the name: the Enrol & Collect
+steps (`05-enrol-collect-step-1-proposed.jpg` to `step-4`), the batch view's
+Enrolments and Instructors tabs, and the student portal's three tabs, which exist
+in both states. The Today version of a screen has no sub-states and is captured
+once. `19-component-sheet.jpg` and `20-js-toolkit.jpg` are the prototype's
+documentation pages, captured once.
+
+`design_handoff_training_centre/screens/public/` holds the public site, numbered in
+the order the prototype is navigated: the home page, the five certificate verifier
+outcomes (valid, replaced, revoked, not found, empty submit), the publications
+library in four states, two article pages, the student portal sign-in modal and the
+download toast. The verifier outcomes are cropped to the verifier section, and the
+modal and the toast are captures of the first 900 px only, because both are fixed to
+the viewport.
+
+The public prototype has no Arabic and English toggle. Arabic appears in it only as
+subtitles beside the English text, so there are no Arabic captures yet. In the admin
+prototype the report chips and the filter chips change nothing on screen, so one
+capture each stands for them.
