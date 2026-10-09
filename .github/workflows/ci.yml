@@ -54,9 +54,18 @@ jobs:
       HORIZON_ALERT_EMAIL: ci@example.com
       MAIL_FROM_ADDRESS: ci@example.com
 
+    # SERVICE IMAGES COME FROM AWS'S PUBLIC MIRROR OF DOCKER'S OFFICIAL IMAGES,
+    # NOT DOCKER HUB (2026-10-09). Docker Hub caps anonymous pulls per IP, and
+    # GitHub's hosted runners share their IPs, so other people's jobs spent the
+    # quota and every run here failed with `toomanyrequests` before a single
+    # test ran: five runs across two PRs on 2026-10-09. These are the same
+    # images: the content digests of mysql:8.4 and redis:8-alpine were
+    # identical on Docker Hub, public.ecr.aws and mirror.gcr.io when this
+    # changed. If this mirror ever fails, mirror.gcr.io/library/<name>:<tag>
+    # carries the same digests.
     services:
       mysql:
-        image: mysql:8.4
+        image: public.ecr.aws/docker/library/mysql:8.4
         env:
           MYSQL_ROOT_PASSWORD: root
           MYSQL_DATABASE: training_center_ci
@@ -68,7 +77,7 @@ jobs:
           --health-timeout=5s
           --health-retries=10
       redis:
-        image: redis:8-alpine
+        image: public.ecr.aws/docker/library/redis:8-alpine
         ports:
           - 6379:6379
         options: >-
