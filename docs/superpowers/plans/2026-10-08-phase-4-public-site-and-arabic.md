@@ -274,7 +274,8 @@ is unreproducible. This commits it, after removing:
   `image-slot.js` are checked, not assumed).
 
 **Where the spec and the handoff disagree, the spec wins.** The README lists every
-known conflict and how it is settled: seats, contact hours, the verifier's empty
+known conflict and how it is settled: no Today / Proposed toggle in the product —
+the Proposed design replaces the panel outright (owner, 2026-10-10); seats, contact hours, the verifier's empty
 submit, "certificates due", the prototypes' CSS, the portal sign-in (a link, per
 T15), "Request a seat" (a contact link, per §12). Two are open, each with a named
 task: the verifier's sample buttons (T14) and the embedded map (T12).

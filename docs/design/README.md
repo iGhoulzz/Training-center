@@ -10,9 +10,20 @@ Where anything in here disagrees with
 `docs/superpowers/specs/2026-07-20-training-center-dashboard-design.md` or with
 `docs/superpowers/plans/2026-10-08-phase-4-public-site-and-arabic.md`, the spec
 and the plan win. The handoff describes what the designer drew. They describe what
-the project builds. Nine conflicts are known, and the screenshots still show the
-drawn version of each. Seven are decided; two are open and name the task that
-settles them:
+the project builds.
+
+**First, and above everything below: there is no Today / Proposed toggle in the
+product. The Proposed design is the panel.** The toggle in the admin prototype,
+and the `mode` state its README lists, existed only so the owner could compare the
+redesign with the current panel during design. The owner decided this on
+2026-10-10. The phase 4 revamp (T16a–T16e) replaces the old look outright, in
+development and production alike, with no switch, setting or route back to it. The
+`*-today.jpg` screenshots record what the panel looked like before the revamp.
+They are reference, never a target.
+
+Nine further conflicts are known, and the screenshots still show the drawn
+version of each. Seven are decided; two are open and name the task that settles
+them:
 
 1. Public programme cards show no "seats left" pill. The screenshots show one.
 2. The certificate verifier's result shows no contact hours. The valid-result
@@ -79,8 +90,9 @@ height. The prototypes load their fonts from Google Fonts, so the type is the re
 type.
 
 `design_handoff_training_centre/screens/admin/` holds the admin prototype.
-`NN-<screen>-today.jpg` is the panel as it renders now, and
-`NN-<screen>-proposed.jpg` is the redesign. NN follows the order of the screens
+`NN-<screen>-today.jpg` is the panel as it renders now (before the revamp, for
+comparison only), and `NN-<screen>-proposed.jpg` is the redesign, which is what
+gets built. NN follows the order of the screens
 list in the handoff README. Sub-states are part of the name: the Enrol & Collect
 steps (`05-enrol-collect-step-1-proposed.jpg` to `step-4`), the batch view's
 Enrolments and Instructors tabs, and the student portal's three tabs, which exist
