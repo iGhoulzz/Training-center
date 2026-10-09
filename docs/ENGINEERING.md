@@ -526,7 +526,7 @@ Committed under `.githooks/`, and **inert until you opt in**:
 git config core.hooksPath .githooks
 ```
 
-`pre-commit` runs the fast gate and never rewrites your files — Pint runs with `--test`, because a hook that reformats mid-commit changes what you already reviewed. `pre-push` runs the push gate, `composer verify:push`, plus the frontend build when a pushed commit touches a frontend input. The full suite runs in CI, and `docs/WORKFLOW.md`, "Where the full suite runs", is the authoritative statement of which gate runs where and how to restore the suite at pre-push. `pre-push` also **refuses a dirty worktree**: the gate checks files on disk while a push publishes commits, and those differ exactly when uncommitted changes are present.
+`pre-commit` runs the fast gate and never rewrites your files — Pint runs with `--test`, because a hook that reformats mid-commit changes what you already reviewed. `pre-push` runs the push gate selected in the hook — `docs/WORKFLOW.md`, "Where the full suite runs", says which is the default and how to switch it — plus the frontend build when a pushed commit touches a frontend input. CI runs the full suite on every pull request regardless. `pre-push` also **refuses a dirty worktree**: the gate checks files on disk while a push publishes commits, and those differ exactly when uncommitted changes are present.
 
 No hook migrates, seeds, cleans backups, updates dependencies, commits, pushes, or touches history.
 

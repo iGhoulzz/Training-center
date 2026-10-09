@@ -83,8 +83,8 @@ Enable the Git hooks once per clone:
 git config core.hooksPath .githooks
 ```
 
-After that, `pre-commit` runs `composer verify:fast`, `pre-push` runs
-`composer verify:push` (validation, formatting and static analysis), and CI runs
-the full `composer verify` on every pushed head. `docs/WORKFLOW.md`, "Where the
-full suite runs", explains why, and shows how to restore the full suite at
-pre-push for one clone: `git config training-center.prePushGate full`.
+After that, `pre-commit` runs `composer verify:fast`, `pre-push` runs the push
+gate selected in `.githooks/pre-push`, and CI runs the full `composer verify` on
+every pull request and every push to `main`. `docs/WORKFLOW.md`, "Where the full
+suite runs", says which push gate is the default, explains why, and shows how to
+switch it for one clone with `git config training-center.prePushGate`.

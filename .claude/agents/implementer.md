@@ -79,7 +79,7 @@ shipped a disabled security guard once in this project.
 - Run the task's own test files: `php artisan test --compact <paths>`.
 - Run `composer verify:fast` before your final commit.
 - **Do not run the full `composer verify`.** It takes about 40 minutes, and CI
-  runs it on the pushed head; see `docs/WORKFLOW.md`, "Where the full suite
+  runs it on the pull request; see `docs/WORKFLOW.md`, "Where the full suite
   runs".
 - Run `vendor/bin/pint --dirty --format agent` before committing.
 - Commit on the task branch with a conventional message, for example

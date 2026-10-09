@@ -66,9 +66,9 @@ php artisan test --compact <your task's test files>
 composer verify:push
 ```
 
-`verify:push` is `composer validate --strict` plus formatting and static analysis. The pre-push hook runs it for you. **The full suite, `composer verify`, runs in CI on every pushed head, and green CI is required before merge.** Which gate runs where, and how to restore the full suite at pre-push, is set out once in `docs/WORKFLOW.md`, "Where the full suite runs". That section is authoritative over this paragraph.
+`verify:push` is `composer validate --strict` plus formatting and static analysis. The pre-push hook runs it for you. **The full suite, `composer verify`, runs in CI on the pull request (and on every push to `main`), and green CI is required before merge.** Which gate runs where, and how to restore the full suite at pre-push, is set out once in `docs/WORKFLOW.md`, "Where the full suite runs". That section is authoritative over this paragraph.
 
-Every gate reaches the same definitions, so passing locally and failing in CI means something genuinely differs, not that the commands drifted. Say in your PR which CI run is the evidence for the full suite.
+Every gate reaches the same definitions, so passing locally and failing in CI means something genuinely differs, not that the commands drifted. CI does not run on a bare branch push, so when you open a PR, say the full suite is pending. Once the run finishes, update the PR with its link and result.
 
 `composer verify:fast` is the same gate without the suite, for use while working.
 

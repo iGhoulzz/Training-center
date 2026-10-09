@@ -118,12 +118,13 @@ brief ─▶ implement ─▶ triage ─▶ review ──approve──▶ push �
    stand. The loop then returns to step 3, and the re-review covers the delta
    plus the code around every changed hunk. A revision introduces new defects
    more reliably than a first draft does.
-6. **Approve.** The lead pushes, once, after the review loop has finished, so a
+6. **Approve.** The lead pushes once, after the review loop has finished, so a
    fix does not cost another CI run. The pre-push hook runs the push gate, and
-   CI runs the full suite, as "Where the full suite runs" sets out; a subagent
-   runs neither. The lead then opens the PR, which states that a subagent
-   implemented it, which reviewer passed it, and which CI run is the evidence
-   for the full suite.
+   CI runs the full suite on the pull request, as "Where the full suite runs"
+   sets out; a subagent runs neither. The lead opens the PR, stating that a
+   subagent implemented it, which reviewer passed it, and that the full suite is
+   pending in CI. **When the run finishes, the lead updates the PR with its link
+   and result.**
 
    Codex's findings re-enter the loop at step 5 in the same way.
 
@@ -356,7 +357,7 @@ DROP DATABASE `training_center_test_<its 8 hex>`;
    php artisan test --compact <the task's test files>
    composer verify:push
    ```
-   `verify:push` is `composer validate --strict` plus `composer verify:fast` — formatting and static analysis — and the pre-push hook runs it on every push, so nobody needs `--no-verify`. **The full suite runs in CI**, as `composer verify`, on every pushed head, and green CI is required before merge. See "Where the full suite runs" below; it is the authoritative statement of this rule.
+   `verify:push` is `composer validate --strict` plus `composer verify:fast` — formatting and static analysis — and the pre-push hook runs it on every push, so nobody needs `--no-verify`. **The full suite runs in CI**, as `composer verify`, on the pull request's head and on every push to `main`, and green CI is required before merge. See "Where the full suite runs" below; it is the authoritative statement of this rule.
 
    **Do not restate these as separate tool invocations.** There is one definition, `Tooling\Gate::fastChecks()`, and both agents' Stop hooks, the Git hooks and CI all reach it. Restating it here is how the copies drift; the previous version of this step listed `vendor/bin/phpstan analyse` without `--memory-limit`, which exhausts PHP's default on this codebase and reports a crash rather than an analysis.
 
@@ -372,43 +373,61 @@ DROP DATABASE `training_center_test_<its 8 hex>`;
 ### Where the full suite runs
 
 **Decided by the owner on 2026-10-09; this section is the authoritative statement.**
-`CLAUDE.md`, `AGENTS.md`, `docs/ENGINEERING.md`, `README.md` and the hooks point
-here rather than restating it.
 
 | Stage | Runs | Enforced by |
 |---|---|---|
 | While working | The task's own tests; `composer verify:fast` | The author, and both agents' Stop hooks |
 | Commit | `composer verify:fast` | `.githooks/pre-commit` |
 | Push | `composer verify:push` = `validate --strict` + `verify:fast` | `.githooks/pre-push` |
-| Every pushed head | `composer verify` — the full suite | CI; the `verify` check is required on `main` |
+| A pull request's head, and every push to `main` | `composer verify` — the full suite | CI; the `verify` check is required on `main` |
+
+**CI does not run on a bare branch push.** `ci.yml` triggers on `pull_request`
+and on pushes to `main`, so a task branch's suite first runs when its PR is
+opened. After that it runs on every push to the PR.
 
 **Why.** The suite takes about 40 minutes. It ran in the pre-push hook and again in
-CI, so every push paid for it twice, and pushes took to `--no-verify` to avoid
-the first run, which is a gate being routed around. It now runs once, where it
-cannot be skipped.
+CI, so every push paid for it twice. Pushes took to `--no-verify` to avoid the
+first run, which is a gate being routed around. It now runs once, where it
+cannot be skipped: CI on the pull request, required before merge.
 
-**What it asks of the author.** Review happens *before* the push — the subagent
-loop, or the author's own — so that a fix does not cost another CI run.
-Commits are batched into one push where possible. CI cancels a superseded
-run on the same ref (`concurrency` in `ci.yml`), so pushing twice in quick
-succession costs one run, not two.
+**What it asks of the author.**
 
-**"Tests pass" still means a real run.** Before a PR is opened or a finding is
-reported fixed, the task's tests have run with output to quote, and the PR says
-which CI run is the evidence for the full suite. Never write that the suite
-passed on the strength of a run that did not happen.
+- Review happens *before* the push — the subagent loop, or the author's own —
+  so that a fix does not cost another CI run.
+- Commits are batched into one push where possible.
+- CI cancels a superseded run on the same ref (`concurrency` in `ci.yml`), so
+  two pushes to one PR in quick succession cost one run, not two.
 
-**Reverting.** The pre-push hook has one switch, with two levels:
+**"Tests pass" still means a real run.**
+
+- Before a PR is opened or a finding is reported fixed, the task's tests have run
+  with output to quote.
+- A PR is opened before its CI run exists, so its description says the full
+  suite is pending in CI. Once that run has finished, the author **updates the
+  PR with the run's link and result**.
+- Never write that the suite passed on the strength of a run that did not
+  happen, or one still in progress.
+
+**Reverting.** The pre-push hook has one switch, with two levels.
 
 - **One clone, immediately:** `git config training-center.prePushGate full`
   restores the full suite at pre-push; `fast` or `--unset` returns to the default.
-- **Everyone:** set `default_gate=full` in `.githooks/pre-push`, and replace this
-  section. Nothing else restates the policy, so nothing else needs editing.
-  `tests/Unit/Tooling/GitHookTest.php` pins the default and fails until it is
-  updated deliberately.
+  Nothing else changes.
+- **Everyone:** this is a small, deliberate change. These are the files that
+  state the current policy, and each needs editing:
+  - `.githooks/pre-push` — set `default_gate=full`, and update its header comment;
+  - this section, step 4 of the task lifecycle above, and step 6 of the subagent loop;
+  - `CLAUDE.md`, "Gates";
+  - `AGENTS.md`, "Before opening a pull request";
+  - `tests/Unit/Tooling/GitHookTest.php` — *runs the fast push gate by default*
+    pins the default on purpose, and fails until it is updated.
 
-**Before production** the owner may restore the full local gate. That is a
-decision for then, and it is one line.
+  `README.md`, `docs/ENGINEERING.md`, `.githooks/pre-commit`,
+  `scripts/Tooling/Gate.php` and `.claude/agents/implementer.md` are worded so
+  that they hold under either default. They point here and need no edit.
+
+**Before production** the owner may restore the full local gate, using the
+list above.
 
 ---
 

@@ -20,8 +20,9 @@ final class Gate
      * These run after every agent turn, so they must stay in the seconds range.
      * The suite takes about forty minutes and serialises against every other
      * run on the same database; running it here would make each turn unusable.
-     * It belongs to CI, on every pushed head — see docs/WORKFLOW.md, "Where the
-     * full suite runs", including the switch that restores it at pre-push.
+     * It belongs to CI, which runs it on every pull request, and to pre-push
+     * whenever the push gate is set to full — see docs/WORKFLOW.md, "Where the
+     * full suite runs".
      *
      * @return list<array{name: string, command: list<string>}>
      */

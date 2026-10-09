@@ -26,15 +26,16 @@ php scripts/bin/guard-clean-worktree.php </dev/null || exit $?
 # Decided by the owner on 2026-10-09. docs/WORKFLOW.md, "Where the full suite
 # runs", is the authoritative statement, and every other instruction file
 # points at it. The suite used to run here AND in CI, so every push paid the
-# same ~40 minutes twice. It now runs once, in CI, on every pushed head, and
+# same ~40 minutes twice. It now runs once, in CI on the pull request, and
 # green CI is required before merge.
 #
 #   fast  (the default)  composer verify:push = validate --strict + verify:fast
 #   full                 composer verify      = the above + the full suite
 #
 # Revert for one clone, immediately:  git config training-center.prePushGate full
-# Revert for everyone: set default_gate=full below, and restore the policy
-# section in docs/WORKFLOW.md.
+# Revert for everyone: set default_gate=full below, then edit the other files
+# listed under "Reverting" in docs/WORKFLOW.md, including the test that pins
+# this default.
 #
 # An unrecognised value refuses the push rather than guessing. Guessing "fast"
 # would silently skip the suite for someone who asked for it; guessing "full"
