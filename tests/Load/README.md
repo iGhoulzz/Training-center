@@ -43,11 +43,11 @@ Create an absolute path **outside `/workspace`**, for example `/tmp/t11-load-ses
 docker compose exec -T -e DB_DATABASE=training_center_performance -e SESSION_LIFETIME=480 app php artisan load:mint-sessions --user=<staff-user-id> --count=20 --confirm-database=training_center_performance --output=/tmp/t11-load-sessions.json
 ```
 
-The manifest contains 20 independent encrypted session-cookie values and matching CSRF tokens. It is created atomically with owner-only mode `0600`, signed, and never overwritten. The k6 scripts read it through `K6_SESSION_FILE`. `grafana/k6:1.4.0` is the pinned image; `/bin/sh` was checked in that image. The following PowerShell command streams the manifest directly between containers, leaving no copy on the Windows host. Run it once for each script, in this order, replacing `<script>` with `student-search`, `reports`, `enrol-and-collect`, then `receipt-download`:
+The manifest contains 20 independent encrypted session-cookie values and matching CSRF tokens. It is created atomically with owner-only mode `0600`, signed, and never overwritten. The k6 scripts read it through `K6_SESSION_FILE`. `grafana/k6:1.4.0` is the pinned image; `/bin/sh` was checked in that image. **Use Git Bash for this pipeline, not PowerShell 5.1:** PowerShell's encoding can add a BOM and invalidate JSON. Open Git Bash in the same checkout's `docker/dev-linux/` directory. The command below uses the byte-safe pipeline used for the P4-T02 smokes, resolves an absolute Windows mount path, and prevents MSYS from rewriting Docker's container paths. It streams the manifest directly between containers, leaving no copy on the Windows host. Run it once for each script, in this order, replacing `<script>` with `student-search`, `reports`, `enrol-and-collect`, then `receipt-download`:
 
-```powershell
-$scriptPath = (Resolve-Path ../../tests/Load/k6).Path
-docker compose exec -T app cat /tmp/t11-load-sessions.json | docker run --rm -i --network dev-linux_default --entrypoint /bin/sh -v "${scriptPath}:/scripts:ro" -e K6_BASE_URL=http://app:8000 grafana/k6:1.4.0 -c 'umask 077; cat > /tmp/sessions.json; K6_SESSION_FILE=/tmp/sessions.json k6 run /scripts/<script>.js'
+```bash
+scriptPath="$(cygpath -m "$(realpath ../../tests/Load/k6)")"
+MSYS_NO_PATHCONV=1 docker exec training_center_dev_app cat /tmp/t11-load-sessions.json | MSYS_NO_PATHCONV=1 docker run --rm -i --network dev-linux_default --entrypoint /bin/sh -v "${scriptPath}:/scripts:ro" -e K6_BASE_URL=http://app:8000 grafana/k6:1.4.0 -c 'umask 077; cat > /tmp/sessions.json; K6_SESSION_FILE=/tmp/sessions.json k6 run /scripts/<script>.js'
 ```
 
 The k6 container's temporary filesystem is discarded after each run. Its shell writes the streamed manifest with owner-only permissions. No credential is passed as a command argument or environment value.
@@ -101,7 +101,7 @@ the connected database was checked immediately before the guarded seed command.
 The staff owner completed the normal login/password-change flow before minting
 20 sessions. The manifest stayed outside the checkout at `/tmp`, streamed through
 **Git Bash**, and was never printed or copied to the host. Do not use the
-PowerShell 5.1 pipeline above for this stream: its encoding can add a BOM and
+PowerShell 5.1 pipeline for this stream: its encoding can add a BOM and
 invalidate JSON. Revocation exited 0 and removal of the original manifest was
 confirmed before stopping the temporary listener and worker.
 
