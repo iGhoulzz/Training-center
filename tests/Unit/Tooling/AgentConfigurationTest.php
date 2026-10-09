@@ -193,9 +193,16 @@ it('routes Git hooks and CI through the Composer gates', function () {
     $prePush = projectSource('.githooks/pre-push');
     $ci = projectSource('.github/workflows/ci.yml');
 
+    /*
+     * Exact commands, anchored. A bare toContain('composer verify') would match
+     * `composer verify:push` and `composer verify:fast` as well, so it could not
+     * tell the push gate from the full suite. Which one actually runs is proved
+     * behaviourally in GitHookTest; this pins that CI still runs the full suite.
+     */
     expect($preCommit)->toContain('composer verify:fast')
-        ->and($prePush)->toContain('composer verify')
-        ->and($ci)->toContain('run: composer verify');
+        ->and($prePush)->toContain('composer verify:push </dev/null')
+        ->and($prePush)->toContain('composer verify </dev/null')
+        ->and($ci)->toMatch('/^\s*run: composer verify\s*$/m');
 });
 
 it('always builds frontend assets before push and in CI', function () {

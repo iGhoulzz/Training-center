@@ -56,6 +56,170 @@ Everything below describes the standing two-agent model, which resumes at phase 
 
 Neither agent merges its own work without the other's review.
 
+Claude implements and first-reviews through its own subagents, as described in
+the next section. It remains the accountable author of every Claude task.
+**Subagent review never replaces Codex's review of the pull request.**
+
+---
+
+## Claude's subagents: Sonnet implements, Opus reviews
+
+**The reason is cost, not capacity.** The lead's session is the most expensive
+context in the project: every turn re-reads it, and every diff the lead opens
+stays in it for the rest of the session. Implementation is mostly reading and
+writing files, and a cheaper model given a precise brief does it well.
+Judgement — the plan, the brief, the review routing and the verdict — stays with
+the lead.
+
+| Role | Who | Defined in |
+|---|---|---|
+| **Lead** | Claude's main session (Opus) | `CLAUDE.md` |
+| **Implementer** | Subagent, Sonnet | `.claude/agents/implementer.md` |
+| **Reviewer** | Subagent, Opus | `.claude/agents/reviewer.md` |
+| **Cross-reviewer** | Codex, on the PR — unchanged | `AGENTS.md` |
+
+The lead writes plans and briefs, routes reviews, checks each finding, pushes,
+opens PRs and answers Codex.
+
+The implementer writes code and tests for one brief and commits on the task
+branch. The reviewer reviews a committed range and reports findings. Neither
+subagent pushes, merges, edits the plan or the spec, or talks to Codex.
+
+Both subagent definitions preload the project's skills —
+`laravel-best-practices`, `pest-testing` and `tailwindcss-development` — and
+carry Boost's `search-docs`. They therefore start with this codebase's
+conventions and version-correct documentation, rather than whatever the model
+remembers.
+
+### The loop
+
+```
+brief ─▶ implement ─▶ triage ─▶ review ──approve──▶ push ─▶ PR ─▶ Codex review
+            ▲                       │                               │
+            └──── findings ◀────────┴───────────── findings ◀───────┘
+```
+
+1. **Brief.** The lead writes it; the template is below.
+2. **Implement.** Spawn `implementer` in the background, so the lead can work on
+   something else meanwhile. It commits in the task worktree and returns its
+   report.
+3. **Triage**, without reading code. The lead checks four things:
+   - `git diff --stat` stays inside the File scope;
+   - the report carries real output lines;
+   - every guard and authorization test has a probe listed;
+   - `STATUS` is `done`.
+
+   A report that fails any of these goes straight back. A bad report is not
+   reviewed.
+4. **Review**, routed by the table below.
+5. **Findings go back to the same implementer** with `SendMessage`, so it keeps
+   its context and pays no cold start. The lead first checks each finding
+   against the code — a reviewer can be wrong — and forwards only the ones that
+   stand. The loop then returns to step 3, and the re-review covers the delta
+   plus the code around every changed hunk. A revision introduces new defects
+   more reliably than a first draft does.
+6. **Approve.** The lead pushes once, after the review loop has finished, so a
+   fix does not cost another CI run. The pre-push hook runs the push gate, and
+   CI runs the full suite on the pull request, as "Where the full suite runs"
+   sets out; a subagent runs neither. The lead opens the PR, stating that a
+   subagent implemented it, which reviewer passed it, and that the full suite is
+   pending in CI. **When the run finishes, the lead updates the PR with its link
+   and result.**
+
+   Codex's findings re-enter the loop at step 5 in the same way.
+
+**Round cap.** After three subagent review rounds on one task, or a finding
+that survives two fix attempts, the loop stops. Escalate the model or the
+person: the lead fixes that finding itself, or spawns an Opus implementer. If a
+guard is defeated a third time, stop patching it and narrow the claim — name
+what the check really proves, as `docs/ENGINEERING.md` describes for guards.
+
+### Who reviews a round
+
+| Situation | Reviewer |
+|---|---|
+| Touches authorization, money, concurrency or locking, the Action write boundary, file serving, a public route, or an architecture guard | **Opus reviewer, always.** The lead verifies each finding before forwarding it |
+| More than ~300 changed lines, or more than 8 files | Opus reviewer |
+| The lead's session is already long | Opus reviewer, so the diff stays out of the lead's context |
+| Docs only, or a small diff on none of the surfaces above | **The lead, inline**: `git diff --stat`, then only the changed hunks |
+| A fix round | The **same** reviewer, continued with `SendMessage`, over the delta and its surroundings. The lead reviews inline only when the fix is under ~30 lines and on no high-risk surface |
+
+A round is reviewed once, in full, by one reviewer. A second full review of the
+same round doubles the cost and finds the same things.
+
+### Who implements
+
+- **Sonnet implementer by default.**
+- **The lead, directly**, when the change is smaller than a brief for it would
+  be — roughly 30 lines — or when it fixes a finding the implementer has already
+  failed twice.
+- **An Opus implementer** (`model: "opus"` on the Agent call) when the task is
+  mostly design under uncertainty: a race, a lock, a new guard. This should be
+  rare. If the uncertainty is a design question, it belongs in the plan, not in
+  a stronger implementer.
+- Never Haiku for code in this repository.
+
+**Subagents do not raise the concurrency ceiling.** Claude still actively
+implements one task at a time, with one implementer on it. A task whose PR is
+waiting on Codex is no longer active, so the next task's implementer may run
+while that review happens.
+
+### The brief
+
+A subagent starts with no memory of the lead's session and no access to the
+lead's notes. **Anything the task depends on is in the brief, or it does not
+exist.** Point at long material by section and line, and paste only what is
+short and decisive.
+
+```markdown
+TASK: P4-T03 — Publications: the domain and the admin side
+WORKTREE: C:/Users/User/Desktop/Training-center-worktrees/P4-T03   BRANCH: p4/t03-publications-domain
+BASE: <sha of origin/main the branch was cut from>
+
+FILE SCOPE (exact; anything else is a question, not a change):
+- …the plan's list, verbatim…
+
+SEAMS: <file> — the one line you may add, and nothing else in it
+
+DONE WHEN (verbatim from the plan):
+- …
+
+READ (only these):
+- spec §6 lines <a>–<b>; §5 permission matrix lines <c>–<d>
+- docs/ENGINEERING.md "The write boundary" (lines <e>–<f>)
+- nearest sibling to copy: app/Domain/Staff/Actions/<Example>Action.php
+- design: docs/design/design_handoff_training_centre/Public Site.dc.html, grep "<screen anchor>"
+
+DECISIONS ALREADY MADE (do not re-decide):
+- …
+
+LESSONS THIS TASK NEEDS:
+- …only the ones that apply, e.g. "the lazy-loading guard only arms on multi-row hydrations"…
+
+TESTS TO WRITE: <named files>, and the probes expected to fail
+COMMIT TRAILER: Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+```
+
+### Token discipline
+
+- **Reports are capped**: the implementer at 300 words, the reviewer at 500.
+  When the Opus reviewer has reviewed a round, the lead reads its findings, not
+  the diff.
+- **Continue, don't respawn.** `SendMessage` to an existing subagent is cheaper
+  than a cold start, for up to two fix rounds. After that, the subagent's own
+  context costs more than a fresh brief that includes the open findings, so
+  start a new one.
+- **No exploratory subagents for what a single `grep` answers.** A spawn costs a
+  cold start: the definition, `CLAUDE.md`, the preloaded skills and the brief,
+  all before any work begins.
+- **The design prototypes are large.** `Filament Revamp.dc.html` alone is over
+  200 KB, so a brief names the screen and the reader greps for it. Nobody reads
+  a prototype whole.
+- **Visual checks are the lead's**, in the browser pane against `php artisan
+  serve` run from the worktree, because subagents have no browser. Prefer
+  `read_page` and `get_page_text` for structure, and take screenshots at half
+  scale.
+
 ---
 
 ## The unit of work: a task
@@ -187,14 +351,15 @@ DROP DATABASE `training_center_test_<its 8 hex>`;
 
 1. **Assign.** Claude writes the task into the milestone plan with owner, file scope, and definition of done.
 2. **Isolate.** The owning agent creates its worktree and branch.
-3. **Implement.** Tests written alongside the implementation. Work stays inside the declared file scope — if the task genuinely needs a file outside it, stop and raise it rather than silently expanding scope.
-4. **Verify locally.** One command, and it must pass with real output before opening a PR:
+3. **Implement.** Tests written alongside the implementation. Work stays inside the declared file scope — if the task genuinely needs a file outside it, stop and raise it rather than silently expanding scope. Claude's tasks run through the subagent loop in "Claude's subagents" above, and reach step 5 only once its reviewer has approved.
+4. **Verify, locally and then in CI.** Before pushing, the task's own tests must pass with real output, and so must the push gate:
    ```bash
-   composer verify
+   php artisan test --compact <the task's test files>
+   composer verify:push
    ```
-   That is `composer validate --strict`, then formatting and static analysis, then the full suite. Use `composer verify:fast` — the same without the suite — while working.
+   `verify:push` is `composer validate --strict` plus `composer verify:fast` — formatting and static analysis — and the pre-push hook runs it on every push, so nobody needs `--no-verify`. **The full suite runs in CI**, as `composer verify`, on the pull request's head and on every push to `main`, and green CI is required before merge. See "Where the full suite runs" below; it is the authoritative statement of this rule.
 
-   **Do not restate this as separate tool invocations.** There is one definition, `Tooling\Gate::fastChecks()`, and both agents' Stop hooks, the Git hooks and CI all reach it. Restating it here is how the copies drift; the previous version of this step listed `vendor/bin/phpstan analyse` without `--memory-limit`, which exhausts PHP's default on this codebase and reports a crash rather than an analysis.
+   **Do not restate these as separate tool invocations.** There is one definition, `Tooling\Gate::fastChecks()`, and both agents' Stop hooks, the Git hooks and CI all reach it. Restating it here is how the copies drift; the previous version of this step listed `vendor/bin/phpstan analyse` without `--memory-limit`, which exhausts PHP's default on this codebase and reports a crash rather than an analysis.
 
    Enable the Git hooks once per clone: `git config core.hooksPath .githooks`.
 
@@ -204,6 +369,65 @@ DROP DATABASE `training_center_test_<its 8 hex>`;
 7. **Resolve.** The author addresses findings. Disagreement is legitimate — a reviewer can be wrong, and the author should say so with reasoning rather than complying reflexively.
 8. **Merge** once the reviewer approves and CI is green. Squash merge.
 9. **Clean up** the worktree and branch. **Tag the branch tip first and push the tag** — a squash merge leaves the branch's commits unreachable from `main`, so an unpushed tag is the only record of the review history, and a local-only tag is one disk failure from nothing.
+
+### Where the full suite runs
+
+**Decided by the owner on 2026-10-09; this section is the authoritative statement.**
+
+| Stage | Runs | Enforced by |
+|---|---|---|
+| While working | The task's own tests; `composer verify:fast` | The author, and both agents' Stop hooks |
+| Commit | `composer verify:fast` | `.githooks/pre-commit` |
+| Push | `composer verify:push` = `validate --strict` + `verify:fast` | `.githooks/pre-push` |
+| A pull request's head, and every push to `main` | `composer verify` — the full suite | CI; the `verify` check is required on `main` |
+
+**CI does not run on a bare branch push.** `ci.yml` triggers on `pull_request`
+and on pushes to `main`, so a task branch's suite first runs when its PR is
+opened. After that it runs on every push to the PR.
+
+**Why.** The suite takes about 40 minutes. It ran in the pre-push hook and again in
+CI, so every push paid for it twice. Pushes took to `--no-verify` to avoid the
+first run, which is a gate being routed around. It now runs once, where it
+cannot be skipped: CI on the pull request, required before merge.
+
+**What it asks of the author.**
+
+- Review happens *before* the push — the subagent loop, or the author's own —
+  so that a fix does not cost another CI run.
+- Commits are batched into one push where possible.
+- CI cancels a superseded run on the same ref (`concurrency` in `ci.yml`), so
+  two pushes to one PR in quick succession cost one run, not two.
+
+**"Tests pass" still means a real run.**
+
+- Before a PR is opened or a finding is reported fixed, the task's tests have run
+  with output to quote.
+- A PR is opened before its CI run exists, so its description says the full
+  suite is pending in CI. Once that run has finished, the author **updates the
+  PR with the run's link and result**.
+- Never write that the suite passed on the strength of a run that did not
+  happen, or one still in progress.
+
+**Reverting.** The pre-push hook has one switch, with two levels.
+
+- **One clone, immediately:** `git config training-center.prePushGate full`
+  restores the full suite at pre-push; `fast` or `--unset` returns to the default.
+  Nothing else changes.
+- **Everyone:** this is a small, deliberate change. These are the files that
+  state the current policy, and each needs editing:
+  - `.githooks/pre-push` — set `default_gate=full`, and update its header comment;
+  - this section, step 4 of the task lifecycle above, and step 6 of the subagent loop;
+  - `CLAUDE.md`, "Gates";
+  - `AGENTS.md`, "Before opening a pull request";
+  - `tests/Unit/Tooling/GitHookTest.php` — *runs the fast push gate by default*
+    pins the default on purpose, and fails until it is updated.
+
+  `README.md`, `docs/ENGINEERING.md`, `.githooks/pre-commit`,
+  `scripts/Tooling/Gate.php` and `.claude/agents/implementer.md` are worded so
+  that they hold under either default. They point here and need no edit.
+
+**Before production** the owner may restore the full local gate, using the
+list above.
 
 ---
 
