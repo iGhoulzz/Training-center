@@ -54,7 +54,7 @@ Use subagents to give bounded work a fresh context, not to multiply agents by de
 - **Fix narrowly.** Send verified findings back to the same implementer when possible; re-review the fix delta and the code around it. After two unsuccessful fix rounds, Codex takes over or revisits the design instead of repeating the same loop. Do not let a worker spawn its own reviewer.
 - **Keep reports short.** Require status, commit and file list, exact targeted-test and fast-gate output, probe results, deviations and open questions. Keep scratch reports outside the committed file scope. Codex verifies the diff and the required gate itself before claiming completion.
 
-The "Before opening a pull request" gate below still governs. Subagents do not each run the full suite; Codex handles that gate. Any future CI-first policy must change the gate and hooks explicitly, not arrive through an informal `--no-verify` habit.
+The "Before opening a pull request" gate below still governs: Codex runs the task's tests and the push gate on the finished tree, while CI runs the full suite on the pull request. Subagents do not each run the full suite, and nobody bypasses hooks to save time.
 
 ---
 
