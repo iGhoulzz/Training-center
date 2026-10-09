@@ -59,13 +59,16 @@ These are the rules that, when broken, are expensive to correct later:
 
 ## Before opening a pull request
 
-One command, and it must pass with real output:
+Your task's own tests and the push gate must pass with real output before you push:
 
 ```bash
-composer verify
+php artisan test --compact <your task's test files>
+composer verify:push
 ```
 
-That is `composer validate --strict`, then formatting and static analysis, then the full suite. It is the same definition your Stop hook, the Git hooks and CI all use — so passing locally and failing in CI now means something genuinely differs, not that the commands drifted.
+`verify:push` is `composer validate --strict` plus formatting and static analysis. The pre-push hook runs it for you. **The full suite, `composer verify`, runs in CI on every pushed head, and green CI is required before merge.** Which gate runs where, and how to restore the full suite at pre-push, is set out once in `docs/WORKFLOW.md`, "Where the full suite runs". That section is authoritative over this paragraph.
+
+Every gate reaches the same definitions, so passing locally and failing in CI means something genuinely differs, not that the commands drifted. Say in your PR which CI run is the evidence for the full suite.
 
 `composer verify:fast` is the same gate without the suite, for use while working.
 

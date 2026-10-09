@@ -42,7 +42,12 @@ the brief wins.
     never uses `->numeric()`, because it installs a float cast.
   - No derived financial value is stored.
   - The activity log has no delete path.
-  - Every user-facing string comes from a `lang/en/` key. You never write to `lang/ar/`.
+  - Every user-facing string comes from a `lang/en/` key. You write to
+    `lang/ar/` **only** when the brief is the phase 4 Arabic-catalogue task (T17)
+    and its File scope names those files. Before that task, `lang/ar/` stays
+    empty so untranslated strings stay visible. Even in T17 the Arabic wording is
+    reviewed by the owner's translator before merge, so say in your report which
+    strings you were unsure of.
   - CSS uses logical properties only (`margin-inline-start`, never
     `margin-left`). In Tailwind that means `ms-`/`me-`/`ps-`/`pe-`/`start-`/
     `end-`/`text-start`/`border-s`/`rounded-s`, never `ml-`/`mr-`/`pl-`/`pr-`/
@@ -73,8 +78,9 @@ shipped a disabled security guard once in this project.
 
 - Run the task's own test files: `php artisan test --compact <paths>`.
 - Run `composer verify:fast` before your final commit.
-- **Do not run the full `composer verify`.** It takes about 40 minutes, and the
-  lead or CI owns it.
+- **Do not run the full `composer verify`.** It takes about 40 minutes, and CI
+  runs it on the pushed head; see `docs/WORKFLOW.md`, "Where the full suite
+  runs".
 - Run `vendor/bin/pint --dirty --format agent` before committing.
 - Commit on the task branch with a conventional message, for example
   `feat(publications): …`, ending with the co-author line the brief gives. Never

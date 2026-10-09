@@ -471,9 +471,17 @@ file under `resources/`.
 - **Blade components for anything used twice**, under
   `resources/views/components/`. A partial included with variables is not a
   component.
-- **Public pages are sessionless.** They contain no form, no `@csrf`, and no
-  `session()`, `old()` or `auth()` call. See phase 4's T11 for the route group
-  that enforces this, and for the routes deliberately left outside it.
+- **The public-site pages are sessionless, and only those.** This rule covers
+  the GET-only route group phase 4's T11 creates: home, about, programmes,
+  contact, the publications index, article pages and article downloads. Those
+  views contain no form, no `@csrf`, and no `session()`, `old()` or `auth()`
+  call.
+
+  It does **not** apply to the certificate verifier (`resources/views/verify/`),
+  whose form posts and needs both its session and its CSRF token, or to either
+  panel's login page. Never remove a form, a `@csrf` or a session from those on
+  the strength of this rule. They stay on the full `web` stack deliberately,
+  and T11 tests that they do.
 - **Accessible by default.** Real headings in order, a `label` for every input,
   `alt` on every meaningful image and an empty `alt` on decorative ones, visible
   focus, and contrast that holds in both themes. The prototype's look does not
@@ -518,7 +526,7 @@ Committed under `.githooks/`, and **inert until you opt in**:
 git config core.hooksPath .githooks
 ```
 
-`pre-commit` runs the fast gate and never rewrites your files — Pint runs with `--test`, because a hook that reformats mid-commit changes what you already reviewed. `pre-push` runs `composer verify` plus the frontend build, and **refuses a dirty worktree**: the gate checks files on disk while a push publishes commits, and those differ exactly when uncommitted changes are present.
+`pre-commit` runs the fast gate and never rewrites your files — Pint runs with `--test`, because a hook that reformats mid-commit changes what you already reviewed. `pre-push` runs the push gate, `composer verify:push`, plus the frontend build when a pushed commit touches a frontend input. The full suite runs in CI, and `docs/WORKFLOW.md`, "Where the full suite runs", is the authoritative statement of which gate runs where and how to restore the suite at pre-push. `pre-push` also **refuses a dirty worktree**: the gate checks files on disk while a push publishes commits, and those differ exactly when uncommitted changes are present.
 
 No hook migrates, seeds, cleans backups, updates dependencies, commits, pushes, or touches history.
 

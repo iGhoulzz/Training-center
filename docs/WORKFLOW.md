@@ -118,9 +118,12 @@ brief ─▶ implement ─▶ triage ─▶ review ──approve──▶ push �
    stand. The loop then returns to step 3, and the re-review covers the delta
    plus the code around every changed hunk. A revision introduces new defects
    more reliably than a first draft does.
-6. **Approve.** The lead pushes. The full gate belongs to the lead: the pre-push
-   hook or CI, never a subagent. The lead then opens the PR, which states that a
-   subagent implemented it and which reviewer passed it.
+6. **Approve.** The lead pushes, once, after the review loop has finished, so a
+   fix does not cost another CI run. The pre-push hook runs the push gate, and
+   CI runs the full suite, as "Where the full suite runs" sets out; a subagent
+   runs neither. The lead then opens the PR, which states that a subagent
+   implemented it, which reviewer passed it, and which CI run is the evidence
+   for the full suite.
 
    Codex's findings re-enter the loop at step 5 in the same way.
 
@@ -348,13 +351,14 @@ DROP DATABASE `training_center_test_<its 8 hex>`;
 1. **Assign.** Claude writes the task into the milestone plan with owner, file scope, and definition of done.
 2. **Isolate.** The owning agent creates its worktree and branch.
 3. **Implement.** Tests written alongside the implementation. Work stays inside the declared file scope — if the task genuinely needs a file outside it, stop and raise it rather than silently expanding scope. Claude's tasks run through the subagent loop in "Claude's subagents" above, and reach step 5 only once its reviewer has approved.
-4. **Verify locally.** One command, and it must pass with real output before opening a PR:
+4. **Verify, locally and then in CI.** Before pushing, the task's own tests must pass with real output, and so must the push gate:
    ```bash
-   composer verify
+   php artisan test --compact <the task's test files>
+   composer verify:push
    ```
-   That is `composer validate --strict`, then formatting and static analysis, then the full suite. Use `composer verify:fast` — the same without the suite — while working.
+   `verify:push` is `composer validate --strict` plus `composer verify:fast` — formatting and static analysis — and the pre-push hook runs it on every push, so nobody needs `--no-verify`. **The full suite runs in CI**, as `composer verify`, on every pushed head, and green CI is required before merge. See "Where the full suite runs" below; it is the authoritative statement of this rule.
 
-   **Do not restate this as separate tool invocations.** There is one definition, `Tooling\Gate::fastChecks()`, and both agents' Stop hooks, the Git hooks and CI all reach it. Restating it here is how the copies drift; the previous version of this step listed `vendor/bin/phpstan analyse` without `--memory-limit`, which exhausts PHP's default on this codebase and reports a crash rather than an analysis.
+   **Do not restate these as separate tool invocations.** There is one definition, `Tooling\Gate::fastChecks()`, and both agents' Stop hooks, the Git hooks and CI all reach it. Restating it here is how the copies drift; the previous version of this step listed `vendor/bin/phpstan analyse` without `--memory-limit`, which exhausts PHP's default on this codebase and reports a crash rather than an analysis.
 
    Enable the Git hooks once per clone: `git config core.hooksPath .githooks`.
 
@@ -364,6 +368,47 @@ DROP DATABASE `training_center_test_<its 8 hex>`;
 7. **Resolve.** The author addresses findings. Disagreement is legitimate — a reviewer can be wrong, and the author should say so with reasoning rather than complying reflexively.
 8. **Merge** once the reviewer approves and CI is green. Squash merge.
 9. **Clean up** the worktree and branch. **Tag the branch tip first and push the tag** — a squash merge leaves the branch's commits unreachable from `main`, so an unpushed tag is the only record of the review history, and a local-only tag is one disk failure from nothing.
+
+### Where the full suite runs
+
+**Decided by the owner on 2026-10-09; this section is the authoritative statement.**
+`CLAUDE.md`, `AGENTS.md`, `docs/ENGINEERING.md`, `README.md` and the hooks point
+here rather than restating it.
+
+| Stage | Runs | Enforced by |
+|---|---|---|
+| While working | The task's own tests; `composer verify:fast` | The author, and both agents' Stop hooks |
+| Commit | `composer verify:fast` | `.githooks/pre-commit` |
+| Push | `composer verify:push` = `validate --strict` + `verify:fast` | `.githooks/pre-push` |
+| Every pushed head | `composer verify` — the full suite | CI; the `verify` check is required on `main` |
+
+**Why.** The suite takes about 40 minutes. It ran in the pre-push hook and again in
+CI, so every push paid for it twice, and pushes took to `--no-verify` to avoid
+the first run, which is a gate being routed around. It now runs once, where it
+cannot be skipped.
+
+**What it asks of the author.** Review happens *before* the push — the subagent
+loop, or the author's own — so that a fix does not cost another CI run.
+Commits are batched into one push where possible. CI cancels a superseded
+run on the same ref (`concurrency` in `ci.yml`), so pushing twice in quick
+succession costs one run, not two.
+
+**"Tests pass" still means a real run.** Before a PR is opened or a finding is
+reported fixed, the task's tests have run with output to quote, and the PR says
+which CI run is the evidence for the full suite. Never write that the suite
+passed on the strength of a run that did not happen.
+
+**Reverting.** The pre-push hook has one switch, with two levels:
+
+- **One clone, immediately:** `git config training-center.prePushGate full`
+  restores the full suite at pre-push; `fast` or `--unset` returns to the default.
+- **Everyone:** set `default_gate=full` in `.githooks/pre-push`, and replace this
+  section. Nothing else restates the policy, so nothing else needs editing.
+  `tests/Unit/Tooling/GitHookTest.php` pins the default and fails until it is
+  updated deliberately.
+
+**Before production** the owner may restore the full local gate. That is a
+decision for then, and it is one line.
 
 ---
 

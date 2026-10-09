@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Full gate before anything leaves this machine.
+# The push gate, before anything leaves this machine.
 #
 # stdin carries the ref tuples git supplies to pre-push. They are captured up
 # front, because composer and php below inherit this hook's stdin and would
@@ -19,10 +19,37 @@ tuples=$(cat)
 # commits being pushed. See scripts/bin/guard-clean-worktree.php.
 php scripts/bin/guard-clean-worktree.php </dev/null || exit $?
 
-# composer verify = validate --strict + verify:fast + the serialised suite.
-# Called as one script rather than restated stage by stage, so this hook and CI
-# cannot drift apart.
-composer verify </dev/null || exit $?
+# ---------------------------------------------------------------------------
+# Which gate runs here: ONE SWITCH, so the policy can be reverted in one place
+# ---------------------------------------------------------------------------
+#
+# Decided by the owner on 2026-10-09. docs/WORKFLOW.md, "Where the full suite
+# runs", is the authoritative statement, and every other instruction file
+# points at it. The suite used to run here AND in CI, so every push paid the
+# same ~40 minutes twice. It now runs once, in CI, on every pushed head, and
+# green CI is required before merge.
+#
+#   fast  (the default)  composer verify:push = validate --strict + verify:fast
+#   full                 composer verify      = the above + the full suite
+#
+# Revert for one clone, immediately:  git config training-center.prePushGate full
+# Revert for everyone: set default_gate=full below, and restore the policy
+# section in docs/WORKFLOW.md.
+#
+# An unrecognised value refuses the push rather than guessing. Guessing "fast"
+# would silently skip the suite for someone who asked for it; guessing "full"
+# would cost forty minutes for a typo.
+default_gate=fast
+gate=$(git config --get training-center.prePushGate) || gate=$default_gate
+
+case "$gate" in
+    fast) composer verify:push </dev/null || exit $? ;;
+    full) composer verify </dev/null || exit $? ;;
+    *)
+        printf 'pre-push: training-center.prePushGate is "%s"; expected fast or full.\n' "$gate" >&2
+        exit 1
+        ;;
+esac
 
 # ---------------------------------------------------------------------------
 # The frontend build, and why it is conditional again

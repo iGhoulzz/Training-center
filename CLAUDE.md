@@ -69,13 +69,14 @@ Section 12 of the spec lists what is explicitly out of scope for the entire proj
 
 ## Gates
 
-One command, and it must pass with real output:
+Before a push, the task's own tests and the push gate must pass with real output:
 
 ```bash
-composer verify
+php artisan test --compact <the task's test files>
+composer verify:push
 ```
 
-That is `composer validate --strict`, then formatting and static analysis, then the full suite. `composer verify:fast` is the same without the suite, for use while working. Your Stop hook, the Git hooks and CI all reach the same definition — so a local pass and a CI failure now means something genuinely differs, not that the commands drifted.
+`verify:push` is `composer validate --strict` plus `composer verify:fast` (formatting and static analysis), and the pre-push hook runs it. **The full suite, `composer verify`, runs in CI on every pushed head; green CI is required before merge**, and the PR names the run that is its evidence. Which gate runs where, and the one switch that restores the full suite at pre-push, are in `docs/WORKFLOW.md`, "Where the full suite runs" — authoritative over this paragraph. Your Stop hook, the Git hooks and CI all reach the same definitions, so a local pass and a CI failure means something genuinely differs, not that the commands drifted.
 
 **The suite serialises per database, not per machine.** Every checkout runs against its own — `training_center_test_<8 hex of its path>`, which `tests/bootstrap.php` resolves, creates if missing, and announces — and the lock is keyed on that database. So two worktrees run their gates at the same time, while two runs against one database still take turns: a run that reports it is waiting is correct, not hung. Parallel testing *within* one run is still refused, because its workers would all resolve the same database.
 

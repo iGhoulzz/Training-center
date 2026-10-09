@@ -18,9 +18,10 @@ final class Gate
      * THE FULL TEST SUITE IS DELIBERATELY ABSENT.
      *
      * These run after every agent turn, so they must stay in the seconds range.
-     * The suite takes about five minutes and serialises against every other
-     * worktree; running it here would make each turn unusable. It belongs to
-     * pre-push and CI, which is where it is.
+     * The suite takes about forty minutes and serialises against every other
+     * run on the same database; running it here would make each turn unusable.
+     * It belongs to CI, on every pushed head — see docs/WORKFLOW.md, "Where the
+     * full suite runs", including the switch that restores it at pre-push.
      *
      * @return list<array{name: string, command: list<string>}>
      */
