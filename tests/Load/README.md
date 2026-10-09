@@ -62,6 +62,71 @@ Each k6 summary includes `flow_duration` p95, `flow_errors` rate, and `flow_comp
 
 Failed iterations pause for two seconds before retrying. This keeps a lost target from turning 20 VUs into a tight request-failure loop; the pause is outside `flow_duration`.
 
+## Dependency-upgrade smoke — P4-T02, 2026-10-10
+
+Filament's constraint is restored to `^5.8.4`; the lock advances all ten
+Filament packages from 5.8.4 to **5.10.1**, the compatible stable release available
+on this date. Livewire remains **4.4.7**. `concurrently` advances from 9.2.4 to
+**9.2.5** with a minimum constraint of `^9.2.5`: that release directly depends on
+patched `shell-quote` **1.12.0**, so the override is removed. Upstream evidence:
+[Filament 5 installation](https://filamentphp.com/docs/5.x/introduction/installation),
+[concurrently 9.2.5 manifest](https://registry.npmjs.org/concurrently/9.2.5).
+Both `composer audit --locked` and `npm audit --audit-level=high` exited 0 with
+no vulnerabilities. `npm ci --ignore-scripts` and `npm run build` also exited 0.
+
+All four unmodified scripts ran against committed code
+`8012e86aa7bc396485e3aa30859088db11812e6b`, installed using `setup.sh` with that
+full SHA. `composer install` ran `filament:upgrade` in Windows and Linux;
+the published panel `app.js` matched `vendor/filament/filament/dist/index.js`
+in both environments (SHA-256
+`774df019e62b96c8f22e3628fcca0ce0a09f0b81eb11070baac9dc725c0524e2`).
+
+These were **smokes, not a 20-VU baseline or an SLO benchmark**. The pinned
+`grafana/k6:1.4.0` supports `--vus 1 --iterations 1` (not `--once`); reports used
+`--vus 1 --iterations 4` to exercise every report variant. k6 selected shared
+iterations with a 10-minute maximum and 30-second graceful stop. Actual runs
+finished in approximately 0.4, 1.9, 1.8 and 25.1 seconds respectively. The
+receipt iteration retained its 25-second sleep after the request.
+
+| Script | Completed / attempted | `flow_errors` | HTTP failures / requests | `flow_duration` p95 | HTTP duration p95 | Exit |
+|---|---|---|---|---|---|---|
+| student-search | 1 / 1 | 0% | 0 / 2 | 394 ms | 302.82 ms | 0 |
+| reports | 4 / 4 | 0% | 0 / 8 | 1.07 s | 609.21 ms | 0 |
+| enrol-and-collect | 1 / 1 | 0% | 0 / 6 | 1.8 s | 422.37 ms | 0 |
+| receipt-download | 1 / 1 | 0% | 0 / 1 | 59 ms | 57.52 ms | 0 |
+
+The existing containers were started without recreation. The owner explicitly
+approved rebuilding only `training_center_performance` with the medium profile;
+the connected database was checked immediately before the guarded seed command.
+The staff owner completed the normal login/password-change flow before minting
+20 sessions. The manifest stayed outside the checkout at `/tmp`, streamed through
+**Git Bash**, and was never printed or copied to the host. Do not use the
+PowerShell 5.1 pipeline above for this stream: its encoding can add a BOM and
+invalidate JSON. Revocation exited 0 and removal of the original manifest was
+confirmed before stopping the temporary listener and worker.
+
+Conditions: Windows 10 build 19045, Docker Engine 29.8.0 / Compose 5.5.1;
+Debian 13.6, PHP 8.4.25, Composer 2.10.3, MySQL 8.4.7 and Redis 8.4.0. The running
+drivers were Redis queue, database cache and database sessions, with
+`SESSION_LIFETIME=480`. The PHP development server used
+`PHP_CLI_SERVER_WORKERS=8` (eight workers plus its parent, verified in `/proc`),
+and a Redis worker consumed `receipts,default` with three tries and a 120-second
+timeout. These conditions do not establish production throughput.
+
+Post-run facts: students, enrolments and charges moved **4000 → 4001**;
+payments, tenders and allocations moved **8000 → 8001**; receipt snapshots
+**0 → 1**; activity rows **8 → 15**. The new payment's allocation was exactly
+`1000.000` LYD. Its receipt job completed, payment 8001 had canonical path
+`receipts/RCT-2026-008001.pdf`, and the file existed on the secure disk with a
+`%PDF-` header. Download then returned PDF content successfully. Failed jobs
+remained zero.
+
+The six focused feature-test files covering student resources, collection,
+report filters/access, receipt downloads and load sessions passed **106 tests /
+784 assertions** in **117916 ms** on the isolated Windows test database.
+`composer verify:fast` exited 0 (Pint passed, PHPStan zero errors). The full
+`composer verify` suite is deferred to PR CI under `docs/WORKFLOW.md`.
+
 ## Revoke (always the final step)
 
 After all runs, including a failed or interrupted run, revoke using the original manifest inside the app container:
