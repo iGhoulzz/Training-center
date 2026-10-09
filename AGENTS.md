@@ -43,6 +43,21 @@ Your review of Claude's work is a real gate, not a formality. If the implementat
 
 ---
 
+## Codex's subagent loop
+
+Use subagents to give bounded work a fresh context, not to multiply agents by default. Codex remains accountable for the task, the final review verdict, and every claim in its PR. Claude's cross-review of Codex work, and Codex's cross-review of Claude work, remain unchanged.
+
+- **Route by task.** Handle small documentation and mechanical fixes directly. For a scoped implementation task, give one implementer a self-contained brief with the worktree and branch, exact File scope and seams, relevant spec and engineering sections, Done-when, tests and probes. Do not copy this long chat into the subagent. A file outside scope is a question for the lead, not a silent expansion.
+- **Route by risk.** Use Luna only for tightly specified, low-risk edits. Use GPT-6.1 Sol for multi-file Laravel, Filament or Pest work; increase its reasoning effort for money, authorization, concurrency, file serving or architectural uncertainty. Do not use Astra unless the owner explicitly asks for it. Check the available model list when dispatching rather than assuming a model name remains available.
+- **Keep one writer.** One implementer works on one task worktree at a time. Do not dispatch parallel agents that edit the same files or share a test database. The implementer runs targeted tests and `composer verify:fast`, reports actual output, and never opens or merges its own PR.
+- **Review independently.** For meaningful code changes, use one fresh, read-only reviewer after implementation, especially on the risk areas above. The reviewer checks the committed range against the brief, spec, unhappy paths and tests. Codex checks the findings against the code and remains the reviewer of record; a subagent's approval is not Codex's approval. For a tiny change, Codex reviews directly. For a large Claude PR, a read-only subagent may investigate a bounded risk, but Codex still reads the relevant diff and posts the cross-review verdict.
+- **Fix narrowly.** Send verified findings back to the same implementer when possible; re-review the fix delta and the code around it. After two unsuccessful fix rounds, Codex takes over or revisits the design instead of repeating the same loop. Do not let a worker spawn its own reviewer.
+- **Keep reports short.** Require status, commit and file list, exact targeted-test and fast-gate output, probe results, deviations and open questions. Keep scratch reports outside the committed file scope. Codex verifies the diff and the required gate itself before claiming completion.
+
+The "Before opening a pull request" gate below still governs. Subagents do not each run the full suite; Codex handles that gate. Any future CI-first policy must change the gate and hooks explicitly, not arrive through an informal `--no-verify` habit.
+
+---
+
 ## Non-negotiables
 
 These are the rules that, when broken, are expensive to correct later:
