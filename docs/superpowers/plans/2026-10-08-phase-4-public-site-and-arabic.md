@@ -1,6 +1,6 @@
 # Phase 4 — Public site, Publications, the design revamp and Arabic/RTL
 
-**Status: DRAFT, round 3. No task may begin until this merges green.** The rule
+**Status: DRAFT, round 4. No task may begin until this merges green.** The rule
 that has held since phase 2: a plan-level architecture error cost five
 remediation rounds, so Codex reviews the plan before any implementation starts.
 
@@ -36,6 +36,14 @@ is checked against the code. Three needed the owner, who decided them on
 | P1 — T17's keys have no code using them; new audited models need record-type labels | `ActivityResource.php` is in T17's scope, with Arabic behavioural assertions. `lang/en/activity.php` is in T03's and T04's scopes and is a seam |
 | P2 — T14's optional script breaks `VerificationDisclosureTest` | **No script.** The empty-box prompt is the input's native `required` attribute. The verifier pages stay standalone and do not adopt the public layout, and the security test is unchanged |
 | P2 — the locale boundary and the routes seam stop short | **The owner chose full coverage**: `/ar/` verifier routes inside the existing verifier group, and a guest locale on both panels' login pages. T18 is in the routes seam, and its Done-when names every surface |
+
+## Round 4 — what changed, and where
+
+Codex's re-review of `52cfa4a` cleared round 3 and found one remaining P1.
+
+| Finding | Answer |
+|---|---|
+| P1 — registering `/ar` routes cannot keep an Arabic journey in Arabic. The form action, the controller's redirect and both "verify another" links resolve route names that point at the English URLs, and reusing those names would overwrite them | **Arabic routes get their own names, and every public and verifier link goes through one resolver.** Arabic routes are named `ar.` plus the English name. `PublicRoute` (created by T11) picks the name for the request's locale. T18 converts the controller's redirect and all three verifier call sites, and its test walks the full Arabic flow and the full English flow. **The same defect would have hit every public-site link**, so T11's guard forbids a bare `route()` in public views from the start |
 
 ---
 
@@ -140,11 +148,13 @@ first attempt.
 | `database/seeders/RolePermissionSeeder.php` | **T03 → T04** | T03 adds the article permissions, T04 the expense and category permissions. T04 rebases on T03 and must not reorder T03's rows |
 | `app/Providers/Filament/AdminPanelProvider.php` | **T03 → T09 → T16a → T18** | T03 adds `discoverResources` for `Domain/Publications`; T09 adds `discoverPages` for `Domain/Enrollment/Filament/Pages`; T16a owns the theme, colours and navigation; T18 adds the guest-locale middleware. Each adds its own lines and edits no other task's |
 | `app/Providers/AppServiceProvider.php` | **T11 → T13** | T11 registers the `public-site` rate limiter, T13 the `publication-download` limiter. Nothing else in the file is touched |
-| `routes/web.php` | **T11 → T12 → T13 → T15 → T18** | T11 creates the sessionless public group; T12, T13 and T15 add routes inside it and may not alter the group or its middleware. T18 adds the `/ar` prefix to the public group and the `/ar/` verifier routes **inside the existing verifier group**, under the same middleware and the same named limiter. **No task touches the private-file group** |
+| `routes/web.php` | **T11 → T12 → T13 → T15 → T18** | T11 creates the sessionless public group; T12, T13 and T15 add routes inside it and may not alter the group or its middleware. T18 adds the `/ar` copies of the public group and the `/ar/` verifier routes **inside the existing verifier group**, under the same middleware and the same named limiter, **named `ar.` plus the English name** so the English names never move. **No task touches the private-file group** |
 | `resources/css/app.css`, `vite.config.js` | **T11 → T16a → T18** | T11 adds the public site's stylesheet entry; T16a the Filament theme entry; T18 the direction work over both |
 | `resources/views/layouts/public.blade.php` | **T11 → T18** | T11 creates it; T18 makes it directional. The verifier does **not** use it — see T14 |
 | `resources/views/public/partials/header.blade.php` | **T11 → T15 → T18** | T11 creates it; T15 adds the portal link; T18 makes that link carry the locale |
-| `resources/views/verify/*` | **T14 → T18** | T14 restyles; T18 makes them directional. Both keep them standalone and scriptless |
+| `resources/views/verify/*` | **T14 → T18** | T14 restyles; T18 makes them directional and converts their three `route()` call sites to `PublicRoute`. Both keep them standalone and scriptless |
+| `app/Http/Controllers/VerifyCertificateController.php` | **T18 only** | One line: the `submit()` redirect goes through `PublicRoute`. The lookup, the normalisation and the uniform miss are untouched |
+| `app/Support/PublicRoute.php` | **T11 only** | Complete from the start, so T18 adds routes and a locale without editing it |
 | `app/Domain/Enrollment/Models/Batch.php` | **T05 only** | Scopes beside the existing predicates |
 | `app/Domain/Finance/Reports/ProfitReport.php` | **T04 → T10** | T04 teaches it expenses; T10 charts what it returns and must not change what the figure means |
 | `app/Domain/Finance/Filament/Pages/Reports/*` | **T10 → T16d** | T10 adds the charts; T16d restyles. T16d must not change what a chart plots |
@@ -609,7 +619,9 @@ clamped · `composer verify` green.
 - `resources/views/welcome.blade.php` — deleted
 - `resources/css/public.css`, `vite.config.js` (seam, first)
 - `lang/en/public.php`
-- `tests/Feature/Public/PublicGroupTest.php`, `PublicSessionlessTest.php`
+- `app/Support/PublicRoute.php` — new
+- `tests/Feature/Public/PublicGroupTest.php`, `PublicSessionlessTest.php`,
+  `PublicRouteTest.php`
 
 **Does**
 
@@ -638,10 +650,29 @@ property to be built, not assumed:
 
 The `public-site` limiter is keyed by IP and applied to the whole group.
 
+**Every public link goes through `PublicRoute`, from the first commit.** T18
+will add Arabic routes named `ar.` plus the English name. Reusing the English
+names would overwrite the English URL lookup, so the names must differ. A bare
+`route('public.home')` in a view would then send an Arabic visitor back to
+English on the first click.
+
+- `PublicRoute::url($name, $parameters)` returns
+  `route("{$locale}.{$name}")` when the request's locale is not English, and
+  `route($name)` when it is.
+- If the localised route does not exist, it **throws** rather than falling back.
+  A silent fallback is exactly the defect this exists to prevent.
+- Until T18 the locale is always English, so it behaves as `route()`; T18
+  never has to edit it.
+- `PublicRouteTest` scans `resources/views/public/` and the public layout and
+  fails on a bare `route(`, so T12, T13 and T15 inherit the rule without
+  restating it.
+
 **Done when**
 
 The two tests above pass, including the probe that adds a POST route to the
-public group and must fail the GET-only assertion · the layout uses logical CSS
+public group and must fail the GET-only assertion · `PublicRouteTest` resolves an
+`ar.`-named route under an Arabic locale, throws for a missing one, and fails on
+a planted bare `route(` in a public view · the layout uses logical CSS
 properties only · `composer verify` green.
 
 ### Task 12 — Home, about, programmes, contact
@@ -910,7 +941,11 @@ interpolating the raw name · `composer verify` green.
 - `resources/css/app.css`, `resources/css/public.css`,
   `resources/css/filament/admin/theme.css` (seam, last)
 - `resources/views/layouts/public.blade.php` (seam, last)
-- `resources/views/verify/*` — direction only (seam, after T14)
+- `resources/views/verify/*` — direction, and the three `route()` call sites:
+  `form.blade.php`'s action, and the "verify another" links in `show.blade.php`
+  and `not-found.blade.php` (seam, after T14)
+- `app/Http/Controllers/VerifyCertificateController.php` — the one redirect in
+  `submit()` (seam)
 - `resources/views/public/partials/header.blade.php` — the locale-carrying portal link (seam, last)
 - `routes/web.php` — the `/ar` prefix on the public group, and `/ar/` verifier
   routes inside the existing verifier group (seam, last)
@@ -928,11 +963,18 @@ Direction and the locale switch, over every surface the bilingual pass covers.
   sessionless: there is no session to remember a choice in, and a URL is
   cacheable and indexable.
 - **The verifier gets `/ar/verify/certificates` routes inside its existing
-  group**, under the same disclosure headers and the same named limiter, with
-  `SetPublicLocale` and `VerifyCertificateController` unchanged. The `/ar` form
-  posts to the `/ar` submit route, which redirects to the `/ar` result. **One
-  limiter budget covers both prefixes**: the limiter is keyed by client, not by
-  route, so the second language cannot double the guess rate.
+  group**, under the same disclosure headers and the same named limiter, plus
+  `SetPublicLocale`.
+  - **The names are distinct**: `ar.verify.certificates.form`, `.submit` and
+    `.show`. The English names keep resolving to the unprefixed URLs.
+  - **Every link and redirect resolves through T11's `PublicRoute`**: the form's
+    action, both "verify another" links, and the redirect in
+    `VerifyCertificateController::submit()`. Without that, every one of them
+    would return an Arabic visitor to the English pages. The controller's
+    lookup, its normalisation and the uniform miss do not change. Only the name
+    its redirect resolves does.
+  - **One limiter budget covers both prefixes.** The limiter is keyed by client
+    IP alone, not by route, so a second language cannot double the guess rate.
 - **Both login pages honour a guest locale.** The Arabic site's portal link adds
   `?locale=ar`. `SetGuestPanelLocale` runs in both panels' middleware — **not**
   `authMiddleware`, where the login page would never see it — and acts only for
@@ -954,7 +996,13 @@ Both directions render every public page, all three verifier pages, both login
 pages and every panel screen, with `dir` set correctly · an `/ar/` public URL
 renders Arabic and an unprefixed one English, with no session involved · the
 `/ar` verifier still passes `VerificationDisclosureTest`'s checks, and its blank,
-malformed and unknown misses are byte-identical to each other · requests across
+malformed and unknown misses are byte-identical to each other · **the Arabic
+journey stays Arabic**: the form at `/ar/verify/certificates` posts to the `/ar`
+submit URL; a valid reference redirects to `/ar/verify/certificates/{reference}`;
+and the "verify another" links on the `/ar` result and `/ar` miss pages both
+point under `/ar` · **the English journey stays unprefixed** through the same
+four steps · the `/ar` and unprefixed verifier routes carry identical middleware
+lists, asserted by comparing the routes, not by reading the file · requests across
 both prefixes draw on one limiter budget, and the test fails if they do not · a
 guest's `?locale=ar` login renders Arabic, an unsupported value falls back to
 English, and a signed-in user's `users.locale` wins over a guest value · the
