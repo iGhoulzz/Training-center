@@ -233,11 +233,14 @@ Applies to every file the system stores, now and later.
 
 - **Binary content never goes in the database.** Rows hold metadata and a path; the bytes live on a filesystem disk.
 - **Uploads go to a private disk**, not a web-served one. Staff certificates carry personal data — full names, national ID numbers, dates of birth — and a public disk gives every file a permanent URL that needs no login and cannot be recalled once it leaks.
-- **Files are served only through policy-authorized downloads or temporary signed URLs.** Authorization is checked per request, at the point of serving.
-- **A published article is the first file served to anonymous readers (P4), and it still lives on the private disk.**
-  - Its download route re-reads the article's publication state on every request: the check is part of the query that finds the file.
-  - Unpublishing therefore withdraws the file at once, with no URL left behind to revoke.
-  - This is the rule above applied to a public reader: the per-request check is "is this published?" rather than a policy.
+- **Files are served only through policy-authorized downloads or temporary signed URLs, with one exception: a published article (P4).** Either way, the check runs per request, at the point of serving.
+  - **Every protected file** — staff certificates, profile photos, payment receipts, report exports, and anything added later — keeps the policy or signed-URL requirement, unchanged.
+  - **A published article** is the one file served to anonymous readers, through the article download route (phase 4, T13), together with its `/ar` counterpart from the bilingual pass. It checks no policy, because a reader has no identity to authorize. Its per-request check is publication state instead.
+- **How the published-article exception holds.**
+  - The file still lives on the private disk, and has no URL of its own.
+  - The route finds the file through a query that requires `published_at IS NOT NULL`, on every request.
+  - So unpublishing withdraws the file at once, and the same URL then returns the same 404 as an unknown slug.
+  - No other route, and no other kind of file, may use this exception. A new anonymously served file needs its own amendment here.
 - **The private disk is included in backups** (see section 11). A database dump alone would restore rows pointing at files that no longer exist.
 
 Phase 2's payment receipts and generated report PDFs reuse this storage infrastructure. Phase 3 student certificates do **not** create or store a certificate PDF: the physical template, visual design, and printing are handled outside the system. If scanned student-certificate copies are added later, that is a separate feature with its own model, policy, retention rule, and private storage path; it must not reuse `staff_certificates`.
