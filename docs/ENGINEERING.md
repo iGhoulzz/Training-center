@@ -474,7 +474,52 @@ Enforced from the first commit, even though Arabic strings arrive in phase 4:
 
 - **No hardcoded user-facing strings.** Everything goes through `lang/` files.
 - **Logical CSS properties only** — `margin-inline-start`, `padding-inline-end`, `text-align: start`. Never `margin-left`, `padding-right`, `text-align: left`.
+- **The same rule in Tailwind.** Use `ms-` `me-` `ps-` `pe-` `start-` `end-` `text-start` `text-end` `border-s` `border-e` `rounded-s` `rounded-e` `scroll-ms` and their kin. Never use `ml-` `mr-` `pl-` `pr-` `left-` `right-` `text-left` `text-right` `border-l` `border-r` `rounded-l` `rounded-r`. A physical utility is the same defect as `margin-left`, only harder to grep for.
 - Test any new layout at `dir="rtl"` before considering it done.
+
+---
+
+## Frontend (phase 4)
+
+Phase 4 turns a frontend of two Blade templates into a real surface: a public
+site, a restyled Filament panel and both directions. These rules apply to every
+file under `resources/`.
+
+- **Stack, and nothing added to it without approval.** Blade, Tailwind 4 through
+  `@tailwindcss/vite`, and Filament's own Livewire and Alpine. No component
+  library, no icon package and no JavaScript framework. A new npm or Composer
+  dependency is a scope change the owner approves.
+- **Version-correct APIs.** Filament 5 theming, Tailwind 4 configuration in CSS
+  rather than `tailwind.config.js`, and Livewire as Filament ships it. Look each
+  one up with Boost's `search-docs` before using it. Most published examples are
+  for older majors.
+- **The design handoff is reference, not specification.** Where it disagrees with
+  the spec, the spec wins (`docs/design/README.md` lists the known conflicts).
+  The prototypes' CSS is not copied in. It is rewritten as Tailwind utilities
+  under the logical-property rule above, because the prototypes were not written
+  to this repository's standard.
+- **Blade components for anything used twice**, under
+  `resources/views/components/`. A partial included with variables is not a
+  component.
+- **The public-site pages are sessionless, and only those.** This rule covers
+  the GET-only route group phase 4's T11 creates: home, about, programmes,
+  contact, the publications index, article pages and article downloads. Those
+  views contain no form, no `@csrf`, and no `session()`, `old()` or `auth()`
+  call.
+
+  It does **not** apply to the certificate verifier (`resources/views/verify/`),
+  whose form posts and needs both its session and its CSRF token, or to either
+  panel's login page. Never remove a form, a `@csrf` or a session from those on
+  the strength of this rule. They stay on the full `web` stack deliberately,
+  and T11 tests that they do.
+- **Accessible by default.** Real headings in order, a `label` for every input,
+  `alt` on every meaningful image and an empty `alt` on decorative ones, visible
+  focus, and contrast that holds in both themes. The prototype's look does not
+  override any of these.
+- **Verified by eye as well as by test.** Before a frontend PR opens, the lead
+  views each changed screen in the browser pane at desktop and phone width, and
+  at `dir="rtl"` once T18 has landed. A test proves the markup and data; it does
+  not prove the page looks right.
 
 ---
 
@@ -511,7 +556,7 @@ Committed under `.githooks/`, and **inert until you opt in**:
 git config core.hooksPath .githooks
 ```
 
-`pre-commit` runs the fast gate and never rewrites your files — Pint runs with `--test`, because a hook that reformats mid-commit changes what you already reviewed. `pre-push` runs `composer verify` plus the frontend build, and **refuses a dirty worktree**: the gate checks files on disk while a push publishes commits, and those differ exactly when uncommitted changes are present.
+`pre-commit` runs the fast gate and never rewrites your files — Pint runs with `--test`, because a hook that reformats mid-commit changes what you already reviewed. `pre-push` runs the push gate selected in the hook — `docs/WORKFLOW.md`, "Where the full suite runs", says which is the default and how to switch it — plus the frontend build when a pushed commit touches a frontend input. CI runs the full suite on every pull request regardless. `pre-push` also **refuses a dirty worktree**: the gate checks files on disk while a push publishes commits, and those differ exactly when uncommitted changes are present.
 
 No hook migrates, seeds, cleans backups, updates dependencies, commits, pushes, or touches history.
 

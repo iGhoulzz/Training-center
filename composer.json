@@ -69,6 +69,10 @@
         "verify:fast": [
             "@php scripts/bin/verify-fast.php"
         ],
+        "verify:push": [
+            "@composer validate --strict",
+            "@verify:fast"
+        ],
         "verify": [
             "Composer\\Config::disableProcessTimeout",
             "@composer validate --strict",

@@ -4,7 +4,8 @@
 #
 # Deliberately does NOT run the test suite: a commit hook that takes five
 # minutes gets bypassed with --no-verify, and a gate people route around is
-# worse than none. The suite runs at pre-push and in CI.
+# worse than none. The suite runs in CI on every pull request, and at pre-push
+# whenever the push gate is set to full (see .githooks/pre-push).
 #
 # Deliberately does NOT reformat anything. Pint runs with --test here, never as
 # a fixer, because a hook that rewrites files mid-commit changes what you are
