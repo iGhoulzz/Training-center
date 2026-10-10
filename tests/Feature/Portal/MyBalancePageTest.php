@@ -83,12 +83,17 @@ it('shows an unbilled enrolment as zero owed', function () {
     billedEnrollmentFor($student, '300.000');
     // Unbilled — StudentBalanceQuery's RIGHT JOIN keeps it in the summary at
     // zero rather than dropping it, and this page must render that row too.
-    Enrollment::factory()->for($student)->for(Batch::factory()->for(Course::factory()))->create();
+    $unbilled = Enrollment::factory()->for($student)->for(Batch::factory()->for(Course::factory()))->create();
 
-    $this->actingAs($user, 'student')->get('/portal/my-balance')
-        ->assertSuccessful()
-        ->assertSee(__('portal.amount_lyd', ['amount' => '0.000']), false)
-        ->assertSee(__('portal.amount_lyd', ['amount' => '300.000']), false);
+    $rendered = renderedWithoutLivewireState(
+        $this->actingAs($user, 'student')->get('/portal/my-balance')->assertSuccessful(),
+    );
+    $reference = preg_quote(__('portal.balance_enrollment_row', ['id' => $unbilled->getKey()]), '/');
+    $zero = preg_quote(__('portal.amount_lyd', ['amount' => '0.000']), '/');
+
+    expect($rendered)
+        ->toMatch("/<tr>(?:(?!<\\/tr>).)*{$reference}(?:(?!<\\/tr>).)*{$zero}(?:(?!<\\/tr>).)*<\\/tr>/s")
+        ->toContain(__('portal.amount_lyd', ['amount' => '300.000']));
 });
 
 it('renders a total that is the sum of the rows, distinguishable from every row', function () {

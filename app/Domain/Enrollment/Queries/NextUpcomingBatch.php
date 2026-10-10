@@ -59,14 +59,14 @@ final class NextUpcomingBatch
             return null;
         }
 
-        $batch = (new Batch)->newFromBuilder([
+        $batch = Batch::query()->hydrate([[
             'id' => $course->getAttribute('next_batch_id'),
             'course_id' => $course->getKey(),
             'code' => $course->getAttribute('next_batch_code'),
             'start_date' => $course->getAttribute('next_start_date'),
             'price' => $course->getAttribute('next_price'),
             'total_hours' => $course->getAttribute('next_total_hours'),
-        ]);
+        ]])->firstOrFail();
 
         // Both inheriting readers use this relation; the card must issue no lazy query.
         $batch->setRelation('course', $course);

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Enrollment\Services;
 
+use App\Domain\Enrollment\Models\Course;
 use App\Domain\Enrollment\Models\Enrollment;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Collection;
@@ -343,6 +344,20 @@ final class EnrollmentQueryService
     public const COURSE_NAME_EN = 'catalogue_course_name_en';
 
     public const COURSE_NAME_AR = 'catalogue_course_name_ar';
+
+    /**
+     * Resolve projected names through the catalogue's display rule, without SQL.
+     * Hydrated models are transient readers only; no catalogue row is written.
+     *
+     * @param  array<int, array{name_en: string, name_ar: ?string}>  $names
+     * @return array<int, string>
+     */
+    public function localizedCourseNames(array $names): array
+    {
+        return Course::query()->hydrate($names)
+            ->map(fn (Course $course): string => $course->name())
+            ->all();
+    }
 
     /**
      * Add display labels to a query already scoped by scopeToStudent().

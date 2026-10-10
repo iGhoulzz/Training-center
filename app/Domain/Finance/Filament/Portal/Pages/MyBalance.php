@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Finance\Filament\Portal\Pages;
 
+use App\Domain\Enrollment\Services\EnrollmentQueryService;
 use App\Domain\Enrollment\Support\AuthenticatedStudent;
 use App\Domain\Finance\Data\EnrollmentBalance;
 use App\Domain\Finance\Services\StudentBalanceQuery;
@@ -24,8 +25,8 @@ use Filament\Support\Icons\Heroicon;
  * no further Finance query of its own.
  *
  * P4-T05 adds course names and batch codes through EnrollmentQueryService's
- * published catalogue projection. The page chooses the localized course name,
- * with the same Arabic-empty fallback as Course::name(), without querying models.
+ * published catalogue projection. EnrollmentQueryService resolves display names
+ * through Course::name() on transient readers, without further SQL.
  *
  * PLAIN ARRAYS OF DECIMAL STRINGS, NOT Money OBJECTS, ON THE PUBLIC
  * PROPERTY.
@@ -82,11 +83,16 @@ class MyBalance extends Page
 
         $summary = app(StudentBalanceQuery::class)->forStudent((int) $student->getKey());
 
+        $names = array_map(fn (EnrollmentBalance $balance): array => [
+            'name_en' => $balance->courseNameEn,
+            'name_ar' => $balance->courseNameAr,
+        ], $summary->enrollments);
+        $localizedNames = app(EnrollmentQueryService::class)->localizedCourseNames($names);
+
         $this->rows = collect($summary->enrollments)
             ->map(fn (EnrollmentBalance $balance): array => [
                 'enrollment_id' => $balance->enrollmentId,
-                'course' => app()->getLocale() === 'ar' && filled($balance->courseNameAr)
-                    ? (string) $balance->courseNameAr : $balance->courseNameEn,
+                'course' => $localizedNames[$balance->enrollmentId],
                 'batch_code' => $balance->batchCode,
                 'outstanding' => $balance->outstanding->toDecimal(),
             ])

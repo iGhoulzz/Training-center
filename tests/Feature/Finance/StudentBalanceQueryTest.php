@@ -7,6 +7,7 @@ use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Course;
 use App\Domain\Enrollment\Models\Enrollment;
 use App\Domain\Enrollment\Models\Student;
+use App\Domain\Enrollment\Services\EnrollmentQueryService;
 use App\Domain\Finance\Models\Charge;
 use App\Domain\Finance\Models\Payment;
 use App\Domain\Finance\Models\PaymentAllocation;
@@ -36,6 +37,26 @@ use Illuminate\Support\Facades\DB;
 | arithmetic instead of reusing it.
 */
 uses(RefreshDatabase::class);
+
+it('localizes projected course names without SQL and preserves their keys', function (string $locale, array $expected) {
+    app()->setLocale($locale);
+    $names = [
+        7 => ['name_en' => 'Translated', 'name_ar' => 'اسم عربي'],
+        19 => ['name_en' => 'Null translation', 'name_ar' => null],
+        27 => ['name_en' => 'Empty translation', 'name_ar' => ''],
+        41 => ['name_en' => 'Blank translation', 'name_ar' => '  '],
+    ];
+    DB::enableQueryLog();
+    DB::flushQueryLog();
+    $localized = app(EnrollmentQueryService::class)->localizedCourseNames($names);
+    $queries = DB::getQueryLog();
+    DB::disableQueryLog();
+
+    expect($localized)->toBe($expected)->and($queries)->toBeEmpty();
+})->with([
+    'English' => ['en', [7 => 'Translated', 19 => 'Null translation', 27 => 'Empty translation', 41 => 'Blank translation']],
+    'Arabic' => ['ar', [7 => 'اسم عربي', 19 => 'Null translation', 27 => 'Empty translation', 41 => 'Blank translation']],
+]);
 
 it('returns bilingual course names and batch codes for billed and unbilled enrolments only for their owner', function () {
     $student = Student::factory()->create();
