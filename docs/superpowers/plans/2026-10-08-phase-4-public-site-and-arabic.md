@@ -159,7 +159,9 @@ first attempt.
 | `app/Domain/Finance/Reports/ProfitReport.php` | **T04 → T10** | T04 teaches it expenses; T10 charts what it returns and must not change what the figure means |
 | `app/Domain/Finance/Filament/Pages/Reports/*` | **T10 → T16d** | T10 adds the charts; T16d restyles. T16d must not change what a chart plots |
 | `lang/en/*` other than `activity.php` | Every task, each in its own catalogue | No task ships a user-facing string without an English key. A task adding to an existing catalogue appends its own keys and edits nobody else's |
-| `lang/ar/*` | **T17 only** | Stay empty until T17, so an untranslated string stays visible |
+| `lang/ar/*` | **T17 only** for Arabic strings | Stay empty until T17, so an untranslated string stays visible. The task that adds an English catalogue may add the matching **empty** placeholder (`return [];`), because `LocalizationTest` requires one per English file; only T17 writes Arabic strings |
+| `app/Domain/Staff/Jobs/PurgeDeletedFileJob.php` (`isOwned()`) | **T03** first; any later task that stores a file on the private disk | `isOwned()` must know every kind of row that owns a file there, or a stale provisional upload receipt lets the sweep unlink a live file. T03 adds articles; a later task adds its own owner here, with a test in the style of `ArticleFileOwnershipTest` |
+| `tests/Feature/Finance/FinancePermissionSeedingTest.php` (the non-finance classification list) | **T03 → T04** | The test fails on any seeded permission it does not classify. T03 classifies the six article permissions; T04 classifies the expense and expense-category ones |
 
 ---
 
@@ -328,6 +330,14 @@ and `npm audit --audit-level=high` both clean · `composer verify` green.
 - `tests/Feature/Publications/ArticleActionsTest.php`,
   `ArticleResourceTest.php`, `ArticleStorageTest.php`,
   `ArticleDownloadCounterTest.php`, `ArticleWriteBoundaryArchTest.php`
+- **Owner-approved expansion (2026-10-10):**
+  - `app/Domain/Staff/Jobs/PurgeDeletedFileJob.php` — `isOwned()` learns articles,
+    so a stale provisional upload receipt cannot unlink a live article's PDF (seam)
+  - `lang/ar/publications.php` — an **empty** placeholder, as `LocalizationTest`
+    requires; T17 still writes all Arabic (seam)
+  - `tests/Feature/Finance/FinancePermissionSeedingTest.php` — the article
+    permissions classified non-finance (seam)
+  - `tests/Feature/Publications/ArticleFileOwnershipTest.php`
 
 **Does**
 
