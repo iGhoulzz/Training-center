@@ -156,6 +156,7 @@ first attempt.
 | `app/Http/Controllers/VerifyCertificateController.php` | **T18 only** | One line: the `submit()` redirect goes through `PublicRoute`. The lookup, the normalisation and the uniform miss are untouched |
 | `app/Support/PublicRoute.php` | **T11 only** | Complete from the start, so T18 adds routes and a locale without editing it |
 | `app/Domain/Enrollment/Models/Batch.php` | **T05 only** | Scopes beside the existing predicates |
+| `app/Domain/Enrollment/Services/EnrollmentQueryService.php`, `app/Domain/Finance/Services/StudentBalanceQuery.php`, `app/Domain/Finance/Data/EnrollmentBalance.php`, `app/Domain/Finance/Filament/Portal/Pages/MyBalance.php`, `resources/views/portal/my-balance.blade.php`, `lang/en/portal.php`, `tests/Feature/Finance/StudentBalanceQueryTest.php`, `tests/Feature/Portal/MyBalancePageTest.php`, `tests/Feature/Portal/PortalQueryCountTest.php` | **T05 only** | Owner-approved scope expansion (2026-10-10): show localized course names and batch codes on balance rows now, preserving ownership, unbilled enrolments and fixed query counts |
 | `app/Domain/Finance/Reports/ProfitReport.php` | **T04 → T10** | T04 teaches it expenses; T10 charts what it returns and must not change what the figure means |
 | `app/Domain/Finance/Filament/Pages/Reports/*` | **T10 → T16d** | T10 adds the charts; T16d restyles. T16d must not change what a chart plots |
 | `lang/en/*` other than `activity.php` | Every task, each in its own catalogue | No task ships a user-facing string without an English key. A task adding to an existing catalogue appends its own keys and edits nobody else's |
@@ -427,7 +428,7 @@ figure for one month · `LocalizationTest` passes with both new models recording
 activity · `MoneyCastArchTest` covers the new columns · `composer verify` green.
 
 ### Task 5 — The read queries the design needs
-**Owner: Claude · `p4/t05-read-queries` · depends on T01**
+**Owner: Codex · `p4/t05-read-queries` · depends on T01**
 
 **File scope**
 - `app/Domain/Enrollment/Models/Batch.php` — scopes only (seam)
@@ -436,8 +437,23 @@ activity · `MoneyCastArchTest` covers the new columns · `composer verify` gree
 - `app/Domain/Finance/Queries/BatchOutstanding.php`, `StudentsOwingMoney.php`,
   `RevenuePerCourse.php`, `ChargeAgeing.php` — new
 - `app/Domain/Staff/Queries/AssignedHoursPerUser.php` — new
-- `tests/Feature/Enrollment/Queries/` and `tests/Feature/Finance/Queries/`, one
-  test file per query, named after it
+- `app/Domain/Enrollment/Services/EnrollmentQueryService.php`,
+  `app/Domain/Finance/Services/StudentBalanceQuery.php`,
+  `app/Domain/Finance/Data/EnrollmentBalance.php`,
+  `app/Domain/Finance/Filament/Portal/Pages/MyBalance.php`,
+  `resources/views/portal/my-balance.blade.php`, `lang/en/portal.php`,
+  `tests/Feature/Finance/StudentBalanceQueryTest.php`,
+  `tests/Feature/Portal/MyBalancePageTest.php`,
+  `tests/Feature/Portal/PortalQueryCountTest.php` — owner-approved expansion
+  (2026-10-10), seam: show localized course names and batch codes now, including
+  unbilled enrolments; all catalogue reads pass through EnrollmentQueryService
+- `tests/Feature/Enrollment/Queries/NextUpcomingBatchTest.php`,
+  `tests/Feature/Enrollment/Queries/CertificateIssuanceQueueTest.php`,
+  `tests/Feature/Enrollment/Queries/AssignedHoursPerUserTest.php`,
+  `tests/Feature/Finance/Queries/BatchOutstandingTest.php`,
+  `tests/Feature/Finance/Queries/StudentsOwingMoneyTest.php`,
+  `tests/Feature/Finance/Queries/RevenuePerCourseTest.php`,
+  `tests/Feature/Finance/Queries/ChargeAgeingTest.php` — one file per query
 
 **Does**
 

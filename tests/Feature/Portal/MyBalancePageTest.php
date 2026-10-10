@@ -137,3 +137,33 @@ it('refuses a student who holds view_own_balance but not portal access', functio
 
     $this->actingAs($user, 'student')->get('/portal/my-balance')->assertForbidden();
 });
+
+it('renders course and batch labels for billed and unbilled rows without exposing another student', function () {
+    [$user, $student] = balanceActor(['access_student_portal', 'view_own_balance']);
+    $course = Course::factory()->create(['name_en' => 'Visible course <script>', 'name_ar' => 'دورة مرئية']);
+    $billed = Enrollment::factory()->for($student)->for(Batch::factory()->for($course)->state(['code' => 'MY-BILLED']))->create();
+    Charge::factory()->for($billed)->create(['amount' => '1.234']);
+    Enrollment::factory()->for($student)->for(Batch::factory()->for($course)->state(['code' => 'MY-UNBILLED']))->create();
+    Enrollment::factory()->for(Batch::factory()->for(Course::factory()->state(['name_en' => 'Other student private course'])))->create();
+
+    $response = $this->actingAs($user, 'student')->get('/portal/my-balance')->assertSuccessful()
+        ->assertDontSee('Other student private course');
+    $rendered = renderedWithoutLivewireState($response);
+    expect($rendered)->toContain('Visible course &lt;script&gt;', 'MY-BILLED', 'MY-UNBILLED')
+        ->not->toContain('Visible course <script>', 'Other student private course');
+});
+
+it('uses the Arabic course name and falls back to English when it is empty', function () {
+    [$user, $student] = balanceActor(['access_student_portal', 'view_own_balance']);
+    $user->update(['locale' => 'ar']);
+    Enrollment::factory()->for($student)->for(Batch::factory()->for(Course::factory()->state([
+        'name_en' => 'English-only labelled course', 'name_ar' => 'اسم الدورة العربية',
+    ])))->create();
+    Enrollment::factory()->for($student)->for(Batch::factory()->for(Course::factory()->state([
+        'name_en' => 'Fallback English course', 'name_ar' => '',
+    ])))->create();
+
+    $rendered = renderedWithoutLivewireState($this->actingAs($user, 'student')->get('/portal/my-balance')->assertSuccessful());
+    expect($rendered)->toContain('اسم الدورة العربية', 'Fallback English course')
+        ->not->toContain('English-only labelled course');
+});

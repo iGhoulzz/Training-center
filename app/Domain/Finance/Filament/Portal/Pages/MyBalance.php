@@ -23,24 +23,9 @@ use Filament\Support\Icons\Heroicon;
  * PortalQueryCountTest. This page calls it exactly once in mount() and does
  * no further Finance query of its own.
  *
- * NO CATALOGUE CONTEXT ON THIS PAGE — A DELIBERATE DECISION THE SPEC DOES
- * NOT COVER.
- * -------------------------------------------------------------------------
- * The design table lists this page's contents as "per-enrolment outstanding
- * and a total", and `StudentBalanceQuery` hands back exactly that shape:
- * `EnrollmentBalance` carries an enrolment id, a nullable charge id and an
- * outstanding `Money` — no course or batch name. Enriching a row with a
- * course or batch name would mean this Finance-domain page either querying
- * `enrollments` directly — forbidden by `docs/ENGINEERING.md`'s "Finance
- * reads enrollment data via EnrollmentQueryService, never by querying
- * enrollments directly" — or re-deriving `EnrollmentQueryService::
- * joinCatalogueTo()`'s join logic by hand, which would duplicate exactly the
- * knowledge that method exists to keep on the Enrollment side of the
- * boundary. Neither is in this task's file scope, and both are more
- * cross-domain reach than "outstanding and a total" asks for. Rows are
- * therefore identified by enrolment id alone; a richer label is future work
- * for whichever task is willing to extend `EnrollmentQueryService` or
- * `StudentBalanceQuery` deliberately.
+ * P4-T05 adds course names and batch codes through EnrollmentQueryService's
+ * published catalogue projection. The page chooses the localized course name,
+ * with the same Arabic-empty fallback as Course::name(), without querying models.
  *
  * PLAIN ARRAYS OF DECIMAL STRINGS, NOT Money OBJECTS, ON THE PUBLIC
  * PROPERTY.
@@ -69,7 +54,7 @@ class MyBalance extends Page
      * One entry per enrolment the student holds, in the order
      * StudentBalanceQuery returned them (enrolment id ascending).
      *
-     * @var array<int, array{enrollment_id: int, outstanding: string}>
+     * @var array<int, array{enrollment_id: int, course: string, batch_code: string, outstanding: string}>
      */
     public array $rows = [];
 
@@ -100,6 +85,9 @@ class MyBalance extends Page
         $this->rows = collect($summary->enrollments)
             ->map(fn (EnrollmentBalance $balance): array => [
                 'enrollment_id' => $balance->enrollmentId,
+                'course' => app()->getLocale() === 'ar' && filled($balance->courseNameAr)
+                    ? (string) $balance->courseNameAr : $balance->courseNameEn,
+                'batch_code' => $balance->batchCode,
                 'outstanding' => $balance->outstanding->toDecimal(),
             ])
             ->values()

@@ -37,6 +37,27 @@ use Illuminate\Support\Facades\DB;
 */
 uses(RefreshDatabase::class);
 
+it('returns bilingual course names and batch codes for billed and unbilled enrolments only for their owner', function () {
+    $student = Student::factory()->create();
+    $course = Course::factory()->create(['name_en' => 'Workplace English', 'name_ar' => 'الإنجليزية المهنية']);
+    $billed = Enrollment::factory()->for($student)->for(Batch::factory()->for($course)->state(['code' => 'BILLED-2026']))->create();
+    Charge::factory()->for($billed)->create(['amount' => '12.345']);
+    $unbilled = Enrollment::factory()->for($student)->for(Batch::factory()->for($course)->state(['code' => 'UNBILLED-2026']))->create();
+    Enrollment::factory()->create();
+
+    $summary = app(StudentBalanceQuery::class)->forStudent($student->id);
+    expect(array_keys($summary->enrollments))->toBe([$billed->id, $unbilled->id]);
+    foreach ($summary->enrollments as $row) {
+        expect($row->courseNameEn)->toBe('Workplace English')
+            ->and($row->courseNameAr)->toBe('الإنجليزية المهنية');
+    }
+    expect($summary->enrollments[$billed->id]->batchCode)->toBe('BILLED-2026')
+        ->and($summary->enrollments[$billed->id]->outstanding->toDecimal())->toBe('12.345')
+        ->and($summary->enrollments[$unbilled->id]->batchCode)->toBe('UNBILLED-2026')
+        ->and($summary->enrollments[$unbilled->id]->chargeId)->toBeNull()
+        ->and($summary->enrollments[$unbilled->id]->outstanding->toDecimal())->toBe('0.000');
+});
+
 beforeEach(function () {
     $this->query = app(StudentBalanceQuery::class);
     $this->charges = app(ChargeQueryService::class);

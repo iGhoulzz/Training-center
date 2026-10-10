@@ -340,6 +340,30 @@ final class EnrollmentQueryService
 
     public const COURSE_CODE = 'catalogue_course_code';
 
+    public const COURSE_NAME_EN = 'catalogue_course_name_en';
+
+    public const COURSE_NAME_AR = 'catalogue_course_name_ar';
+
+    /**
+     * Add display labels to a query already scoped by scopeToStudent().
+     *
+     * Both names cross the boundary so the page chooses its locale. The inner
+     * joins follow non-null catalogue foreign keys from the preserved enrolment
+     * side; they retain unbilled enrolments from scopeToStudent()'s RIGHT JOIN.
+     * This adds catalogue context only and is not an ownership check.
+     */
+    public function joinStudentCatalogueTo(Builder $query): Builder
+    {
+        return $query
+            ->join('batches', 'batches.id', '=', 'enrollments.batch_id')
+            ->join('courses', 'courses.id', '=', 'batches.course_id')
+            ->addSelect([
+                'batches.code as '.self::BATCH_CODE,
+                'courses.name_en as '.self::COURSE_NAME_EN,
+                'courses.name_ar as '.self::COURSE_NAME_AR,
+            ]);
+    }
+
     /** The student identity alias contributed to a report query. */
     public const ENROLLMENT_STUDENT_ID = 'enrollment_student_id';
 
