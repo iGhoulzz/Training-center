@@ -26,5 +26,8 @@ final readonly class EnrollmentBalance
         public int $enrollmentId,
         public ?int $chargeId,
         public Money $outstanding,
+        public string $courseNameEn,
+        public ?string $courseNameAr,
+        public string $batchCode,
     ) {}
 }

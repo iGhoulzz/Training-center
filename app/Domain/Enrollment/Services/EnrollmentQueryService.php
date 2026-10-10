@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Enrollment\Services;
 
+use App\Domain\Enrollment\Models\Course;
 use App\Domain\Enrollment\Models\Enrollment;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Collection;
@@ -339,6 +340,44 @@ final class EnrollmentQueryService
     public const COURSE_ID = 'catalogue_course_id';
 
     public const COURSE_CODE = 'catalogue_course_code';
+
+    public const COURSE_NAME_EN = 'catalogue_course_name_en';
+
+    public const COURSE_NAME_AR = 'catalogue_course_name_ar';
+
+    /**
+     * Resolve projected names through the catalogue's display rule, without SQL.
+     * Hydrated models are transient readers only; no catalogue row is written.
+     *
+     * @param  array<int, array{name_en: string, name_ar: ?string}>  $names
+     * @return array<int, string>
+     */
+    public function localizedCourseNames(array $names): array
+    {
+        return Course::query()->hydrate($names)
+            ->map(fn (Course $course): string => $course->name())
+            ->all();
+    }
+
+    /**
+     * Add display labels to a query already scoped by scopeToStudent().
+     *
+     * Both names cross the boundary so the page chooses its locale. The inner
+     * joins follow non-null catalogue foreign keys from the preserved enrolment
+     * side; they retain unbilled enrolments from scopeToStudent()'s RIGHT JOIN.
+     * This adds catalogue context only and is not an ownership check.
+     */
+    public function joinStudentCatalogueTo(Builder $query): Builder
+    {
+        return $query
+            ->join('batches', 'batches.id', '=', 'enrollments.batch_id')
+            ->join('courses', 'courses.id', '=', 'batches.course_id')
+            ->addSelect([
+                'batches.code as '.self::BATCH_CODE,
+                'courses.name_en as '.self::COURSE_NAME_EN,
+                'courses.name_ar as '.self::COURSE_NAME_AR,
+            ]);
+    }
 
     /** The student identity alias contributed to a report query. */
     public const ENROLLMENT_STUDENT_ID = 'enrollment_student_id';

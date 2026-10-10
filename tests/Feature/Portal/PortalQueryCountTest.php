@@ -121,7 +121,7 @@ it('issues the same number of queries for the enrolments page whether the studen
 
 it('issues the same number of queries for the balance page whether the student holds one enrolment or twenty', function () {
     [$soloUser, $soloStudent] = queryCountActor(['access_student_portal', 'view_own_balance']);
-    enrolledAndBilled($soloStudent);
+    $soloEnrollment = enrolledAndBilled($soloStudent);
 
     [$busyUser, $busyStudent] = queryCountActor(['access_student_portal', 'view_own_balance']);
 
@@ -135,13 +135,18 @@ it('issues the same number of queries for the balance page whether the student h
     // permission cache before the listener attaches.
     $soloUser->can('view_own_balance');
 
+    $soloCourse = $soloEnrollment->batch->course->name();
+    $soloBatch = $soloEnrollment->batch->code;
+
     $queries = 0;
     DB::listen(function () use (&$queries): void {
         $queries++;
     });
 
-    $this->actingAs($soloUser, 'student')->get('/portal/my-balance')->assertSuccessful();
+    $soloResponse = $this->actingAs($soloUser, 'student')->get('/portal/my-balance')->assertSuccessful();
     $queriesForOne = $queries;
+
+    expect(renderedWithoutLivewireState($soloResponse))->toContain($soloCourse, $soloBatch);
 
     $queries = 0;
     $this->actingAs($busyUser, 'student')->get('/portal/my-balance')->assertSuccessful();

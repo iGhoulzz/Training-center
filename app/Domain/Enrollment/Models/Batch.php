@@ -16,6 +16,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\DB;
 
 /**
  * A course actually running — the January intake, the March intake.
@@ -195,6 +196,36 @@ class Batch extends Model
     public function scopeOpen(Builder $query): void
     {
         $query->whereIn('status', [BatchStatus::Planned, BatchStatus::Active]);
+    }
+
+    /**
+     * SQL selection equivalent to isOverCapacity(); parity is tested on the same rows.
+     *
+     * @param  Builder<self>  $query
+     */
+    public function scopeOverCapacity(Builder $query): void
+    {
+        $activeCount = Enrollment::query()->active()->selectRaw('COUNT(*)')
+            ->whereColumn('enrollments.batch_id', 'batches.id');
+
+        $query->where('batches.capacity', '>', 0)
+            ->whereRaw('('.$activeCount->toSql().') > batches.capacity', $activeCount->getBindings());
+    }
+
+    /**
+     * SQL selection equivalent to hasHourMismatch(), including departed instructors.
+     *
+     * @param  Builder<self>  $query
+     */
+    public function scopeHourMismatch(Builder $query): void
+    {
+        $assignedHours = DB::table('batch_instructor')->selectRaw('COALESCE(SUM(assigned_hours), 0)')
+            ->whereColumn('batch_instructor.batch_id', 'batches.id');
+
+        $query->whereRaw('('.$assignedHours->toSql().') <> '
+            .'COALESCE(batches.total_hours, (SELECT courses.total_hours FROM courses WHERE courses.id = batches.course_id))',
+            $assignedHours->getBindings(),
+        );
     }
 
     /**

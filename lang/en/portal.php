@@ -72,8 +72,8 @@ return [
     'balance_outstanding' => 'Outstanding',
     'balance_total' => 'Total',
     // A composite string with its own key rather than assembled by joining
-    // fragments — design section 12. The enrolment is identified by id alone;
-    // see MyBalance's own docblock for why no course/batch name is shown here.
+    // fragments — design section 12. Course and batch columns provide context
+    // beside this enrolment reference.
     'balance_enrollment_row' => 'Enrolment #:id',
     // Matches charges.amount_lyd / collect.amount_lyd / payments.amount_lyd —
     // each catalogue keeps its own copy rather than sharing one across domains.
