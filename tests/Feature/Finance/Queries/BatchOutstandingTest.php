@@ -25,6 +25,8 @@ it('sums exact outstanding across students and keeps write-offs and reversed pay
     $totals = app(BatchOutstanding::class)->totals();
     expect($totals[$batch->id]->toDecimal())->toBe('100.002')
         ->and($totals[$other->id]->toDecimal())->toBe('7.777')
+        ->and(app(BatchOutstanding::class)->forBatch($batch->id)->toDecimal())->toBe('100.002')
+        ->and(app(BatchOutstanding::class)->forBatch($other->id)->toDecimal())->toBe('7.777')
         ->and(app(BatchOutstanding::class)->forBatch(999999)->toDecimal())->toBe('0.000');
 });
 
