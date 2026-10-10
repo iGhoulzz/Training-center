@@ -105,6 +105,9 @@ return [
         'PayrollRun' => 'Payroll run',
         'PayrollLine' => 'Payroll line',
         'PayrollLineAdjustment' => 'Payroll line adjustment',
+
+        // Phase 4 (P4-T03). A document in the public library.
+        'Article' => 'Article',
     ],
 
     // The composite shapes. Separator AND order are localisable — see

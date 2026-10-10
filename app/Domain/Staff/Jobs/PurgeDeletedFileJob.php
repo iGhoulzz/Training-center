@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Domain\Staff\Jobs;
 
 use App\Domain\Finance\Services\ReceiptFileOwnershipService;
+use App\Domain\Publications\Models\Article;
 use App\Domain\Staff\Actions\UpdateStaffPhotoAction;
 use App\Domain\Staff\Enums\PathKind;
 use App\Domain\Staff\Exceptions\FileStorageException;
@@ -218,6 +219,19 @@ class PurgeDeletedFileJob implements ShouldQueue
                 ->first(['id']);
 
             if ($certificate instanceof StaffCertificate) {
+                return true;
+            }
+
+            // A published or draft article's PDF is owned by its row too. Without
+            // this a stale provisional upload receipt would let the sweep unlink a
+            // live article's file.
+            $article = Article::on($connection)
+                ->where('disk', $pending->disk)
+                ->where('path', $pending->path)
+                ->lockForUpdate()
+                ->first(['id']);
+
+            if ($article instanceof Article) {
                 return true;
             }
 

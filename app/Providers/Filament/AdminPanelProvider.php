@@ -49,6 +49,10 @@ class AdminPanelProvider extends PanelProvider
                 in: app_path('Domain/Staff/Filament/Resources'),
                 for: 'App\Domain\Staff\Filament\Resources',
             )
+            ->discoverResources(
+                in: app_path('Domain/Publications/Filament/Resources'),
+                for: 'App\Domain\Publications\Filament\Resources',
+            )
             ->discoverPages(in: app_path('Filament/Pages'), for: 'App\Filament\Pages')
             ->discoverPages(in: app_path('Domain/Finance/Filament/Pages'), for: 'App\Domain\Finance\Filament\Pages')
             ->pages([

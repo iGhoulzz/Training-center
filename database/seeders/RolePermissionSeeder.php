@@ -105,6 +105,30 @@ class RolePermissionSeeder extends Seeder
         'delete_payroll_run',
     ];
 
+    /**
+     * The public library (P4-T03). Six abilities, and no delete counterpart.
+     *
+     * An article is created, edited, published and unpublished; a withdrawn one
+     * is unpublished and its row and file stay. delete_article and Shield's
+     * delete_any / force_delete / restore / replicate / reorder variants are
+     * deliberately not created, because ArticlePolicy refuses those
+     * unconditionally and seeding an ability nothing may honour invites somebody
+     * to wire it up later. ArticleResourceTest grants delete_article anyway and
+     * proves the refusal still stands.
+     *
+     * publish_article and unpublish_article are bare verbs of their own rather
+     * than a share of update_article: making a document public, and taking it
+     * down, are decisions separate from correcting its metadata.
+     */
+    private const ARTICLE = [
+        'view_any_article',
+        'view_article',
+        'create_article',
+        'update_article',
+        'publish_article',
+        'unpublish_article',
+    ];
+
     private const ACTIONS = ['view_any', 'view', 'create', 'update', 'delete'];
 
     private const READ_ACTIONS = ['view_any', 'view'];
@@ -214,6 +238,7 @@ class RolePermissionSeeder extends Seeder
             ...self::FINANCE_WRITE,
             ...self::CUSTOM,
             ...self::ROLE_EXTRA,
+            ...self::ARTICLE,
         ];
 
         foreach ($bare as $ability) {
@@ -276,6 +301,9 @@ class RolePermissionSeeder extends Seeder
             'issue_student_certificate',
             'replace_student_certificate',
             'revoke_student_certificate',
+            // Phase 4. An admin runs the library end to end: add, edit, publish
+            // and withdraw. Staff hold none of it.
+            ...self::ARTICLE,
         ]);
 
         $writer->syncRolePermissions(Role::findOrCreate('staff', 'web'), [

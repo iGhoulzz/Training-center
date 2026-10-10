@@ -176,6 +176,11 @@ const NON_FINANCE_CUSTOM = [
     'issue_portal_credential', 'reset_portal_credential',
     'view_any_student_certificate', 'view_student_certificate',
     'issue_student_certificate', 'replace_student_certificate', 'revoke_student_certificate',
+    /*
+     * Phase 4 (P4-T03). The public library is not a financial record.
+     */
+    'view_any_article', 'view_article', 'create_article', 'update_article',
+    'publish_article', 'unpublish_article',
 ];
 
 /** Every permission the seeder creates that has nothing to do with finance. */
