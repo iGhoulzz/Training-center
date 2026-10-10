@@ -25,10 +25,10 @@ class ArticleFactory extends Factory
         return [
             'title_en' => $title,
 
-            // Null by default, and deliberately so: the Arabic catalogue arrives
-            // in phase 4, so an untranslated article is the normal state. It is
-            // also the case title() falls back for, and a fixture that always
-            // translated would never exercise it.
+            // Null by default, and deliberately so: Arabic arrives with the public
+            // pages (T13) and the Arabic catalogues (T17), so an untranslated
+            // article is the normal state. It is also the case title() falls back
+            // for, and a fixture that always translated would never exercise it.
             'title_ar' => null,
 
             // Unique without leaving it to chance: the random suffix is what

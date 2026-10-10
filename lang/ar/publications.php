@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 /*
 |--------------------------------------------------------------------------
-| Arabic — deliberately empty until phase 4
+| Arabic — deliberately empty until P4-T17, the Arabic catalogues task
 |--------------------------------------------------------------------------
 |
 | Every key in lang/en/publications.php resolves through this file to its
@@ -19,7 +19,7 @@ declare(strict_types=1);
 | means untranslated, and stays visible as such. See lang/ar/enrollment.php
 | for the fuller reasoning, which applies unchanged here.
 |
-| Phase 4 fills this in. Add keys only with real Arabic; a partially filled
+| T17 fills this in. Add keys only with real Arabic; a partially filled
 | file is fine, because the fallback covers whatever is not here yet.
 */
 

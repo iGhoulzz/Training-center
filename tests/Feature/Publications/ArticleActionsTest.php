@@ -379,6 +379,34 @@ it('refuses a different slug for a published article and changes nothing', funct
         ->and($fresh->title_en)->toBe('Before');
 });
 
+it('refuses a different slug from a copy loaded before the article was published', function () {
+    $article = Article::factory()->create(['slug' => 'shared-link', 'title_en' => 'Before']);
+
+    // An editor opens the article while it is still a draft, so their copy
+    // believes the slug is free to change...
+    $editorsCopy = Article::query()->findOrFail($article->getKey());
+    expect($editorsCopy->isPublished())->toBeFalse();
+
+    // ...and someone else publishes it before they save.
+    app(PublishArticleAction::class)->execute(
+        ($this->actorWith)('publish_article'),
+        Article::query()->findOrFail($article->getKey()),
+    );
+
+    // The lock reads the row, not the editor's copy: the link is already out.
+    expect(fn () => app(UpdateArticleAction::class)->execute(
+        ($this->actorWith)('update_article'),
+        $editorsCopy,
+        ($this->metadata)(['title_en' => 'After', 'slug' => 'a-different-link']),
+    ))->toThrow(ValidationException::class);
+
+    $fresh = $article->fresh();
+
+    expect($fresh->slug)->toBe('shared-link')
+        ->and($fresh->title_en)->toBe('Before')
+        ->and($fresh->isPublished())->toBeTrue();
+});
+
 it('accepts the same slug for a published article, so a read-only form field is harmless', function () {
     $article = Article::factory()->published()->create(['slug' => 'shared-link']);
 
@@ -583,6 +611,25 @@ it('refuses to unpublish an article that is not published', function () {
     ))->toThrow(ValidationException::class);
 
     expect($article->fresh()->published_at)->toBeNull();
+});
+
+it('refuses the second of two withdrawals made from stale copies of the same article', function () {
+    $article = Article::factory()->published()->create();
+    $actor = ($this->actorWith)('unpublish_article');
+
+    // Two administrators open the same published article.
+    $first = Article::query()->findOrFail($article->getKey());
+    $second = Article::query()->findOrFail($article->getKey());
+
+    app(UnpublishArticleAction::class)->execute($actor, $first);
+
+    // $second still believes it is published. The Action re-reads under lock.
+    expect($second->isPublished())->toBeTrue();
+    expect(fn () => app(UnpublishArticleAction::class)->execute($actor, $second))
+        ->toThrow(ValidationException::class);
+
+    expect($article->fresh()->published_at)->toBeNull()
+        ->and(Activity::query()->where('subject_type', Article::class)->where('event', 'updated')->count())->toBe(1);
 });
 
 it('can republish a withdrawn article, with a new date', function () {

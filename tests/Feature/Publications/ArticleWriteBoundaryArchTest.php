@@ -34,9 +34,10 @@ use Illuminate\Support\Facades\File;
 | flagged `orderByDesc('download_count')` would make the library unbuildable. So
 | the detector looks for WRITE shapes only — an increment or decrement naming the
 | column, an assignment to the property or the array offset, a persisting call
-| whose arguments name it, and raw SQL that updates it — and each shape has
-| samples below, in both directions, so deleting a rule or over-broadening one
-| fails a test of its own.
+| whose arguments name it, and raw SQL that updates it. Calls are judged by their
+| whole argument list, so positional and named arguments are both covered, in any
+| order. Each shape has samples below, in both directions, so deleting a rule or
+| over-broadening one fails a test of its own.
 |
 | THE SCAN READS WHAT THE CODE DOES. Comments are stripped by the tokenizer first,
 | because this codebase's docblocks quote the very patterns being searched for —
@@ -63,7 +64,12 @@ const ARTICLE_COUNTER_WRITER = 'app/Domain/Publications/Support/ArticleDownloadC
  */
 const ARTICLE_PERSISTING_CALLS = 'update|updateQuietly|updateOrInsert|updateOrCreate|upsert|insert|insertOrIgnore'
     .'|insertGetId|insertUsing|create|createQuietly|forceCreate|forceCreateQuietly|firstOrCreate|createOrFirst'
-    .'|forceFill|fill|setAttribute|setRawAttributes';
+    .'|forceFill|fill|setAttribute|setRawAttributes'
+    // The increment family. Judged by the call's whole argument list rather than
+    // by the first argument, so `increment(column: 'download_count')` and
+    // `increment(amount: 2, column: 'download_count')` are caught as surely as
+    // `increment('download_count')`.
+    .'|increment|decrement|incrementEach|decrementEach|incrementQuietly|decrementQuietly';
 
 /** PHP source with comments and docblocks removed. Strings are KEPT: the column name is one. */
 function articleCodeWithoutComments(string $source): string
@@ -126,16 +132,7 @@ function articleDownloadCountWriteShapes(string $source): array
     $code = articleCodeWithoutComments($source);
     $found = [];
 
-    // 1. An increment or decrement naming the column: $a->increment('download_count'),
-    //    Article::query()->incrementEach(['download_count' => 1]).
-    preg_match_all(
-        '/\b(?:increment|decrement|incrementEach|decrementEach|incrementQuietly|decrementQuietly)\s*\(\s*(?:\[\s*)?[\'"]download_count[\'"]/',
-        $code,
-        $matches,
-    );
-    array_push($found, ...$matches[0]);
-
-    // 2. An assignment to the property: $a->download_count = 0, += 1, ++.
+    // 1. An assignment to the property: $a->download_count = 0, += 1, ++.
     //    `==`, `===`, `=>`, `>=` and `<=` are comparisons or array syntax, not writes.
     preg_match_all(
         '/(?:->|\?->)\s*download_count\s*(?:=(?![=>])|\+=|-=|\*=|\/=|\.=|\?\?=|\+\+|--)|(?:\+\+|--)\s*\$[\w$]+\s*(?:->|\?->)\s*download_count/',
@@ -144,7 +141,7 @@ function articleDownloadCountWriteShapes(string $source): array
     );
     array_push($found, ...$matches[0]);
 
-    // 3. An assignment to the array offset: $attributes['download_count'] = 0.
+    // 2. An assignment to the array offset: $attributes['download_count'] = 0.
     preg_match_all(
         '/\[\s*[\'"]download_count[\'"]\s*\]\s*(?:=(?![=>])|\+=|-=|\.=|\?\?=)/',
         $code,
@@ -152,9 +149,10 @@ function articleDownloadCountWriteShapes(string $source): array
     );
     array_push($found, ...$matches[0]);
 
-    // 4. A persisting call whose arguments name the column, wherever in them:
-    //    ->update(['download_count' => DB::raw('download_count + 1')), spread over
-    //    any number of lines.
+    // 3. A persisting or incrementing call whose arguments name the column, wherever
+    //    in them and however they are passed: ->update(['download_count' => ...]),
+    //    ->increment('download_count'), ->increment(column: 'download_count'),
+    //    spread over any number of lines.
     preg_match_all(
         '/(?:->|::)\s*(?:'.ARTICLE_PERSISTING_CALLS.')\s*\(/',
         $code,
@@ -170,7 +168,7 @@ function articleDownloadCountWriteShapes(string $source): array
         }
     }
 
-    // 5. Raw SQL that updates, inserts or replaces the column: the verb comes
+    // 4. Raw SQL that updates, inserts or replaces the column: the verb comes
     //    before the column in every statement that writes it, including
     //    `ON DUPLICATE KEY UPDATE download_count = ...`. A READ of it
     //    (`select download_count`, `order by download_count desc`) has no verb.
@@ -193,6 +191,12 @@ it('recognises every write shape it claims to', function (string $sample) {
     'increment, double quotes' => ['$article->increment("download_count");'],
     'increment, spaced' => ["\$a -> increment ( 'download_count' );"],
     'incrementEach' => ["Article::query()->incrementEach(['download_count' => 1]);"],
+    'increment, named argument' => ["Article::query()->whereKey(1)->increment(column: 'download_count');"],
+    'increment, named arguments out of order' => ["\$article->increment(amount: 2, column: 'download_count');"],
+    'decrement, named argument' => ['$article->decrement(column: "download_count");'],
+    'incrementEach, named argument' => ["Article::query()->incrementEach(columns: ['download_count' => 1]);"],
+    'update, named argument' => ["\$article->update(attributes: ['download_count' => 0]);"],
+    'setAttribute, named argument' => ["\$article->setAttribute(key: 'download_count', value: 4);"],
     'quiet increment' => ["\$article->incrementQuietly('download_count');"],
     'decrement' => ['$a->decrement("download_count", 3);'],
     'property assignment' => ['$article->download_count = 0;'],
@@ -236,6 +240,7 @@ it('does not mistake reads, sorts, display or prose for a write', function (stri
     'a docblock' => ["/** \$article->download_count = 0 is forbidden; use increment('download_count'). */\n\$x = 1;"],
     'a line comment' => ["// \$article->increment('download_count');\n\$x = 1;"],
     'another column' => ["\$article->increment('attempts');"],
+    'another column, named argument' => ["\$article->increment(column: 'attempts', amount: 2);"],
     'an update that does not name it' => ["\$article->update(['title_en' => 'x']);"],
     'an update elsewhere in the file' => ["\$a->update(['title_en' => 'x']);\n\$b = \$c->download_count;"],
     'a where on it' => ["Article::query()->where('download_count', '>', 5)->update(['topic' => 'x']);"],

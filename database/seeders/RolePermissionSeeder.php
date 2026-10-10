@@ -113,7 +113,7 @@ class RolePermissionSeeder extends Seeder
      * delete_any / force_delete / restore / replicate / reorder variants are
      * deliberately not created, because ArticlePolicy refuses those
      * unconditionally and seeding an ability nothing may honour invites somebody
-     * to wire it up later. ArticlePolicyTest grants delete_article anyway and
+     * to wire it up later. ArticleResourceTest grants delete_article anyway and
      * proves the refusal still stands.
      *
      * publish_article and unpublish_article are bare verbs of their own rather
