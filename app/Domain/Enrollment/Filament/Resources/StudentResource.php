@@ -10,6 +10,7 @@ use App\Domain\Enrollment\Filament\Resources\StudentResource\Pages\EditStudent;
 use App\Domain\Enrollment\Filament\Resources\StudentResource\Pages\ListStudents;
 use App\Domain\Enrollment\Filament\Resources\StudentResource\Pages\ViewStudent;
 use App\Domain\Enrollment\Models\Student;
+use App\Domain\Finance\Services\StudentBalanceQuery;
 use App\Domain\Staff\Actions\IssuePortalCredentialAction;
 use App\Domain\Staff\Actions\ResetPortalCredentialAction;
 use App\Domain\Staff\Exceptions\EmailAlreadyRegisteredException;
@@ -32,6 +33,7 @@ use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Database\Eloquent\Builder;
 
 /**
  * The student register (P1-T07).
@@ -161,6 +163,10 @@ class StudentResource extends Resource
     public static function table(Table $table): Table
     {
         return $table
+            // Staff without Finance read access must not receive balance data.
+            ->modifyQueryUsing(fn (Builder $query): Builder => auth()->user()?->can('view_any_charge')
+                ? app(StudentBalanceQuery::class)->withOutstanding($query)
+                : $query)
             ->columns([
                 TextColumn::make('student_code')
                     ->label(__('enrollment.student_code'))

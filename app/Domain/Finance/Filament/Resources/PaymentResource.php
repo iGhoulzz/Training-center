@@ -162,7 +162,7 @@ class PaymentResource extends Resource
 
     /**
      * Select the tender total alongside every payment column, and
-     * eager-load the student, the recording staff member, and each
+     * eager-load the tenders, student, the recording staff member, and each
      * allocation's bill — without the last one, "the bill it settled" is a
      * textbook N+1, one query per row.
      *
@@ -177,7 +177,7 @@ class PaymentResource extends Resource
     {
         return parent::getEloquentQuery()
             ->withSum('tenders', 'amount')
-            ->with(['student', 'recordedBy', 'allocations.charge']);
+            ->with(['tenders', 'student', 'recordedBy', 'allocations.charge']);
     }
 
     public static function table(Table $table): Table
