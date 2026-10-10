@@ -75,6 +75,17 @@ use Illuminate\Validation\ValidationException;
  */
 class ArticleResource extends Resource
 {
+    /**
+     * How many existing topics the form suggests, most-used first.
+     *
+     * Topic is free text, so its distinct values grow with the library. Every
+     * create and edit form sends its suggestions to Livewire, so the list is
+     * bounded in SQL, before any row is hydrated, not trimmed afterwards. That
+     * is the unbounded option list P3.5-T03 removed elsewhere, not reintroduced
+     * here.
+     */
+    public const TOPIC_SUGGESTION_LIMIT = 25;
+
     protected static ?string $model = Article::class;
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedDocumentText;
@@ -142,9 +153,13 @@ class ArticleResource extends Resource
                 ->maxLength(100)
                 // Offered so that "Safety" is typed the same way twice; a free
                 // text field alone would grow "Safety" and "safety " as two chips.
+                // The most-used topics only, bounded in SQL: see TOPIC_SUGGESTION_LIMIT.
                 ->datalist(fn (): array => Article::query()
-                    ->distinct()
+                    ->select('topic')
+                    ->groupBy('topic')
+                    ->orderByRaw('COUNT(*) DESC')
                     ->orderBy('topic')
+                    ->limit(self::TOPIC_SUGGESTION_LIMIT)
                     ->pluck('topic')
                     ->all()),
 

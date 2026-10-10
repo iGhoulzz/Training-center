@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Domain\Publications\Filament\Resources\ArticleResource;
 use App\Domain\Publications\Filament\Resources\ArticleResource\Pages\CreateArticle;
 use App\Domain\Publications\Filament\Resources\ArticleResource\Pages\EditArticle;
 use App\Domain\Publications\Filament\Resources\ArticleResource\Pages\ListArticles;
@@ -108,6 +109,49 @@ afterEach(function () {
 | Permissions as seeded and as the policy answers them
 |--------------------------------------------------------------------------
 */
+
+/*
+|--------------------------------------------------------------------------
+| Topic suggestions are bounded in SQL (Codex review of #89)
+|--------------------------------------------------------------------------
+*/
+
+it('suggests only the most-used topics, bounded in SQL rather than trimmed after loading', function () {
+    // Thirty distinct topics used once each, plus two used more often. Hand
+    // counts: "Welding" x3, "Ventilation" x2, then thirty singles. Both
+    // frequent topics sort AFTER every "Single NN" alphabetically, so only the
+    // usage-count ordering can bring them into the 25: count desc gives Welding,
+    // Ventilation, Single 01..23 and leaves Single 24..30 out.
+    foreach (range(1, 30) as $n) {
+        Article::factory()->create(['topic' => sprintf('Single %02d', $n)]);
+    }
+    Article::factory()->count(3)->create(['topic' => 'Welding']);
+    Article::factory()->count(2)->create(['topic' => 'Ventilation']);
+
+    expect(ArticleResource::TOPIC_SUGGESTION_LIMIT)->toBe(25);
+
+    $topicQueries = [];
+    DB::listen(function ($query) use (&$topicQueries): void {
+        if (str_contains($query->sql, 'group by `topic`')) {
+            $topicQueries[] = strtolower($query->sql);
+        }
+    });
+
+    $this->actingAs($this->admin);
+    $html = Livewire::test(CreateArticle::class)->html();
+
+    expect($topicQueries)->not->toBeEmpty()
+        ->and($topicQueries[0])->toContain('limit 25');
+
+    preg_match_all('/<option value="([^"]+)"/', $html, $options);
+    $offered = $options[1];
+
+    expect($offered)->toContain('Welding', 'Ventilation')
+        ->and($offered)->toContain('Single 01')
+        ->and($offered)->not->toContain('Single 24', 'Single 30')
+        ->and(count(array_filter($offered, fn (string $value): bool => str_starts_with($value, 'Single ')
+            || in_array($value, ['Welding', 'Ventilation'], true))))->toBe(25);
+});
 
 it('seeds exactly the six article permissions and never a delete one', function () {
     $seeded = Permission::query()
