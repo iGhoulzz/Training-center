@@ -7,6 +7,7 @@ use App\Domain\Publications\Actions\PublishArticleAction;
 use App\Domain\Publications\Actions\UnpublishArticleAction;
 use App\Domain\Publications\Actions\UpdateArticleAction;
 use App\Domain\Publications\Models\Article;
+use App\Domain\Staff\Actions\UploadStaffCertificateAction;
 use App\Domain\Staff\Services\FileLifecycleService;
 use App\Models\User;
 use Carbon\Carbon;
@@ -241,6 +242,29 @@ it('accepts nothing but a real PDF, judged by its bytes and not its name', funct
     'a PHP script wearing a .pdf name' => ['paper.pdf', '<?php echo "hello";'],
     'a PNG image' => ['cover.png', makePngBytes()],
 ]);
+
+it('accepts a PDF of exactly the size limit and refuses one a byte over it', function () {
+    // The limit is the one staff certificate uploads have: 10 MB, written out here
+    // by hand as 10240 kilobytes. The bytes are a real PDF header followed by
+    // padding, so the type check passes and only the size can refuse. Validation
+    // is exercised directly: it runs before anything is stored, and storing two
+    // 10 MB files would only slow the suite down.
+    expect(CreateArticleAction::MAX_KILOBYTES)->toBe(10240)
+        ->and(CreateArticleAction::MAX_KILOBYTES)->toBe(UploadStaffCertificateAction::MAX_KILOBYTES);
+
+    $header = '%PDF-1.4
+1 0 obj<</Type/Catalog>>endobj
+trailer<</Root 1 0 R>>
+%%EOF
+';
+    $limit = 10240 * 1024;
+
+    CreateArticleAction::validateFile(uploadWithBytes('big.pdf', str_pad($header, $limit, ' ')));
+
+    expect(fn () => CreateArticleAction::validateFile(
+        uploadWithBytes('too-big.pdf', str_pad($header, $limit + 1, ' ')),
+    ))->toThrow(ValidationException::class);
+});
 
 /*
 |--------------------------------------------------------------------------
