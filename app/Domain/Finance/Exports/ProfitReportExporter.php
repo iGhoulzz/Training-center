@@ -10,7 +10,7 @@ final class ProfitReportExporter extends ReportExporter
 {
     protected static ?string $model = User::class;
 
-    protected const COLUMNS = ['revenue', 'wage_cost', 'profit'];
+    protected const COLUMNS = ['revenue', 'wage_cost', 'expenses', 'profit'];
 
     public static function kind(): ReportKind
     {

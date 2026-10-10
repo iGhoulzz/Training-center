@@ -18,6 +18,19 @@ final class ProfitReportPage extends ReportPage
         return ReportKind::Profit;
     }
 
+    /**
+     * Profit states what it means where it is read (spec section 8).
+     *
+     * The definition gained a term when expenses joined it, so the figure's
+     * meaning changed between months without the number saying so. Shown under
+     * the title, from a translation key, and nowhere else on this page: the
+     * shared report shell and view are untouched.
+     */
+    public function getSubheading(): string
+    {
+        return (string) __('reports.profit_definition');
+    }
+
     protected static function exporter(): string
     {
         return ProfitReportExporter::class;

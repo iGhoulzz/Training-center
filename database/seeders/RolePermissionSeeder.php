@@ -129,6 +129,37 @@ class RolePermissionSeeder extends Seeder
         'unpublish_article',
     ];
 
+    /**
+     * Expense categories and expenses (P4-T04). Eight abilities, and no delete
+     * or edit counterpart for either model.
+     *
+     * A category is deactivated (an update), never deleted. An expense is
+     * recorded and, if wrong, reversed — never edited, never deleted. So
+     * delete_expense_category, update_expense, delete_expense and Shield's
+     * delete_any / force_delete / restore / replicate / reorder variants are
+     * deliberately not created: both policies refuse those unconditionally, and
+     * seeding an ability nothing may honour invites somebody to wire it up later.
+     * ExpenseResourceTest grants delete_expense, update_expense and
+     * delete_expense_category anyway and proves each refusal still stands.
+     *
+     * These are FINANCE abilities: they record or read money paid out, and
+     * FinancePermissionSeedingTest classifies them as such.
+     *
+     * reverse_expense is a bare verb of its own and is super admin's alone,
+     * mirroring reverse_payment: the restricted capability that keeps the audit
+     * trail meaningful.
+     */
+    private const EXPENSE = [
+        'view_any_expense_category',
+        'view_expense_category',
+        'create_expense_category',
+        'update_expense_category',
+        'view_any_expense',
+        'view_expense',
+        'create_expense',
+        'reverse_expense',
+    ];
+
     private const ACTIONS = ['view_any', 'view', 'create', 'update', 'delete'];
 
     private const READ_ACTIONS = ['view_any', 'view'];
@@ -239,6 +270,7 @@ class RolePermissionSeeder extends Seeder
             ...self::CUSTOM,
             ...self::ROLE_EXTRA,
             ...self::ARTICLE,
+            ...self::EXPENSE,
         ];
 
         foreach ($bare as $ability) {
@@ -304,6 +336,18 @@ class RolePermissionSeeder extends Seeder
             // Phase 4. An admin runs the library end to end: add, edit, publish
             // and withdraw. Staff hold none of it.
             ...self::ARTICLE,
+            // Phase 4. An admin maintains the category list and records money
+            // paid out, but undoes nothing: reverse_expense is deliberately
+            // absent, super admin only, and its denial is a negative test. Listed
+            // by name rather than derived from EXPENSE, so an ability added to
+            // that list later is not granted to admin by default.
+            'view_any_expense_category',
+            'view_expense_category',
+            'create_expense_category',
+            'update_expense_category',
+            'view_any_expense',
+            'view_expense',
+            'create_expense',
         ]);
 
         $writer->syncRolePermissions(Role::findOrCreate('staff', 'web'), [

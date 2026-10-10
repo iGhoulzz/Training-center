@@ -199,11 +199,12 @@ final readonly class ReportDataBuilder
     {
         $totals = $this->profit->forMonths($this->monthRange($options));
 
-        return new ReportDataset($this->columns('profit', ['revenue', 'wage_cost', 'profit']), [[
+        return new ReportDataset($this->columns('profit', ['revenue', 'wage_cost', 'expenses', 'profit']), [[
             'carrier_id' => $requester->getKey(),
             'cells' => [
                 'revenue' => $totals['revenue']->toDecimal(),
                 'wage_cost' => $totals['wageCost']->toDecimal(),
+                'expenses' => $totals['expenses']->toDecimal(),
                 'profit' => $totals['profit']->toDecimal(),
             ],
         ]]);

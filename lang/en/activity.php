@@ -108,6 +108,11 @@ return [
 
         // Phase 4 (P4-T03). A document in the public library.
         'Article' => 'Article',
+
+        // Phase 4 (P4-T04). Money paid out other than wages, and the managed list
+        // it is recorded against.
+        'Expense' => 'Expense',
+        'ExpenseCategory' => 'Expense category',
     ],
 
     // The composite shapes. Separator AND order are localisable — see
