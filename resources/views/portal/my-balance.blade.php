@@ -4,6 +4,8 @@
             <thead class="bg-gray-50 dark:bg-white/5">
                 <tr>
                     <th scope="col" class="px-4 py-3 text-start font-semibold text-gray-950 dark:text-white">{{ __('portal.balance_enrollment') }}</th>
+                    <th scope="col" class="px-4 py-3 text-start font-semibold text-gray-950 dark:text-white">{{ __('portal.enrollments_course') }}</th>
+                    <th scope="col" class="px-4 py-3 text-start font-semibold text-gray-950 dark:text-white">{{ __('portal.enrollments_batch') }}</th>
                     <th scope="col" class="px-4 py-3 text-start font-semibold text-gray-950 dark:text-white">{{ __('portal.balance_outstanding') }}</th>
                 </tr>
             </thead>
@@ -11,17 +13,19 @@
                 @forelse ($rows as $row)
                     <tr>
                         <td class="px-4 py-3 text-gray-700 dark:text-gray-200">{{ __('portal.balance_enrollment_row', ['id' => $row['enrollment_id']]) }}</td>
+                        <td class="px-4 py-3 text-gray-700 dark:text-gray-200">{{ $row['course'] }}</td>
+                        <td class="px-4 py-3 text-gray-700 dark:text-gray-200"><bdi>{{ $row['batch_code'] }}</bdi></td>
                         <td class="px-4 py-3 text-gray-700 dark:text-gray-200">{{ __('portal.amount_lyd', ['amount' => $row['outstanding']]) }}</td>
                     </tr>
                 @empty
                     <tr>
-                        <td colspan="2" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">{{ __('portal.no_enrollments') }}</td>
+                        <td colspan="4" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">{{ __('portal.no_enrollments') }}</td>
                     </tr>
                 @endforelse
             </tbody>
             <tfoot class="bg-gray-50 dark:bg-white/5">
                 <tr>
-                    <th scope="row" class="px-4 py-3 text-start font-semibold text-gray-950 dark:text-white">{{ __('portal.balance_total') }}</th>
+                    <th scope="row" colspan="3" class="px-4 py-3 text-start font-semibold text-gray-950 dark:text-white">{{ __('portal.balance_total') }}</th>
                     <td class="px-4 py-3 font-semibold text-gray-950 dark:text-white">{{ __('portal.amount_lyd', ['amount' => $total]) }}</td>
                 </tr>
             </tfoot>

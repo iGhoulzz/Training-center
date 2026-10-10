@@ -57,6 +57,11 @@ use InvalidArgumentException;
  * answer "chargeId === null, outstanding zero" for an unbilled enrolment
  * rather than silently dropping the row.
  *
+ * P4-T05 adds catalogue labels through joinStudentCatalogueTo(), following the
+ * preserved enrolment's non-null foreign keys. Billed and unbilled rows both
+ * retain their course names and batch codes in the same statement; the page
+ * selects its language from the two names rather than this query choosing one.
+ *
  * REUSES ChargeBalance, DOES NOT RESTATE ITS ARITHMETIC.
  * ---------------------------------------------------------------------------
  * The outstanding figure is `ChargeBalance::outstandingSql()` — the
@@ -115,7 +120,7 @@ final class StudentBalanceQuery
      */
     public function forStudent(int $studentId): StudentBalanceSummary
     {
-        $rows = $this->enrollments->scopeToStudent(
+        $query = $this->enrollments->scopeToStudent(
             DB::table('charges'),
             'charges.enrollment_id',
             $studentId,
@@ -124,9 +129,11 @@ final class StudentBalanceQuery
                 'enrollments.id as enrollment_id',
                 'charges.id as charge_id',
             ])
-            ->selectRaw(ChargeBalance::outstandingSql().' as '.ChargeBalance::OUTSTANDING_ALIAS)
-            ->orderBy('enrollments.id')
-            ->get();
+            ->selectRaw(ChargeBalance::outstandingSql().' as '.ChargeBalance::OUTSTANDING_ALIAS);
+
+        $this->enrollments->joinStudentCatalogueTo($query);
+
+        $rows = $query->orderBy('enrollments.id')->get();
 
         $enrollments = [];
         $total = Money::zero();
@@ -147,6 +154,10 @@ final class StudentBalanceQuery
                 enrollmentId: (int) $row->enrollment_id,
                 chargeId: $chargeId,
                 outstanding: $outstanding,
+                courseNameEn: (string) $row->{EnrollmentQueryService::COURSE_NAME_EN},
+                courseNameAr: $row->{EnrollmentQueryService::COURSE_NAME_AR} === null
+                    ? null : (string) $row->{EnrollmentQueryService::COURSE_NAME_AR},
+                batchCode: (string) $row->{EnrollmentQueryService::BATCH_CODE},
             );
 
             $enrollments[$balance->enrollmentId] = $balance;

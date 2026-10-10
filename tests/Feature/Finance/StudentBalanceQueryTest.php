@@ -7,6 +7,7 @@ use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Course;
 use App\Domain\Enrollment\Models\Enrollment;
 use App\Domain\Enrollment\Models\Student;
+use App\Domain\Enrollment\Services\EnrollmentQueryService;
 use App\Domain\Finance\Models\Charge;
 use App\Domain\Finance\Models\Payment;
 use App\Domain\Finance\Models\PaymentAllocation;
@@ -36,6 +37,47 @@ use Illuminate\Support\Facades\DB;
 | arithmetic instead of reusing it.
 */
 uses(RefreshDatabase::class);
+
+it('localizes projected course names without SQL and preserves their keys', function (string $locale, array $expected) {
+    app()->setLocale($locale);
+    $names = [
+        7 => ['name_en' => 'Translated', 'name_ar' => 'اسم عربي'],
+        19 => ['name_en' => 'Null translation', 'name_ar' => null],
+        27 => ['name_en' => 'Empty translation', 'name_ar' => ''],
+        41 => ['name_en' => 'Blank translation', 'name_ar' => '  '],
+    ];
+    DB::enableQueryLog();
+    DB::flushQueryLog();
+    $localized = app(EnrollmentQueryService::class)->localizedCourseNames($names);
+    $queries = DB::getQueryLog();
+    DB::disableQueryLog();
+
+    expect($localized)->toBe($expected)->and($queries)->toBeEmpty();
+})->with([
+    'English' => ['en', [7 => 'Translated', 19 => 'Null translation', 27 => 'Empty translation', 41 => 'Blank translation']],
+    'Arabic' => ['ar', [7 => 'اسم عربي', 19 => 'Null translation', 27 => 'Empty translation', 41 => 'Blank translation']],
+]);
+
+it('returns bilingual course names and batch codes for billed and unbilled enrolments only for their owner', function () {
+    $student = Student::factory()->create();
+    $course = Course::factory()->create(['name_en' => 'Workplace English', 'name_ar' => 'الإنجليزية المهنية']);
+    $billed = Enrollment::factory()->for($student)->for(Batch::factory()->for($course)->state(['code' => 'BILLED-2026']))->create();
+    Charge::factory()->for($billed)->create(['amount' => '12.345']);
+    $unbilled = Enrollment::factory()->for($student)->for(Batch::factory()->for($course)->state(['code' => 'UNBILLED-2026']))->create();
+    Enrollment::factory()->create();
+
+    $summary = app(StudentBalanceQuery::class)->forStudent($student->id);
+    expect(array_keys($summary->enrollments))->toBe([$billed->id, $unbilled->id]);
+    foreach ($summary->enrollments as $row) {
+        expect($row->courseNameEn)->toBe('Workplace English')
+            ->and($row->courseNameAr)->toBe('الإنجليزية المهنية');
+    }
+    expect($summary->enrollments[$billed->id]->batchCode)->toBe('BILLED-2026')
+        ->and($summary->enrollments[$billed->id]->outstanding->toDecimal())->toBe('12.345')
+        ->and($summary->enrollments[$unbilled->id]->batchCode)->toBe('UNBILLED-2026')
+        ->and($summary->enrollments[$unbilled->id]->chargeId)->toBeNull()
+        ->and($summary->enrollments[$unbilled->id]->outstanding->toDecimal())->toBe('0.000');
+});
 
 beforeEach(function () {
     $this->query = app(StudentBalanceQuery::class);
