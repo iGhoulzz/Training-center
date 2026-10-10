@@ -23,6 +23,7 @@ use App\Domain\Enrollment\Support\EnrollmentUpdateRule;
 use App\Domain\Finance\Actions\EnrollAndBillAction;
 use App\Domain\Finance\Data\EnrollAndBillData;
 use App\Domain\Finance\Exceptions\ChargeAlreadyCommittedException;
+use App\Domain\Finance\Services\StudentBalanceQuery;
 use App\Models\User;
 use Filament\Actions\Action;
 use Filament\Actions\BulkAction;
@@ -36,6 +37,7 @@ use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Support\Facades\Gate;
 
 /*
@@ -140,7 +142,13 @@ class EnrollmentsRelationManager extends RelationManager
             ->recordTitleAttribute('id')
             // Eager-load the student, or every row queries for its own name. The
             // relation is withTrashed(), so departed students still resolve.
-            ->modifyQueryUsing(fn (Builder $query): Builder => $query->with('student'))
+            ->modifyQueryUsing(fn (Builder $query): Builder => $query->with([
+                'student' => function (Relation $student): void {
+                    if (auth()->user()?->can('view_any_charge')) {
+                        app(StudentBalanceQuery::class)->withOutstanding($student->getQuery());
+                    }
+                },
+            ]))
             ->defaultSort('enrolled_at', 'desc')
             ->columns([
                 /*
