@@ -13,6 +13,7 @@ use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Contracts\Filesystem\Filesystem;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
@@ -279,6 +280,18 @@ it('writes no row when the disk refuses the first file of a new article', functi
 
     expect(Article::count())->toBe(0)
         ->and(PendingFileDeletion::count())->toBe(0);
+});
+
+it('refuses two articles that point at one stored file', function () {
+    // A file belongs to exactly one article: replacing or withdrawing one must
+    // never be able to reach another's PDF. The unique index is what says so, and
+    // it is also what lets the ownership check find a row without scanning.
+    Article::factory()->create(['path' => 'publications/shared.pdf']);
+
+    expect(fn () => Article::factory()->create(['path' => 'publications/shared.pdf']))
+        ->toThrow(UniqueConstraintViolationException::class);
+
+    expect(Article::count())->toBe(1);
 });
 
 /*

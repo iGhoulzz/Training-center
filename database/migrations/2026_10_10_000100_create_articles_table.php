@@ -57,7 +57,13 @@ return new class extends Migration
             // default: a row that does not say where its file lives is a bug
             // worth failing on, not a value worth guessing.
             $table->string('disk', 30);
-            $table->string('path', 512);
+
+            // Unique because a stored file belongs to exactly one article:
+            // replacing or withdrawing one must never reach another's PDF. It is
+            // also what lets the file lifecycle's ownership check find the owning
+            // row through the index rather than by scanning, and locking, the
+            // whole table.
+            $table->string('path', 512)->unique();
 
             // An approximate anonymous counter, written by exactly one class
             // (ArticleDownloadCounter) through a single conditional increment.
