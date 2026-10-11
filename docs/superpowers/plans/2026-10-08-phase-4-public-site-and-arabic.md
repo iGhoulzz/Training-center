@@ -598,6 +598,14 @@ nothing. So the page lists spreadsheet exports and says so. The design's PDF
 rows and its Retry button are therefore not built here. A failed export is run
 again from its report page.
 
+**An export still unfinished an hour after it was requested reads Failed.**
+When preparation fails, from a refused requester or any other fault, Filament's
+chain stops before `ExportCompletion`. So `completed_at` is never set and no
+notification is sent (traced and probed in the pre-push review). A report export
+takes seconds and Horizon's job timeout is 60 s, so an hour is far past any honest
+queue delay. If a stalled worker does finish such an export later, its row turns
+Ready.
+
 **Done when**
 
 A user sees only their own rows · a ready row's link is refused for a user whose
