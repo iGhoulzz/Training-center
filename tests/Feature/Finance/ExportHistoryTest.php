@@ -401,6 +401,33 @@ it('calls a completed export failed when its rows did not all succeed or were no
         ->assertTableActionHidden('download', $unprocessed);
 });
 
+/*
+ * An export whose preparation failed never reaches ExportCompletion, so its
+ * completed_at stays null for good and nothing is ever sent. The only thing that
+ * tells it from one still in the queue is its age. The cut-off is STRICTLY more
+ * than an hour: exactly sixty minutes is still queued.
+ *
+ * Time is frozen to the second, so "sixty minutes ago" is sixty minutes to the
+ * second when the page renders and not a fraction of a second either side of it.
+ */
+it('reads an unfinished export as queued up to an hour old and failed beyond it, with no link either way', function (int $minutesOld, string $label): void {
+    $this->freezeSecond();
+
+    $owner = ($this->owner)();
+    $export = ($this->makeExport)($owner, 'queued', ['created_at' => now()->subMinutes($minutesOld)]);
+
+    Livewire::actingAs($owner)
+        ->test(ExportHistory::class)
+        ->assertTableColumnFormattedStateSet('status', $label, $export)
+        ->assertTableActionHidden('download', $export);
+})->with([
+    'just requested' => [0, 'Queued'],
+    '59 minutes old' => [59, 'Queued'],
+    'exactly 60 minutes old' => [60, 'Queued'],
+    '61 minutes old' => [61, 'Failed'],
+    'two days old' => [2 * 24 * 60, 'Failed'],
+]);
+
 it('calls a completed export of something other than a report unavailable, with no link', function (): void {
     $owner = ($this->owner)();
 
@@ -570,6 +597,13 @@ it('marks as ready exactly the exports the download route serves', function (): 
     $exports['failed with files'] = ($this->makeExport)($owner, 'ready', ['processed_rows' => 3, 'successful_rows' => 2]);
     $exports['processed short'] = ($this->makeExport)($owner, 'ready', ['processed_rows' => 2, 'successful_rows' => 3]);
     $exports['foreign exporter'] = ($this->makeExport)($owner, 'ready', ['exporter' => 'App\\Domain\\Elsewhere\\RetiredExporter']);
+    // An export still running: every row done and the directory already on disk,
+    // but not yet marked complete. The route refuses it, so the list must not link.
+    $exports['in flight'] = ($this->makeExport)($owner, 'ready', ['completed_at' => null]);
+    // Unfinished and requested inside the hour, and unfinished and requested beyond
+    // it: queued and failed on the list, and the route refuses both.
+    $exports['unfinished 59 minutes'] = ($this->makeExport)($owner, 'queued', ['created_at' => now()->subMinutes(59)]);
+    $exports['unfinished 61 minutes'] = ($this->makeExport)($owner, 'queued', ['created_at' => now()->subMinutes(61)]);
 
     $component = Livewire::actingAs($owner)->test(ExportHistory::class);
 
@@ -591,6 +625,9 @@ it('marks as ready exactly the exports the download route serves', function (): 
         'failed with files' => false,
         'processed short' => false,
         'foreign exporter' => false,
+        'in flight' => false,
+        'unfinished 59 minutes' => false,
+        'unfinished 61 minutes' => false,
     ])->and($served)->toBe([
         'queued' => 404,
         'failed' => 404,
@@ -599,6 +636,9 @@ it('marks as ready exactly the exports the download route serves', function (): 
         'failed with files' => 404,
         'processed short' => 404,
         'foreign exporter' => 404,
+        'in flight' => 404,
+        'unfinished 59 minutes' => 404,
+        'unfinished 61 minutes' => 404,
     ]);
 });
 

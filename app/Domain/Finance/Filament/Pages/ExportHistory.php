@@ -9,6 +9,7 @@ use App\Domain\Finance\Exports\ReportExporter;
 use App\Models\User;
 use App\Support\CentreCalendar;
 use BackedEnum;
+use Carbon\CarbonInterface;
 use Filament\Actions\Action;
 use Filament\Actions\Exports\Models\Export;
 use Filament\Facades\Filament;
@@ -44,8 +45,10 @@ use Illuminate\Support\Facades\URL;
  *
  * EXACTLY FOUR STATUSES, WORKED OUT ONCE PER ROW
  * ----------------------------------------------
- *   queued       `completed_at` is null.
- *   failed       completed, but not every row was processed and succeeded.
+ *   queued       `completed_at` is null and the request is at most an hour old.
+ *   failed       either still unfinished more than an hour after it was requested
+ *                (a failed preparation never completes the row), or completed but
+ *                not every row was processed and succeeded.
  *   ready        the download route would serve it (a report exporter, completed,
  *                every row processed and succeeded) AND its directory still
  *                exists on its disk.
@@ -90,6 +93,9 @@ final class ExportHistory extends Page implements HasTable
     private const STATUS_READY = 'ready';
 
     private const STATUS_UNAVAILABLE = 'unavailable';
+
+    /** A report export takes seconds and a job times out at 60 s, so an hour is far past any honest queue delay. */
+    private const UNFINISHED_IS_FAILED_AFTER_MINUTES = 60;
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedArrowDownTray;
 
@@ -197,7 +203,12 @@ final class ExportHistory extends Page implements HasTable
     private function resolveStatus(Export $export): string
     {
         if ($export->completed_at === null) {
-            return self::STATUS_QUEUED;
+            $requestedAt = $export->created_at;
+
+            return $requestedAt instanceof CarbonInterface
+                && $requestedAt->lt(now()->subMinutes(self::UNFINISHED_IS_FAILED_AFTER_MINUTES))
+                    ? self::STATUS_FAILED
+                    : self::STATUS_QUEUED;
         }
 
         $everyRowSucceeded = $export->processed_rows === $export->total_rows
