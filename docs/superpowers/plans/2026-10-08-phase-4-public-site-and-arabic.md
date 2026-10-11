@@ -550,7 +550,8 @@ the measurement is recorded in the PR, not estimated · `composer verify` green.
   `discoverPages` line, so the panel provider is not touched
 - `resources/views/filament/finance/finance-hub.blade.php`
 - `lang/en/finance_hub.php` (renamed from the planned finance-hub.php so LocalizationTest's key
-  scan covers it)
+  scan covers it), and `lang/ar/finance_hub.php` as an empty placeholder (the
+  `lang/ar/*` seam row allows it)
 - `tests/Feature/Finance/FinanceHubTest.php`
 
 **Does**

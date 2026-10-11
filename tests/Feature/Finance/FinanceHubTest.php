@@ -21,6 +21,8 @@ use App\Domain\Finance\Filament\Resources\StaffCompensationResource;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Livewire\Livewire;
+use Spatie\Permission\PermissionRegistrar;
 
 /**
  * The finance hub: a landing page tiling the finance screens and reports that
@@ -476,4 +478,23 @@ it('keeps tile titles out of the catalogue, so a copy cannot drift from the dest
     foreach (array_keys(FINANCE_HUB_TILES) as $id) {
         expect(trans("finance_hub.tiles.{$id}.label"))->toBe("finance_hub.tiles.{$id}.label");
     }
+});
+
+/*
+ * Through Livewire, not only the initial GET (pre-push review, 2026-10-11).
+ * Filament re-checks canAccess() when a page component hydrates. Nothing in
+ * this file exercised that path, so a regression there would have passed.
+ */
+it('refuses the hub through Livewire on mount and on a later update once access is lost', function () {
+    $this->actingAs(($this->actorWith)('access_admin_panel'));
+    Livewire::test(FinanceHub::class)->assertForbidden();
+
+    $actor = ($this->actorWith)('access_admin_panel', 'view_any_charge');
+    $this->actingAs($actor);
+    $component = Livewire::test(FinanceHub::class)->assertSuccessful();
+
+    $actor->revokePermissionTo('view_any_charge');
+    app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+    $component->call('$refresh')->assertForbidden();
 });
