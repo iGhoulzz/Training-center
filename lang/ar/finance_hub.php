@@ -7,7 +7,7 @@ declare(strict_types=1);
 | Arabic — deliberately empty until P4-T17, the Arabic catalogues task
 |--------------------------------------------------------------------------
 |
-| Every key in lang/en/finance-hub.php resolves through this file to its
+| Every key in lang/en/finance_hub.php resolves through this file to its
 | English value: Laravel's translator tries the active locale, then
 | app.fallback_locale. An empty array is therefore a working state, not a
 | broken one.

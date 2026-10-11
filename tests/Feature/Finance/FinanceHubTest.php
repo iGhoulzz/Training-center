@@ -32,10 +32,16 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
  * ability the hub (or a destination) checked and prove nothing about which one.
  *
  * EVERY EXPECTED VALUE IS A LITERAL written in the table below: the destination
- * classes, the permission each one needs, the group it sits in, its label and its
- * address. Nothing is read back from the hub's own tile list, so a tile that was
- * deleted, added, regrouped, relabelled or pointed at the wrong page fails here
- * instead of agreeing with itself.
+ * classes, the permission each one needs, the group it sits in and its address.
+ * Nothing is read back from the hub's own tile list, so a tile that was deleted,
+ * added, regrouped or pointed at the wrong page fails here instead of agreeing
+ * with itself.
+ *
+ * A TILE'S TITLE IS THE ONE VALUE NOT WRITTEN OUT HERE, on purpose: the hub's
+ * rule is that a title is the destination's own navigation label, so the test
+ * asks the destination the same question rather than keeping a second copy that
+ * a rename would leave behind. What stops that agreeing with itself is that the
+ * destination is named in the table by hand, not taken from the hub.
  */
 uses(RefreshDatabase::class);
 
@@ -49,105 +55,90 @@ const FINANCE_HUB_TILES = [
         'destination' => ChargeResource::class,
         'permission' => 'view_any_charge',
         'group' => 'money_in',
-        'label' => 'Charges',
         'path' => '/admin/charges',
     ],
     'payments' => [
         'destination' => PaymentResource::class,
         'permission' => 'view_any_payment',
         'group' => 'money_in',
-        'label' => 'Payments',
         'path' => '/admin/payments',
     ],
     'discounts' => [
         'destination' => DiscountResource::class,
         'permission' => 'view_any_discount',
         'group' => 'money_in',
-        'label' => 'Discounts',
         'path' => '/admin/discounts',
     ],
     'enroll_and_collect' => [
         'destination' => EnrollAndCollect::class,
         'permission' => 'create_enrollment',
         'group' => 'money_in',
-        'label' => 'Enrol & collect',
         'path' => '/admin/enroll-and-collect',
     ],
     'payroll_runs' => [
         'destination' => PayrollRunResource::class,
         'permission' => 'view_any_payroll_run',
         'group' => 'money_out',
-        'label' => 'Payroll runs',
         'path' => '/admin/payroll-runs',
     ],
     'staff_compensation' => [
         'destination' => StaffCompensationResource::class,
         'permission' => 'view_any_staff_compensation',
         'group' => 'money_out',
-        'label' => 'Staff compensation',
         'path' => '/admin/staff-compensations',
     ],
     'expenses' => [
         'destination' => ExpenseResource::class,
         'permission' => 'view_any_expense',
         'group' => 'money_out',
-        'label' => 'Expenses',
         'path' => '/admin/expenses',
     ],
     'expense_categories' => [
         'destination' => ExpenseCategoryResource::class,
         'permission' => 'view_any_expense_category',
         'group' => 'money_out',
-        'label' => 'Expense categories',
         'path' => '/admin/expense-categories',
     ],
     'revenue_report' => [
         'destination' => RevenueReportPage::class,
         'permission' => 'view_financial_report',
         'group' => 'reports',
-        'label' => 'Revenue',
         'path' => '/admin/reports/revenue',
     ],
     'outstanding_aged_report' => [
         'destination' => OutstandingAgedReportPage::class,
         'permission' => 'view_financial_report',
         'group' => 'reports',
-        'label' => 'Outstanding balances',
         'path' => '/admin/reports/outstanding-aged',
     ],
     'payment_method_report' => [
         'destination' => PaymentMethodReportPage::class,
         'permission' => 'view_financial_report',
         'group' => 'reports',
-        'label' => 'Payment methods',
         'path' => '/admin/reports/payment-methods',
     ],
     'daily_tender_report' => [
         'destination' => DailyTenderReportPage::class,
         'permission' => 'view_financial_report',
         'group' => 'reports',
-        'label' => 'Daily tender',
         'path' => '/admin/reports/daily-tender',
     ],
     'wage_cost_report' => [
         'destination' => WageCostReportPage::class,
         'permission' => 'view_financial_report',
         'group' => 'reports',
-        'label' => 'Wage cost',
         'path' => '/admin/reports/wage-cost',
     ],
     'profit_report' => [
         'destination' => ProfitReportPage::class,
         'permission' => 'view_financial_report',
         'group' => 'reports',
-        'label' => 'Profit',
         'path' => '/admin/reports/profit',
     ],
     'student_payment_history_report' => [
         'destination' => StudentPaymentHistoryPage::class,
         'permission' => 'view_financial_report',
         'group' => 'reports',
-        'label' => 'Student payments',
         'path' => '/admin/reports/student-payment-history',
     ],
 ];
@@ -281,7 +272,7 @@ it('shows a tile to an actor holding exactly its destination permission', functi
     // destination's rule and showed to everyone would be caught here too.
     expect(array_keys($rendered))->toEqualCanonicalizing(($this->tileIdsNeeding)($tile['permission']))
         ->and($rendered)->toHaveKey($id)
-        ->and($rendered[$id]['label'])->toBe($tile['label'])
+        ->and($rendered[$id]['label'])->toBe($tile['destination']::getNavigationLabel())
         ->and($rendered[$id]['group'])->toBe($tile['group']);
 })->with('finance hub tiles');
 
@@ -404,29 +395,67 @@ it('links each tile to an address that opens', function (string $id, array $tile
 
 /*
 |--------------------------------------------------------------------------
+| Titles
+|--------------------------------------------------------------------------
+|
+| A tile's title is its destination's own navigation label; the per-tile test
+| above asserts every one against `getNavigationLabel()`. These two pin the end
+| points by hand, so that "the label equals the label" cannot be satisfied by
+| two empty strings, or by a destination whose label was swapped for another's.
+*/
+
+it('titles the enrol and collect tile exactly as that page titles itself', function () {
+    $actor = ($this->actorWith)('access_admin_panel', 'create_enrollment');
+
+    $rendered = ($this->renderedTiles)($actor);
+
+    expect($rendered['enroll_and_collect']['label'])->toBe('Enrol & Collect');
+});
+
+it('titles a tile with a non-empty label for every destination', function (string $id, array $tile) {
+    expect(trim($tile['destination']::getNavigationLabel()))->not->toBe('');
+})->with('finance hub tiles');
+
+/*
+|--------------------------------------------------------------------------
+| Navigation
+|--------------------------------------------------------------------------
+|
+| Navigation groups belong to the theme and shell task (P4-T16a), so the hub
+| joins none and is placed by its sort alone.
+*/
+
+it('joins no navigation group, and sorts above every ungrouped item', function () {
+    // Filament gives an item with no sort of its own -1 and the dashboard -2.
+    // Equal sorts fall back on registration order, so only a strictly lower
+    // number puts the hub first for certain.
+    expect(FinanceHub::getNavigationGroup())->toBeNull()
+        ->and(FinanceHub::getNavigationSort())->toBeLessThan(-2);
+});
+
+/*
+|--------------------------------------------------------------------------
 | Wording
 |--------------------------------------------------------------------------
 |
-| LocalizationTest's key scan only sees literal `__('group.key')` calls whose
-| group is letters and underscores, so it can see neither this catalogue's
-| hyphenated name nor keys built from a tile id. This is the check for them.
+| Keys built from a tile id are invisible to LocalizationTest's key scan, which
+| sees literal `__('group.key')` calls only. This is the check for them; the
+| literal keys (the page title and navigation label) are scanned there as well.
 */
 
-it('has wording in the catalogue for the page, every group and every tile', function () {
+it('has wording in the catalogue for the page, every group and every tile description', function () {
     $keys = [
-        'finance-hub.title',
-        'finance-hub.navigation_label',
-        'finance-hub.navigation_group',
+        'finance_hub.title',
+        'finance_hub.navigation_label',
     ];
 
     foreach (['money_in', 'money_out', 'reports'] as $group) {
-        $keys[] = "finance-hub.groups.{$group}.heading";
-        $keys[] = "finance-hub.groups.{$group}.description";
+        $keys[] = "finance_hub.groups.{$group}.heading";
+        $keys[] = "finance_hub.groups.{$group}.description";
     }
 
     foreach (array_keys(FINANCE_HUB_TILES) as $id) {
-        $keys[] = "finance-hub.tiles.{$id}.label";
-        $keys[] = "finance-hub.tiles.{$id}.description";
+        $keys[] = "finance_hub.tiles.{$id}.description";
     }
 
     $missing = [];
@@ -439,6 +468,12 @@ it('has wording in the catalogue for the page, every group and every tile', func
         }
     }
 
-    expect($keys)->toHaveCount(3 + 6 + 30)
+    expect($keys)->toHaveCount(2 + 6 + 15)
         ->and($missing)->toBe([]);
+});
+
+it('keeps tile titles out of the catalogue, so a copy cannot drift from the destination', function () {
+    foreach (array_keys(FINANCE_HUB_TILES) as $id) {
+        expect(trans("finance_hub.tiles.{$id}.label"))->toBe("finance_hub.tiles.{$id}.label");
+    }
 });

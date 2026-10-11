@@ -40,6 +40,13 @@ use Illuminate\Support\Fluent;
  * written and silently wrong the first time the destination's rule changed,
  * either showing a tile that leads to a 403 or hiding one that would open.
  *
+ * A TILE'S TITLE COMES FROM THE DESTINATION TOO
+ * ---------------------------------------------
+ * The same single-source reasoning: the title is `getNavigationLabel()` of the
+ * destination, so the tile reads exactly as the destination's own menu entry
+ * and page do, and renaming a screen renames its tile. Only the group headings
+ * and each tile's one-line description are this page's own wording.
+ *
  * `canAccess()` is asked rather than `canViewAny()` for a resource, because it
  * is what Filament itself consults before it serves the resource's index route
  * (`CanAuthorizeResourceAccess`), and a resource's `canAccess()` is `canViewAny()`
@@ -64,10 +71,12 @@ use Illuminate\Support\Fluent;
 final class FinanceHub extends Page
 {
     /**
-     * Every tile, in the order shown. The id names the tile's wording
-     * (`finance-hub.tiles.<id>.label` and `.description`) and the group heading
-     * it appears under (`finance-hub.groups.<group>.heading`); the groups are
-     * drawn in the order they first appear here.
+     * Every tile, in the order shown. The id names the tile's one-line
+     * description (`finance_hub.tiles.<id>.description`); the group names the
+     * heading it appears under (`finance_hub.groups.<group>.heading`), and the
+     * groups are drawn in the order they first appear here. The tile's title is
+     * not in this list or in the catalogue: it is the destination's own
+     * navigation label.
      *
      * @var list<array{id: string, group: string, destination: class-string<\Filament\Resources\Resource>|class-string<Page>}>
      */
@@ -91,8 +100,14 @@ final class FinanceHub extends Page
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedSquares2x2;
 
-    /** First within its group. */
-    protected static ?int $navigationSort = 0;
+    /**
+     * The top of the ungrouped items. Filament gives an item with no sort of its
+     * own -1 and the dashboard -2, and equal sorts fall back on registration
+     * order, which nobody should rely on: -3 is the lowest number nothing else
+     * holds. Navigation groups, and so where this sits among them, are the theme
+     * and shell task's (P4-T16a); the hub joins none.
+     */
+    protected static ?int $navigationSort = -3;
 
     protected string $view = 'filament.finance.finance-hub';
 
@@ -129,17 +144,12 @@ final class FinanceHub extends Page
 
     public function getTitle(): string
     {
-        return __('finance-hub.title');
+        return __('finance_hub.title');
     }
 
     public static function getNavigationLabel(): string
     {
-        return __('finance-hub.navigation_label');
-    }
-
-    public static function getNavigationGroup(): string
-    {
-        return __('finance-hub.navigation_group');
+        return __('finance_hub.navigation_label');
     }
 
     /**
@@ -160,15 +170,15 @@ final class FinanceHub extends Page
         foreach (self::visibleTiles() as $tile) {
             $groups[$tile['group']] ??= [
                 'id' => $tile['group'],
-                'heading' => __("finance-hub.groups.{$tile['group']}.heading"),
-                'description' => __("finance-hub.groups.{$tile['group']}.description"),
+                'heading' => __("finance_hub.groups.{$tile['group']}.heading"),
+                'description' => __("finance_hub.groups.{$tile['group']}.description"),
                 'tiles' => [],
             ];
 
             $groups[$tile['group']]['tiles'][] = new Fluent([
                 'id' => $tile['id'],
-                'label' => __("finance-hub.tiles.{$tile['id']}.label"),
-                'description' => __("finance-hub.tiles.{$tile['id']}.description"),
+                'label' => $tile['destination']::getNavigationLabel(),
+                'description' => __("finance_hub.tiles.{$tile['id']}.description"),
                 'url' => self::urlOf($tile['destination']),
             ]);
         }
