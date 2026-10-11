@@ -6,6 +6,7 @@ namespace App\Domain\Finance\Filament\Pages\Reports;
 
 use App\Domain\Finance\Exports\ReportKind;
 use App\Domain\Finance\Exports\RevenueReportExporter;
+use App\Domain\Finance\Filament\Widgets\RevenueChart;
 
 final class RevenueReportPage extends ReportPage
 {
@@ -16,6 +17,18 @@ final class RevenueReportPage extends ReportPage
     public static function kind(): ReportKind
     {
         return ReportKind::Revenue;
+    }
+
+    /** @return list<class-string<RevenueChart>> */
+    protected function getHeaderWidgets(): array
+    {
+        return [RevenueChart::class];
+    }
+
+    /** @return array<string, mixed> */
+    public function getWidgetData(): array
+    {
+        return ['reportFilters' => $this->appliedFilters];
     }
 
     protected static function exporter(): string

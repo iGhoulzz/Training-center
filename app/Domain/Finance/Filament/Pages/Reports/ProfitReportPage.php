@@ -6,6 +6,7 @@ namespace App\Domain\Finance\Filament\Pages\Reports;
 
 use App\Domain\Finance\Exports\ProfitReportExporter;
 use App\Domain\Finance\Exports\ReportKind;
+use App\Domain\Finance\Filament\Widgets\ProfitChart;
 
 final class ProfitReportPage extends ReportPage
 {
@@ -29,6 +30,18 @@ final class ProfitReportPage extends ReportPage
     public function getSubheading(): string
     {
         return (string) __('reports.profit_definition');
+    }
+
+    /** @return list<class-string<ProfitChart>> */
+    protected function getHeaderWidgets(): array
+    {
+        return [ProfitChart::class];
+    }
+
+    /** @return array<string, mixed> */
+    public function getWidgetData(): array
+    {
+        return ['reportFilters' => $this->appliedFilters];
     }
 
     protected static function exporter(): string
