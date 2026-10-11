@@ -435,6 +435,33 @@ it('turns a ready export unavailable once its files are purged', function (): vo
         ->assertTableActionHidden('download', $export);
 });
 
+it('looks for a ready row\'s files once per render, however many parts of the table ask', function (): void {
+    $owner = ($this->owner)();
+    $exports = [($this->makeExport)($owner, 'ready'), ($this->makeExport)($owner, 'ready')];
+
+    // The status column, its colour and the download action's visibility all need a
+    // row's status, and "ready" costs a disk lookup. Count the lookups on the
+    // export directories, passing each through to the real disk.
+    $real = Storage::disk('local');
+    $lookups = [];
+    $spy = Mockery::mock($real)->makePartial();
+    $spy->shouldReceive('exists')->andReturnUsing(function (string $path) use ($real, &$lookups): bool {
+        $lookups[] = $path;
+
+        return $real->exists($path);
+    });
+    Storage::set('local', $spy);
+
+    Livewire::actingAs($owner)->test(ExportHistory::class)->assertCanSeeTableRecords($exports);
+
+    sort($lookups);
+    $directories = array_map(fn (Export $export): string => $export->getFileDirectory(), $exports);
+    sort($directories);
+
+    // One lookup per row: two ready rows, two lookups, each directory once.
+    expect($lookups)->toBe($directories);
+});
+
 /*
 |--------------------------------------------------------------------------
 | Columns
