@@ -38,16 +38,17 @@ use Spatie\Permission\PermissionRegistrar;
 | prove nothing about which. Every actor holds exactly the permissions named, and
 | each access case is paired with an actor holding one fewer.
 |
-| EVERY EXPECTED VALUE IS WRITTEN OUT HERE BY HAND: the four status labels, the
+| EVERY EXPECTED VALUE IS WRITTEN OUT HERE BY HAND: the five status labels, the
 | seven report titles, the centre-time rendering of a stored instant, the route's
 | answer per row. Nothing is read back from the page's own status method, so a
 | status the page got wrong cannot agree with itself. The one place the page and
 | the route are compared with each other (the equivalence test) compares two
 | OBSERVED maps, each against a map typed in this file.
 |
-| THE FOUR STATUSES, and the fixture that makes each:
+| THE FIVE STATUSES, and the fixture that makes each:
 |
-|   queued       completed_at is null
+|   queued       completed_at is null, requested at most an hour ago
+|   overdue      completed_at is null, requested more than an hour ago
 |   failed       completed, but the rows do not all succeed
 |   ready        completed, rows complete, and the export directory is on its disk
 |   unavailable  completed, rows complete, and the directory is gone (purged after
@@ -344,7 +345,7 @@ it('lists the newest request first, and the later row first when two share a sec
 
 /*
 |--------------------------------------------------------------------------
-| The four statuses
+| The statuses
 |--------------------------------------------------------------------------
 */
 
@@ -372,9 +373,10 @@ it('labels each export by its status and offers the download on the ready one on
         ->assertTableActionHidden('download', $exports['unavailable']);
 });
 
-it('offers a failed export no link anywhere on the rendered page', function (): void {
+it('offers a failed, overdue or otherwise unready export no link anywhere on the rendered page', function (): void {
     $owner = ($this->owner)();
     $exports = ($this->makeEveryState)($owner);
+    $exports['overdue'] = ($this->makeExport)($owner, 'queued', ['created_at' => now()->subMinutes(61)]);
 
     $html = $this->actingAs($owner)->get(ExportHistory::getUrl())->assertSuccessful()->getContent();
 
@@ -382,7 +384,7 @@ it('offers a failed export no link anywhere on the rendered page', function (): 
     // match id 10.
     expect($html)->toContain('/admin/reports/xlsx/'.$exports['ready']->getKey().'?');
 
-    foreach (['queued', 'failed', 'unavailable'] as $state) {
+    foreach (['queued', 'overdue', 'failed', 'unavailable'] as $state) {
         expect($html)->not->toContain('/admin/reports/xlsx/'.$exports[$state]->getKey().'?');
     }
 });
@@ -403,14 +405,16 @@ it('calls a completed export failed when its rows did not all succeed or were no
 
 /*
  * An export whose preparation failed never reaches ExportCompletion, so its
- * completed_at stays null for good and nothing is ever sent. The only thing that
- * tells it from one still in the queue is its age. The cut-off is STRICTLY more
- * than an hour: exactly sixty minutes is still queued.
+ * completed_at stays null for good and nothing is ever sent. The page cannot tell
+ * that from a paused or backed-up queue, so it claims no cause: past an hour an
+ * unfinished row reads OVERDUE, never Failed (Failed is a completed export with
+ * rows missing, above). The cut-off is STRICTLY more than an hour: exactly sixty
+ * minutes is still queued.
  *
  * Time is frozen to the second, so "sixty minutes ago" is sixty minutes to the
  * second when the page renders and not a fraction of a second either side of it.
  */
-it('reads an unfinished export as queued up to an hour old and failed beyond it, with no link either way', function (int $minutesOld, string $label): void {
+it('reads an unfinished export as queued up to an hour old and overdue beyond it, with no link either way', function (int $minutesOld, string $label): void {
     $this->freezeSecond();
 
     $owner = ($this->owner)();
@@ -424,9 +428,36 @@ it('reads an unfinished export as queued up to an hour old and failed beyond it,
     'just requested' => [0, 'Queued'],
     '59 minutes old' => [59, 'Queued'],
     'exactly 60 minutes old' => [60, 'Queued'],
-    '61 minutes old' => [61, 'Failed'],
-    'two days old' => [2 * 24 * 60, 'Failed'],
+    '61 minutes old' => [61, 'Overdue'],
+    'two days old' => [2 * 24 * 60, 'Overdue'],
 ]);
+
+it('colours each status by its meaning, overdue as a warning', function (): void {
+    $this->freezeSecond();
+
+    $owner = ($this->owner)();
+    $exports = ($this->makeEveryState)($owner);
+    $exports['overdue'] = ($this->makeExport)($owner, 'queued', ['created_at' => now()->subMinutes(61)]);
+
+    $component = Livewire::actingAs($owner)->test(ExportHistory::class);
+    $column = $component->instance()->getTable()->getColumn('status');
+
+    $colours = [];
+
+    foreach ($exports as $name => $export) {
+        $column->record($export);
+        $column->clearCachedState();
+        $colours[$name] = $column->getColor($column->getState());
+    }
+
+    expect($colours)->toBe([
+        'queued' => 'info',
+        'failed' => 'danger',
+        'ready' => 'success',
+        'unavailable' => 'gray',
+        'overdue' => 'warning',
+    ]);
+});
 
 it('calls a completed export of something other than a report unavailable, with no link', function (): void {
     $owner = ($this->owner)();
@@ -601,7 +632,7 @@ it('marks as ready exactly the exports the download route serves', function (): 
     // but not yet marked complete. The route refuses it, so the list must not link.
     $exports['in flight'] = ($this->makeExport)($owner, 'ready', ['completed_at' => null]);
     // Unfinished and requested inside the hour, and unfinished and requested beyond
-    // it: queued and failed on the list, and the route refuses both.
+    // it: queued and overdue on the list, and the route refuses both.
     $exports['unfinished 59 minutes'] = ($this->makeExport)($owner, 'queued', ['created_at' => now()->subMinutes(59)]);
     $exports['unfinished 61 minutes'] = ($this->makeExport)($owner, 'queued', ['created_at' => now()->subMinutes(61)]);
 
@@ -722,6 +753,7 @@ it('has exactly the wording the page uses in the catalogue, every key resolving'
         'export_history.statuses.ready',
         'export_history.statuses.failed',
         'export_history.statuses.unavailable',
+        'export_history.statuses.overdue',
         'export_history.actions.download',
     ];
 

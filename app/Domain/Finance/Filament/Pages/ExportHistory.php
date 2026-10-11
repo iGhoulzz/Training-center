@@ -43,12 +43,13 @@ use Illuminate\Support\Facades\URL;
  * abilities). No permission name is restated here. Filament consults it on the
  * route, on every Livewire hydration and before registering the menu entry.
  *
- * EXACTLY FOUR STATUSES, WORKED OUT ONCE PER ROW
+ * EXACTLY FIVE STATUSES, WORKED OUT ONCE PER ROW
  * ----------------------------------------------
  *   queued       `completed_at` is null and the request is at most an hour old.
- *   failed       either still unfinished more than an hour after it was requested
- *                (a failed preparation never completes the row), or completed but
- *                not every row was processed and succeeded.
+ *   overdue      `completed_at` is null and the request is more than an hour old.
+ *                It claims no cause, because nothing records a job's failure
+ *                against its row and a paused queue looks the same; no link.
+ *   failed       completed, but not every row was processed and succeeded.
  *   ready        the download route would serve it (a report exporter, completed,
  *                every row processed and succeeded) AND its directory still
  *                exists on its disk.
@@ -72,8 +73,8 @@ use Illuminate\Support\Facades\URL;
  * --------------------------
  * PDFs: a queued, refused or failed PDF leaves no row anywhere (the job stores the
  * file and, on success only, sends a notification), so there is nothing to list;
- * the subheading says so. No retry action: a failed export is run again from its
- * report page. No styling and no markup beyond the table, which the look task
+ * the subheading says so. No retry action: an export is run again from its report
+ * page, and nothing here re-runs one. No styling and no markup beyond the table, which the look task
  * (P4-T16d) owns.
  *
  * `extends Page`, NEVER `SimplePage`
@@ -88,14 +89,16 @@ final class ExportHistory extends Page implements HasTable
 
     private const STATUS_QUEUED = 'queued';
 
+    private const STATUS_OVERDUE = 'overdue';
+
     private const STATUS_FAILED = 'failed';
 
     private const STATUS_READY = 'ready';
 
     private const STATUS_UNAVAILABLE = 'unavailable';
 
-    /** A report export takes seconds and a job times out at 60 s, so an hour is far past any honest queue delay. */
-    private const UNFINISHED_IS_FAILED_AFTER_MINUTES = 60;
+    /** A report export takes seconds, so an hour is far past when an unfinished one should have finished. */
+    private const UNFINISHED_IS_OVERDUE_AFTER_MINUTES = 60;
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedArrowDownTray;
 
@@ -206,8 +209,8 @@ final class ExportHistory extends Page implements HasTable
             $requestedAt = $export->created_at;
 
             return $requestedAt instanceof CarbonInterface
-                && $requestedAt->lt(now()->subMinutes(self::UNFINISHED_IS_FAILED_AFTER_MINUTES))
-                    ? self::STATUS_FAILED
+                && $requestedAt->lt(now()->subMinutes(self::UNFINISHED_IS_OVERDUE_AFTER_MINUTES))
+                    ? self::STATUS_OVERDUE
                     : self::STATUS_QUEUED;
         }
 
@@ -231,6 +234,7 @@ final class ExportHistory extends Page implements HasTable
     {
         return (string) match ($status) {
             self::STATUS_QUEUED => __('export_history.statuses.queued'),
+            self::STATUS_OVERDUE => __('export_history.statuses.overdue'),
             self::STATUS_FAILED => __('export_history.statuses.failed'),
             self::STATUS_READY => __('export_history.statuses.ready'),
             self::STATUS_UNAVAILABLE => __('export_history.statuses.unavailable'),
@@ -242,6 +246,7 @@ final class ExportHistory extends Page implements HasTable
     {
         return match ($status) {
             self::STATUS_QUEUED => 'info',
+            self::STATUS_OVERDUE => 'warning',
             self::STATUS_FAILED => 'danger',
             self::STATUS_READY => 'success',
             self::STATUS_UNAVAILABLE => 'gray',

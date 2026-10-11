@@ -16,9 +16,11 @@ declare(strict_types=1);
 | the report page does and cannot drift from it. `other_export` is only for an
 | export that is not one of the report exporters.
 |
-| The four statuses are the page's whole vocabulary. "No longer available" does
+| The five statuses are the page's whole vocabulary. "No longer available" does
 | not name a retention period: how long the files are kept is the purge's to say,
-| and a number copied here would be wrong the day that changed.
+| and a number copied here would be wrong the day that changed. "Overdue" is an
+| export still unfinished long after it was requested: it names no cause, because
+| the page cannot tell a failed export from a stalled queue.
 */
 
 return [
@@ -37,6 +39,7 @@ return [
 
     'statuses' => [
         'queued' => 'Queued',
+        'overdue' => 'Overdue',
         'ready' => 'Ready',
         'failed' => 'Failed',
         'unavailable' => 'No longer available',
