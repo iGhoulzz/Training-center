@@ -156,7 +156,8 @@ first attempt.
 | `app/Http/Controllers/VerifyCertificateController.php` | **T18 only** | One line: the `submit()` redirect goes through `PublicRoute`. The lookup, the normalisation and the uniform miss are untouched |
 | `app/Support/PublicRoute.php` | **T11 only** | Complete from the start, so T18 adds routes and a locale without editing it |
 | `app/Domain/Enrollment/Models/Batch.php` | **T05 only** | Scopes beside the existing predicates |
-| `app/Domain/Enrollment/Services/EnrollmentQueryService.php`, `app/Domain/Finance/Services/StudentBalanceQuery.php`, `app/Domain/Finance/Data/EnrollmentBalance.php`, `app/Domain/Finance/Filament/Portal/Pages/MyBalance.php`, `resources/views/portal/my-balance.blade.php`, `lang/en/portal.php`, `tests/Feature/Finance/StudentBalanceQueryTest.php`, `tests/Feature/Portal/MyBalancePageTest.php`, `tests/Feature/Portal/PortalQueryCountTest.php` | **T05 only** | Owner-approved scope expansion (2026-10-10): show localized course names and batch codes on balance rows now. Ownership, existing unbilled-row handling and fixed query counts are preserved regression behavior |
+| `app/Domain/Enrollment/Services/EnrollmentQueryService.php`, `app/Domain/Finance/Data/EnrollmentBalance.php`, `app/Domain/Finance/Filament/Portal/Pages/MyBalance.php`, `resources/views/portal/my-balance.blade.php`, `lang/en/portal.php`, `tests/Feature/Finance/StudentBalanceQueryTest.php`, `tests/Feature/Portal/MyBalancePageTest.php`, `tests/Feature/Portal/PortalQueryCountTest.php` | **T05 only** | Owner-approved scope expansion (2026-10-10): show localized course names and batch codes on balance rows now. Ownership, existing unbilled-row handling and fixed query counts are preserved regression behavior |
+| `app/Domain/Finance/Services/StudentBalanceQuery.php` | **T05 → T06** | T05 adds portal balance labels; owner-approved T06 expansion (2026-10-11) adds the batched staff-list projection without changing portal behavior |
 | `app/Domain/Finance/Reports/ProfitReport.php` | **T04 → T10** | T04 teaches it expenses; T10 charts what it returns and must not change what the figure means |
 | `app/Domain/Finance/Filament/Pages/Reports/*` | **T10 → T16d** | T10 adds the charts; T16d restyles. T16d must not change what a chart plots |
 | `lang/en/*` other than `activity.php` | Every task, each in its own catalogue | No task ships a user-facing string without an English key. A task adding to an existing catalogue appends its own keys and edits nobody else's |
@@ -498,6 +499,7 @@ UTC midnight · each query's statement count does not grow with row count ·
 - `app/Domain/Enrollment/Filament/Resources/BatchResource/RelationManagers/EnrollmentsRelationManager.php`
 - `app/Domain/Enrollment/Filament/Resources/CourseResource.php`
 - `app/Domain/Finance/Filament/Resources/PaymentResource.php`
+- `app/Domain/Finance/Services/StudentBalanceQuery.php` — owner-approved expansion (2026-10-11)
 - `tests/Feature/Performance/ListQueryCountTest.php` — new
 
 **Does**
@@ -506,6 +508,10 @@ Four per-row calls the lists would make once per row: per-student balance in the
 students list and the batch roster, tender chips per payment, enrolled-student
 and batch counts per course. **Data loading only** — no column is restyled here;
 T16b and T16c own the look.
+
+The course enrolled-student count includes **distinct students across its
+batches** with **active or completed** enrolments. **Withdrawn** enrolments are
+excluded (owner-approved rule).
 
 P3.5-T04's lazy-loading guard only arms on multi-row hydrations, so a test that
 loads one record proves nothing.

@@ -103,9 +103,9 @@ use InvalidArgumentException;
  *
  * NOTHING DERIVED IS STORED.
  * ---------------------------------------------------------------------------
- * The total is `Money::add()` folded over the per-row figures this class
- * already computed, in PHP, after the query returns — never a second SQL
- * SUM. It cannot disagree with the rows it is a total of.
+ * forStudent() folds Money::add() over its returned per-enrolment figures.
+ * withOutstanding() sums that same charge-balance expression in SQL for
+ * each student on a list. Both totals are derived on read; neither is stored.
  */
 final class StudentBalanceQuery
 {
@@ -125,12 +125,14 @@ final class StudentBalanceQuery
      */
     public function withOutstanding(Builder $students): Builder
     {
-        $balances = DB::table('charges')
-            ->selectRaw(ChargeBalance::outstandingSql().' as '.ChargeBalance::OUTSTANDING_ALIAS);
+        // Keep the inner query unaggregated so MySQL can merge it and use the
+        // enrolment's student index; the alias keeps ChargeBalance's one SQL
+        // expression correlated to the selected charge row.
+        $balances = DB::table('charges')->select('charges.id', 'charges.amount');
         $this->enrollments->joinEnrollmentStudentIdentityTo($balances, 'charges.enrollment_id');
 
-        $total = DB::query()->fromSub($balances, 'student_balances')
-            ->selectRaw('COALESCE(SUM('.ChargeBalance::OUTSTANDING_ALIAS.'), 0)')
+        $total = DB::query()->fromSub($balances, 'charges')
+            ->selectRaw('COALESCE(SUM('.ChargeBalance::outstandingSql().'), 0)')
             ->whereColumn(EnrollmentQueryService::ENROLLMENT_STUDENT_ID, $students->qualifyColumn('id'));
 
         return $students->addSelect([self::OUTSTANDING_ALIAS => $total])

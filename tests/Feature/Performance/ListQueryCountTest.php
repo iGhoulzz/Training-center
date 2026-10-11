@@ -23,6 +23,7 @@ use App\Domain\Staff\Actions\SystemRoleWriter;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Livewire\Livewire;
 
 uses(RefreshDatabase::class);
@@ -47,7 +48,7 @@ function measuredListReads(Closure $render): int
     $render();
 
     return collect($statements)->filter(fn (array $statement): bool => str_starts_with($statement['sql'], 'select')
-        && preg_match('/\b(?:from|join) `?(students|courses|batches|enrollments|charges|payments|payment_tenders|payment_allocations)`?\b/', $statement['sql']) === 1
+        && preg_match('/\b(?:from|join) `?(users|students|courses|batches|enrollments|charges|payments|payment_tenders|payment_allocations)`?\b/', $statement['sql']) === 1
     )->count();
 }
 
@@ -65,11 +66,11 @@ function listSplitPayment(User $actor): Payment
     return $payment;
 }
 
-function listStudentWithBalance(User $actor, ?Batch $roster = null): Student
+function listStudentWithBalance(User $actor, ?Batch $roster = null, string $listPrice = '100.001'): Student
 {
     $student = Student::factory()->create();
     $enrollment = Enrollment::factory()->for($student)->for($roster ?? Batch::factory())->create();
-    $charge = Charge::factory()->for($enrollment)->create(['list_price' => '100.001']);
+    $charge = Charge::factory()->for($enrollment)->create(['list_price' => $listPrice]);
     $payment = Payment::factory()->for($student)->create(['recorded_by' => $actor->getKey()]);
     PaymentTender::factory()->for($payment)->create(['amount' => '50.003']);
     PaymentAllocation::factory()->for($payment)->for($charge)->create(['amount' => '50.003']);
@@ -86,13 +87,27 @@ function listStudentWithBalance(User $actor, ?Batch $roster = null): Student
 it('loads student balances in bounded statements at two multi-row sizes', function (bool $roster) {
     $batch = $roster ? Batch::factory()->active()->create() : null;
     $counts = [];
+    $expected = [];
+    $fixtures = [
+        ['price' => '100.001', 'balance' => '250.000'],
+        ['price' => '100.002', 'balance' => '250.001'],
+        ['price' => '101.003', 'balance' => '251.002'],
+        ['price' => '102.004', 'balance' => '252.003'],
+        ['price' => '103.005', 'balance' => '253.004'],
+        ['price' => '104.006', 'balance' => '254.005'],
+        ['price' => '105.007', 'balance' => '255.006'],
+        ['price' => '106.008', 'balance' => '256.007'],
+    ];
 
     foreach ([2, 8] as $size) {
-        foreach (range(count($counts) === 0 ? 1 : 3, $size) as $ignored) {
-            listStudentWithBalance($this->admin, $batch);
+        foreach (range(count($expected), $size - 1) as $index) {
+            $student = listStudentWithBalance($this->admin, $batch, $fixtures[$index]['price']);
+            $expected[$student->getKey()] = $fixtures[$index]['balance'];
+            expect(app(StudentBalanceQuery::class)->forStudent((int) $student->getKey())->total->toDecimal())
+                ->toBe($fixtures[$index]['balance']);
         }
 
-        $counts[$size] = measuredListReads(function () use ($roster, $batch, $size): void {
+        $counts[$size] = measuredListReads(function () use ($roster, $batch, $size, $expected): void {
             $component = $roster
                 ? Livewire::actingAs($this->admin)->test(EnrollmentsRelationManager::class, [
                     'ownerRecord' => $batch,
@@ -101,11 +116,15 @@ it('loads student balances in bounded statements at two multi-row sizes', functi
                 : Livewire::actingAs($this->admin)->test(ListStudents::class)->assertSuccessful();
             $records = $component->instance()->getTableRecords();
             expect($records->count())->toBe($size);
+            $actual = [];
             foreach ($records as $record) {
                 $student = $roster ? $record->student : $record;
                 expect(array_key_exists(StudentBalanceQuery::OUTSTANDING_ALIAS, $student->getAttributes()))->toBeTrue();
-                expect(Money::fromDecimal($student->{StudentBalanceQuery::OUTSTANDING_ALIAS})->toDecimal())->toBe('250.000');
+                $actual[$student->getKey()] = Money::fromDecimal($student->{StudentBalanceQuery::OUTSTANDING_ALIAS})->toDecimal();
             }
+            ksort($actual);
+            ksort($expected);
+            expect($actual)->toBe($expected);
         });
     }
 
@@ -136,7 +155,7 @@ it('loads split tenders for payment lists in bounded statements at two multi-row
         });
     }
 
-    expect($counts[2])->toBeGreaterThan(0)->toBeLessThanOrEqual(6)
+    expect($counts[2])->toBeGreaterThan(0)->toBeLessThanOrEqual(7)
         ->and($counts[8])->toBe($counts[2], 'Payment SELECT counts: '.json_encode($counts));
 });
 
@@ -205,25 +224,70 @@ it('keeps zero balances and pagination on student lists', function (bool $roster
     }
 })->with(['student register' => false, 'batch roster' => true]);
 
-it('does not load balances for staff without finance read permission', function (bool $roster) {
-    $staff = User::factory()->create(['is_active' => true]);
-    app(SystemRoleWriter::class)->assignRoles($staff, 'staff');
-    $staff->refresh();
-    expect($staff->can('view_any_charge'))->toBeFalse();
+it('loads balances only with charge-list read permission', function (bool $roster, bool $mayReadCharges) {
+    $actor = User::factory()->create(['is_active' => true]);
+    $permissions = $roster
+        ? ['access_admin_panel', 'view_any_batch', 'view_batch', 'view_any_enrollment']
+        : ['access_admin_panel', 'view_any_student'];
+    $actor->givePermissionTo($mayReadCharges ? [...$permissions, 'view_any_charge'] : $permissions);
+    $actor->refresh();
+    expect($actor->can('view_any_charge'))->toBe($mayReadCharges)
+        ->and($actor->can('view_any_payment'))->toBeFalse();
     $batch = $roster ? Batch::factory()->active()->create() : null;
     listStudentWithBalance($this->admin, $batch);
     listStudentWithBalance($this->admin, $batch);
 
+    $statements = captureStatements();
     $component = $roster
-        ? Livewire::actingAs($staff)->test(EnrollmentsRelationManager::class, [
+        ? Livewire::actingAs($actor)->test(EnrollmentsRelationManager::class, [
             'ownerRecord' => $batch,
             'pageClass' => ViewBatch::class,
         ])->assertSuccessful()
-        : Livewire::actingAs($staff)->test(ListStudents::class)->assertSuccessful();
+        : Livewire::actingAs($actor)->test(ListStudents::class)->assertSuccessful();
     $records = $component->instance()->getTableRecords();
     expect($records->count())->toBe(2);
     foreach ($records as $record) {
         $student = $roster ? $record->student : $record;
-        expect(array_key_exists(StudentBalanceQuery::OUTSTANDING_ALIAS, $student->getAttributes()))->toBeFalse();
+        expect(array_key_exists(StudentBalanceQuery::OUTSTANDING_ALIAS, $student->getAttributes()))->toBe($mayReadCharges);
     }
-})->with(['student register' => false, 'batch roster' => true]);
+    $chargeReads = collect($statements)->filter(fn (array $statement): bool => str_starts_with($statement['sql'], 'select')
+        && preg_match('/\bfrom `?charges`?\b/', $statement['sql']) === 1
+    )->count();
+    expect($chargeReads)->toBe($mayReadCharges ? 1 : 0);
+})->with([
+    'register with charge read' => [false, true],
+    'register without charge read' => [false, false],
+    'roster with charge read' => [true, true],
+    'roster without charge read' => [true, false],
+]);
+
+it('bounds balance reads to selected students despite unrelated charges', function () {
+    $first = listStudentWithBalance($this->admin);
+    $second = listStudentWithBalance($this->admin, null, '106.008');
+    Charge::factory()->count(300)->create();
+    $ids = [$first->getKey(), $second->getKey()];
+    $query = app(StudentBalanceQuery::class)->withOutstanding(Student::query()->whereKey($ids));
+    $explain = DB::select('EXPLAIN FORMAT=JSON '.$query->toSql(), $query->getBindings());
+    $plan = json_decode($explain[0]->EXPLAIN, true, flags: JSON_THROW_ON_ERROR);
+    $chargeTables = [];
+    $walk = function (array $node) use (&$walk, &$chargeTables): void {
+        if (($node['table_name'] ?? null) === 'charges') {
+            $chargeTables[] = $node;
+        }
+        foreach ($node as $value) {
+            if (is_array($value)) {
+                $walk($value);
+            }
+        }
+    };
+    $walk($plan);
+
+    expect($chargeTables)->not->toBeEmpty();
+    foreach ($chargeTables as $table) {
+        expect(in_array($table['access_type'], ['ALL', 'index'], true))->toBeFalse(
+            'The selected-student balance projection must not scan every charge: '.json_encode($table),
+        );
+    }
+    expect($query->orderBy('students.id')->get()->pluck(StudentBalanceQuery::OUTSTANDING_ALIAS)->all())
+        ->toBe(['250.000', '256.007']);
+});
