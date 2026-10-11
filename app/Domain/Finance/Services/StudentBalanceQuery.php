@@ -9,12 +9,14 @@ use App\Domain\Finance\Data\EnrollmentBalance;
 use App\Domain\Finance\Data\StudentBalanceSummary;
 use App\Domain\Finance\Support\ChargeBalance;
 use App\Domain\Finance\Support\Money;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
 /**
- * A student's whole balance picture, published for the portal's "my balance"
- * page. Design §4.2, §11.4, §11.5.
+ * Student balances, published for the portal and staff lists.
+ * Design §4.2, §11.4, §11.5.
  *
  * WHY THIS EXISTS: outstandingForEnrollment() PER ROW IS THE N+1 THIS TASK
  * REMOVES.
@@ -35,8 +37,9 @@ use InvalidArgumentException;
  * which is what that test scans (`File::allFiles(app_path())`), so `tests/`,
  * `database/` and `scripts/` are outside it. This class only
  * ever opens `DB::table('charges')` — a table Finance owns — and reaches
- * `enrollments` through `EnrollmentQueryService::scopeToStudent()`, which
- * performs the join from the Enrolment domain's own side.
+ * `enrollments` through EnrollmentQueryService's scopeToStudent() and
+ * joinEnrollmentStudentIdentityTo(), which perform the joins from the
+ * Enrolment domain's own side.
  *
  * It does still NAME two `enrollments` columns — `enrollments.id` in the select
  * and in the order — which the rule permits (it forbids querying the table, not
@@ -100,13 +103,41 @@ use InvalidArgumentException;
  *
  * NOTHING DERIVED IS STORED.
  * ---------------------------------------------------------------------------
- * The total is `Money::add()` folded over the per-row figures this class
- * already computed, in PHP, after the query returns — never a second SQL
- * SUM. It cannot disagree with the rows it is a total of.
+ * forStudent() folds Money::add() over its returned per-enrolment figures.
+ * withOutstanding() sums that same charge-balance expression in SQL for
+ * each student on a list. Both totals are derived on read; neither is stored.
  */
 final class StudentBalanceQuery
 {
+    public const OUTSTANDING_ALIAS = 'student_outstanding_amount';
+
     public function __construct(private readonly EnrollmentQueryService $enrollments) {}
+
+    /**
+     * Project each student's total onto an existing, paginated student query.
+     * No balances are stored, and withdrawn or written-off debt still counts.
+     * Enrollment owns the identity join; Finance owns the balance expression.
+     *
+     * @template TModel of Model
+     *
+     * @param  Builder<TModel>  $students
+     * @return Builder<TModel>
+     */
+    public function withOutstanding(Builder $students): Builder
+    {
+        // Keep the inner query unaggregated so MySQL can merge it and use the
+        // enrolment's student index; the alias keeps ChargeBalance's one SQL
+        // expression correlated to the selected charge row.
+        $balances = DB::table('charges')->select('charges.id', 'charges.amount');
+        $this->enrollments->joinEnrollmentStudentIdentityTo($balances, 'charges.enrollment_id');
+
+        $total = DB::query()->fromSub($balances, 'charges')
+            ->selectRaw('COALESCE(SUM('.ChargeBalance::outstandingSql().'), 0)')
+            ->whereColumn(EnrollmentQueryService::ENROLLMENT_STUDENT_ID, $students->qualifyColumn('id'));
+
+        return $students->addSelect([self::OUTSTANDING_ALIAS => $total])
+            ->withCasts([self::OUTSTANDING_ALIAS => 'decimal:3']);
+    }
 
     /**
      * Every enrolment a student holds, with its outstanding figure, and the

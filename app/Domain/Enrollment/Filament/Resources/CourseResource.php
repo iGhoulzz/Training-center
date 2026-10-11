@@ -5,12 +5,14 @@ declare(strict_types=1);
 namespace App\Domain\Enrollment\Filament\Resources;
 
 use App\Domain\Enrollment\Actions\DeleteCourseAction;
+use App\Domain\Enrollment\Enums\EnrollmentStatus;
 use App\Domain\Enrollment\Exceptions\CourseInUseException;
 use App\Domain\Enrollment\Filament\Resources\CourseResource\Pages\CreateCourse;
 use App\Domain\Enrollment\Filament\Resources\CourseResource\Pages\EditCourse;
 use App\Domain\Enrollment\Filament\Resources\CourseResource\Pages\ListCourses;
 use App\Domain\Enrollment\Filament\Resources\CourseResource\Pages\ViewCourse;
 use App\Domain\Enrollment\Models\Course;
+use App\Domain\Enrollment\Models\Enrollment;
 use BackedEnum;
 use Filament\Actions\DeleteAction;
 use Filament\Forms\Components\Textarea;
@@ -23,6 +25,7 @@ use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
 
 /**
  * The course catalogue (P1-T08).
@@ -59,6 +62,9 @@ use Filament\Tables\Table;
  */
 class CourseResource extends Resource
 {
+    /** Distinct students with active or completed enrolments across all intakes. */
+    public const ENROLLED_STUDENTS_COUNT = 'enrolled_students_count';
+
     protected static ?string $model = Course::class;
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedBookOpen;
@@ -151,6 +157,13 @@ class CourseResource extends Resource
     public static function table(Table $table): Table
     {
         return $table
+            ->modifyQueryUsing(fn (Builder $query): Builder => $query->addSelect([
+                self::ENROLLED_STUDENTS_COUNT => Enrollment::query()
+                    ->selectRaw('COUNT(DISTINCT student_id)')
+                    ->whereIn('status', [EnrollmentStatus::Active, EnrollmentStatus::Completed])
+                    ->whereHas('batch', fn (Builder $batch): Builder => $batch
+                        ->whereColumn('course_id', $query->qualifyColumn('id'))),
+            ]))
             ->columns([
                 TextColumn::make('code')
                     ->label(__('enrollment.course_code'))
