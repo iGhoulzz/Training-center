@@ -9,6 +9,7 @@ use App\Domain\Enrollment\Models\Enrollment;
 use App\Domain\Enrollment\Models\StudentCertificate;
 use App\Domain\Enrollment\Queries\CertificateIssuanceQueue as IssuanceQueueQuery;
 use App\Models\User;
+use App\Support\CentreCalendar;
 use BackedEnum;
 use Filament\Actions\Action;
 use Filament\Pages\Page;
@@ -56,7 +57,8 @@ class CertificateIssuanceQueue extends Page implements HasTable
                     ->label(__('certificates.course'))
                     ->formatStateUsing(fn (Enrollment $record): string => $record->batch->course->name()),
                 TextColumn::make('batch.code')->label(__('certificates.queue_batch')),
-                TextColumn::make('completed_at')->label(__('certificates.completed_on'))->date(),
+                TextColumn::make('completed_at')->label(__('certificates.completed_on'))
+                    ->date(timezone: CentreCalendar::TIMEZONE),
             ])
             ->recordActions([
                 Action::make('issueCertificate')

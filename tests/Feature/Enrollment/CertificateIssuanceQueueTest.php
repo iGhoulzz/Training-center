@@ -63,8 +63,11 @@ it('lists completed enrolments without a valid certificate including revoked and
         ->assertCountTableRecords(3);
 });
 
-it('renders the student course batch and completion date in the actual table markup', function () {
-    $enrollment = Enrollment::factory()->completed()->create();
+it('renders the student course batch and Tripoli completion date in the actual table markup', function () {
+    $enrollment = Enrollment::factory()->completed()->create([
+        'enrolled_at' => '2026-10-01 10:00:00',
+        'completed_at' => '2026-10-10 22:30:00',
+    ]);
     $response = $this->actingAs($this->issuer)->get('/admin/certificate-issuance-queue')->assertSuccessful();
     $document = new DOMDocument;
     @$document->loadHTML($response->getContent());
@@ -73,7 +76,7 @@ it('renders the student course batch and completion date in the actual table mar
 
     expect($text)->toContain($enrollment->student->full_name, $enrollment->student->student_code,
         $enrollment->batch->course->name(), $enrollment->batch->code,
-        $enrollment->completed_at->format('M j, Y'));
+        'Oct 11, 2026')->not->toContain('Oct 10, 2026');
 });
 
 it('links each row to the existing issue form and issues a debtor with only the issue grant', function () {
