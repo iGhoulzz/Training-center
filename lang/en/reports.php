@@ -74,4 +74,11 @@ return [
             'collected_total' => 'Student collected total (LYD)',
         ],
     ],
+    'charts' => [
+        'revenue' => 'Collected revenue by batch',
+        'profit' => 'Profit for the selected period',
+        'wage_cost' => 'Wage cost by staff member',
+        'payment_method' => 'Collected payments by method',
+        'period' => ':from – :to',
+    ],
 ];
