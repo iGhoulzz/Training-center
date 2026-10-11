@@ -159,7 +159,7 @@ first attempt.
 | `app/Domain/Enrollment/Services/EnrollmentQueryService.php`, `app/Domain/Finance/Data/EnrollmentBalance.php`, `app/Domain/Finance/Filament/Portal/Pages/MyBalance.php`, `resources/views/portal/my-balance.blade.php`, `lang/en/portal.php`, `tests/Feature/Finance/StudentBalanceQueryTest.php`, `tests/Feature/Portal/MyBalancePageTest.php`, `tests/Feature/Portal/PortalQueryCountTest.php` | **T05 only** | Owner-approved scope expansion (2026-10-10): show localized course names and batch codes on balance rows now. Ownership, existing unbilled-row handling and fixed query counts are preserved regression behavior |
 | `app/Domain/Finance/Services/StudentBalanceQuery.php` | **T05 → T06** | T05 adds portal balance labels; owner-approved T06 expansion (2026-10-11) adds the batched staff-list projection without changing portal behavior |
 | `app/Domain/Finance/Reports/ProfitReport.php` | **T04 → T10** | T04 teaches it expenses; T10 charts what it returns and must not change what the figure means |
-| `app/Domain/Finance/Filament/Pages/Reports/*` | **T10 → T16d** | T10 adds the charts; T16d restyles. T16d must not change what a chart plots |
+| `app/Domain/Finance/Filament/Pages/Reports/*` | **T04 (`ProfitReportPage` subheading only) → T10 → T16d** | T04 shows the Profit definition under the page title and touches nothing else there; T10 adds the charts; T16d restyles. T16d must not change what a chart plots |
 | `lang/en/*` other than `activity.php` | Every task, each in its own catalogue | No task ships a user-facing string without an English key. A task adding to an existing catalogue appends its own keys and edits nobody else's |
 | `lang/ar/*` | **T17 only** for Arabic strings | Stay empty until T17, so an untranslated string stays visible. The task that adds an English catalogue may add the matching **empty** placeholder (`return [];`), because `LocalizationTest` requires one per English file; only T17 writes Arabic strings |
 | `app/Domain/Staff/Jobs/PurgeDeletedFileJob.php` (`isOwned()`) | **T03** first; any later task that stores a file on the private disk | `isOwned()` must know every kind of row that owns a file there, or a stale provisional upload receipt lets the sweep unlink a live file. T03 adds articles; a later task adds its own owner here, with a test in the style of `ArticleFileOwnershipTest` |
@@ -391,6 +391,13 @@ removed · `LocalizationTest` passes with `Article` recording activity ·
   expenses column; this is the one snapshot builder the screen, PDF and XLSX all
   read (seam)
 - `app/Domain/Finance/Exports/ProfitReportExporter.php` — the new column
+- `app/Domain/Finance/Filament/Pages/Reports/ProfitReportPage.php` —
+  owner-approved expansion (2026-10-10/11): the definition subheading only,
+  from a `lang/en/reports.php` key; no other change to that file
+- `tests/Feature/Finance/FinancePermissionSeedingTest.php` — the expense
+  abilities classified as finance (seam, after T03); forced by the seeder change
+- `tests/Feature/Finance/Reports/ProfitReportTest.php` — header comment only:
+  its definition of Profit predated the expense term (review finding, 2026-10-11)
 - `app/Domain/Finance/Filament/Resources/ExpenseCategoryResource.php`,
   `ExpenseResource.php`, and their `Pages/`
 - `database/seeders/RolePermissionSeeder.php` (seam, after T03)

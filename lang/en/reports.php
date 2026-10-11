@@ -5,6 +5,11 @@ declare(strict_types=1);
 return [
     'navigation_group' => 'Financial reports',
     'empty' => 'No rows match these filters.',
+    // Stated where Profit is read (spec section 8): the figure's meaning changed
+    // when expenses joined the definition, and a figure whose meaning changed
+    // without saying so is the traceability complaint the finance reports exist
+    // to answer.
+    'profit_definition' => 'Profit = collected revenue - finalized wage cost - expenses paid in the period (reversed expenses excluded).',
     'pages' => [
         'revenue' => ['navigation' => 'Revenue', 'title' => 'Revenue by course and batch'],
         'outstanding_aged' => ['navigation' => 'Outstanding balances', 'title' => 'Outstanding balances, aged'],
@@ -58,7 +63,8 @@ return [
         'wage_cost' => ['staff_name' => 'Staff member', 'total' => 'Wage cost (LYD)'],
         'profit' => [
             'revenue' => 'Collected revenue (LYD)', 'wage_cost' => 'Wage cost (LYD)',
-            'profit' => 'Profit (LYD)',
+            'expenses' => 'Expenses paid (LYD, reversed excluded)',
+            'profit' => 'Profit (LYD) = revenue - wage cost - expenses',
         ],
         'student_payment_history' => [
             'student_code' => 'Student code', 'student_name' => 'Student',

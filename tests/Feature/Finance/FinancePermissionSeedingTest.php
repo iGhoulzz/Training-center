@@ -32,8 +32,16 @@ use Spatie\Permission\Models\Role;
 */
 uses(RefreshDatabase::class);
 
-/** The five finance resources, which take READ permissions only. */
-const FINANCE_RESOURCES = ['charge', 'payment', 'discount', 'staff_compensation', 'payroll_run'];
+/**
+ * The seven finance resources, which take READ permissions only as standard CRUD.
+ *
+ * `expense_category` and `expense` joined in phase 4 (P4-T04). Their writes are
+ * named one by one in FINANCE_WRITES, as every finance write is.
+ */
+const FINANCE_RESOURCES = [
+    'charge', 'payment', 'discount', 'staff_compensation', 'payroll_run',
+    'expense_category', 'expense',
+];
 
 /** Every finance read, spelled out rather than generated from the seeder's own list. */
 const FINANCE_READS = [
@@ -42,23 +50,34 @@ const FINANCE_READS = [
     'view_any_discount', 'view_discount',
     'view_any_staff_compensation', 'view_staff_compensation',
     'view_any_payroll_run', 'view_payroll_run',
+    // Phase 4 (P4-T04). Money paid out is as financial as money taken in.
+    'view_any_expense_category', 'view_expense_category',
+    'view_any_expense', 'view_expense',
 ];
 
 /**
- * Every finance write there is. Three.
+ * Every finance write there is. Six.
  *
  * `create_staff_compensation` and no update counterpart: the only legitimate
  * change to a rate is a new effective-dated row, so *create* IS the write ability
  * for that table. `delete_payroll_run` removes a draft; a finalized run is
  * refused by the policy whoever holds it.
+ *
+ * The other three are phase 4's (P4-T04). `update_expense_category` is the
+ * deactivate ability: a category is switched off, never deleted. There is no
+ * `update_expense` and no `delete_expense`: an expense is recorded and, if wrong,
+ * reversed through `reverse_expense` in FINANCE_CUSTOM.
  */
-const FINANCE_WRITES = ['create_payment', 'create_staff_compensation', 'delete_payroll_run'];
+const FINANCE_WRITES = [
+    'create_payment', 'create_staff_compensation', 'delete_payroll_run',
+    'create_expense_category', 'update_expense_category', 'create_expense',
+];
 
 /**
- * The ten custom abilities — bare verbs, because each names an act, not a row.
+ * The eleven custom abilities — bare verbs, because each names an act, not a row.
  *
  * Nine of them are phase 2's. The tenth, view_own_balance, is phase 3's student
- * self-read; see its own note below.
+ * self-read; see its own note below. The eleventh, reverse_expense, is phase 4's.
  */
 const FINANCE_CUSTOM = [
     'manage_pricing',
@@ -85,6 +104,11 @@ const FINANCE_CUSTOM = [
      * the scoping; this grants the capability, nothing more.
      */
     'view_own_balance',
+    /*
+     * Undoing an expense (P4-T04). Super admin only, mirroring reverse_payment:
+     * the restricted capability that keeps the audit trail meaningful.
+     */
+    'reverse_expense',
 ];
 
 /**
@@ -106,6 +130,9 @@ const FINANCE_NEVER_SEEDED = [
     'update_staff_compensation',
     'update_payroll_run',
     'update_discount', 'create_discount',
+    // Phase 4 (P4-T04). A category is deactivated and an expense is reversed;
+    // neither is ever deleted, and an expense is never edited.
+    'delete_expense_category', 'update_expense', 'delete_expense',
 ];
 
 /** What an admin may reach: read everything, record money, choose a discount. */
@@ -115,6 +142,11 @@ const ADMIN_FINANCE_GRANTS = [
     'apply_discount',
     'view_financial_report',
     'export_financial_report',
+    // Phase 4 (P4-T04): the category list is maintained and money paid out is
+    // recorded. Reversing it is not on this list; see ADMIN_FINANCE_DENIALS.
+    'create_expense_category',
+    'update_expense_category',
+    'create_expense',
 ];
 
 /**
@@ -127,6 +159,7 @@ const ADMIN_FINANCE_DENIALS = [
     'adjust_charge',
     'write_off_charge',
     'reverse_payment',
+    'reverse_expense',
     'run_payroll',
     'finalize_payroll',
     // The two writes that are seeded but are super admin's alone. Easy to leave
@@ -219,13 +252,15 @@ it('seeds every finance ability design §10 names', function (string $ability) {
         ->toBeTrue("{$ability} is not seeded. Its policy now fails closed for everybody, super admin included.");
 })->with(financeAbilities());
 
-it('seeds twenty-three finance abilities and no more', function () {
+it('seeds thirty-one finance abilities and no more', function () {
     /*
      * The count, so a name QUIETLY ADDED to the seeder shows up here rather than
-     * only in whatever it was added for. Ten reads, three writes, ten custom.
+     * only in whatever it was added for. Fourteen reads, six writes, eleven
+     * custom. It was twenty-three until P4-T04 added the expense abilities,
+     * deliberately: they record and read money, so they are finance abilities.
      */
-    expect(financeAbilities())->toHaveCount(23)
-        ->and(array_unique(financeAbilities()))->toHaveCount(23);
+    expect(financeAbilities())->toHaveCount(31)
+        ->and(array_unique(financeAbilities()))->toHaveCount(31);
 
     /*
      * THE REAL CLOSED-SET CHECK. This used to read
@@ -261,7 +296,7 @@ it('seeds twenty-three finance abilities and no more', function () {
     $expected = financeAbilities();
     sort($expected);
 
-    expect($financeSeeded)->toHaveCount(23)
+    expect($financeSeeded)->toHaveCount(31)
         ->toBe($expected, 'The seeded finance permissions no longer match financeAbilities() exactly.');
 });
 
@@ -337,11 +372,11 @@ it('gives super_admin every finance ability', function () {
 
 /*
 |--------------------------------------------------------------------------
-| Admin — the fourteen, and the denials that matter more
+| Admin — the twenty-one, and the denials that matter more
 |--------------------------------------------------------------------------
 */
 
-it('grants admin exactly fourteen finance abilities', function () {
+it('grants admin exactly twenty-one finance abilities', function () {
     $admin = Role::findByName('admin');
 
     $held = array_values(array_filter(
@@ -353,7 +388,7 @@ it('grants admin exactly fourteen finance abilities', function () {
     $expected = ADMIN_FINANCE_GRANTS;
     sort($expected);
 
-    expect($expected)->toHaveCount(14)
+    expect($expected)->toHaveCount(21)
         ->and($held)->toBe(
             $expected,
             "Admin's finance grant no longer matches design §10.",
