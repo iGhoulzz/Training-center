@@ -563,9 +563,11 @@ it('rejects the download link with its signature altered', function (): void {
 it('marks as ready exactly the exports the download route serves', function (): void {
     $owner = ($this->owner)();
     $exports = ($this->makeEveryState)($owner);
-    // Two more ways to be refused that look serviceable on the surface: rows
-    // processed short of the total while every row succeeded, and files that are
-    // there for an exporter the route will not serve.
+    // Three more ways to be refused that look serviceable on the surface: a failed
+    // export whose partial files are still on disk, rows processed short of the
+    // total while every row succeeded, and files that are there for an exporter the
+    // route will not serve.
+    $exports['failed with files'] = ($this->makeExport)($owner, 'ready', ['processed_rows' => 3, 'successful_rows' => 2]);
     $exports['processed short'] = ($this->makeExport)($owner, 'ready', ['processed_rows' => 2, 'successful_rows' => 3]);
     $exports['foreign exporter'] = ($this->makeExport)($owner, 'ready', ['exporter' => 'App\\Domain\\Elsewhere\\RetiredExporter']);
 
@@ -586,6 +588,7 @@ it('marks as ready exactly the exports the download route serves', function (): 
         'failed' => false,
         'ready' => true,
         'unavailable' => false,
+        'failed with files' => false,
         'processed short' => false,
         'foreign exporter' => false,
     ])->and($served)->toBe([
@@ -593,6 +596,7 @@ it('marks as ready exactly the exports the download route serves', function (): 
         'failed' => 404,
         'ready' => 200,
         'unavailable' => 404,
+        'failed with files' => 404,
         'processed short' => 404,
         'foreign exporter' => 404,
     ]);
