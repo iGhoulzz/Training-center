@@ -393,6 +393,10 @@ removed · `LocalizationTest` passes with `Article` recording activity ·
 - `app/Domain/Finance/Filament/Pages/Reports/ProfitReportPage.php` —
   owner-approved expansion (2026-10-10/11): the definition subheading only,
   from a `lang/en/reports.php` key; no other change to that file
+- `tests/Feature/Finance/FinancePermissionSeedingTest.php` — the expense
+  abilities classified as finance (seam, after T03); forced by the seeder change
+- `tests/Feature/Finance/Reports/ProfitReportTest.php` — header comment only:
+  its definition of Profit predated the expense term (review finding, 2026-10-11)
 - `app/Domain/Finance/Filament/Resources/ExpenseCategoryResource.php`,
   `ExpenseResource.php`, and their `Pages/`
 - `database/seeders/RolePermissionSeeder.php` (seam, after T03)

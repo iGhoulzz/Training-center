@@ -19,12 +19,16 @@ use Illuminate\Support\Facades\DB;
 
 /*
 |--------------------------------------------------------------------------
-| ProfitReport — collected revenue minus finalized wage cost, composed from
-| RevenueReport and WageCostReport, never re-derived
+| ProfitReport — collected revenue minus finalized wage cost minus
+| non-reversed expenses, composed from RevenueReport, WageCostReport and
+| ExpenseReport, never re-derived
 |--------------------------------------------------------------------------
 |
-| Design §8: "Profit | Collected revenue minus finalized wage cost for a
-| period."
+| Design §8, as amended for phase 4 (P4-T01): "Profit = collected revenue −
+| finalized wage cost − non-reversed expenses paid in the period." Every
+| fixture in this file records no expenses, so each figure here is revenue
+| minus wage cost — exactly what the amended definition gives a month with no
+| expense rows. The expense term is proven in tests/Feature/Finance/Expenses/.
 |
 | Every fixture states a payment's received_at (a UTC instant RevenueReport
 | filters through ReportPeriod) and a payroll line's posting_period_start (a
