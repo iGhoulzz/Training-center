@@ -152,6 +152,9 @@ first attempt.
 | `resources/css/app.css`, `vite.config.js` | **T11 → T16a → T18** | T11 adds the public site's stylesheet entry; T16a the Filament theme entry; T18 the direction work over both |
 | `resources/views/layouts/public.blade.php` | **T11 → T18** | T11 creates it; T18 makes it directional. The verifier does **not** use it — see T14 |
 | `resources/views/public/partials/header.blade.php` | **T11 → T15 → T18** | T11 creates it; T15 adds the portal link; T18 makes that link carry the locale |
+| `resources/views/public/partials/navigation.blade.php`, `footer.blade.php` | **T11 → T12 → T13** | Owner-approved amendment (2026-10-12). T11 creates them, linking only to pages that exist: the home page and the verifier. T12 adds About, Programmes and Contact; T13 adds Publications. Each adds its own links through `PublicRoute` and edits no other task's |
+| `resources/views/public/home.blade.php` | **T11 → T12** | T11 creates a minimal page at `public.home` so `/` has somewhere to go once `welcome.blade.php` is deleted; T12 replaces it with the real home page |
+| `config/public_site.php`, `.env.example` | **T11 → T12** | Owner-approved amendment (2026-10-12). T11 creates the public contact details: the centre's real public email and telephone as committed defaults, each overridable from `.env`, plus a map-link key that defaults to null. T12 sets the map link's default once the owner provides it, and touches nothing else |
 | `resources/views/verify/*` | **T14 → T18** | T14 restyles; T18 makes them directional and converts their three `route()` call sites to `PublicRoute`. Both keep them standalone and scriptless |
 | `app/Http/Controllers/VerifyCertificateController.php` | **T18 only** | One line: the `submit()` redirect goes through `PublicRoute`. The lookup, the normalisation and the uniform miss are untouched |
 | `app/Support/PublicRoute.php` | **T11 only** | Complete from the start, so T18 adds routes and a locale without editing it |
@@ -677,12 +680,26 @@ clamped · `composer verify` green.
 - `app/Providers/AppServiceProvider.php` — the `public-site` rate limiter (seam, first)
 - `resources/views/layouts/public.blade.php` — new (seam, first)
 - `resources/views/public/partials/` — header, footer, navigation
+- `resources/views/public/home.blade.php` — the minimal page that replaces
+  `welcome.blade.php` at `public.home` (seam, first; T12 writes the real page)
 - `resources/views/welcome.blade.php` — deleted
+- `tests/Feature/LocalizationTest.php` — only `STOCK_TAILWIND_PAGES` loses its
+  `welcome.blade.php` entry. That test fails by design once the exempted file is
+  gone, so the public views are scanned like every other view (lead's amendment,
+  2026-10-12, for the owner to confirm on T11's PR)
 - `resources/css/public.css`, `vite.config.js` (seam, first)
 - `lang/en/public.php`
+- `config/public_site.php` — new, and `.env.example` — its keys (owner-approved
+  amendment, 2026-10-12; see the seams table)
 - `app/Support/PublicRoute.php` — new
 - `tests/Feature/Public/PublicGroupTest.php`, `PublicSessionlessTest.php`,
   `PublicRouteTest.php`
+
+**Contact details (owner, 2026-10-12).** The header and footer show the centre's
+public email and telephone. They live in `config/public_site.php`, with the real
+values committed as defaults and each overridable from `.env`. They are what the
+site publishes, so the public repository reveals nothing more. No Blade file
+holds them. The map link's key exists and defaults to null; T12 renders it.
 
 **Does**
 
@@ -742,8 +759,13 @@ properties only · `composer verify` green.
 **File scope**
 - `app/Http/Controllers/Public/PageController.php`, `ProgrammeController.php`
 - `routes/web.php` — routes inside the public group (seam, after T11)
-- `resources/views/public/home.blade.php`, `about.blade.php`,
-  `programmes/index.blade.php`, `programmes/show.blade.php`, `contact.blade.php`
+- `resources/views/public/home.blade.php` (seam, after T11: replaces T11's minimal
+  page), `about.blade.php`, `programmes/index.blade.php`,
+  `programmes/show.blade.php`, `contact.blade.php`
+- `resources/views/public/partials/navigation.blade.php`, `footer.blade.php` — the
+  About, Programmes and Contact links (seam, after T11)
+- `config/public_site.php` — the map link's default only, once the owner provides
+  it (seam, after T11)
 - `lang/en/public.php` — appended
 - `tests/Feature/Public/ProgrammesTest.php`, `PublicPagesTest.php`
 
@@ -773,7 +795,10 @@ query log · an inactive course has no card · `composer verify` green.
 - `routes/web.php` — routes inside the public group (seam, after T12)
 - `app/Providers/AppServiceProvider.php` — the `publication-download` limiter (seam, after T11)
 - `resources/views/public/publications/index.blade.php`, `show.blade.php`
-- `lang/en/publications.php` — public keys, appended
+- `resources/views/public/partials/navigation.blade.php`, `footer.blade.php` — the
+  Publications link (seam, after T12)
+- `lang/en/publications.php` — public keys, appended; `lang/en/public.php` — the
+  Publications link label, appended
 - `tests/Feature/Public/PublicationsIndexTest.php`, `PublicationDownloadTest.php`
 
 **Does**
