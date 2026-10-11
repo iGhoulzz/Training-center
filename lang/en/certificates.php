@@ -93,4 +93,9 @@ return [
     'revoke_modal_heading' => 'Revoke this certificate',
     'revoke_reason_hint' => 'Required. This does not delete the certificate — it stays on the register, marked revoked.',
     'revoked_successfully' => 'Certificate revoked.',
+
+    'queue_title' => 'Certificate issuance queue',
+    'queue_student_code' => 'Student code',
+    'queue_batch' => 'Batch',
+    'queue_empty' => 'No enrolments awaiting certificate issuance',
 ];
