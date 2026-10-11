@@ -22,6 +22,8 @@ use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
 use Livewire\Livewire;
 use Spatie\Activitylog\Models\Activity;
@@ -696,6 +698,35 @@ it('refuses a duplicate or blank category name in the form', function () {
         ->assertHasFormErrors(['name_en' => 'required']);
 
     expect(ExpenseCategory::query()->count())->toBe(1);
+});
+
+it('shows a lost race on a category name as a notification, not an error page', function () {
+    $actor = ($this->categoryActorWith)('create_expense_category');
+
+    Event::listen('eloquent.creating: '.ExpenseCategory::class, function (): void {
+        DB::table('expense_categories')->insert([
+            'name_en' => 'Insurance',
+            'is_active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    });
+
+    try {
+        Livewire::actingAs($actor)
+            ->test(CreateExpenseCategory::class)
+            ->fillForm(['name_en' => 'Insurance'])
+            ->call('create')
+            ->assertNotified();
+    } finally {
+        Event::forget('eloquent.creating: '.ExpenseCategory::class);
+    }
+
+    // The refusal halts the page and rolls its transaction back. In production the
+    // competitor committed on another connection and its row stands; here it shared
+    // this transaction, so what is left is the fixture's own "Rent", and nothing
+    // half-written by the loser.
+    expect(ExpenseCategory::query()->pluck('name_en')->all())->toBe(['Rent']);
 });
 
 it('does not offer the active switch on a new category, which is always active', function () {

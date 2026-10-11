@@ -7,11 +7,13 @@ namespace App\Domain\Finance\Actions;
 use App\Domain\Finance\Models\ExpenseCategory;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Spatie\Activitylog\Support\CauserResolver;
+use Throwable;
 
 /**
  * Add a heading an expense can be recorded against.
@@ -21,12 +23,26 @@ use Spatie\Activitylog\Support\CauserResolver;
  * rules. A new category is always active; switching one off is an edit, owned by
  * `UpdateExpenseCategoryAction`.
  *
+ * A LOST RACE IS A FIELD ERROR, NEVER A 500
+ * ------------------------------------------
+ * `rules()` checks the name is free, but two concurrent saves can both pass that
+ * read. `expense_categories_name_en_unique` is the backstop, and the loser's
+ * unique violation is turned into the same `name_en` error the validator gives
+ * (`duplicateNameRefusal()`), so the person sees "already taken" and not an error
+ * page. Any other unique violation is not ours and propagates.
+ *
  * THE AUDIT TRAIL IS THE MODEL EVENT. The `created` entry is written by
  * RecordsActivity; this Action only names the actor it is attributed to.
  */
 final class CreateExpenseCategoryAction
 {
     public const NAME_MAX_LENGTH = 100;
+
+    /** Laravel's generated name for `$table->string('name_en')->unique()`. */
+    public const NAME_INDEX = 'expense_categories_name_en_unique';
+
+    /** MySQL ER_DUP_ENTRY, checked beside the index name as the other lost-race handlers do. */
+    private const DUPLICATE_ENTRY = 1062;
 
     public function __construct(private readonly CauserResolver $causers) {}
 
@@ -45,14 +61,37 @@ final class CreateExpenseCategoryAction
             self::attributeNames(),
         )->validate();
 
-        return $this->causers->withCauser(
-            $actor,
-            fn (): ExpenseCategory => ExpenseCategory::query()->create([
-                'name_en' => (string) $validated['name_en'],
-                'name_ar' => $validated['name_ar'] ?? null,
-                'is_active' => true,
-            ]),
-        );
+        try {
+            return $this->causers->withCauser(
+                $actor,
+                fn (): ExpenseCategory => ExpenseCategory::query()->create([
+                    'name_en' => (string) $validated['name_en'],
+                    'name_ar' => $validated['name_ar'] ?? null,
+                    'is_active' => true,
+                ]),
+            );
+        } catch (UniqueConstraintViolationException $exception) {
+            throw self::duplicateNameRefusal($exception);
+        }
+    }
+
+    /**
+     * What to throw for a unique violation: the validator's own "already taken"
+     * error on `name_en` when it was the name index that collided, otherwise the
+     * violation itself, untouched.
+     *
+     * Shared with `UpdateExpenseCategoryAction`, so a lost race refuses in the same
+     * words on both paths.
+     */
+    public static function duplicateNameRefusal(UniqueConstraintViolationException $exception): Throwable
+    {
+        if (($exception->errorInfo[1] ?? null) !== self::DUPLICATE_ENTRY || $exception->index !== self::NAME_INDEX) {
+            return $exception;
+        }
+
+        return ValidationException::withMessages([
+            'name_en' => trans('validation.unique', ['attribute' => self::attributeNames()['name_en']]),
+        ]);
     }
 
     /**

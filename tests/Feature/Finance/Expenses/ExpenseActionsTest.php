@@ -10,8 +10,10 @@ use App\Domain\Finance\Models\ExpenseCategory;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Validation\ValidationException;
 use Spatie\Activitylog\Models\Activity;
 
@@ -311,6 +313,156 @@ it('refuses a blank, an over-long, or a duplicate English category name', functi
         // "Rent" exists already; the match ignores case under the table's collation.
         ->and(fn () => $create('rent'))->toThrow(ValidationException::class)
         ->and(ExpenseCategory::query()->count())->toBe(1);
+});
+
+/*
+|--------------------------------------------------------------------------
+| The English name is unique in the database, not only in the Action
+|--------------------------------------------------------------------------
+|
+| An Action that only reads the table lets two concurrent saves both pass its check.
+| The unique index is the backstop, and the Actions turn the loser into the same
+| field error the validator gives. A lost race is simulated by inserting the
+| competing row from inside the model's own `creating` / `updating` event, i.e.
+| AFTER validation has read the table and BEFORE the write.
+*/
+
+/** A category row written straight to the table, past every model and Action. */
+function rawCategory(string $name): bool
+{
+    return DB::table('expense_categories')->insert([
+        'name_en' => $name,
+        'is_active' => true,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+}
+
+it('rejects a duplicate English name at the database', function () {
+    $insert = fn () => rawCategory('Rent');
+
+    expect($insert)->toThrow(UniqueConstraintViolationException::class)
+        ->and(DB::table('expense_categories')->where('name_en', 'Rent')->count())->toBe(1);
+
+    try {
+        $insert();
+    } catch (UniqueConstraintViolationException $exception) {
+        // The index the Actions match on, by name.
+        expect($exception->index)->toBe('expense_categories_name_en_unique');
+    }
+});
+
+it('rejects a case-variant duplicate at the database, because the collation ignores case', function (string $variant) {
+    expect(fn () => rawCategory($variant))->toThrow(UniqueConstraintViolationException::class)
+        ->and(DB::table('expense_categories')->count())->toBe(1);
+})->with([
+    'lower case' => 'rent',
+    'upper case' => 'RENT',
+]);
+
+it('allows two categories with no Arabic name, which is not unique', function () {
+    ExpenseCategory::factory()->create(['name_en' => 'Insurance', 'name_ar' => null]);
+    ExpenseCategory::factory()->create(['name_en' => 'Utilities', 'name_ar' => null]);
+
+    expect(ExpenseCategory::query()->whereNull('name_ar')->count())->toBe(3);
+});
+
+it('gives the name_en field error for a duplicate through the Action, case variants included', function (string $name) {
+    $actor = ($this->actorWith)('create_expense_category');
+    $create = fn () => app(CreateExpenseCategoryAction::class)->execute($actor, $name, null);
+
+    expect($create)->toThrow(ValidationException::class);
+
+    try {
+        $create();
+    } catch (ValidationException $exception) {
+        expect($exception->errors())->toHaveKey('name_en')
+            ->and($exception->errors()['name_en'][0])->toContain('Name (English)');
+    }
+
+    expect(ExpenseCategory::query()->count())->toBe(1);
+})->with([
+    'the same name' => 'Rent',
+    'a case variant' => 'rent',
+]);
+
+it('turns a lost race on create into the same field error, never a database error', function () {
+    $actor = ($this->actorWith)('create_expense_category');
+    $create = fn () => app(CreateExpenseCategoryAction::class)->execute($actor, 'Insurance', null);
+
+    // What a normal duplicate says, for comparison.
+    $normal = null;
+
+    try {
+        app(CreateExpenseCategoryAction::class)->execute($actor, 'Rent', null);
+    } catch (ValidationException $exception) {
+        $normal = $exception->errors()['name_en'][0];
+    }
+
+    // Validation passes ("Insurance" is free), then a competitor takes the name.
+    Event::listen('eloquent.creating: '.ExpenseCategory::class, function (): void {
+        rawCategory('Insurance');
+    });
+
+    try {
+        $create();
+        $thrown = null;
+    } catch (Throwable $exception) {
+        $thrown = $exception;
+    } finally {
+        Event::forget('eloquent.creating: '.ExpenseCategory::class);
+    }
+
+    expect($thrown)->toBeInstanceOf(ValidationException::class)
+        ->and($thrown->errors())->toHaveKey('name_en')
+        ->and($thrown->errors()['name_en'][0])->toBe($normal)
+        // The competitor's row stands, and ours was not written.
+        ->and(DB::table('expense_categories')->where('name_en', 'Insurance')->count())->toBe(1);
+});
+
+it('turns a lost race on rename into the same field error, never a database error', function () {
+    $actor = ($this->actorWith)('update_expense_category');
+    $update = fn () => app(UpdateExpenseCategoryAction::class)->execute($actor, $this->category, 'Utilities', null, true);
+
+    Event::listen('eloquent.updating: '.ExpenseCategory::class, function (): void {
+        rawCategory('Utilities');
+    });
+
+    try {
+        $update();
+        $thrown = null;
+    } catch (Throwable $exception) {
+        $thrown = $exception;
+    } finally {
+        Event::forget('eloquent.updating: '.ExpenseCategory::class);
+    }
+
+    expect($thrown)->toBeInstanceOf(ValidationException::class)
+        ->and($thrown->errors())->toHaveKey('name_en')
+        ->and(ExpenseCategory::query()->findOrFail($this->category->getKey())->name_en)->toBe('Rent');
+});
+
+it('does not turn a unique violation on some other index into a name error', function () {
+    // Built from a real violation on this table's only unique index, then pointed at
+    // a different one: the helper must leave a violation that is not its own alone.
+    try {
+        rawCategory('Rent');
+    } catch (UniqueConstraintViolationException $exception) {
+        $foreign = new UniqueConstraintViolationException(
+            $exception->getConnectionName(),
+            $exception->getSql(),
+            $exception->getBindings(),
+            $exception->getPrevious(),
+        );
+        $foreign->index = 'some_other_unique';
+        $foreign->errorInfo = [$exception->errorInfo[0] ?? '23000', 1062, 'Duplicate entry'];
+
+        expect(CreateExpenseCategoryAction::duplicateNameRefusal($foreign))->toBe($foreign);
+
+        return;
+    }
+
+    throw new RuntimeException('The control violation was not raised.');
 });
 
 /*

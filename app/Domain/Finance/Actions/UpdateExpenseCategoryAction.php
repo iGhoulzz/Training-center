@@ -7,6 +7,7 @@ namespace App\Domain\Finance\Actions;
 use App\Domain\Finance\Models\ExpenseCategory;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Validator;
@@ -23,6 +24,12 @@ use Spatie\Activitylog\Support\CauserResolver;
  * viewed, created, edited and deactivated). A deactivated category leaves the
  * picker and stays on every expense that already names it. No Action deletes a
  * category.
+ *
+ * A LOST RACE ON THE NAME IS A FIELD ERROR, NEVER A 500
+ * -----------------------------------------------------
+ * Renaming into a name another save has just taken passes the validator's read and
+ * collides on `expense_categories_name_en_unique`. The violation is turned into the
+ * same `name_en` error the validator gives, by the helper the create Action uses.
  *
  * THE ROW IS LOCKED BEFORE IT IS WRITTEN
  * --------------------------------------
@@ -56,21 +63,25 @@ final class UpdateExpenseCategoryAction
             CreateExpenseCategoryAction::attributeNames(),
         )->validate();
 
-        return DB::transaction(function () use ($actor, $category, $validated, $isActive): ExpenseCategory {
-            $lockedCategory = ExpenseCategory::query()
-                ->lockForUpdate()
-                ->findOrFail($category->getKey());
+        try {
+            return DB::transaction(function () use ($actor, $category, $validated, $isActive): ExpenseCategory {
+                $lockedCategory = ExpenseCategory::query()
+                    ->lockForUpdate()
+                    ->findOrFail($category->getKey());
 
-            $this->causers->withCauser(
-                $actor,
-                fn (): bool => $lockedCategory->update([
-                    'name_en' => (string) $validated['name_en'],
-                    'name_ar' => $validated['name_ar'] ?? null,
-                    'is_active' => $isActive,
-                ]),
-            );
+                $this->causers->withCauser(
+                    $actor,
+                    fn (): bool => $lockedCategory->update([
+                        'name_en' => (string) $validated['name_en'],
+                        'name_ar' => $validated['name_ar'] ?? null,
+                        'is_active' => $isActive,
+                    ]),
+                );
 
-            return $lockedCategory;
-        });
+                return $lockedCategory;
+            });
+        } catch (UniqueConstraintViolationException $exception) {
+            throw CreateExpenseCategoryAction::duplicateNameRefusal($exception);
+        }
     }
 }
