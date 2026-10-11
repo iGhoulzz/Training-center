@@ -55,6 +55,7 @@ class AdminPanelProvider extends PanelProvider
             )
             ->discoverPages(in: app_path('Filament/Pages'), for: 'App\Filament\Pages')
             ->discoverPages(in: app_path('Domain/Finance/Filament/Pages'), for: 'App\Domain\Finance\Filament\Pages')
+            ->discoverPages(in: app_path('Domain/Enrollment/Filament/Pages'), for: 'App\Domain\Enrollment\Filament\Pages')
             ->pages([
                 Dashboard::class,
             ])
