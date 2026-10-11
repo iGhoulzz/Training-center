@@ -598,13 +598,17 @@ nothing. So the page lists spreadsheet exports and says so. The design's PDF
 rows and its Retry button are therefore not built here. A failed export is run
 again from its report page.
 
-**An export still unfinished an hour after it was requested reads Failed.**
-When preparation fails, from a refused requester or any other fault, Filament's
-chain stops before `ExportCompletion`. So `completed_at` is never set and no
-notification is sent (traced and probed in the pre-push review). A report export
-takes seconds and Horizon's job timeout is 60 s, so an hour is far past any honest
-queue delay. If a stalled worker does finish such an export later, its row turns
-Ready.
+**An export still unfinished an hour after it was requested reads Overdue, not
+Failed.** When preparation fails, from a refused requester or any other fault,
+Filament's chain stops before `ExportCompletion`. So `completed_at` is never set
+and no notification is sent (traced and probed in the pre-push review). The page
+cannot tell that from a paused or backed-up queue, because nothing records a job's
+failure against its export row. So it claims no cause. A report export takes
+seconds, so after an hour the row reads Overdue, with no link. Failed is kept for
+an export that completed with rows missing. If a worker finishes an overdue export
+later, its row turns Ready. Recording a real failure would need the export's job
+batch to be findable from its row, which touches `ReportExporter`, outside this
+task.
 
 **Done when**
 
