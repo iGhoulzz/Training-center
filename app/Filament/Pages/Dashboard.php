@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Filament\Pages;
 
 use App\Domain\Finance\Filament\Pages\EnrollAndCollect;
+use App\Support\CentreCalendar;
 use Filament\Actions\Action;
 use Filament\Facades\Filament;
 use Filament\Pages\Dashboard as BaseDashboard;
@@ -25,7 +26,7 @@ class Dashboard extends BaseDashboard
     public function getSubheading(): string
     {
         return __('navigation.dashboard_context', [
-            'date' => now('Africa/Tripoli')->locale(app()->getLocale())->isoFormat('dddd, D MMMM YYYY'),
+            'date' => now(CentreCalendar::TIMEZONE)->locale(app()->getLocale())->isoFormat(__('navigation.dashboard_date_format')),
             'centre' => Filament::getBrandName(),
         ]);
     }

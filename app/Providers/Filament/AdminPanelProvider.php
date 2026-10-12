@@ -39,12 +39,16 @@ class AdminPanelProvider extends PanelProvider
 {
     public function panel(Panel $panel): Panel
     {
+        // Match the public layout's fallback in a checkout whose assets are not built yet.
+        if (file_exists(public_path('build/manifest.json')) || file_exists(public_path('hot'))) {
+            $panel->viteTheme('resources/css/filament/admin/theme.css');
+        }
+
         return $panel
             ->default()
             ->id('admin')
             ->path('admin')
             ->login()
-            ->viteTheme('resources/css/filament/admin/theme.css')
             ->darkMode(isForced: true)
             ->themeSwitcher(false)
             ->font('Instrument Sans', provider: LocalFontProvider::class)
@@ -61,6 +65,7 @@ class AdminPanelProvider extends PanelProvider
                 'danger' => Color::Red,
             ])
             ->navigation(function (NavigationBuilder $builder): NavigationBuilder {
+                // The shell owns groups by destination, overriding each page/resource's getNavigationGroup().
                 $groups = [];
                 $panel = Filament::getCurrentOrDefaultPanel();
 
