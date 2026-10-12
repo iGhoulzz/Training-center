@@ -8,11 +8,60 @@ use App\Http\Controllers\Staff\StaffProfilePhotoController;
 use App\Http\Controllers\VerifyCertificateController;
 use App\Http\Middleware\AuthenticatePrivateFileSession;
 use App\Http\Middleware\VerificationResponseHeaders;
+use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
+use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
+use Illuminate\Session\Middleware\StartSession;
 use Illuminate\Support\Facades\Route;
+use Illuminate\View\Middleware\ShareErrorsFromSession;
 
-Route::get('/', function () {
-    return view('welcome');
-});
+/*
+|--------------------------------------------------------------------------
+| The public site (phase 4, P4-T11)
+|--------------------------------------------------------------------------
+|
+| Home, about, programmes, contact, the publications index and the articles
+| (T12, T13 and T15 add their routes INSIDE this group; none of them alters the
+| group or its middleware). Every route here is named `public.` plus its own
+| name, which is what PublicGroupTest finds them by.
+|
+| THESE PAGES HAVE NO SESSION, AND THAT IS BUILT, NOT ASSUMED. Every route in
+| this file receives the `web` group, which starts a session and sets a cookie on
+| every response, so an anonymous visitor to a page that varies by nobody would
+| still be handed a Set-Cookie. Shared caches generally refuse to store a
+| response that carries one, and which layer sits in front of the application
+| stays a deployment decision with no host chosen. The four middleware removed
+| below are the ones that start the session, share its error bag, check the
+| CSRF token and queue cookies onto the response. `withoutMiddleware()` removes
+| only ROUTE middleware, which these four are (the `web` group names them); it
+| would not remove a global one.
+|
+| WHAT THAT COSTS, AND WHY IT IS ACCEPTABLE. A page here can hold no form, no
+| `@csrf`, and no `session()`, `old()` or `auth()` call, because the machinery
+| behind each one is gone. So every route is GET, and contact is links rather
+| than a form. PublicGroupTest asserts the GET-only property over the router's
+| own route list, PublicSessionlessTest that a response carries no cookie and
+| that the views contain none of those constructs.
+|
+| NOT SESSIONLESS, AND UNTOUCHED: the private-file group and the verifier group
+| below (the verifier's form posts and needs CSRF), and both Filament panels.
+| PublicSessionlessTest asserts each of them still issues a session cookie, and
+| that the ones that accept a POST still refuse one without a token. Removing
+| the session from one group is one edit away from removing it from all of them.
+|
+| `public-site` is the named limiter registered in AppServiceProvider,
+| referenced here so it protects something rather than reading as a control.
+*/
+Route::name('public.')
+    ->middleware('throttle:public-site')
+    ->withoutMiddleware([
+        StartSession::class,
+        ShareErrorsFromSession::class,
+        PreventRequestForgery::class,
+        AddQueuedCookiesToResponse::class,
+    ])
+    ->group(function (): void {
+        Route::view('/', 'public.home')->name('home');
+    });
 
 /*
 |--------------------------------------------------------------------------

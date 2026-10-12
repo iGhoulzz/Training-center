@@ -1,0 +1,51 @@
+/*
+ * The public site's stylesheet (P4-T11).
+ *
+ * Its own entry, separate from app.css, so a visitor to the public pages
+ * downloads only what those pages use. `source(none)` turns off Tailwind's
+ * automatic detection, which would otherwise scan every view in the project,
+ * including the panels', and the three @source lines name the only places this
+ * stylesheet may take a class from.
+ *
+ * System font stacks only. No font file is bundled and no third-party origin is
+ * requested at runtime. Logical utilities only (ms-, me-, ps-, pe-, start-, end-,
+ * text-start); resources/css/README.md and LocalizationTest enforce it.
+ */
+@import 'tailwindcss' source(none);
+
+@source '../views/layouts/public.blade.php';
+@source '../views/public';
+@source '../views/components';
+
+/*
+ * The palette is the design handoff's: deep navy, gold and cream. The values are
+ * chosen for contrast rather than copied from the prototype: navy text on cream
+ * and gold or cream text on navy clear WCAG AA for body text. Gold is never used
+ * as text on cream, where it would not.
+ */
+@theme {
+    --color-navy-900: #0c2043;
+    --color-navy-800: #12294d;
+    --color-navy-700: #1d3a68;
+    --color-gold-500: #c9a24a;
+    --color-gold-400: #d9b865;
+    --color-cream-50: #fdfaf2;
+    --color-cream-100: #f8f2e3;
+    --color-cream-200: #e8dfc6;
+
+    --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans',
+        sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+    --font-serif: ui-serif, Georgia, Cambria, 'Times New Roman', Times, serif;
+}
+
+/*
+ * A visible focus ring on every interactive element, navy by default. On a navy
+ * surface that ring would vanish, so those elements set their own with
+ * `focus-visible:outline-gold-400`, which wins over this base rule.
+ */
+@layer base {
+    :focus-visible {
+        outline: 2px solid var(--color-navy-700);
+        outline-offset: 2px;
+    }
+}

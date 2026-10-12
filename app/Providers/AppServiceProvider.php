@@ -280,6 +280,35 @@ class AppServiceProvider extends ServiceProvider
         });
 
         /*
+         * THE PUBLIC SITE'S LIMITER, REFERENCED THE SAME WAY (P4-T11).
+         *
+         * `routes/web.php`'s public group applies this by name —
+         * `throttle:public-site` — to every page in it, so a page added to the
+         * group tomorrow is throttled without anybody remembering to.
+         *
+         * ONE WINDOW, SO NO WINDOW PREFIX. The comment on
+         * `certificate-verification` above explains why two limits sharing a name
+         * need `minute:` and `hour:` in their keys: the cache key is the limiter
+         * name plus whatever `by()` was given, so two windows keyed on the bare IP
+         * collapse into one bucket counted twice. A single Limit has nothing to
+         * collide with, and the bare IP is the right key.
+         *
+         * 120 A MINUTE, KEYED BY IP. These are read-only GET pages. The figure
+         * stops a script hammering them while leaving a person (or a few people
+         * behind one shared address) well clear of it. PHP serves the HTML only:
+         * the stylesheet is a static file the web server hands out in
+         * production, so a page view is one request here, not a dozen.
+         *
+         * BEHIND A PROXY OR CDN, `$request->ip()` is the proxy's address unless
+         * the application trusts it, and every visitor then shares one bucket.
+         * That is a deployment fact for whoever chooses the host, stated here so
+         * it is read before 120 a minute is blamed.
+         */
+        RateLimiter::for('public-site', function (Request $request): Limit {
+            return Limit::perMinute(120)->by($request->ip());
+        });
+
+        /*
          * saveQuietly() is deliberate: P1-T12 adds activity logging, and a login
          * timestamp must not produce a spurious "user updated" audit entry.
          *

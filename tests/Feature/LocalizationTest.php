@@ -580,22 +580,35 @@ it('renders the panel left-to-right for an english user', function () {
  * The exclusion is conditional, not permanent: the test below re-checks that the
  * file still carries that build. Whoever replaces this placeholder with a real
  * public site loses the exemption automatically rather than inheriting it.
+ *
+ * EMPTY SINCE P4-T11, which deleted the stock welcome page, the only entry, and
+ * put the public layout and views under both scans like every other view.
  */
-const STOCK_TAILWIND_PAGES = ['welcome.blade.php'];
+const STOCK_TAILWIND_PAGES = [];
 
 it('only exempts files that are still stock vendor builds', function () {
+    // Collected rather than asserted inside the loop: with the list empty a loop
+    // makes no assertion at all, and this test would pass without checking anything.
+    $stale = [];
+
     foreach (STOCK_TAILWIND_PAGES as $name) {
         $path = resource_path("views/{$name}");
 
-        expect(file_exists($path))->toBeTrue("{$name} is exempted from the logical-CSS scan but no longer exists. Remove the exemption.");
+        if (! file_exists($path)) {
+            $stale[] = "{$name} is exempted from the logical-CSS scan but no longer exists. Remove the exemption.";
+
+            continue;
+        }
 
         // str_contains, not expect()->toContain(): that is variadic, so a second
         // argument becomes a second expected substring rather than the failure
         // message — and the failure then dumps the whole 220-line file.
-        expect(str_contains((string) file_get_contents($path), 'tailwindcss v4'))->toBeTrue(
-            "{$name} no longer contains the generated Tailwind build it was exempted for. It is hand-written now, so it must be scanned.",
-        );
+        if (! str_contains((string) file_get_contents($path), 'tailwindcss v4')) {
+            $stale[] = "{$name} no longer contains the generated Tailwind build it was exempted for. It is hand-written now, so it must be scanned.";
+        }
     }
+
+    expect($stale)->toBeEmpty(implode("\n", $stale));
 });
 
 /**
