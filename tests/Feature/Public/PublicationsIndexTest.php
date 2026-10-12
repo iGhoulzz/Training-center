@@ -221,8 +221,9 @@ it('prints each card from its article: topic, date, title link, description, aut
     preg_match('/<article\b.*?<\/article>/s', $html, $card);
     $text = trim((string) preg_replace('/\s+/', ' ', html_entity_decode(strip_tags($card[0]))));
 
-    // Computed by hand: the date format is the sentinel 'Y/m/d', 2026-02-12.
-    expect($text)->toBe('Arbitration 2026/02/12 Enforcing Foreign Awards A practitioner reading of the grounds. Dr. Salah Ferjani PDFSENT 318 DLSENT');
+    // Computed by hand: the date format is the sentinel 'Y/m/d' and the wording the
+    // sentinel 'ISSUEDSENT :date', for 2026-02-12.
+    expect($text)->toBe('Arbitration ISSUEDSENT 2026/02/12 Enforcing Foreign Awards A practitioner reading of the grounds. Dr. Salah Ferjani PDFSENT 318 DLSENT');
 
     $links = libraryAnchors($card[0]);
 
@@ -230,6 +231,23 @@ it('prints each card from its article: topic, date, title link, description, aut
         url('/publications/'.$article->slug),
         url('/publications/'.$article->slug.'/download'),
     ])->and(str_contains($html, '<time datetime="2026-02-12"'))->toBeTrue();
+});
+
+it('renders the topic and issue date the same on the card and on the article page, from one component', function () {
+    $article = libraryArticle(['topic' => 'Arbitration', 'issued_on' => '2026-02-12']);
+
+    $fragment = '/<p class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">.*?<\/p>/s';
+
+    preg_match_all($fragment, libraryBody($this->get('/publications')->assertOk()), $onCard);
+    preg_match_all($fragment, libraryBody($this->get('/publications/'.$article->slug)->assertOk()), $onPage);
+
+    // One on each page, and the same bytes. Written by hand: the sentinel date
+    // format 'Y/m/d' and the sentinel wording 'ISSUEDSENT :date' give the text.
+    expect($onCard[0])->toHaveCount(1)
+        ->and($onPage[0])->toHaveCount(1)
+        ->and($onPage[0][0])->toBe($onCard[0][0])
+        ->and(trim((string) preg_replace('/\s+/', ' ', strip_tags($onCard[0][0]))))->toBe('Arbitration ISSUEDSENT 2026/02/12')
+        ->and($onCard[0][0])->toContain('<time datetime="2026-02-12"');
 });
 
 it('names the title in the download link for a screen reader, whatever the visible text', function () {

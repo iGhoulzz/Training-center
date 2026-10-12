@@ -8,6 +8,7 @@ use App\Domain\Publications\Actions\CreateArticleAction;
 use App\Domain\Publications\Models\Article;
 use App\Domain\Publications\Support\ArticleDownloadCounter;
 use App\Http\Controllers\Controller;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -34,14 +35,19 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
  *      feature's file would otherwise stream it to the open internet, so the
  *      path must be `publications/{ULID}.pdf`, and nothing else is served.
  *   3. The file exists. A row that outlived its file is a 404 and is NOT counted.
- *   4. Only then is the download counted. The counter re-reads publication state
- *      itself in one conditional UPDATE, so if the article was unpublished
- *      between steps 1 and 4 it returns false and this route answers 404 rather
- *      than serving a file nobody may now have.
+ *   4. Only then is the download counted, and only for a GET. The counter
+ *      re-reads publication state itself in one conditional UPDATE, so if the
+ *      article was unpublished between steps 1 and 4 it returns false and this
+ *      route answers 404 rather than serving a file nobody may now have.
  *
  * Counting after the checks means a download that cannot be served is never
  * counted. The count is approximate by nature (ArticleDownloadCounter) and is
  * taken when the response is built, not when the last byte arrives.
+ *
+ * A HEAD IS NOT A DOWNLOAD. The route answers HEAD as it answers GET, with the
+ * same status and headers and no body, but a HEAD fetches no bytes. Download
+ * managers and link checkers send one before the GET, so counting it would count
+ * the same download twice. A HEAD still takes one of the route's limiter slots.
  *
  * This class writes nothing except through the counter.
  *
@@ -51,15 +57,21 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
  */
 final class PublicationDownloadController extends Controller
 {
-    /** The generated path shape: the upload Action's directory, a ULID, and the one accepted extension. */
-    private const PATH_PATTERN = '#^'.CreateArticleAction::DIRECTORY.'/[0-9A-HJKMNP-TV-Z]{26}\.'.CreateArticleAction::EXTENSION.'$#i';
+    /**
+     * The generated path shape: the upload Action's directory, a ULID, and the one
+     * accepted extension.
+     *
+     * `\A` and `\z`, not `^` and `$`: `$` also matches before a trailing newline,
+     * so a path ending in "\n" would pass a shape check that is meant to be exact.
+     */
+    private const PATH_PATTERN = '#\A'.CreateArticleAction::DIRECTORY.'/[0-9A-HJKMNP-TV-Z]{26}\.'.CreateArticleAction::EXTENSION.'\z#i';
 
     /** The longest stem a download name keeps, in characters, before ".pdf". */
     private const NAME_STEM_MAX_LENGTH = 100;
 
     public function __construct(private readonly ArticleDownloadCounter $counter) {}
 
-    public function __invoke(string $slug): StreamedResponse
+    public function __invoke(Request $request, string $slug): StreamedResponse
     {
         $article = Article::query()
             ->published()
@@ -83,7 +95,7 @@ final class PublicationDownloadController extends Controller
             abort(404);
         }
 
-        if (! $this->counter->increment($article)) {
+        if ($request->isMethod('GET') && ! $this->counter->increment($article)) {
             abort(404);
         }
 

@@ -8,6 +8,7 @@ use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -88,6 +89,49 @@ it('serves a published article as a PDF download and counts it once', function (
         ->and($response->headers->get('Content-Disposition'))->toBe('attachment; filename="Safety Guide 2026.pdf"')
         ->and($response->headers->get('X-Content-Type-Options'))->toBe('nosniff')
         ->and(downloadCountOf($article))->toBe(1);
+});
+
+it('answers a HEAD like a GET, with the same status and headers, but does not count it', function () {
+    $article = ($this->publishedWithFile)(['original_filename' => 'Safety Guide 2026.pdf'], '%PDF-1.4 the real bytes');
+
+    $head = $this->call('HEAD', '/publications/'.$article->slug.'/download', server: ['REMOTE_ADDR' => '203.0.113.80']);
+
+    $head->assertOk();
+
+    // Nothing moved: a HEAD fetches no bytes, so it is not a download.
+    expect(downloadCountOf($article))->toBe(0);
+
+    $get = ($this->download)($article->slug, '203.0.113.81')->assertOk();
+
+    // The same answer to both, headers included, and then the GET is the one that counts.
+    expect($head->headers->get('Content-Type'))->toBe('application/pdf')
+        ->and($head->headers->get('Content-Type'))->toBe($get->headers->get('Content-Type'))
+        ->and($head->headers->get('Content-Disposition'))->toBe('attachment; filename="Safety Guide 2026.pdf"')
+        ->and($head->headers->get('Content-Disposition'))->toBe($get->headers->get('Content-Disposition'))
+        ->and($head->headers->get('X-Content-Type-Options'))->toBe('nosniff')
+        ->and(downloadCountOf($article))->toBe(1);
+});
+
+it('gives a HEAD the same 404 as a GET for an unpublished article, and counts nothing', function () {
+    $unpublished = Article::factory()->create();
+    Storage::disk('private')->put($unpublished->path, 'bytes');
+
+    $this->call('HEAD', '/publications/'.$unpublished->slug.'/download')->assertNotFound();
+    $this->call('HEAD', '/publications/no-such-article/download')->assertNotFound();
+
+    expect(downloadCountOf($unpublished))->toBe(0);
+});
+
+it('still spends a limiter slot on a HEAD, so the limit cannot be dodged by sending one', function () {
+    $article = ($this->publishedWithFile)();
+
+    for ($attempt = 1; $attempt <= 20; $attempt++) {
+        $this->call('HEAD', '/publications/'.$article->slug.'/download', server: ['REMOTE_ADDR' => '203.0.113.82'])->assertOk();
+    }
+
+    ($this->download)($article->slug, '203.0.113.82')->assertStatus(429);
+
+    expect(downloadCountOf($article))->toBe(0);
 });
 
 it('adds one to the count for each download, and moves no other column', function () {
@@ -263,13 +307,14 @@ it('answers 404 and does not count when the row names a disk other than the priv
 it('answers 404 and does not count for a path that is not the shape the upload writes', function (string $path) {
     $article = Article::factory()->published()->create(['path' => $path]);
 
-    // The bytes are on the private disk at that path (when the disk accepts it), so
-    // only the path check stops it: the private disk is shared with other features.
-    try {
-        Storage::disk('private')->put($path, 'another feature\'s file');
-    } catch (Throwable) {
-        // A traversing path is refused by the disk itself; the route must still refuse it.
-    }
+    // A disk on which EVERY file exists and every download would succeed, so the
+    // only thing that can refuse is the path check: the private disk is shared with
+    // other features, and a disk that cannot hold the path (a traversal, a newline)
+    // must not be what stands between it and the internet.
+    $disk = Mockery::mock(FilesystemAdapter::class);
+    $disk->shouldReceive('exists')->andReturn(true);
+    $disk->shouldReceive('download')->never();
+    Storage::set('private', $disk);
 
     ($this->download)($article->slug)->assertNotFound();
 
@@ -277,10 +322,14 @@ it('answers 404 and does not count for a path that is not the shape the upload w
 })->with([
     'another feature\'s directory' => ['staff-certificates/01ARZ3NDEKTSV4RRFFQ69G5FAV.pdf'],
     'a subdirectory' => ['publications/sub/01ARZ3NDEKTSV4RRFFQ69G5FAV.pdf'],
+    'a prefix before the directory' => ['x/publications/01ARZ3NDEKTSV4RRFFQ69G5FAV.pdf'],
     'another extension' => ['publications/01ARZ3NDEKTSV4RRFFQ69G5FAV.png'],
     'a name that is not a ULID' => ['publications/not-a-ulid.pdf'],
     'a trailing extension' => ['publications/01ARZ3NDEKTSV4RRFFQ69G5FAV.pdf.exe'],
     'a traversal' => ['publications/../staff-certificates/01ARZ3NDEKTSV4RRFFQ69G5FAV.pdf'],
+    // `$` would let the trailing newline through; `\z` does not.
+    'a trailing newline' => ["publications/01ARZ3NDEKTSV4RRFFQ69G5FAV.pdf\n"],
+    'a leading newline' => ["\npublications/01ARZ3NDEKTSV4RRFFQ69G5FAV.pdf"],
 ]);
 
 it('serves a generated ULID path in either letter case', function (string $name) {

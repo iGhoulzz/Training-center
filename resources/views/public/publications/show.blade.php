@@ -26,10 +26,9 @@
     <div class="mx-auto max-w-3xl px-4 py-12">
         <p><a href="{{ PublicRoute::url('public.publications.index') }}" class="text-sm font-medium text-navy-700 hover:underline">{{ __('publications.public.back') }}</a></p>
 
-        <p class="mt-6 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-            <span class="rounded-full bg-cream-100 px-3 py-1 font-semibold text-navy-800">{{ $article->topic }}</span>
-            <time datetime="{{ $article->issuedOn }}" class="text-navy-700">{{ __('publications.public.issued', ['date' => CarbonImmutable::parse($article->issuedOn)->translatedFormat(__('publications.public.date_format'))]) }}</time>
-        </p>
+        <div class="mt-6">
+            <x-public.article-meta :topic="$article->topic" :issued-on="$article->issuedOn" />
+        </div>
 
         <h1 class="mt-4 font-serif text-4xl font-semibold">{{ $article->title }}</h1>
         <p class="mt-3 text-navy-700">{{ $article->authors }}</p>

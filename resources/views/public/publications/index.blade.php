@@ -24,7 +24,6 @@
 --}}
 @use('App\Domain\Publications\Queries\PublicArticleCatalogue')
 @use('App\Support\PublicRoute')
-@use('Carbon\CarbonImmutable')
 
 @section('title')
     {{ __('public.page_title', ['page' => __('publications.public.heading'), 'name' => config('app.name')]) }}
@@ -138,10 +137,7 @@
                 @foreach ($articles as $article)
                     <li>
                         <article class="flex h-full flex-col rounded-xl border border-cream-200 bg-white p-6 shadow-sm">
-                            <p class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-                                <span class="rounded-full bg-cream-100 px-3 py-1 font-semibold text-navy-800">{{ $article->topic }}</span>
-                                <time datetime="{{ $article->issuedOn }}" class="text-navy-700">{{ CarbonImmutable::parse($article->issuedOn)->translatedFormat(__('publications.public.date_format')) }}</time>
-                            </p>
+                            <x-public.article-meta :topic="$article->topic" :issued-on="$article->issuedOn" />
 
                             <h2 class="mt-3 font-serif text-xl font-semibold text-navy-900">
                                 <a href="{{ PublicRoute::url('public.publications.show', ['slug' => $article->slug]) }}" class="hover:underline">{{ $article->title }}</a>

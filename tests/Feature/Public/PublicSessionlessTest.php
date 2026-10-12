@@ -80,17 +80,55 @@ function publicViewFilesForSessionScan(): array
  * for the same reason.
  *
  * The attribute is read out of the tag rather than searched for in the source, so
- * `method="get"` inside another attribute's value does not count, and a Blade echo
- * with a `>` in it (`$a->b`) cannot end the tag early: each echo is blanked first.
- * A tag that never closes is read to the end of the source, so it cannot hide.
+ * `method="get"` inside another attribute's value does not count (nor does a
+ * `data-method`: the name must be exactly `method`), and a Blade echo with a `>`
+ * in it (`$a->b`) cannot end the tag early. A tag that never closes is read to
+ * the end of the source, so it cannot hide.
+ *
+ * A BLADE ECHO CAN HIDE A FORM OR AN ATTRIBUTE, SO THE TAG MAY HOLD ONE IN ONE
+ * PLACE ONLY. Each echo is first swapped for a marker byte (`\x01` for `{{ }}`,
+ * `\x02` for `{!! !!}`), never blanked to a letter, which would let
+ * `<form{{ "" }} method="post">` read as a tag named `formx`. Then:
+ *
+ *   - a source with more `<form` in it than its marked copy has holds a form that
+ *     is written inside an echo (`{!! '<form method="post">' !!}`), and is refused;
+ *   - a tag holding an echo is refused, because an attribute bag
+ *     (`<form {{ $attributes }} method="get">`) can carry a `method="post"` that a
+ *     browser reads FIRST. The one exception is an escaped `{{ }}` inside the
+ *     `action="..."` value: the search form's only dynamic part is its URL, and an
+ *     escaped echo cannot close the quotes around it. A `{!! !!}` is refused
+ *     there too, since it can;
+ *   - a tag holding a Blade directive (`@`) or another `<` is refused for the same
+ *     reason: either can write attributes the scan cannot see.
+ *
+ * A refused tag is returned with each echo shown as `{{ }}` or `{!! !!}`.
+ * The caller strips Blade comments first, as firstSessionDependentConstruct() does.
  */
 function firstNonGetForm(string $source): ?string
 {
-    $plain = (string) preg_replace(['/\{\{.*?\}\}/s', '/\{!!.*?!!\}/s'], 'x', $source);
+    $marked = (string) preg_replace(['/\{\{.*?\}\}/s', '/\{!!.*?!!\}/s'], ["\x01", "\x02"], $source);
 
-    preg_match_all('/<form\b[^>]*(?:>|$)/i', $plain, $tags);
+    if (preg_match_all('/<form\b/i', $source) > preg_match_all('/<form\b/i', $marked)) {
+        return '<form (hidden in a Blade echo)';
+    }
+
+    preg_match_all('/<form\b[^>]*(?:>|$)/i', $marked, $tags);
 
     foreach ($tags[0] as $tag) {
+        $shown = str_replace(["\x01", "\x02"], ['{{ }}', '{!! !!}'], $tag);
+
+        // Only the first `action` is the one a browser reads, so only its echo is let through.
+        $outsideAction = (string) preg_replace('/(?<![\w-])action\s*=\s*(?:"[^"]*"|\'[^\']*\')/i', '', $tag, 1);
+
+        if (
+            str_contains(substr($tag, 1), '<')
+            || str_contains($tag, '@')
+            || str_contains($tag, "\x02")
+            || str_contains($outsideAction, "\x01")
+        ) {
+            return $shown;
+        }
+
         preg_match_all('/([^\s"\'<>\/=]+)\s*=\s*(?:"([^"]*)"|\'([^\']*)\')/', $tag, $attributes, PREG_SET_ORDER);
 
         $method = null;
@@ -105,7 +143,7 @@ function firstNonGetForm(string $source): ?string
         }
 
         if ($method !== 'get') {
-            return $tag;
+            return $shown;
         }
     }
 
@@ -296,7 +334,7 @@ it('leaves ordinary markup and similar words alone', function (string $sample) {
     '<form method="get" action="/x"><input name="q"></form>',
 ]);
 
-it('accepts a read-only GET form, in either quote style and any case', function (string $sample) {
+it('accepts a read-only GET form, in either quote style, any case and any spacing', function (string $sample) {
     expect(firstNonGetForm($sample))->toBeNull()
         ->and(firstSessionDependentConstruct($sample))->toBeNull();
 })->with([
@@ -304,9 +342,17 @@ it('accepts a read-only GET form, in either quote style and any case', function 
     '<FORM METHOD="GET">',
     "<form method='get'>",
     '<form role="search" method="Get" action="/x">',
-    // The tag spans lines and a Blade echo inside it holds a `>`: neither ends it early.
+    // The tag spans lines and its action is an escaped echo holding a `>`: neither ends it early.
     "<form\n    method=\"get\"\n    action=\"{{ \$route->url }}\"\n    role=\"search\"\n>",
     '<form method="get"></form><form class="a" method="get"></form>',
+    // The shape the publications search uses: the one echo is the action's URL.
+    "<form method=\"get\" action=\"{{ PublicRoute::url('public.publications.index') }}\" role=\"search\" class=\"mt-8\">",
+    // Spaces around the equals sign, a tab, a newline and a slash all separate attributes.
+    '<form method = "get">',
+    "<form\tmethod=\"get\"\n>",
+    '<form/method="get">',
+    '<form method="get"/>',
+    '<FORM/METHOD = \'GET\'/>',
 ]);
 
 it('refuses every form that is not a read-only GET form, returning its opening tag', function (string $sample, string $tag) {
@@ -323,6 +369,29 @@ it('refuses every form that is not a read-only GET form, returning its opening t
     'get only inside another value' => ["<form title='method=\"get\"'>", "<form title='method=\"get\"'>"],
     'the second form is the post' => ['<form method="get"></form><form method="post">', '<form method="post">'],
     'a form that never closes' => ['<form method="post"', '<form method="post"'],
+
+    // The attribute NAME must be exactly `method`: a get in `data-method` is not one.
+    'data-method get, real method post' => ['<form data-method="get" method="post">', '<form data-method="get" method="post">'],
+    'a name that merely ends in method' => ['<form xmethod="get">', '<form xmethod="get">'],
+    // Upper case, spaced and slash-separated posts are posts all the same.
+    'upper-case post' => ['<FORM METHOD="POST">', '<FORM METHOD="POST">'],
+    'spaced post' => ['<form method = "post">', '<form method = "post">'],
+    'slash-separated post' => ['<form/method="post">', '<form/method="post">'],
+    'a post first, a get after it' => ['<form method="post"/method="get">', '<form method="post"/method="get">'],
+
+    // A Blade echo can hide a form or an attribute, so the tag holds one only in its action.
+    'a tag name built by an echo' => ['<form{{ "" }} method="post">', '<form{{ }} method="post">'],
+    'a whole form written in an echo' => ['{!! \'<form method="post">\' !!}', '<form (hidden in a Blade echo)'],
+    'a form hidden in an escaped echo' => ['{{ \'<form method="post">\' }}', '<form (hidden in a Blade echo)'],
+    'an attribute bag before the get' => ['<form {{ $attributes }} method="get">', '<form {{ }} method="get">'],
+    'an unescaped bag after the get' => ['<form method="get" {!! $attributes !!}>', '<form method="get" {!! !!}>'],
+    'an echo in another attribute' => ['<form method="get" class="{{ $class }}">', '<form method="get" class="{{ }}">'],
+    'an echo as the method' => ['<form method="{{ $method }}" action="/x">', '<form method="{{ }}" action="/x">'],
+    'an echo in data-action' => ['<form method="get" data-action="{{ $url }}">', '<form method="get" data-action="{{ }}">'],
+    'an unescaped echo in the action' => ['<form method="get" action="{!! $url !!}">', '<form method="get" action="{!! !!}">'],
+    'an echo in a second action' => ['<form method="get" action="/a" action="{{ $b }}">', '<form method="get" action="/a" action="{{ }}">'],
+    'a directive in the tag' => ['<form method="get" action="/x" @if ($x) data-y @endif>', '<form method="get" action="/x" @if ($x) data-y @endif>'],
+    'raw php in the tag' => ['<form <?php echo \'method="post"\'; ?> method="get">', '<form <?php echo \'method="post"\'; ?>'],
 ]);
 
 it('refuses a button that overrides the form method', function () {
