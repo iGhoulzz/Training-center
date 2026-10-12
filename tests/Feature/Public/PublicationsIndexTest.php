@@ -466,17 +466,21 @@ it('has no query at all on the clear link and the unfiltered chips, apart from t
  * Six articles with every tie the two sorts break, and their titles by name.
  *
  *   title  issued_on   published_at       downloads
- *   A      2026-01-10  2026-02-01 09:00         5
- *   B      2026-03-01  2026-04-01 10:00         5
+ *   B      2026-03-01  2026-04-01 10:00         5   (created FIRST, so its id is lower than A's)
+ *   A      2026-01-10  2026-02-01 09:00         5   (older than B but created after it: ties B on downloads only)
  *   C      2025-12-01  2026-01-05 09:00        90
- *   D      2026-03-01  2026-04-02 10:00         1   (created third)
+ *   D      2026-03-01  2026-04-02 10:00         1
  *   E      2026-03-01  2026-04-02 10:00         1   (created after D: ties D on everything but id)
  *   F      2026-03-01  2026-04-02 10:00         1   (created after E)
+ *
+ * B is created before A on purpose: the issue date and the id then disagree about
+ * which of the two downloads-tied articles comes first, so a sort that dropped the
+ * issue date and fell straight to the id would put A first and fail.
  */
 function librarySortFixture(): void
 {
-    libraryArticle(['title_en' => 'A', 'issued_on' => '2026-01-10', 'published_at' => '2026-02-01 09:00:00', 'download_count' => 5]);
     libraryArticle(['title_en' => 'B', 'issued_on' => '2026-03-01', 'published_at' => '2026-04-01 10:00:00', 'download_count' => 5]);
+    libraryArticle(['title_en' => 'A', 'issued_on' => '2026-01-10', 'published_at' => '2026-02-01 09:00:00', 'download_count' => 5]);
     libraryArticle(['title_en' => 'C', 'issued_on' => '2025-12-01', 'published_at' => '2026-01-05 09:00:00', 'download_count' => 90]);
     libraryArticle(['title_en' => 'D', 'issued_on' => '2026-03-01', 'published_at' => '2026-04-02 10:00:00', 'download_count' => 1]);
     libraryArticle(['title_en' => 'E', 'issued_on' => '2026-03-01', 'published_at' => '2026-04-02 10:00:00', 'download_count' => 1]);
@@ -495,8 +499,9 @@ it('sorts newest first by issue date, then publication time, then id', function 
 it('sorts most downloaded first, then newest issue date, then id', function () {
     librarySortFixture();
 
-    // C has 90. A and B tie on 5, and B was issued later. D, E and F tie on 1 and
-    // on every date, so the higher id is first.
+    // C has 90. A and B tie on 5, and B was issued later (though A has the higher
+    // id, so only the issue date can put B first). D, E and F tie on 1 and on every
+    // date, so the higher id is first.
     expect(libraryCardTitles(libraryBody($this->get('/publications?sort=downloads')->assertOk())))->toBe(['C', 'B', 'A', 'F', 'E', 'D']);
 });
 

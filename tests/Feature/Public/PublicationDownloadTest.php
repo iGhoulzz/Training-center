@@ -249,8 +249,11 @@ it('answers 404 and does not count when the row names a disk other than the priv
     Storage::fake('public');
 
     $article = Article::factory()->published()->create(['disk' => 'public']);
-    // The bytes are there, on the disk the row names, so only the disk check stops it.
+    // The bytes are on BOTH disks at the row's path: on the disk the row names, and
+    // on the private one the route reads from. Only the disk check can stop it, so
+    // a route that trusted the path alone would serve the private copy.
     Storage::disk('public')->put($article->path, 'public disk bytes');
+    Storage::disk('private')->put($article->path, 'private disk bytes');
 
     ($this->download)($article->slug)->assertNotFound();
 
