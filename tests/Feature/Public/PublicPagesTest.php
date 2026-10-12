@@ -6,6 +6,7 @@ use App\Domain\Enrollment\Models\Course;
 use App\Support\PublicContact;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Routing\Route as RoutingRoute;
+use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\Route;
 
 uses(RefreshDatabase::class);
@@ -158,6 +159,20 @@ it('renders no contact link, and no bar for them, when none is configured', func
             expect(str_contains($html, $needle))->toBeFalse("{$path} still has [{$needle}] with no contact details configured.");
         }
     }
+});
+
+it('renders nothing from either contact link component when its value is empty, whatever the caller does', function () {
+    // The pages guard their own wrappers, so this is the components' guard on its
+    // own: a link with nothing in it is not rendered.
+    config(['public_site.contact.email' => '', 'public_site.contact.phone' => '  ']);
+
+    expect(trim(Blade::render('<x-public.email-link class="x" />')))->toBe('')
+        ->and(trim(Blade::render('<x-public.phone-link class="x" />')))->toBe('');
+
+    config(['public_site.contact.email' => 'desk@example.test', 'public_site.contact.phone' => '+218 91']);
+
+    expect(trim(Blade::render('<x-public.email-link class="x" />')))->toBe('<a href="mailto:desk@example.test" dir="ltr" class="x">desk@example.test</a>')
+        ->and(trim(Blade::render('<x-public.phone-link class="x" />')))->toBe('<a href="tel:+21891" dir="ltr" class="x">+218 91</a>');
 });
 
 it('reads the public email, telephone and map link from the three public_site config keys', function () {
