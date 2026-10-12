@@ -140,9 +140,11 @@ it('serves the home page with no Set-Cookie header at all', function () {
 it('renders the home page with no form and no CSRF token', function () {
     $body = strtolower((string) $this->get('/')->assertOk()->getContent());
 
-    expect($body)->not->toContain('<form')
-        ->and($body)->not->toContain('_token')
-        ->and($body)->not->toContain('csrf');
+    // str_contains rather than expect()->not->toContain(), whose failure message
+    // would print the whole page.
+    foreach (['<form', '_token', 'csrf'] as $needle) {
+        expect(str_contains($body, $needle))->toBeFalse("The home page contains [{$needle}], which a sessionless page has no use for.");
+    }
 });
 
 it('finds the files the source scan reads', function () {
