@@ -51,6 +51,16 @@ class PasswordChange extends Page
     /** @var array<string, mixed> */
     public array $data = [];
 
+    public function getTitle(): string
+    {
+        return __('navigation.password_change');
+    }
+
+    public function getSubheading(): string
+    {
+        return __('navigation.password_change_description');
+    }
+
     /**
      * @return array<string, mixed>
      */

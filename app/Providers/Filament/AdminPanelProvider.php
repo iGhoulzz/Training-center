@@ -4,24 +4,35 @@ declare(strict_types=1);
 
 namespace App\Providers\Filament;
 
+use App\Domain\Finance\Filament\Pages\EnrollAndCollect;
+use App\Domain\Finance\Filament\Pages\ExportHistory;
+use App\Filament\Pages\Dashboard;
 use App\Http\Middleware\ForcePasswordChange;
 use App\Http\Middleware\SetLocale;
 use BezhanSalleh\FilamentShield\FilamentShieldPlugin;
+use Filament\Facades\Filament;
+use Filament\FontProviders\LocalFontProvider;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
 use Filament\Http\Middleware\DisableBladeIconComponents;
 use Filament\Http\Middleware\DispatchServingFilamentEvent;
-use Filament\Pages\Dashboard;
+use Filament\Navigation\NavigationBuilder;
+use Filament\Navigation\NavigationGroup;
+use Filament\Navigation\NavigationItem;
+use Filament\Pages\Page;
 use Filament\Panel;
 use Filament\PanelProvider;
+use Filament\Resources\Resource;
 use Filament\Support\Colors\Color;
-use Filament\Widgets\AccountWidget;
-use Filament\Widgets\FilamentInfoWidget;
+use Filament\Support\Enums\Width;
+use Filament\View\PanelsRenderHook;
+use Illuminate\Contracts\Support\Htmlable;
 use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
 use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
 use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Session\Middleware\StartSession;
+use Illuminate\Support\Facades\Vite;
 use Illuminate\View\Middleware\ShareErrorsFromSession;
 
 class AdminPanelProvider extends PanelProvider
@@ -33,9 +44,60 @@ class AdminPanelProvider extends PanelProvider
             ->id('admin')
             ->path('admin')
             ->login()
+            ->viteTheme('resources/css/filament/admin/theme.css')
+            ->darkMode(isForced: true)
+            ->themeSwitcher(false)
+            ->font('Instrument Sans', provider: LocalFontProvider::class)
+            ->renderHook(PanelsRenderHook::STYLES_AFTER, fn (): Htmlable => Vite::fonts('instrument-sans'))
+            ->sidebarWidth('16.125rem')
+            ->maxContentWidth(Width::Full)
+            ->collapsibleNavigationGroups(false)
             ->colors([
                 'primary' => Color::Amber,
+                'gray' => Color::Gray,
+                'success' => Color::Green,
+                'info' => Color::Blue,
+                'warning' => Color::Amber,
+                'danger' => Color::Red,
             ])
+            ->navigation(function (NavigationBuilder $builder): NavigationBuilder {
+                $groups = [];
+                $panel = Filament::getCurrentOrDefaultPanel();
+
+                foreach (array_merge($panel->getPages(), $panel->getResources()) as $destination) {
+                    if (! is_subclass_of($destination, Page::class) && ! is_subclass_of($destination, Resource::class)) {
+                        continue;
+                    }
+
+                    if (! $destination::shouldRegisterNavigation() || ! $destination::canAccess()) {
+                        continue;
+                    }
+
+                    $group = match (true) {
+                        $destination === Dashboard::class, $destination === EnrollAndCollect::class => 'front_desk',
+                        $destination === ExportHistory::class,
+                        str_starts_with($destination, 'App\\Domain\\Finance\\Filament\\Pages\\Reports\\') => 'reports',
+                        str_starts_with($destination, 'App\\Domain\\Enrollment\\') => 'enrollment',
+                        str_starts_with($destination, 'App\\Domain\\Finance\\') => 'finance',
+                        str_starts_with($destination, 'App\\Domain\\Publications\\') => 'publications',
+                        default => 'administration',
+                    };
+
+                    $groups[$group] = [...($groups[$group] ?? []), ...$destination::getNavigationItems()];
+                }
+
+                foreach (['front_desk', 'enrollment', 'finance', 'reports', 'administration', 'publications'] as $group) {
+                    $items = $groups[$group] ?? [];
+                    usort($items, fn (NavigationItem $first, NavigationItem $second): int => $first->getSort() <=> $second->getSort());
+
+                    $builder->group(NavigationGroup::make()
+                        ->label(fn (): string => __("navigation.{$group}"))
+                        ->collapsible(false)
+                        ->items($items));
+                }
+
+                return $builder;
+            })
             ->discoverResources(in: app_path('Filament/Resources'), for: 'App\Filament\Resources')
             ->discoverResources(
                 in: app_path('Domain/Enrollment/Filament/Resources'),
@@ -60,10 +122,6 @@ class AdminPanelProvider extends PanelProvider
                 Dashboard::class,
             ])
             ->discoverWidgets(in: app_path('Filament/Widgets'), for: 'App\Filament\Widgets')
-            ->widgets([
-                AccountWidget::class,
-                FilamentInfoWidget::class,
-            ])
             ->middleware([
                 EncryptCookies::class,
                 AddQueuedCookiesToResponse::class,
