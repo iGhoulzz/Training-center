@@ -155,7 +155,7 @@ first attempt.
 | `resources/views/public/partials/navigation.blade.php`, `footer.blade.php` | **T11 → T12 → T13** | Owner-approved amendment (2026-10-12). T11 creates them, linking only to pages that exist: the home page and the verifier. T12 adds About, Programmes and Contact; T13 adds Publications. Each adds its own links through `PublicRoute` and edits no other task's |
 | `resources/views/public/home.blade.php` | **T11 → T12** | T11 creates a minimal page at `public.home` so `/` has somewhere to go once `welcome.blade.php` is deleted; T12 replaces it with the real home page |
 | `config/public_site.php`, `.env.example` | **T11 → T12** | Owner-approved amendment (2026-10-12). T11 creates the public contact details: the centre's real public email and telephone as committed defaults, each overridable from `.env`, plus a map-link key that defaults to null. T12 sets the map link's default once the owner provides it, and touches nothing else |
-| `resources/views/verify/*` | **T14 → T18** | T14 restyles; T18 makes them directional and converts their three `route()` call sites to `PublicRoute`. Both keep them standalone and scriptless |
+| `resources/views/verify/*` | **T14 → T18** | T14 restyles; T18 makes them directional and converts their three `route()` call sites to `PublicRoute`, **and the six `url('/')` links T14's headers added** (two a page), which no `route()` search finds. Both keep them standalone and scriptless |
 | `app/Http/Controllers/VerifyCertificateController.php` | **T18 only** | One line: the `submit()` redirect goes through `PublicRoute`. The lookup, the normalisation and the uniform miss are untouched |
 | `app/Support/PublicRoute.php` | **T11 only** | Complete from the start, so T18 adds routes and a locale without editing it |
 | `app/Domain/Enrollment/Models/Batch.php` | **T05 only** | Scopes beside the existing predicates |
@@ -794,6 +794,9 @@ properties only · `composer verify` green.
   About, Programmes and Contact links (seam, after T11)
 - `config/public_site.php` — the map link's default only, once the owner provides
   it (seam, after T11)
+- `resources/views/components/public/programme-card.blade.php` — new: the home
+  page and the programmes page both show the card, and ENGINEERING requires a
+  component for anything used twice (owner-approved, 2026-10-12)
 - `lang/en/public.php` — appended
 - `tests/Feature/Public/ProgrammesTest.php`, `PublicPagesTest.php`
 
@@ -805,6 +808,31 @@ public; seats are not**, and nothing on the page reads capacity or enrollment
 counts. A course with no upcoming batch shows its name, description and hours,
 **no date and no price**, and a contact call to action — a price with no batch
 behind it is a promise the centre has not made.
+
+**Owner decisions, 2026-10-12:**
+- **The copy is a draft, kept for easy replacement.** The owner will send the
+  real home and About text later. Until then the copy adapts the design's
+  wording, minus anything the centre has not confirmed: no figures (the design's
+  "2,140 trained", "38 programmes", "11 years" and "96%" are placeholders, and the
+  stats strip is not built) and no "accredited". Every sentence lives in
+  `lang/en/public.php`, grouped by page, so replacing it is a language-file edit.
+- **The location is a directions link, not an embedded map.** This settles
+  `docs/design/README.md`'s open conflict 9 in favour of its default. The
+  owner's link is `https://maps.app.goo.gl/nrs5mzbxjh9A7wci8`, given with a
+  share-tracking `?g_st=ipc` that is dropped. It becomes `map_url`'s default, and
+  a plain link opens the visitor's own map app. No third-party origin loads on
+  the page.
+- **There is no street address and no opening hours** until the owner sends them.
+  The design's hours and address are placeholders.
+
+**What the home page leaves out.** The design's home page is the whole site on
+one page. Here, About, Programmes and Contact are their own pages, so the home
+page summarises each and links on. Three of the drawn sections are not built:
+- **The stats strip**, which shows unconfirmed figures.
+- **An inline verifier form.** Public pages are sessionless, so a form posting
+  from one would carry no CSRF token. The section links to the verifier instead.
+- **The publications section.** It needs T13's articles, and T13's scope does
+  not include the home page, so adding it later is a plan amendment.
 
 **Done when**
 
@@ -1057,7 +1085,9 @@ interpolating the raw name · `composer verify` green.
 - `resources/views/layouts/public.blade.php` (seam, last)
 - `resources/views/verify/*` — direction, and the three `route()` call sites:
   `form.blade.php`'s action, and the "verify another" links in `show.blade.php`
-  and `not-found.blade.php` (seam, after T14)
+  and `not-found.blade.php` (seam, after T14). Also the header's two `url('/')`
+  links on each of the three pages: they are English-only, and T14 added them
+  after this list was written. Each becomes `PublicRoute::url('public.home')`.
 - `app/Http/Controllers/VerifyCertificateController.php` — the one redirect in
   `submit()` (seam)
 - `resources/views/public/partials/header.blade.php` — the locale-carrying portal link (seam, last)
