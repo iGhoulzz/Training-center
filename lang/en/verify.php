@@ -51,4 +51,10 @@ return [
 
     'not_found_heading' => 'Certificate not found',
     'not_found_body' => 'We could not verify a certificate with that reference. Check the reference exactly as printed and try again.',
+
+    'eyebrow' => 'Certificate check',
+    'back_to_site' => 'Back to the public site',
+    'reference_hint' => 'Use the full reference exactly as printed on the certificate.',
+    'result_intro' => 'Confirm the details printed on the certificate against the centre’s record.',
+    'privacy_note' => 'Verification shows certificate details only. Student contact details and financial information are kept private.',
 ];
