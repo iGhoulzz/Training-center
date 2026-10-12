@@ -28,12 +28,18 @@ use Illuminate\View\Middleware\ShareErrorsFromSession;
 | this file receives the `web` group, which starts a session and sets a cookie on
 | every response, so an anonymous visitor to a page that varies by nobody would
 | still be handed a Set-Cookie. Shared caches generally refuse to store a
-| response that carries one, and which layer sits in front of the application
-| stays a deployment decision with no host chosen. The four middleware removed
-| below are the ones that start the session, share its error bag, check the
-| CSRF token and queue cookies onto the response. `withoutMiddleware()` removes
-| only ROUTE middleware, which these four are (the `web` group names them); it
-| would not remove a global one.
+| response that carries one, so the cookie was the blocker the application
+| controls, and this group removes it. The four middleware removed below are the
+| ones that start the session, share its error bag, check the CSRF token and
+| queue cookies onto the response. `withoutMiddleware()` removes only ROUTE
+| middleware, which these four are (the `web` group names them); it would not
+| remove a global one.
+|
+| THIS DOES NOT MAKE THE PAGES CACHED, AND IT IS NOT MEANT TO. The responses
+| still carry Symfony's default `Cache-Control: no-cache, private`, which a
+| shared cache honours by not storing them. Choosing cache headers belongs with
+| the cache layer, and the plan leaves that layer to deployment: the application
+| adds no response cache in phase 4, and no `cache.headers` middleware here.
 |
 | WHAT THAT COSTS, AND WHY IT IS ACCEPTABLE. A page here can hold no form, no
 | `@csrf`, and no `session()`, `old()` or `auth()` call, because the machinery

@@ -4,13 +4,7 @@
 <footer class="bg-navy-900 text-cream-100">
     <div class="mx-auto grid max-w-6xl gap-8 px-4 py-10 md:grid-cols-[2fr_1fr]">
         <div>
-            <p class="flex items-center gap-3">
-                <span
-                    aria-hidden="true"
-                    class="grid size-10 place-items-center rounded-full bg-navy-800 font-serif text-lg text-gold-400 ring-1 ring-gold-500"
-                >{{ __('public.brand.mark') }}</span>
-                <span class="font-serif text-lg font-semibold">{{ config('app.name') }}</span>
-            </p>
+            <x-public.brand />
             <p class="mt-3 max-w-md text-sm text-cream-200">{{ __('public.footer.description') }}</p>
         </div>
 

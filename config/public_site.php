@@ -13,8 +13,10 @@ declare(strict_types=1);
 | repository reveals nothing more. Each can still be overridden from `.env`
 | (see the commented keys in .env.example) without a code change.
 |
-| NO BLADE FILE HOLDS THEM. The header and footer read these keys, so changing a
-| number is one edit and the views cannot drift from each other.
+| NO BLADE FILE HOLDS THEM. The header's top bar reads these keys, and so will
+| the contact page and the home page's contact section (P4-T12). The footer shows
+| no contact details, as the design draws it. Changing a number is one edit, and
+| the views cannot drift from each other.
 |
 | `map_url` has no default. It stays null until the owner supplies the link, and
 | the contact section (P4-T12) renders it only when it is set.

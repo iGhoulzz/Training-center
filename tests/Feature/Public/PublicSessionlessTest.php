@@ -45,7 +45,12 @@ function cookieNamesOn(TestResponse $response): array
 }
 
 /**
- * The layout and every file under resources/views/public/, as absolute paths.
+ * The layout, every file under resources/views/public/ and every public
+ * component under resources/views/components/public/, as absolute paths.
+ *
+ * The components are included because a component renders inside a public page:
+ * a form or a session call in one is on the page as surely as in the page's own
+ * file.
  *
  * @return array<int, string>
  */
@@ -53,8 +58,10 @@ function publicViewFilesForSessionScan(): array
 {
     $files = [resource_path('views/layouts/public.blade.php')];
 
-    foreach (File::allFiles(resource_path('views/public')) as $file) {
-        $files[] = (string) $file->getRealPath();
+    foreach ([resource_path('views/public'), resource_path('views/components/public')] as $directory) {
+        foreach (File::allFiles($directory) as $file) {
+            $files[] = (string) $file->getRealPath();
+        }
     }
 
     return $files;
@@ -67,7 +74,14 @@ function publicViewFilesForSessionScan(): array
  * `session(`, `old(` and `auth(` calls), plus the shapes that reach the same
  * state another way: the auth and session facades, the `@auth` and `@guest`
  * directives, and the error bag, which only exists because a session middleware
- * put it there. A named function with samples, so it cannot quietly narrow.
+ * put it there.
+ *
+ * ALSO EVERY WAY OF ASKING "WHO IS THIS": `@can`, `@cannot`, `@canany`, and
+ * `request()->user(` and `$request->user(`. Each resolves the user, and resolving
+ * the user is what reads the remember-me cookie, so a page that does it varies by
+ * visitor whether or not it prints a name.
+ *
+ * A named function with samples, so it cannot quietly narrow.
  *
  * A BLADE COMMENT IS NOT SCANNED: it is removed before the template renders, so a
  * note explaining the rule may name a construct without being one. Anything after
@@ -89,6 +103,8 @@ function firstSessionDependentConstruct(string $source): ?string
         'Auth::/Session::' => '/\b(?:Auth|Session)::/',
         '@auth/@guest' => '/@(?:auth|guest)\b/',
         '@error/$errors' => '/@error\b|\$errors\b/',
+        '@can/@cannot/@canany' => '/@(?:can|cannot|canany)\b/',
+        'request()->user(' => '/(?:\brequest\s*\(\s*\)|\$request)\s*->\s*user\s*\(/',
     ];
 
     foreach ($patterns as $label => $pattern) {
@@ -155,7 +171,8 @@ it('finds the files the source scan reads', function () {
         ->toContain('header.blade.php')
         ->toContain('navigation.blade.php')
         ->toContain('footer.blade.php')
-        ->toContain('home.blade.php');
+        ->toContain('home.blade.php')
+        ->toContain('brand.blade.php');
 });
 
 it('has no session-dependent construct in the public layout or views', function () {
@@ -190,6 +207,13 @@ it('flags every construct that needs a session', function (string $sample) {
     '@guest x @endguest',
     '@error(\'x\') y @enderror',
     '{{ $errors->first() }}',
+    // Every way of resolving the user (and with it the remember-me cookie).
+    "@can('update_student') x @endcan",
+    "@cannot('update_student') x @endcannot",
+    "@canany(['a', 'b']) x @endcanany",
+    '{{ request()->user()->name }}',
+    '{{ request ( ) -> user () }}',
+    '{{ $request->user() }}',
 ]);
 
 it('leaves ordinary markup and similar words alone', function (string $sample) {
@@ -201,6 +225,9 @@ it('leaves ordinary markup and similar words alone', function (string $sample) {
     "{{ \$threshold(1) }} {{ bold('x') }} {{ \$request->session() }}",
     '<formatted>x</formatted>',
     '<p>An authority on old things</p>',
+    // Near misses of the user lookups: a different variable, a different method,
+    // and a directive that merely begins with the same letters.
+    '{{ $requestor->user() }} {{ $request->route() }} {{ $user->name }} @cancel',
     // A Blade comment is removed before rendering, so it may name a construct.
     '{{-- No @csrf and no session() on these pages. --}}',
 ]);
@@ -221,9 +248,13 @@ it('issues the session cookie on the verifier form and refuses a POST without a 
 });
 
 it('does not refuse the same verifier POST once it carries a valid token', function () {
-    // Proves the binding in enforceCsrfCheck() is live. If it were not, the 419
-    // above would be vacuous in the other direction: the middleware would be
-    // waving every POST through, and a token would change nothing.
+    // The control for the 419 test above, and it proves something narrower than
+    // that the binding is live. Without enforceCsrfCheck() this POST is waved
+    // through and is not 419 either, so this test cannot tell the two apart.
+    // Liveness is proven by the 419 test above, which gets 404 without the
+    // binding. What this proves is that, with the real check running, the
+    // refusal depends on the token: a valid one gets past it, so the 419 is the
+    // check telling the two requests apart rather than refusing every POST.
     enforceCsrfCheck();
 
     $response = $this->withSession(['_token' => KNOWN_CSRF_TOKEN])
@@ -244,6 +275,8 @@ it('issues the session cookie on each panel login page', function (string $route
 it('refuses a Livewire update without a CSRF token, and accepts the same one with it', function () {
     enforceCsrfCheck();
 
+    // The 419 proves the binding is live and the endpoint guarded. The second
+    // request is only the control: with the check running, a valid token gets past it.
     $this->postJson(Livewire::getUpdateUri(), ['components' => []], ['X-Livewire' => 'true'])
         ->assertStatus(419);
 

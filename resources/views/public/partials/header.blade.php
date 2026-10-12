@@ -28,12 +28,8 @@
 
     <div class="border-b border-cream-200 bg-cream-50">
         <div class="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3">
-            <a href="{{ PublicRoute::url('public.home') }}" class="flex items-center gap-3 rounded-md">
-                <span
-                    aria-hidden="true"
-                    class="grid size-10 place-items-center rounded-full bg-navy-800 font-serif text-lg text-gold-400 ring-1 ring-gold-500"
-                >{{ __('public.brand.mark') }}</span>
-                <span class="font-serif text-lg font-semibold">{{ config('app.name') }}</span>
+            <a href="{{ PublicRoute::url('public.home') }}" class="rounded-md">
+                <x-public.brand />
             </a>
 
             @include('public.partials.navigation')

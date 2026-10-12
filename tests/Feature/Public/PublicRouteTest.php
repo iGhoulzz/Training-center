@@ -92,33 +92,62 @@ it('throws for any locale that is not English, not only Arabic', function () {
 });
 
 /**
- * The first bare route() call in a view's source, or null.
+ * The first link shape in a view's source that bypasses PublicRoute, or null.
+ *
+ * EVERY SHAPE THAT PRODUCES AN ENGLISH-ONLY URL, NOT JUST route(). The first
+ * version caught the `route(` helper and its three spellings, and a review then
+ * planted five more in the footer without any test failing: `url('/x')`, a literal
+ * `href="/x"`, `action([...])`, `app('url')->route(`, and `to_route(`. Each sends
+ * an Arabic visitor to the English page exactly as a bare route() does, so each is
+ * a hit:
+ *
+ *   - `route(`, wherever it appears: the helper, `\route(`, `URL::route(`,
+ *     `url()->route(`, `app('url')->route(` and `$request->route(`;
+ *   - `to_route(` and `action(` (which also covers `URL::action(`);
+ *   - `url(` as a function, and the URL facade or `app('url')` however they are used;
+ *   - an `href` or `action` attribute whose literal value starts with a slash.
  *
  * A NAMED FUNCTION WITH SAMPLES, like the other scanners in this suite, so the
- * scan cannot quietly narrow. CASE-SENSITIVE ON PURPOSE: `PublicRoute::url(` and
- * `Route::has(` contain "Route" with a capital and are the sanctioned forms.
- *
- * Three bypass shapes are named beside the plain helper, because each reaches the
- * same unqualified URL: a leading backslash, the URL facade, and `url()->route(`.
- * A method call on some other object (`$request->route(`) is not a link and is
- * left alone.
+ * scan cannot quietly narrow. CASE-SENSITIVE ON PURPOSE for the calls:
+ * `PublicRoute::url(` and `Route::has(` contain "Route" with a capital, and
+ * `Facade::url(` follows a double colon, so neither is a hit. `asset(` is not one
+ * either: a static file has no Arabic twin.
  *
  * A BLADE COMMENT IS NOT SCANNED. It is removed before the template renders, so
  * a note explaining the rule may name the call without being the call, which is
  * how the first version of the navigation partial tripped its own scan. Anything
  * after the comment still is scanned.
  */
-function firstBareRouteCall(string $source): ?string
+function firstUnlocalisedLink(string $source): ?string
 {
     $code = (string) preg_replace('/\{\{--.*?--\}\}/s', ' ', $source);
 
-    $pattern = '/(?<![\w$>:])route\s*\(|\b(?:URL::|url\(\s*\)->)route\s*\(/';
+    $patterns = [
+        '/(?<![\w$])route\s*\(/',
+        '/(?<![\w$])to_route\s*\(/',
+        '/(?<![\w$])action\s*\(/',
+        // Not after `::`, which is how PublicRoute::url( is written, nor after `->`.
+        '/(?<![\w$:>])url\s*\(/',
+        '/\bURL::/',
+        '/\bapp\s*\(\s*[\'"]url[\'"]\s*\)/',
+        '/\b(?:href|action)\s*=\s*["\']\s*\//i',
+    ];
 
-    return preg_match($pattern, $code, $match) === 1 ? trim($match[0]) : null;
+    foreach ($patterns as $pattern) {
+        if (preg_match($pattern, $code, $match) === 1) {
+            return trim($match[0]);
+        }
+    }
+
+    return null;
 }
 
 /**
- * The layout and every file under resources/views/public/, as absolute paths.
+ * The layout, every file under resources/views/public/ and every public component
+ * under resources/views/components/public/, as absolute paths.
+ *
+ * The components are included because one renders inside a public page, so a link
+ * built in it is on the page as surely as one in the page's own file.
  *
  * @return array<int, string>
  */
@@ -126,16 +155,19 @@ function publicViewFilesForRouteScan(): array
 {
     $files = [resource_path('views/layouts/public.blade.php')];
 
-    foreach (File::allFiles(resource_path('views/public')) as $file) {
-        $files[] = (string) $file->getRealPath();
+    foreach ([resource_path('views/public'), resource_path('views/components/public')] as $directory) {
+        foreach (File::allFiles($directory) as $file) {
+            $files[] = (string) $file->getRealPath();
+        }
     }
 
     return $files;
 }
 
-it('flags a bare route() call', function (string $sample) {
-    expect(firstBareRouteCall($sample))->not->toBeNull();
+it('flags every link shape that bypasses PublicRoute', function (string $sample) {
+    expect(firstUnlocalisedLink($sample))->not->toBeNull();
 })->with([
+    // The route() helper and its spellings.
     "{{ route('x') }}",
     "<a href=\"{{ route('public.home') }}\">x</a>",
     "{{ route ('x') }}",
@@ -143,25 +175,46 @@ it('flags a bare route() call', function (string $sample) {
     "@php \$a = route('x'); @endphp",
     "{{ URL::route('x') }}",
     "{{ url()->route('x') }}",
+    "{{ \$request->route('x') }}",
+    "{{ app('url')->route('x') }}",
+    // The shapes a review planted in the footer.
+    "{{ to_route('x') }}",
+    "{{ action([FooController::class, 'x']) }}",
+    "{{ url('/verify/certificates') }}",
+    "{{ url ('/verify/certificates') }}",
+    '<a href="/verify/certificates">x</a>',
+    "<a href='/verify/certificates'>x</a>",
+    '<a HREF = "/verify/certificates">x</a>',
+    '<form action="/verify/certificates">',
+    // The URL facade and the container's url service, however they are used.
+    "{{ URL::to('/x') }}",
+    "{{ app('url')->to('/x') }}",
+    '{{ app("url")->full() }}',
 ]);
 
 it('leaves the sanctioned forms alone', function (string $sample) {
-    expect(firstBareRouteCall($sample))->toBeNull();
+    expect(firstUnlocalisedLink($sample))->toBeNull();
 })->with([
     "{{ PublicRoute::url('x') }}",
+    "<a href=\"{{ PublicRoute::url('public.home') }}\">x</a>",
     "@if (Route::has('x')) @endif",
-    "{{ \$request->route('x') }}",
+    "{{ asset('images/mark.svg') }}",
     "{{ __('public.route_label') }}",
     '<p>Route (optional)</p>',
-    // A Blade comment is removed before rendering, so it may name the call.
-    "{{-- Never route('x') here; use PublicRoute. --}}",
+    // Anchors, mail and telephone links, and a bound value are not paths.
+    '<a href="#main">x</a>',
+    '<a href="mailto:info@example.org">x</a>',
+    '<a href="tel:+218000000000">x</a>',
+    '<a href="{{ $href }}">x</a>',
+    // A Blade comment is removed before rendering, so it may name the shapes.
+    "{{-- Never route('x'), url('/x') or href=\"/x\" here; use PublicRoute. --}}",
 ]);
 
 it('still scans what follows a Blade comment', function () {
-    expect(firstBareRouteCall("{{-- a note --}}{{ route('x') }}"))->not->toBeNull();
+    expect(firstUnlocalisedLink("{{-- a note --}}{{ route('x') }}"))->not->toBeNull();
 });
 
-it('finds the files it scans, including the layout and the partials', function () {
+it('finds the files it scans, including the layout, the partials and the component', function () {
     $names = array_map('basename', publicViewFilesForRouteScan());
 
     // The control: a scan over an empty list passes by finding nothing.
@@ -169,14 +222,15 @@ it('finds the files it scans, including the layout and the partials', function (
         ->toContain('header.blade.php')
         ->toContain('navigation.blade.php')
         ->toContain('footer.blade.php')
-        ->toContain('home.blade.php');
+        ->toContain('home.blade.php')
+        ->toContain('brand.blade.php');
 });
 
-it('finds no bare route() call in the public layout or views', function () {
+it('finds no link that bypasses PublicRoute in the public layout, views or components', function () {
     $offenders = [];
 
     foreach (publicViewFilesForRouteScan() as $path) {
-        if (($match = firstBareRouteCall((string) file_get_contents($path))) !== null) {
+        if (($match = firstUnlocalisedLink((string) file_get_contents($path))) !== null) {
             $offenders[] = str_replace(base_path().DIRECTORY_SEPARATOR, '', $path).' -> '.$match;
         }
     }
