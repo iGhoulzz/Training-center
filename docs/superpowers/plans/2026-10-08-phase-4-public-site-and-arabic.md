@@ -687,6 +687,8 @@ clamped · `composer verify` green.
   `welcome.blade.php` entry. That test fails by design once the exempted file is
   gone, so the public views are scanned like every other view (lead's amendment,
   2026-10-12, for the owner to confirm on T11's PR)
+- `resources/css/README.md` — only its paragraph on that exemption, which would
+  otherwise describe a file that no longer exists (same amendment)
 - `resources/css/public.css`, `vite.config.js` (seam, first)
 - `lang/en/public.php`
 - `config/public_site.php` — new, and `.env.example` — its keys (owner-approved

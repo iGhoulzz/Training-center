@@ -44,7 +44,7 @@ that quietly matches less than this table promises is worse than no scan: it
 reports the rule as enforced while `ml-auto` sails through. Anything added to
 the table above belongs in both sample sets.
 
-One file is exempt: `resources/views/welcome.blade.php`, Laravel's stock landing
-page, which inlines a compiled Tailwind build. The exemption is checked — it
-lasts only while that file still contains the generated build, so replacing the
-placeholder with a real public site brings it back under the scan.
+No file is exempt. Laravel's stock landing page, `welcome.blade.php`, was until
+P4-T11 deleted it, because it inlined a compiled Tailwind build. The exemption
+list (`STOCK_TAILWIND_PAGES` in `LocalizationTest`) is now empty, and the public
+layout and views are scanned like every other view.
