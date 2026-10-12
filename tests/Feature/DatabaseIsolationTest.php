@@ -60,7 +60,6 @@ const READ_ONLY_FEATURE_TESTS = [
     'DatabaseIsolationTest.php',
     'BackupConfigurationTest.php',
     'Enrollment/IdentifierCodeArchTest.php',
-    'ExampleTest.php',
     'Finance/MoneyCastArchTest.php',
     'PolicyAbilitySurfaceTest.php',
     'Staff/ActionBoundaryArchTest.php',

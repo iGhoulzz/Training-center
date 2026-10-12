@@ -3,6 +3,8 @@
 declare(strict_types=1);
 
 use App\Http\Controllers\Finance\ReceiptDownloadController;
+use App\Http\Controllers\Public\PageController;
+use App\Http\Controllers\Public\ProgrammeController;
 use App\Http\Controllers\Staff\StaffCertificateDownloadController;
 use App\Http\Controllers\Staff\StaffProfilePhotoController;
 use App\Http\Controllers\VerifyCertificateController;
@@ -66,7 +68,11 @@ Route::name('public.')
         AddQueuedCookiesToResponse::class,
     ])
     ->group(function (): void {
-        Route::view('/', 'public.home')->name('home');
+        Route::get('/', [PageController::class, 'home'])->name('home');
+        Route::get('about', [PageController::class, 'about'])->name('about');
+        Route::get('programmes', [ProgrammeController::class, 'index'])->name('programmes.index');
+        Route::get('programmes/{course}', [ProgrammeController::class, 'show'])->whereNumber('course')->name('programmes.show');
+        Route::get('contact', [PageController::class, 'contact'])->name('contact');
     });
 
 /*

@@ -89,6 +89,26 @@ class Course extends Model
     }
 
     /**
+     * The catalogue description in the reader's language.
+     *
+     * The twin of name(), with the same rule and for the same reasons: a method
+     * because the value depends on the request locale rather than on the row, and
+     * Arabic wins only when the locale is Arabic AND a translation exists. A
+     * course with no description at all reads as an empty string, so a caller
+     * tests it with filled() rather than for null.
+     *
+     * Kept beside name() so the two cannot drift apart: a card that restated this
+     * rule would show an Arabic name over an English description the day one of
+     * them changed.
+     */
+    public function description(): string
+    {
+        return app()->getLocale() === 'ar' && filled($this->description_ar)
+            ? (string) $this->description_ar
+            : (string) $this->description_en;
+    }
+
+    /**
      * BOTH LOCALE COLUMNS, and no `name`.
      *
      * There is no `name` column. Course::name() is a METHOD that resolves against
