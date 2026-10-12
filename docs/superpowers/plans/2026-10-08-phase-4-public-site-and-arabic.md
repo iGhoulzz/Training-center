@@ -896,6 +896,12 @@ query log · an inactive course has no card · `composer verify` green.
 - `docs/ENGINEERING.md` and `tests/Feature/Public/PublicSessionlessTest.php`, for
   the search form below. The owner approved this on 2026-10-12, and the seam row
   records it
+- `app/Domain/Publications/Queries/PublicArticleCatalogue.php`, new: the public
+  article queries, so the controllers stay thin, as T12's
+  `PublicProgrammeCatalogue` keeps them (same amendment)
+- `tests/Feature/Public/PublicPagesTest.php`, one assertion only. T12's
+  navigation test pins the exact link list, and Publications joins it (same
+  amendment)
 
 **Does**
 

@@ -45,12 +45,15 @@ use Illuminate\View\Middleware\ShareErrorsFromSession;
 | the cache layer, and the plan leaves that layer to deployment: the application
 | adds no response cache in phase 4, and no `cache.headers` middleware here.
 |
-| WHAT THAT COSTS, AND WHY IT IS ACCEPTABLE. A page here can hold no form, no
-| `@csrf`, and no `session()`, `old()` or `auth()` call, because the machinery
-| behind each one is gone. So every route is GET, and contact is links rather
-| than a form. PublicGroupTest asserts the GET-only property over the router's
-| own route list, PublicSessionlessTest that a response carries no cookie and
-| that the views contain none of those constructs.
+| WHAT THAT COSTS, AND WHY IT IS ACCEPTABLE. A page here can hold no form that
+| submits data, no `@csrf`, and no `session()`, `old()` or `auth()` call, because
+| the machinery behind each one is gone. So every route is GET, and contact is
+| links rather than a form. The one form allowed is a read-only
+| `method="get"` form, which only writes its fields into the URL: the
+| publications search (owner, 2026-10-12, P4-T13). PublicGroupTest asserts the
+| GET-only property over the router's own route list, and PublicSessionlessTest
+| asserts that a response carries no cookie and that the views contain none of
+| those constructs.
 |
 | NOT SESSIONLESS, AND UNTOUCHED: the private-file group and the verifier group
 | below (the verifier's form posts and needs CSRF), and both Filament panels.
