@@ -680,6 +680,10 @@ clamped · `composer verify` green.
 - `app/Providers/AppServiceProvider.php` — the `public-site` rate limiter (seam, first)
 - `resources/views/layouts/public.blade.php` — new (seam, first)
 - `resources/views/public/partials/` — header, footer, navigation
+- `resources/views/components/public/brand.blade.php` — new: the mark and name
+  the header and footer both show, as ENGINEERING's "Blade components for
+  anything used twice" requires (lead's amendment, 2026-10-12, from the pre-push
+  review, for the owner to confirm on T11's PR)
 - `resources/views/public/home.blade.php` — the minimal page that replaces
   `welcome.blade.php` at `public.home` (seam, first; T12 writes the real page)
 - `resources/views/welcome.blade.php` — deleted
@@ -697,8 +701,9 @@ clamped · `composer verify` green.
 - `tests/Feature/Public/PublicGroupTest.php`, `PublicSessionlessTest.php`,
   `PublicRouteTest.php`
 
-**Contact details (owner, 2026-10-12).** The header and footer show the centre's
-public email and telephone. They live in `config/public_site.php`, with the real
+**Contact details (owner, 2026-10-12).** The header's top bar shows the centre's
+public email and telephone, as the design draws it. The footer does not; T12's
+contact page and home-page contact section show them again. They live in `config/public_site.php`, with the real
 values committed as defaults and each overridable from `.env`. They are what the
 site publishes, so the public repository reveals nothing more. No Blade file
 holds them. The map link's key exists and defaults to null; T12 renders it.
