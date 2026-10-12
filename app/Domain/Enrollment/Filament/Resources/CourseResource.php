@@ -14,15 +14,20 @@ use App\Domain\Enrollment\Filament\Resources\CourseResource\Pages\ViewCourse;
 use App\Domain\Enrollment\Models\Course;
 use App\Domain\Enrollment\Models\Enrollment;
 use BackedEnum;
+use Filament\Actions\Action;
 use Filament\Actions\DeleteAction;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
+use Filament\Schemas\Components\Callout;
+use Filament\Schemas\Components\Group;
+use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\IconColumn;
+use Filament\Tables\Columns\Layout\Stack;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
@@ -88,75 +93,84 @@ class CourseResource extends Resource
 
     public static function form(Schema $schema): Schema
     {
-        return $schema->components([
-            TextInput::make('code')
-                ->label(__('enrollment.course_code'))
-                ->required()
-                // Course codes stay manual (P35-T09): the placeholder suggests a
-                // shape and never fills one, so nothing is submitted untyped.
-                ->placeholder(__('enrollment.course_code_placeholder'))
-                ->maxLength(30)
-                // The code is what humans mean by a course, on the phone and in
-                // brochures, so a duplicate is a real-world ambiguity rather
-                // than merely a broken index.
-                ->unique(ignoreRecord: true),
+        return $schema->columns(['default' => 1, 'lg' => 3])->components([
+            Group::make()->columnSpan(['lg' => 2])->schema([
+                Section::make(__('enrollment.course_details'))->columns(2)->schema([
+                    TextInput::make('code')
+                        ->label(__('enrollment.course_code'))
+                        ->required()
+                        // Course codes stay manual (P35-T09): the placeholder suggests a
+                        // shape and never fills one, so nothing is submitted untyped.
+                        ->placeholder(__('enrollment.course_code_placeholder'))
+                        ->maxLength(30)
+                        // The code is what humans mean by a course, on the phone and in
+                        // brochures, so a duplicate is a real-world ambiguity rather
+                        // than merely a broken index.
+                        ->unique(ignoreRecord: true),
 
-            TextInput::make('name_en')
-                ->label(__('enrollment.name_en'))
-                ->required()
-                ->maxLength(200),
+                    TextInput::make('name_en')
+                        ->label(__('enrollment.name_en'))
+                        ->required()
+                        ->maxLength(200),
 
-            // Optional: the Arabic catalogue arrives in phase 4, and until then
-            // an untranslated course is normal. Course::name() falls back.
-            TextInput::make('name_ar')
-                ->label(__('enrollment.name_ar'))
-                ->maxLength(200),
+                    // Optional: the Arabic catalogue arrives in phase 4, and until then
+                    // an untranslated course is normal. Course::name() falls back.
+                    TextInput::make('name_ar')
+                        ->label(__('enrollment.name_ar'))
+                        ->maxLength(200),
 
-            TextInput::make('total_hours')
-                ->label(__('enrollment.total_hours'))
-                ->helperText(__('enrollment.total_hours_course_hint'))
-                ->required()
-                ->numeric()
-                ->integer()
-                ->minValue(0)
-                // unsignedSmallInteger: 65535 is the column's ceiling, and a
-                // larger value would be a silent truncation in strict mode or a
-                // raw database error out of it.
-                ->maxValue(65535)
-                ->default(0),
+                    TextInput::make('total_hours')
+                        ->label(__('enrollment.total_hours'))
+                        ->helperText(__('enrollment.total_hours_course_hint'))
+                        ->required()
+                        ->numeric()
+                        ->integer()
+                        ->minValue(0)
+                        // unsignedSmallInteger: 65535 is the column's ceiling, and a
+                        // larger value would be a silent truncation in strict mode or a
+                        // raw database error out of it.
+                        ->maxValue(65535)
+                        ->default(0),
 
-            TextInput::make('default_price')
-                ->label(__('pricing.course_default_price'))
-                ->helperText(__('pricing.course_default_price_hint'))
-                ->required()
-                ->numeric()
-                ->minValue(0)
-                ->rules(['decimal:0,3', 'max:999999999.999'])
-                ->default('0.000')
-                ->visible(fn (): bool => auth()->user()?->can('manage_pricing') ?? false)
-                ->dehydrated(false),
+                    TextInput::make('default_price')
+                        ->label(__('pricing.course_default_price'))
+                        ->helperText(__('pricing.course_default_price_hint'))
+                        ->required()
+                        ->numeric()
+                        ->minValue(0)
+                        ->rules(['decimal:0,3', 'max:999999999.999'])
+                        ->default('0.000')
+                        ->visible(fn (): bool => auth()->user()?->can('manage_pricing') ?? false)
+                        ->dehydrated(false),
 
-            Toggle::make('is_active')
-                ->label(__('enrollment.is_active'))
-                ->helperText(__('enrollment.is_active_course_hint'))
-                ->default(true),
+                    Toggle::make('is_active')
+                        ->label(__('enrollment.is_active'))
+                        ->helperText(__('enrollment.is_active_course_hint'))
+                        ->default(true),
+                ]),
+                Section::make(__('enrollment.course_descriptions'))->columns(2)->schema([
 
-            Textarea::make('description_en')
-                ->label(__('enrollment.description_en'))
-                ->rows(3)
-                ->columnSpanFull(),
+                    Textarea::make('description_en')
+                        ->label(__('enrollment.description_en'))
+                        ->rows(3)
+                        ->columnSpanFull(),
 
-            Textarea::make('description_ar')
-                ->label(__('enrollment.description_ar'))
-                ->rows(3)
-                ->columnSpanFull(),
+                    Textarea::make('description_ar')
+                        ->label(__('enrollment.description_ar'))
+                        ->rows(3)
+                        ->columnSpanFull(),
 
+                ]),
+            ]),
+            Callout::make(__('enrollment.course_inheritance'))->info()
+                ->description(__('enrollment.course_inheritance_hint')),
         ]);
     }
 
     public static function table(Table $table): Table
     {
         return $table
+            ->contentGrid(['md' => 2, 'xl' => 3])
             ->modifyQueryUsing(fn (Builder $query): Builder => $query->addSelect([
                 self::ENROLLED_STUDENTS_COUNT => Enrollment::query()
                     ->selectRaw('COUNT(DISTINCT student_id)')
@@ -165,12 +179,13 @@ class CourseResource extends Resource
                         ->whereColumn('course_id', $query->qualifyColumn('id'))),
             ]))
             ->columns([
-                TextColumn::make('code')
-                    ->label(__('enrollment.course_code'))
-                    ->searchable()
-                    ->sortable(),
+                Stack::make([
+                    TextColumn::make('code')
+                        ->label(__('enrollment.course_code'))
+                        ->searchable()
+                        ->sortable(),
 
-                /*
+                    /*
                  * Shows the localized name but sorts and searches the real
                  * columns behind it — Course::name() is a locale-dependent
                  * method, not an attribute, so it cannot be ordered on.
@@ -192,30 +207,40 @@ class CourseResource extends Resource
                  * enough for it to be measurable; a training centre's course
                  * list is not.
                  */
-                TextColumn::make('name_en')
-                    ->label(__('enrollment.course_name'))
-                    ->formatStateUsing(fn (Course $record): string => $record->name())
-                    ->searchable(['name_en', 'name_ar'])
-                    ->sortable(),
+                    TextColumn::make('name_en')
+                        ->label(__('enrollment.course_name'))
+                        ->formatStateUsing(fn (Course $record): string => $record->name())
+                        ->searchable(['name_en', 'name_ar'])
+                        ->sortable()->weight('semibold'),
 
-                // Not sortable: no index on total_hours, and the catalogue is
-                // looked through by code or name, never by length.
-                TextColumn::make('total_hours')
-                    ->label(__('enrollment.total_hours'))
-                    ->numeric(),
+                    // Not sortable: no index on total_hours, and the catalogue is
+                    // looked through by code or name, never by length.
+                    TextColumn::make('total_hours')
+                        ->label(__('enrollment.total_hours'))
+                        ->numeric(),
 
-                // How many times this course has actually been run. Counted
-                // rather than stored: a cached count is a derived value that
-                // drifts, and the catalogue list is the only place it is read.
-                TextColumn::make('batches_count')
-                    ->label(__('enrollment.batches'))
-                    ->counts('batches')
-                    ->numeric(),
+                    // How many times this course has actually been run. Counted
+                    // rather than stored: a cached count is a derived value that
+                    // drifts, and the catalogue list is the only place it is read.
+                    TextColumn::make('batches_count')
+                        ->label(__('enrollment.batches'))
+                        ->counts('batches')
+                        ->numeric(),
 
-                IconColumn::make('is_active')
-                    ->label(__('enrollment.is_active'))
-                    ->boolean()
-                    ->sortable(),
+                    IconColumn::make('is_active')
+                        ->label(__('enrollment.is_active'))
+                        ->boolean()
+                        ->sortable(),
+
+                    TextColumn::make('course_status')->label(__('enrollment.status'))
+                        ->state(fn (Course $record): string => $record->is_active ? __('enrollment.course_active') : __('enrollment.course_retired'))
+                        ->badge()->color(fn (Course $record): string => $record->is_active ? 'success' : 'gray'),
+
+                    TextColumn::make(self::ENROLLED_STUDENTS_COUNT)
+                        ->label(__('enrollment.enrollments'))
+                        ->formatStateUsing(fn (int $state): string => __('enrollment.enrolled_students', ['count' => $state]))
+                        ->visible(fn (): bool => auth()->user()?->can('view_any_enrollment') ?? false),
+                ]),
 
                 // Deliberately absent from the table: pricing is changed from
                 // the guarded form field, not inline from a listing.
@@ -234,6 +259,9 @@ class CourseResource extends Resource
             // that a crafted Livewire mount ignores, whereas authorize() runs
             // CoursePolicy::delete() against this record on the server.
             ->recordActions([
+                Action::make('batches')->label(fn (Course $record): string => __('enrollment.batches_count', ['count' => $record->batches_count]))
+                    ->visible(fn (): bool => BatchResource::canViewAny())
+                    ->url(fn (Course $record): string => BatchResource::getUrl('index', ['filters' => ['course_id' => ['value' => $record->getKey()]]])),
                 self::deleteAction(),
             ]);
     }

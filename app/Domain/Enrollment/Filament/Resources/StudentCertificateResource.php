@@ -19,6 +19,7 @@ use App\Domain\Enrollment\Filament\Resources\StudentCertificateResource\Pages\Vi
 use App\Domain\Enrollment\Models\Enrollment;
 use App\Domain\Enrollment\Models\StudentCertificate;
 use App\Domain\Finance\Services\ChargeQueryService;
+use App\Domain\Staff\Filament\Resources\UserResource;
 use App\Models\User;
 use BackedEnum;
 use Filament\Actions\Action;
@@ -132,7 +133,7 @@ class StudentCertificateResource extends Resource
     public static function getEloquentQuery(): Builder
     {
         return parent::getEloquentQuery()
-            ->with(['issuedBy', 'revokedBy']);
+            ->with(['issuedBy', 'revokedBy', 'enrollment.student', 'enrollment.batch.course']);
     }
 
     public static function table(Table $table): Table
@@ -148,12 +149,17 @@ class StudentCertificateResource extends Resource
                 TextColumn::make('student_name')
                     ->label(__('certificates.student'))
                     ->searchable()
-                    ->sortable(),
+                    ->sortable()->weight('semibold')
+                    ->url(fn (StudentCertificate $record): ?string => ! $record->enrollment->student->trashed()
+                        && StudentResource::canViewAny() && StudentResource::canView($record->enrollment->student)
+                        ? StudentResource::getUrl('view', ['record' => $record->enrollment->student]) : null),
 
                 TextColumn::make('course_name')
                     ->label(__('certificates.course'))
                     ->searchable()
-                    ->sortable(),
+                    ->sortable()
+                    ->url(fn (StudentCertificate $record): ?string => CourseResource::canViewAny() && CourseResource::canView($record->enrollment->batch->course)
+                        ? CourseResource::getUrl('view', ['record' => $record->enrollment->batch->course]) : null),
 
                 TextColumn::make('completed_on')
                     ->label(__('certificates.completed_on'))
@@ -166,7 +172,10 @@ class StudentCertificateResource extends Resource
                     ->sortable(),
 
                 TextColumn::make('issuedBy.name')
-                    ->label(__('certificates.issued_by')),
+                    ->label(__('certificates.issued_by'))
+                    ->url(fn (StudentCertificate $record): ?string => $record->issuedBy !== null
+                        && UserResource::canViewAny() && UserResource::canEdit($record->issuedBy)
+                        ? UserResource::getUrl('edit', ['record' => $record->issuedBy]) : null),
 
                 TextColumn::make('status')
                     ->label(__('certificates.status'))

@@ -167,7 +167,7 @@ class EnrollmentsRelationManager extends RelationManager
                  * real indexed columns.
                  */
                 TextColumn::make('student.full_name')
-                    ->label(__('enrollment.student'))
+                    ->label(__('enrollment.student'))->weight('semibold')
                     ->searchable(query: fn (Builder $query, string $search): Builder => $query
                         ->whereHas('student', fn (Builder $student): Builder => $student
                             ->where('first_name', 'like', '%'.$search.'%')
@@ -191,6 +191,12 @@ class EnrollmentsRelationManager extends RelationManager
                     ->label(__('enrollment.enrolled_at'))
                     ->date()
                     ->sortable(),
+
+                TextColumn::make('student.'.StudentBalanceQuery::OUTSTANDING_ALIAS)
+                    ->label(__('enrollment.outstanding'))
+                    ->visible(fn (): bool => auth()->user()?->can('view_any_charge') ?? false)
+                    ->formatStateUsing(fn (string $state): string => __('enrollment.money_lyd', ['amount' => $state]))
+                    ->color('warning'),
             ])
             ->headerActions([$this->enrollAction()])
             ->recordActions([$this->withdrawAction(), $this->deleteAction()])

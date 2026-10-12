@@ -18,6 +18,7 @@ use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Support\Icons\Heroicon;
+use Filament\Tables\Columns\Layout\Stack;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -88,18 +89,20 @@ class InstructorsRelationManager extends RelationManager
     public function table(Table $table): Table
     {
         return $table
+            ->contentGrid(['md' => 2, 'xl' => 3])
             ->recordTitleAttribute('name')
             ->columns([
-                TextColumn::make('name')
-                    ->label(__('enrollment.instructor'))
-                    ->searchable()
-                    ->sortable(),
+                Stack::make([
+                    TextColumn::make('name')
+                        ->label(__('enrollment.instructor'))
+                        ->searchable()
+                        ->sortable(),
 
-                TextColumn::make('staffProfile.job_title')
-                    ->label(__('staff.job_title'))
-                    ->placeholder(__('enrollment.no_job_title')),
+                    TextColumn::make('staffProfile.job_title')
+                        ->label(__('staff.job_title'))
+                        ->placeholder(__('enrollment.no_job_title')),
 
-                /*
+                    /*
                  * Whether this allocation belongs to somebody who still works
                  * here.
                  *
@@ -114,24 +117,25 @@ class InstructorsRelationManager extends RelationManager
                  * annotation somebody forgot to fill in; two badges read as an
                  * answer.
                  */
-                TextColumn::make('employment_state')
-                    ->label(__('enrollment.instructor_employment_state'))
-                    ->state(fn (User $record): string => $record->trashed()
-                        ? __('enrollment.instructor_departed')
-                        : __('enrollment.instructor_current'))
-                    ->badge()
-                    ->color(fn (User $record): string => $record->trashed() ? 'danger' : 'success')
-                    ->tooltip(fn (User $record): ?string => $record->trashed()
-                        ? __('enrollment.instructor_departed_hint')
-                        : null),
+                    TextColumn::make('employment_state')
+                        ->label(__('enrollment.instructor_employment_state'))
+                        ->state(fn (User $record): string => $record->trashed()
+                            ? __('enrollment.instructor_departed')
+                            : __('enrollment.instructor_current'))
+                        ->badge()
+                        ->color(fn (User $record): string => $record->trashed() ? 'danger' : 'success')
+                        ->tooltip(fn (User $record): ?string => $record->trashed()
+                            ? __('enrollment.instructor_departed_hint')
+                            : null),
 
-                // The pivot value, which is the entire point of this panel: the
-                // hours belong to the pair, not to the batch and not to the
-                // account.
-                TextColumn::make('assigned_hours')
-                    ->label(__('enrollment.assigned_hours'))
-                    ->state(fn (User $record): int => self::pivotHours($record))
-                    ->numeric(),
+                    // The pivot value, which is the entire point of this panel: the
+                    // hours belong to the pair, not to the batch and not to the
+                    // account.
+                    TextColumn::make('assigned_hours')
+                        ->label(__('enrollment.assigned_hours'))
+                        ->state(fn (User $record): int => self::pivotHours($record))
+                        ->numeric(),
+                ]),
             ])
             ->headerActions([
                 $this->assignAction(),

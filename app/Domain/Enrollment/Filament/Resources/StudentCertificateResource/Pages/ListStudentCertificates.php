@@ -4,8 +4,16 @@ declare(strict_types=1);
 
 namespace App\Domain\Enrollment\Filament\Resources\StudentCertificateResource\Pages;
 
+use App\Domain\Enrollment\Filament\Pages\CertificateIssuanceQueue;
 use App\Domain\Enrollment\Filament\Resources\StudentCertificateResource;
+use App\Domain\Enrollment\Models\StudentCertificate;
+use App\Domain\Enrollment\Queries\CertificateIssuanceQueue as IssuanceQueueQuery;
+use Filament\Actions\Action;
 use Filament\Resources\Pages\ListRecords;
+use Filament\Schemas\Components\Callout;
+use Filament\Schemas\Components\EmbeddedTable;
+use Filament\Schemas\Schema;
+use Illuminate\Support\Facades\Gate;
 
 /**
  * The certificate register, listed. Read-plus-three-actions — see
@@ -25,6 +33,23 @@ use Filament\Resources\Pages\ListRecords;
 class ListStudentCertificates extends ListRecords
 {
     protected static string $resource = StudentCertificateResource::class;
+
+    public function content(Schema $schema): Schema
+    {
+        $components = [];
+        if (Gate::allows('issue', StudentCertificate::class)) {
+            $count = app(IssuanceQueueQuery::class)->query()->count();
+            if ($count > 0) {
+                $components[] = Callout::make(trans_choice('certificates.queue_pending', $count, ['count' => $count]))
+                    ->warning()->description(__('certificates.outstanding_balance_hint'))
+                    ->actions([Action::make('reviewQueue')->label(__('certificates.review_queue'))
+                        ->url(CertificateIssuanceQueue::getUrl())]);
+            }
+        }
+        $components[] = EmbeddedTable::make();
+
+        return $schema->components($components);
+    }
 
     protected function getHeaderActions(): array
     {
