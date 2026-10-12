@@ -11,8 +11,15 @@ use Carbon\CarbonImmutable;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Livewire\Livewire;
 
 uses(RefreshDatabase::class);
+
+// Livewire state left by an earlier file's panel render would inject its script
+// into these pages; PublicPagesTest explains. Flushed before each test.
+beforeEach(function (): void {
+    Livewire::flushState();
+});
 
 /*
 |--------------------------------------------------------------------------

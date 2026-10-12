@@ -13,8 +13,20 @@ use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\View;
 use Illuminate\View\ComponentAttributeBag;
+use Livewire\Livewire;
 
 uses(RefreshDatabase::class);
+
+// Livewire marks "a component rendered this request" in static state that
+// outlives the test. A panel or portal page rendered by an EARLIER file leaves it
+// set, and Livewire then injects its script into these public pages, so the
+// no-<script> assertion fails by file order (it did, in CI, after the portal
+// tests). Production starts each request with fresh statics, so this is test-
+// process state only. Flushed BEFORE each test, because the dirt comes from
+// other files. PublicSessionlessTest flushes after its own panel renders.
+beforeEach(function (): void {
+    Livewire::flushState();
+});
 
 /*
 |--------------------------------------------------------------------------
