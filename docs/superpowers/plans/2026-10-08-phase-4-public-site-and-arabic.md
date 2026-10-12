@@ -800,6 +800,10 @@ properties only · `composer verify` green.
 - `app/Domain/Enrollment/Models/Course.php` — one method, `description()`, the
   locale-aware twin of `name()`, so the card does not restate that rule (lead's
   amendment, 2026-10-12, for the owner to confirm on T12's PR)
+- `tests/Feature/ExampleTest.php` and `tests/Feature/DatabaseIsolationTest.php`:
+  `/` now reads the course catalogue, so `ExampleTest` declares `RefreshDatabase`
+  (rewritten as Pest, the only form that guard accepts) and leaves the list of
+  tests that touch no database (same amendment)
 - `lang/en/public.php` — appended
 - `tests/Feature/Public/ProgrammesTest.php`, `PublicPagesTest.php`
 
