@@ -139,7 +139,7 @@ first attempt.
 | File or surface | Tasks, in order | Rule |
 |---|---|---|
 | `docs/superpowers/specs/2026-07-20-training-center-dashboard-design.md` | **T01 only** | No other task edits the spec. A task that finds the spec wrong stops and raises it; the fix is a spec amendment, not a quiet edit inside a feature PR |
-| `docs/ENGINEERING.md` | **T01 only** | The download-counter exception, in the write-boundary section. Nothing else |
+| `docs/ENGINEERING.md` | **T01 → T13** | T01: the download-counter exception, in the write-boundary section. T13: one sentence in "Frontend (phase 4)" allowing a read-only `method="get"` form on the public pages, for the publications search (owner, 2026-10-12). Nothing else |
 | `lang/en/activity.php` | **T03 → T04 → T17** | T03 adds the `Article` record-type label, T04 `Expense` and `ExpenseCategory`, and T17 the `activity.field.*` group. `LocalizationTest` fails without the labels, so each lands with its model |
 | `app/Domain/Staff/Filament/Resources/ActivityResource.php` | **T16e → T17** | T16e restyles; T17 routes `describeProperties()` and `describeChanges()` through `activity.field.*` |
 | `app/Domain/Finance/Exports/ReportDataBuilder.php` | **T04 only** | `profit()` gains the expenses column |
@@ -889,11 +889,28 @@ query log · an inactive course has no card · `composer verify` green.
 - `lang/en/publications.php` — public keys, appended; `lang/en/public.php` — the
   Publications link label, appended
 - `tests/Feature/Public/PublicationsIndexTest.php`, `PublicationDownloadTest.php`
+- `app/Domain/Publications/Data/PublicArticle.php`, new: the closed, named
+  projection the public views render. ENGINEERING says "a public surface renders a
+  closed, named projection — never a model". T12's review applied that rule to
+  programmes (lead's amendment, 2026-10-12, for the owner to confirm on T13's PR)
+- `docs/ENGINEERING.md` and `tests/Feature/Public/PublicSessionlessTest.php`, for
+  the search form below. The owner approved this on 2026-10-12, and the seam row
+  records it
 
 **Does**
 
 The index with search by title, topic, author and description; topic chips;
 sorting by newest or most downloaded; the article page; and the download route.
+
+**The search box is a read-only GET form (owner, 2026-10-12).** T11's rule allowed
+no form on a public page. A search box only writes `?q=…` into the URL and needs
+no session and no CSRF token. So ENGINEERING now allows one `method="get"`
+form, and `PublicSessionlessTest` accepts a `method="get"` form while rejecting
+every other kind.
+
+**Left out of the design.** There is no file size, because no column stores
+one. There is no "read online" viewer, and no download toast, which would need a
+script.
 
 **Every download re-reads publication state.** The route resolves the article by
 slug **with `published_at` not null in the same query**, streams the file from the
