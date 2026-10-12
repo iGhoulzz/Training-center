@@ -151,7 +151,7 @@ first attempt.
 | `routes/web.php` | **T11 → T12 → T13 → T15 → T18** | T11 creates the sessionless public group; T12, T13 and T15 add routes inside it and may not alter the group or its middleware. T18 adds the `/ar` copies of the public group and the `/ar/` verifier routes **inside the existing verifier group**, under the same middleware and the same named limiter, **named `ar.` plus the English name** so the English names never move. **No task touches the private-file group** |
 | `resources/css/app.css`, `vite.config.js` | **T11 → T16a → T18** | T11 adds the public site's stylesheet entry; T16a the Filament theme entry; T18 the direction work over both |
 | `resources/views/layouts/public.blade.php` | **T11 → T18** | T11 creates it; T18 makes it directional. The verifier does **not** use it — see T14 |
-| `resources/views/public/partials/header.blade.php` | **T11 → T15 → T18** | T11 creates it; T15 adds the portal link; T18 makes that link carry the locale |
+| `resources/views/public/partials/header.blade.php` | **T11 → T12 → T15 → T18** | T11 creates it; T12 replaces its own copy of the contact-link rule with the shared contact components (lead's amendment, 2026-10-12, from T12's pre-push review); T15 adds the portal link; T18 makes that link carry the locale |
 | `resources/views/public/partials/navigation.blade.php`, `footer.blade.php` | **T11 → T12 → T13** | Owner-approved amendment (2026-10-12). T11 creates them, linking only to pages that exist: the home page and the verifier. T12 adds About, Programmes and Contact; T13 adds Publications. Each adds its own links through `PublicRoute` and edits no other task's |
 | `resources/views/public/home.blade.php` | **T11 → T12** | T11 creates a minimal page at `public.home` so `/` has somewhere to go once `welcome.blade.php` is deleted; T12 replaces it with the real home page |
 | `config/public_site.php`, `.env.example` | **T11 → T12** | Owner-approved amendment (2026-10-12). T11 creates the public contact details: the centre's real public email and telephone as committed defaults, each overridable from `.env`, plus a map-link key that defaults to null. T12 sets the map link's default once the owner provides it, and touches nothing else |
@@ -804,8 +804,28 @@ properties only · `composer verify` green.
   `/` now reads the course catalogue, so `ExampleTest` declares `RefreshDatabase`
   (rewritten as Pest, the only form that guard accepts) and leaves the list of
   tests that touch no database (same amendment)
+- From the pre-push review (same amendment): ENGINEERING's "a component for
+  anything used twice", applied.
+  - `app/Support/PublicContact.php`, new: the email, the phone, the `tel:` target
+    and the http(s)-only map link, decided once.
+  - `resources/views/components/public/email-link.blade.php` and
+    `phone-link.blade.php`, new: the header, the home page and the contact page
+    use them.
+  - `resources/views/public/partials/header.blade.php`, a seam after T11: its own
+    copy of the rule gives way to those components.
+  - `resources/views/components/public/programme-facts.blade.php`, new: hours,
+    price, start date and the no-intake line, shared by the card and the
+    programme page.
+  - `app/Domain/Enrollment/Queries/PublicProgrammeCatalogue.php`, new: the
+    ordered card list that both controllers read, so neither controller calls
+    the other.
 - `lang/en/public.php` — appended
 - `tests/Feature/Public/ProgrammesTest.php`, `PublicPagesTest.php`
+
+**A programme's URL uses its id, not its code** (lead, 2026-10-12, from the
+review). Course codes are typed by hand with no character rule, and Laravel's URL
+generator leaves `/`, `?` and `#` in a parameter unencoded. A code holding one of
+them would give a card a link that 404s.
 
 **Does**
 
