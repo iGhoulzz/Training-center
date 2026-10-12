@@ -902,6 +902,13 @@ query log · an inactive course has no card · `composer verify` green.
 - `tests/Feature/Public/PublicPagesTest.php`, one assertion only. T12's
   navigation test pins the exact link list, and Publications joins it (same
   amendment)
+- `routes/web.php`: besides the three routes, one sentence of the public
+  group's comment, which said a page could hold no form. It now names the
+  read-only GET form (same amendment)
+- `resources/views/components/public/article-meta.blade.php`, new: the topic
+  badge and issued date, which the index and the article page both show
+  (ENGINEERING: "a component for anything used twice"). From the pre-push review
+  (same amendment)
 
 **Does**
 
