@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Domain\Enrollment\Models\Course;
+use App\Support\PublicContact;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Routing\Route as RoutingRoute;
 use Illuminate\Support\Facades\Route;
@@ -93,9 +94,9 @@ it('serves each page with exactly one h1, taken from its key', function (string 
 ]);
 
 it('puts the programme name in the h1 of its own page', function () {
-    Course::factory()->create(['name_en' => 'Showing Course', 'code' => 'SHOW-1']);
+    $course = Course::factory()->create(['name_en' => 'Showing Course']);
 
-    expect(publicPageHeadings((string) $this->get('/programmes/SHOW-1')->assertOk()->getContent()))->toBe(['Showing Course']);
+    expect(publicPageHeadings((string) $this->get('/programmes/'.$course->id)->assertOk()->getContent()))->toBe(['Showing Course']);
 });
 
 it('links the home page onward to programmes, about, contact and the verifier', function () {
@@ -117,15 +118,61 @@ it('shows the email and telephone on the contact page as mailto and tel links', 
         ->toContain('>+218 91 234 5678</a>');
 });
 
-it('builds the contact links on the home page exactly as the contact page and the header do', function () {
-    foreach (['/', '/contact'] as $path) {
+it('prints the same email and telephone links in the header and in the page body, from one rule', function () {
+    // Padded values, so a place that did not apply the trim would show it. The
+    // header prints each link once, the home page and the contact page once more
+    // in their own body, and the about page has only the header's.
+    config([
+        'public_site.contact.email' => "  desk@example.test \n",
+        'public_site.contact.phone' => '   +218 91 234 5678  ',
+    ]);
+
+    foreach (['/' => 2, '/contact' => 2, '/about' => 1] as $path => $expected) {
         $html = (string) $this->get($path)->assertOk()->getContent();
 
-        // The header prints each link once, so two or more means the page body
-        // has its own beside it.
-        expect(substr_count($html, 'href="mailto:desk@example.test"'))->toBeGreaterThanOrEqual(2)
-            ->and(substr_count($html, 'href="tel:+218912345678"'))->toBeGreaterThanOrEqual(2);
+        expect(substr_count($html, '<a href="mailto:desk@example.test" dir="ltr"'))->toBe($expected, "{$path}: mailto links")
+            ->and(substr_count($html, '<a href="tel:+218912345678" dir="ltr"'))->toBe($expected, "{$path}: tel links")
+            ->and(substr_count($html, '>desk@example.test</a>'))->toBe($expected)
+            ->and(substr_count($html, '>+218 91 234 5678</a>'))->toBe($expected);
     }
+});
+
+it('hands the callers classes to the contact links and keeps them left to right', function () {
+    $html = (string) $this->get('/contact')->assertOk()->getContent();
+
+    // The header's link carries the header's classes, the page's its own.
+    expect($html)->toContain('<a href="mailto:desk@example.test" dir="ltr" class="hover:text-gold-400 focus-visible:outline-gold-400">')
+        ->toContain('<a href="mailto:desk@example.test" dir="ltr" class="underline hover:text-navy-700">')
+        ->toContain('<a href="tel:+218912345678" dir="ltr" class="hover:text-gold-400 focus-visible:outline-gold-400">')
+        ->toContain('<a href="tel:+218912345678" dir="ltr" class="underline hover:text-navy-700">');
+});
+
+it('renders no contact link, and no bar for them, when none is configured', function () {
+    config(['public_site.contact.email' => '', 'public_site.contact.phone' => '   ']);
+    replacePublicLine('public.header.contact_label', 'SENTINEL-CONTACT-BAR');
+
+    foreach (['/', '/contact', '/about'] as $path) {
+        $html = (string) $this->get($path)->assertOk()->getContent();
+
+        foreach (['mailto:', 'tel:', 'SENTINEL-CONTACT-BAR', '<dl'] as $needle) {
+            expect(str_contains($html, $needle))->toBeFalse("{$path} still has [{$needle}] with no contact details configured.");
+        }
+    }
+});
+
+it('reads the public email, telephone and map link from the three public_site config keys', function () {
+    config([
+        'public_site.contact.email' => ' a@example.test ',
+        'public_site.contact.phone' => '+1 (234) 567',
+        'public_site.contact.map_url' => ' https://maps.example.test/x ',
+    ]);
+
+    $contact = PublicContact::fromConfig();
+
+    expect($contact->email)->toBe('a@example.test')
+        ->and($contact->phone)->toBe('+1 (234) 567')
+        ->and($contact->telephoneHref)->toBe('tel:+1234567')
+        ->and($contact->mapUrl)->toBe('https://maps.example.test/x');
 });
 
 it('links to the directions in a new tab with the safe rel, and embeds nothing', function () {
@@ -182,10 +229,10 @@ it('links to about, programmes and contact from the navigation and the footer', 
 });
 
 it('sets no cookie on any public GET route', function () {
-    // A real code for programmes.show, and a placeholder for any parameter this
+    // A real id for programmes.show, and a placeholder for any parameter this
     // file has no fixture for: a 404 on the sessionless group sets no cookie
     // either, so a route added later is held to the property without an edit here.
-    Course::factory()->create(['code' => 'COOKIE-1']);
+    $course = Course::factory()->create();
 
     $routes = collect(Route::getRoutes()->getRoutes())
         ->filter(fn (RoutingRoute $route): bool => str_starts_with((string) $route->getName(), 'public.') && in_array('GET', $route->methods(), true));
@@ -197,7 +244,7 @@ it('sets no cookie on any public GET route', function () {
         $parameters = [];
 
         foreach ($route->parameterNames() as $name) {
-            $parameters[$name] = $route->getName() === 'public.programmes.show' ? 'COOKIE-1' : 'placeholder';
+            $parameters[$name] = $route->getName() === 'public.programmes.show' ? $course->id : 'placeholder';
         }
 
         $response = $this->get(route($route->getName(), $parameters));

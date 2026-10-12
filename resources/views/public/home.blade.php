@@ -14,7 +14,10 @@
     system makes true. The programme cards are the first few of the same ordered
     list the programmes page shows; the card, not this page, decides what one says.
 --}}
+@use('App\Support\PublicContact')
 @use('App\Support\PublicRoute')
+
+@php($contact = PublicContact::fromConfig())
 
 @section('content')
     <section aria-labelledby="home-heading" class="bg-navy-900 text-cream-50">
@@ -88,13 +91,12 @@
             <h2 id="home-contact-heading" class="font-serif text-3xl font-semibold">{{ __('public.home.contact_heading') }}</h2>
             <p class="mt-4 max-w-2xl text-lg text-navy-800">{{ __('public.home.contact_body') }}</p>
 
-            {{-- dir="ltr": an email address or a number keeps its order inside right-to-left text. --}}
             <ul class="mt-6 flex flex-wrap gap-x-8 gap-y-2 font-medium">
-                @if ($contact['email'] !== '')
-                    <li><a href="mailto:{{ $contact['email'] }}" dir="ltr" class="text-navy-700 underline hover:text-navy-900">{{ $contact['email'] }}</a></li>
+                @if ($contact->email !== '')
+                    <li><x-public.email-link class="text-navy-700 underline hover:text-navy-900" /></li>
                 @endif
-                @if ($contact['phone'] !== '')
-                    <li><a href="tel:{{ $contact['telephone'] }}" dir="ltr" class="text-navy-700 underline hover:text-navy-900">{{ $contact['phone'] }}</a></li>
+                @if ($contact->phone !== '')
+                    <li><x-public.phone-link class="text-navy-700 underline hover:text-navy-900" /></li>
                 @endif
             </ul>
 

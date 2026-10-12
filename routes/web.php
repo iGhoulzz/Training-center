@@ -71,7 +71,7 @@ Route::name('public.')
         Route::get('/', [PageController::class, 'home'])->name('home');
         Route::get('about', [PageController::class, 'about'])->name('about');
         Route::get('programmes', [ProgrammeController::class, 'index'])->name('programmes.index');
-        Route::get('programmes/{course:code}', [ProgrammeController::class, 'show'])->name('programmes.show');
+        Route::get('programmes/{course}', [ProgrammeController::class, 'show'])->whereNumber('course')->name('programmes.show');
         Route::get('contact', [PageController::class, 'contact'])->name('contact');
     });
 

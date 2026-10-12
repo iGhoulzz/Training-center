@@ -66,7 +66,7 @@ return [
     */
     'home' => [
         'heading' => 'Welcome to :name',
-        'lead' => 'Professional and legal training for practitioners, with certificates that anyone can check in a public register.',
+        'lead' => 'Professional and legal training, with certificates that anyone can check in a public register.',
         'programmes_link' => 'Browse programmes',
 
         'about_heading' => 'About the centre',
@@ -93,8 +93,8 @@ return [
     */
     'about' => [
         'heading' => 'About the centre',
-        'intro' => 'The centre offers professional and legal training for people who need practical skills in their work. Each programme is listed on the programmes page, with its hours and, whenever an intake is planned, its start date and price.',
-        'register' => 'Every certificate the centre issues is recorded in a public register. Anyone holding the reference printed on a certificate can check it with the verifier, so an employer or a court does not have to ask the centre to confirm it.',
+        'intro' => 'The centre runs professional and legal training programmes. Each programme is listed on the programmes page, with its hours and, whenever an intake is planned, its start date and price.',
+        'register' => 'Every certificate the centre issues is recorded in a public register. Anyone holding the reference printed on a certificate can check it with the verifier, so nobody has to ask the centre to confirm it.',
         'questions' => 'To ask about a programme or an intake, write to the centre or call it.',
 
         'certification_heading' => 'Verifiable certification',

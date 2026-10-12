@@ -60,6 +60,35 @@ function programmeCardTexts(string $html): array
 }
 
 /**
+ * The <article> of the card whose name link reads $name, or '' when there is none.
+ */
+function programmeCardHtml(string $html, string $name): string
+{
+    preg_match_all('/<article\b.*?<\/article>/s', $html, $articles);
+
+    foreach ($articles[0] as $article) {
+        if (preg_match('/<a\b[^>]*>\s*'.preg_quote($name, '/').'\s*<\/a>/', $article) === 1) {
+            return $article;
+        }
+    }
+
+    return '';
+}
+
+/**
+ * The inside of the first programme-facts list in this HTML, whitespace collapsed.
+ *
+ * The list's own tag is left out because the caller's classes differ between a
+ * card and the programme page; what must not differ is what it says.
+ */
+function programmeFactsFragment(string $html): string
+{
+    preg_match('/<ul\b[^>]*\bdata-programme-facts\b[^>]*>(.*?)<\/ul>/s', $html, $match);
+
+    return trim((string) preg_replace('/\s+/', ' ', $match[1] ?? ''));
+}
+
+/**
  * Every SQL statement the application ran while serving one GET.
  *
  * `DB::listen` cannot be unregistered, so the listener checks a flag and goes
@@ -203,7 +232,7 @@ it('renders the fallback with the name, description, hours and a contact link, a
     }
 });
 
-it('has no card for an inactive course on either page, and a 404 identical to an unknown code', function () {
+it('has no card for an inactive course on either page, and a 404 identical to an unknown id', function () {
     courseWithBatch('2026-10-20', ['name_en' => 'Active Course']);
     $retired = courseWithBatch('2026-10-21', ['name_en' => 'Retired Course', 'code' => 'RETIRED-1', 'is_active' => false]);
 
@@ -213,13 +242,16 @@ it('has no card for an inactive course on either page, and a 404 identical to an
         expect(array_keys($cards))->toBe(['Active Course']);
     }
 
-    $inactive = $this->get('/programmes/'.$retired->code)->assertNotFound();
-    $unknown = $this->get('/programmes/NO-SUCH-CODE')->assertNotFound();
+    $inactive = $this->get('/programmes/'.$retired->id)->assertNotFound();
+    $unknown = $this->get('/programmes/'.($retired->id + 1000))->assertNotFound();
+    // The retired course's CODE is not an address either: the route takes an id.
+    $byCode = $this->get('/programmes/RETIRED-1')->assertNotFound();
 
     // Same body and same headers that matter, so the response does not say which
     // of "retired" and "never existed" this was. Not the rate-limit counters,
     // which fall by one per request.
     expect($inactive->getContent())->toBe($unknown->getContent())
+        ->and($byCode->getContent())->toBe($unknown->getContent())
         ->and($inactive->headers->get('Content-Type'))->toBe($unknown->headers->get('Content-Type'))
         ->and($inactive->headers->get('Cache-Control'))->toBe($unknown->headers->get('Cache-Control'))
         ->and($inactive->headers->getCookies())->toBe([])
@@ -262,18 +294,66 @@ it('keeps the headings in order: h3 cards under the home h2, h2 cards under the 
         ->and(preg_match_all('/<h1\b/', $index))->toBe(1);
 });
 
-it('links each card to its programme page by course code', function () {
-    courseWithBatch('2026-10-20', ['name_en' => 'Linked Course', 'code' => 'LINK-001']);
+it('links each card to its programme page by course id', function () {
+    $course = courseWithBatch('2026-10-20', ['name_en' => 'Linked Course', 'code' => 'LINK-001']);
 
     $html = (string) $this->get('/programmes')->assertOk()->getContent();
 
-    expect($html)->toContain('href="'.url('/programmes/LINK-001').'"');
+    expect($html)->toContain('href="'.url('/programmes/'.$course->id).'"')
+        ->and(str_contains($html, 'LINK-001'))->toBeFalse('The course code is in the page, and the URL should not need it.');
+});
+
+it('gives a working card link to a course whose code holds a slash, a question mark or a hash', function (string $code) {
+    // Codes are typed by hand with no character rule, and the URL generator leaves
+    // these three unencoded, so a link built from the code would 404.
+    $course = courseWithBatch('2026-10-20', ['name_en' => 'Odd Code Course', 'code' => $code]);
+
+    $html = (string) $this->get('/programmes')->assertOk()->getContent();
+    preg_match('/<a\b[^>]*\bhref="([^"]*)"[^>]*>\s*Odd Code Course\s*<\/a>/', $html, $link);
+
+    expect($link[1] ?? null)->toBe(url('/programmes/'.$course->id));
+
+    $page = (string) $this->get($link[1])->assertOk()->getContent();
+
+    expect(preg_match_all('/<h1\b[^>]*>\s*Odd Code Course\s*<\/h1>/s', $page))->toBe(1);
+})->with([
+    'slash' => ['ARB/1'],
+    'question mark' => ['CIV?2'],
+    'hash' => ['LAW#3'],
+]);
+
+it('shows the same facts on a card and on its programme page', function () {
+    $planned = courseWithBatch('2026-10-20',
+        ['name_en' => 'Facts Course', 'total_hours' => 30, 'default_price' => '640.125'],
+        ['price' => null, 'total_hours' => null],
+    );
+    $bare = Course::factory()->create(['name_en' => 'Bare Facts Course', 'total_hours' => 18, 'default_price' => '321.000']);
+
+    $index = (string) $this->get('/programmes')->assertOk()->getContent();
+
+    // One fragment, rendered by one component, so the two pages cannot word a
+    // date or a price differently. Compared as rendered HTML, then pinned by hand.
+    foreach ([[$planned, 'Facts Course', '30 hours 640.125 LYD Starts 20 Oct 2026'], [$bare, 'Bare Facts Course', null]] as [$course, $name, $text]) {
+        $onCard = programmeFactsFragment(programmeCardHtml($index, $name));
+        $onPage = programmeFactsFragment((string) $this->get('/programmes/'.$course->id)->assertOk()->getContent());
+
+        expect($onCard)->not->toBe('', "No facts list on the card for {$name}.")
+            ->and($onPage)->toBe($onCard);
+
+        $plain = trim((string) preg_replace('/\s+/', ' ', strip_tags($onCard)));
+
+        if ($text !== null) {
+            expect($plain)->toBe($text);
+        } else {
+            expect($plain)->toStartWith('18 hours ')->and(str_contains($plain, 'LYD'))->toBeFalse()->and(str_contains($plain, 'Starts'))->toBeFalse();
+        }
+    }
 });
 
 it('never shows seats, capacity or an enrolment count', function () {
     courseWithBatch('2026-10-20', ['name_en' => 'Busy Course'], ['capacity' => 17]);
 
-    foreach (['/', '/programmes', '/programmes/'.Course::query()->firstOrFail()->code] as $path) {
+    foreach (['/', '/programmes', '/programmes/'.Course::query()->firstOrFail()->id] as $path) {
         $text = strtolower((string) $this->get($path)->assertOk()->getContent());
 
         foreach (['seat', 'capacity', 'enrol'] as $word) {
@@ -286,7 +366,7 @@ it('touches neither enrollments nor capacity in any query, on any page', functio
     $course = courseWithBatch('2026-10-20', ['name_en' => 'Queried Course'], ['capacity' => 17]);
     Course::factory()->create(['name_en' => 'Fallback Queried Course']);
 
-    foreach (['/', '/programmes', '/programmes/'.$course->code] as $path) {
+    foreach (['/', '/programmes', '/programmes/'.$course->id] as $path) {
         $statements = sqlStatementsDuring(fn () => $this->get($path)->assertOk());
 
         expect($statements)->not->toBeEmpty("{$path} ran no query, so this assertion would pass over nothing.");
@@ -314,9 +394,9 @@ it('runs the same number of queries for two courses as for six', function () {
             }
         }
 
-        $code = Course::query()->orderBy('id')->firstOrFail()->code;
+        $id = Course::query()->orderBy('id')->firstOrFail()->id;
 
-        foreach (['/', '/programmes', "/programmes/{$code}"] as $path) {
+        foreach (['/', '/programmes', "/programmes/{$id}"] as $path) {
             $counts[$path][$total] = count(sqlStatementsDuring(fn () => $this->get($path)->assertOk()));
         }
     }
@@ -328,14 +408,14 @@ it('runs the same number of queries for two courses as for six', function () {
 });
 
 it('shows the programme page with its details, or the contact call to action when there is no batch', function () {
-    courseWithBatch('2026-10-20',
-        ['name_en' => 'Detail Course', 'code' => 'DETAIL-1', 'description_en' => 'The detail description.', 'total_hours' => 30, 'default_price' => '640.125'],
+    $detailCourse = courseWithBatch('2026-10-20',
+        ['name_en' => 'Detail Course', 'description_en' => 'The detail description.', 'total_hours' => 30, 'default_price' => '640.125'],
         ['price' => null, 'total_hours' => null],
     );
-    Course::factory()->create(['name_en' => 'Bare Course', 'code' => 'BARE-1', 'description_en' => 'The bare description.', 'total_hours' => 18, 'default_price' => '321.000']);
+    $bareCourse = Course::factory()->create(['name_en' => 'Bare Course', 'description_en' => 'The bare description.', 'total_hours' => 18, 'default_price' => '321.000']);
 
-    $detail = (string) $this->get('/programmes/DETAIL-1')->assertOk()->getContent();
-    $bare = (string) $this->get('/programmes/BARE-1')->assertOk()->getContent();
+    $detail = (string) $this->get('/programmes/'.$detailCourse->id)->assertOk()->getContent();
+    $bare = (string) $this->get('/programmes/'.$bareCourse->id)->assertOk()->getContent();
 
     expect(preg_match_all('/<h1\b[^>]*>\s*Detail Course\s*<\/h1>/s', $detail))->toBe(1)
         ->and($detail)->toContain('The detail description.')->toContain('30 hours')->toContain('640.125 LYD')->toContain('Starts 20 Oct 2026')
