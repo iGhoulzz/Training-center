@@ -46,6 +46,7 @@ return [
     'links' => [
         'about' => 'About',
         'programmes' => 'Programmes',
+        'publications' => 'Publications',
         'verify_certificate' => 'Verify a certificate',
         'contact' => 'Contact',
     ],

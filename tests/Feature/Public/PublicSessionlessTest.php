@@ -68,13 +68,59 @@ function publicViewFilesForSessionScan(): array
 }
 
 /**
+ * The opening tag of the first form in this source that is not a read-only GET
+ * form, or null (P4-T13).
+ *
+ * A form is allowed only when it carries `method="get"`, in either quote style and
+ * any case, because a GET form writes its fields into the URL and needs neither a
+ * session nor a CSRF token (docs/ENGINEERING.md, "Frontend (phase 4)"). EVERY
+ * OTHER FORM FAILS, a form with no method attribute included: with none the
+ * browser defaults to GET, but the rule stays explicit so a form's method is
+ * always written down where a reviewer can see it. An unquoted `method=get` fails
+ * for the same reason.
+ *
+ * The attribute is read out of the tag rather than searched for in the source, so
+ * `method="get"` inside another attribute's value does not count, and a Blade echo
+ * with a `>` in it (`$a->b`) cannot end the tag early: each echo is blanked first.
+ * A tag that never closes is read to the end of the source, so it cannot hide.
+ */
+function firstNonGetForm(string $source): ?string
+{
+    $plain = (string) preg_replace(['/\{\{.*?\}\}/s', '/\{!!.*?!!\}/s'], 'x', $source);
+
+    preg_match_all('/<form\b[^>]*(?:>|$)/i', $plain, $tags);
+
+    foreach ($tags[0] as $tag) {
+        preg_match_all('/([^\s"\'<>\/=]+)\s*=\s*(?:"([^"]*)"|\'([^\']*)\')/', $tag, $attributes, PREG_SET_ORDER);
+
+        $method = null;
+
+        foreach ($attributes as $attribute) {
+            if (strtolower($attribute[1]) === 'method') {
+                // The first `method` attribute is the one a browser reads.
+                $method = strtolower($attribute[2] !== '' ? $attribute[2] : ($attribute[3] ?? ''));
+
+                break;
+            }
+        }
+
+        if ($method !== 'get') {
+            return $tag;
+        }
+    }
+
+    return null;
+}
+
+/**
  * The first construct in this source that needs a session, or null.
  *
- * The six the plan names (a form, the CSRF directive, a `csrf_` helper, and the
- * `session(`, `old(` and `auth(` calls), plus the shapes that reach the same
- * state another way: the auth and session facades, the `@auth` and `@guest`
- * directives, and the error bag, which only exists because a session middleware
- * put it there.
+ * The six the plan names (a form that is not a read-only GET form, the CSRF
+ * directive, a `csrf_` helper, and the `session(`, `old(` and `auth(` calls), plus
+ * the shapes that reach the same state another way: the auth and session facades,
+ * the `@auth` and `@guest` directives, and the error bag, which only exists
+ * because a session middleware put it there. A `formmethod` attribute is one of
+ * them too: it lets a button turn a GET form into a POST.
  *
  * ALSO EVERY WAY OF ASKING "WHO IS THIS": `@can`, `@cannot`, `@canany`, and
  * `request()->user(` and `$request->user(`. Each resolves the user, and resolving
@@ -91,10 +137,14 @@ function firstSessionDependentConstruct(string $source): ?string
 {
     $source = (string) preg_replace('/\{\{--.*?--\}\}/s', ' ', $source);
 
+    if (firstNonGetForm($source) !== null) {
+        return '<form';
+    }
+
     $callable = '(?<![\w$>:])';
 
     $patterns = [
-        '<form' => '/<form\b/i',
+        'formmethod' => '/\bformmethod\s*=/i',
         '@csrf' => '/@csrf\b/',
         'csrf_' => '/csrf_/i',
         'session(' => '/'.$callable.'session\s*\(/',
@@ -194,6 +244,18 @@ it('flags every construct that needs a session', function (string $sample) {
 })->with([
     '<form method="post">',
     '<FORM action="/x">',
+    // A form is a hit unless it says method="get": a post, a put, a form with no
+    // method at all, the unquoted spelling, a get that sits inside another
+    // attribute's value, a form that never closes, and a button that overrides it.
+    "<form method='post'>",
+    '<form method="put" action="/x">',
+    '<form>',
+    '<form method=get>',
+    "<form action=\"/x\" title='method=\"get\"'>",
+    '<form method="post"',
+    '<form method="get">@csrf</form>',
+    '<form method="get"></form><form method="post"></form>',
+    '<form method="get"><button formmethod="post">x</button></form>',
     '@csrf',
     '{{ csrf_token() }}',
     '<meta name="x" content="{{ csrf_field() }}">',
@@ -230,7 +292,42 @@ it('leaves ordinary markup and similar words alone', function (string $sample) {
     '{{ $requestor->user() }} {{ $request->route() }} {{ $user->name }} @cancel',
     // A Blade comment is removed before rendering, so it may name a construct.
     '{{-- No @csrf and no session() on these pages. --}}',
+    // The one form a public page may hold: a read-only GET form.
+    '<form method="get" action="/x"><input name="q"></form>',
 ]);
+
+it('accepts a read-only GET form, in either quote style and any case', function (string $sample) {
+    expect(firstNonGetForm($sample))->toBeNull()
+        ->and(firstSessionDependentConstruct($sample))->toBeNull();
+})->with([
+    '<form method="get">',
+    '<FORM METHOD="GET">',
+    "<form method='get'>",
+    '<form role="search" method="Get" action="/x">',
+    // The tag spans lines and a Blade echo inside it holds a `>`: neither ends it early.
+    "<form\n    method=\"get\"\n    action=\"{{ \$route->url }}\"\n    role=\"search\"\n>",
+    '<form method="get"></form><form class="a" method="get"></form>',
+]);
+
+it('refuses every form that is not a read-only GET form, returning its opening tag', function (string $sample, string $tag) {
+    expect(firstNonGetForm($sample))->toBe($tag)
+        ->and(firstSessionDependentConstruct($sample))->toBe('<form');
+})->with([
+    'post' => ['<form method="post"><input></form>', '<form method="post">'],
+    'put' => ['<form method="PUT" action="/x">', '<form method="PUT" action="/x">'],
+    'delete' => ["<form method='delete'>", "<form method='delete'>"],
+    'no method' => ['<p>x</p><form action="/x">', '<form action="/x">'],
+    'a bare form' => ['<form>', '<form>'],
+    'unquoted get' => ['<form method=get>', '<form method=get>'],
+    'an empty method' => ['<form method="">', '<form method="">'],
+    'get only inside another value' => ["<form title='method=\"get\"'>", "<form title='method=\"get\"'>"],
+    'the second form is the post' => ['<form method="get"></form><form method="post">', '<form method="post">'],
+    'a form that never closes' => ['<form method="post"', '<form method="post"'],
+]);
+
+it('refuses a button that overrides the form method', function () {
+    expect(firstSessionDependentConstruct('<form method="get"><button formmethod="post">x</button></form>'))->toBe('formmethod');
+});
 
 it('still scans what follows a Blade comment', function () {
     expect(firstSessionDependentConstruct("{{-- a note --}}{{ session('x') }}"))->toBe('session(');

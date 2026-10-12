@@ -309,6 +309,29 @@ class AppServiceProvider extends ServiceProvider
         });
 
         /*
+         * THE ARTICLE DOWNLOAD'S OWN LIMITER, ON TOP OF THE GROUP'S (P4-T13).
+         *
+         * `routes/web.php` adds `throttle:publication-download` to the download
+         * route alone, so a download is counted against this limit AND against
+         * `public-site` above. The two are separate buckets: a limiter's name is
+         * part of its cache key, so the same IP in both does not collide.
+         *
+         * 20 A MINUTE, KEYED BY IP. A download streams a whole PDF (up to 10 MB)
+         * and moves an anonymous counter, so it gets a tighter limit than a page.
+         * A person fetching a few papers is well clear of it; a script pulling
+         * every file, or inflating a count, is not. The count is still described
+         * as approximate: this limits it, and does not make it exact.
+         *
+         * ONE WINDOW, SO THE BARE IP IS THE KEY, for the reason `public-site`
+         * gives. Behind a proxy or CDN `$request->ip()` is the proxy's address
+         * unless the application trusts it, and every visitor then shares one
+         * bucket of 20.
+         */
+        RateLimiter::for('publication-download', function (Request $request): Limit {
+            return Limit::perMinute(20)->by($request->ip());
+        });
+
+        /*
          * saveQuietly() is deliberate: P1-T12 adds activity logging, and a login
          * timestamp must not produce a spurious "user updated" audit entry.
          *
