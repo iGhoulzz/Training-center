@@ -819,6 +819,12 @@ properties only · `composer verify` green.
   - `app/Domain/Enrollment/Queries/PublicProgrammeCatalogue.php`, new: the
     ordered card list that both controllers read, so neither controller calls
     the other.
+- `app/Domain/Enrollment/Data/PublicProgramme.php`, new, from Codex's review of
+  #98 (lead's amendment, 2026-10-12, for the owner to confirm). ENGINEERING says
+  "a public surface renders a closed, named projection — never a model". So the
+  views receive a readonly object naming each public field off the course and
+  its next intake, never the `Course` model, as `CertificateVerificationView`
+  does for the verifier.
 - `lang/en/public.php` — appended
 - `tests/Feature/Public/ProgrammesTest.php`, `PublicPagesTest.php`
 
