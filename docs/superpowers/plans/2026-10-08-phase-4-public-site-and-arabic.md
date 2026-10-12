@@ -572,9 +572,11 @@ exist, asserted by resolving every tile's URL · `composer verify` green.
 **Owner: Claude · `p4/t08-export-history` · depends on T07**
 
 **File scope**
-- `app/Domain/Finance/Filament/Pages/ExportHistory.php`
+- `app/Domain/Finance/Filament/Pages/ExportHistory.php` — discovered by the existing
+  `discoverPages` line, so the panel provider is not touched
 - `resources/views/filament/finance/export-history.blade.php`
-- `lang/en/export-history.php`
+- `lang/en/export_history.php` (renamed from the planned export-history.php for the
+  reason T07 gives), and `lang/ar/export_history.php` as an empty placeholder
 - `tests/Feature/Finance/ExportHistoryTest.php`
 
 **Does**
@@ -588,6 +590,25 @@ a notification they may have missed.
 every request. The task first records whether a queued PDF leaves a row anywhere:
 if it does, PDFs are listed the same way; if not, the page says it lists
 spreadsheet exports and no new table is added without the owner's approval.
+
+**Recorded before implementation: a queued PDF leaves no row.**
+`GenerateReportPdfJob` stores the file and, on success only, sends a database
+notification carrying its signed link. A queued, refused or failed PDF leaves
+nothing. So the page lists spreadsheet exports and says so. The design's PDF
+rows and its Retry button are therefore not built here. A failed export is run
+again from its report page.
+
+**An export still unfinished an hour after it was requested reads Overdue, not
+Failed.** When preparation fails, from a refused requester or any other fault,
+Filament's chain stops before `ExportCompletion`. So `completed_at` is never set
+and no notification is sent (traced and probed in the pre-push review). The page
+cannot tell that from a paused or backed-up queue, because nothing records a job's
+failure against its export row. So it claims no cause. A report export takes
+seconds, so after an hour the row reads Overdue, with no link. Failed is kept for
+an export that completed with rows missing. If a worker finishes an overdue export
+later, its row turns Ready. Recording a real failure would need the export's job
+batch to be findable from its row, which touches `ReportExporter`, outside this
+task.
 
 **Done when**
 
