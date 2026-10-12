@@ -152,6 +152,9 @@ first attempt.
 | `resources/css/app.css`, `vite.config.js` | **T11 → T16a → T18** | T11 adds the public site's stylesheet entry; T16a the Filament theme entry; T18 the direction work over both |
 | `resources/views/layouts/public.blade.php` | **T11 → T18** | T11 creates it; T18 makes it directional. The verifier does **not** use it — see T14 |
 | `resources/views/public/partials/header.blade.php` | **T11 → T15 → T18** | T11 creates it; T15 adds the portal link; T18 makes that link carry the locale |
+| `resources/views/public/partials/navigation.blade.php`, `footer.blade.php` | **T11 → T12 → T13** | Owner-approved amendment (2026-10-12). T11 creates them, linking only to pages that exist: the home page and the verifier. T12 adds About, Programmes and Contact; T13 adds Publications. Each adds its own links through `PublicRoute` and edits no other task's |
+| `resources/views/public/home.blade.php` | **T11 → T12** | T11 creates a minimal page at `public.home` so `/` has somewhere to go once `welcome.blade.php` is deleted; T12 replaces it with the real home page |
+| `config/public_site.php`, `.env.example` | **T11 → T12** | Owner-approved amendment (2026-10-12). T11 creates the public contact details: the centre's real public email and telephone as committed defaults, each overridable from `.env`, plus a map-link key that defaults to null. T12 sets the map link's default once the owner provides it, and touches nothing else |
 | `resources/views/verify/*` | **T14 → T18** | T14 restyles; T18 makes them directional and converts their three `route()` call sites to `PublicRoute`. Both keep them standalone and scriptless |
 | `app/Http/Controllers/VerifyCertificateController.php` | **T18 only** | One line: the `submit()` redirect goes through `PublicRoute`. The lookup, the normalisation and the uniform miss are untouched |
 | `app/Support/PublicRoute.php` | **T11 only** | Complete from the start, so T18 adds routes and a locale without editing it |
@@ -247,10 +250,20 @@ class and its test · `composer verify` green.
 ### Task 19 — The design contract, cleaned and committed
 **Owner: Claude · `p4/t19-design-contract` · blocks T11–T16e · may run beside T01**
 
-**File scope**
-- `docs/design/design_handoff_training_centre/` — the nine files, cleaned
+**File scope** *(amended 2026-10-10 — see "Owner decision" below)*
+- `docs/design/design_handoff_training_centre/` — `README.md`, `BACKEND_CONTRACT.md`
+  and `TASKS.md`, cleaned, plus `screens/admin/*.jpg` and `screens/public/*.jpg`
 - `docs/design/README.md` — new: what was removed, why, and that the copy is
   reference, not specification
+- this section of the plan, recording the decision below
+
+**Owner decision, 2026-10-09.** `support.js` and `image-slot.js` turned out to be
+the design tool's own runtime, with no licence. The two `.dc.html` prototypes
+cannot render without them. The owner chose to commit screenshots of every screen
+and state instead of the prototypes, scripts, logo and `github.md`. Behaviour the
+screenshots cannot show is in the handoff README's interaction and state
+sections, which are committed. The live prototypes stay with the owner and are
+shared on request.
 
 **Does**
 
@@ -258,7 +271,7 @@ The handoff exists only in the owner's main checkout, untracked. A worktree
 cannot see it and neither can a reviewer, so a task that says "match the design"
 is unreproducible. This commits it, after removing:
 
-- the real logo (`assets/asclst-logo.jpg`) and anything embedding it, including
+- the real logo (the image under `assets/`) and anything embedding it, including
   base64 copies inside the two `.dc.html` prototypes, replaced with a neutral
   placeholder;
 - real contact details — addresses, telephone numbers, email addresses, social
@@ -267,19 +280,25 @@ is unreproducible. This commits it, after removing:
   bundled script whose origin cannot be established (`support.js` and
   `image-slot.js` are checked, not assumed).
 
-**Where the spec and the handoff disagree, the spec wins**, and the README says
-which known conflicts were already decided: seats, contact hours, the verifier's
-empty submit.
+**Where the spec and the handoff disagree, the spec wins.** The README lists every
+known conflict and how it is settled: no Today / Proposed toggle in the product —
+the Proposed design replaces the panel outright (owner, 2026-10-10); seats, contact hours, the verifier's empty
+submit, "certificates due", the prototypes' CSS, the portal sign-in (a link, per
+T15), "Request a seat" (a contact link, per §12). Two are open, each with a named
+task: the verifier's sample buttons (T14) and the embedded map (T12).
 
 **The owner reviews the cleaned copy locally before it is pushed.** Pushing
 publishes it; there is no recall.
 
 **Done when**
 
-A grep for the removed logo's bytes, every real telephone number and email
-address in the original, and the centre's real name in image alt text finds
-nothing · both prototypes still open and render with the placeholder · the owner
-has approved the diff · `composer verify` green.
+A grep of the committed text for every real telephone number, email address and
+street address in the original, and for the centre's real name in English and
+Arabic, finds nothing · no `.html`, `.js` or logo file is committed · every screen
+and state the handoff README lists has a screenshot, and the screenshots show the
+placeholder, not the logo · the owner has reviewed every screenshot locally and
+approved the diff · Codex has reviewed it in the worktree · `composer verify` green
+on the implementation PR it rides in.
 
 ### Task 2 — Relax the two carried pins
 **Owner: Claude · `p4/t02-dependency-pins` · after T01, for sequencing only**
@@ -682,12 +701,33 @@ clamped · `composer verify` green.
 - `app/Providers/AppServiceProvider.php` — the `public-site` rate limiter (seam, first)
 - `resources/views/layouts/public.blade.php` — new (seam, first)
 - `resources/views/public/partials/` — header, footer, navigation
+- `resources/views/components/public/brand.blade.php` — new: the mark and name
+  the header and footer both show, as ENGINEERING's "Blade components for
+  anything used twice" requires (lead's amendment, 2026-10-12, from the pre-push
+  review, for the owner to confirm on T11's PR)
+- `resources/views/public/home.blade.php` — the minimal page that replaces
+  `welcome.blade.php` at `public.home` (seam, first; T12 writes the real page)
 - `resources/views/welcome.blade.php` — deleted
+- `tests/Feature/LocalizationTest.php` — only `STOCK_TAILWIND_PAGES` loses its
+  `welcome.blade.php` entry. That test fails by design once the exempted file is
+  gone, so the public views are scanned like every other view (lead's amendment,
+  2026-10-12, for the owner to confirm on T11's PR)
+- `resources/css/README.md` — only its paragraph on that exemption, which would
+  otherwise describe a file that no longer exists (same amendment)
 - `resources/css/public.css`, `vite.config.js` (seam, first)
 - `lang/en/public.php`
+- `config/public_site.php` — new, and `.env.example` — its keys (owner-approved
+  amendment, 2026-10-12; see the seams table)
 - `app/Support/PublicRoute.php` — new
 - `tests/Feature/Public/PublicGroupTest.php`, `PublicSessionlessTest.php`,
   `PublicRouteTest.php`
+
+**Contact details (owner, 2026-10-12).** The header's top bar shows the centre's
+public email and telephone, as the design draws it. The footer does not; T12's
+contact page and home-page contact section show them again. They live in `config/public_site.php`, with the real
+values committed as defaults and each overridable from `.env`. They are what the
+site publishes, so the public repository reveals nothing more. No Blade file
+holds them. The map link's key exists and defaults to null; T12 renders it.
 
 **Does**
 
@@ -747,8 +787,13 @@ properties only · `composer verify` green.
 **File scope**
 - `app/Http/Controllers/Public/PageController.php`, `ProgrammeController.php`
 - `routes/web.php` — routes inside the public group (seam, after T11)
-- `resources/views/public/home.blade.php`, `about.blade.php`,
-  `programmes/index.blade.php`, `programmes/show.blade.php`, `contact.blade.php`
+- `resources/views/public/home.blade.php` (seam, after T11: replaces T11's minimal
+  page), `about.blade.php`, `programmes/index.blade.php`,
+  `programmes/show.blade.php`, `contact.blade.php`
+- `resources/views/public/partials/navigation.blade.php`, `footer.blade.php` — the
+  About, Programmes and Contact links (seam, after T11)
+- `config/public_site.php` — the map link's default only, once the owner provides
+  it (seam, after T11)
 - `lang/en/public.php` — appended
 - `tests/Feature/Public/ProgrammesTest.php`, `PublicPagesTest.php`
 
@@ -778,7 +823,10 @@ query log · an inactive course has no card · `composer verify` green.
 - `routes/web.php` — routes inside the public group (seam, after T12)
 - `app/Providers/AppServiceProvider.php` — the `publication-download` limiter (seam, after T11)
 - `resources/views/public/publications/index.blade.php`, `show.blade.php`
-- `lang/en/publications.php` — public keys, appended
+- `resources/views/public/partials/navigation.blade.php`, `footer.blade.php` — the
+  Publications link (seam, after T12)
+- `lang/en/publications.php` — public keys, appended; `lang/en/public.php` — the
+  Publications link label, appended
 - `tests/Feature/Public/PublicationsIndexTest.php`, `PublicationDownloadTest.php`
 
 **Does**
