@@ -797,6 +797,9 @@ properties only · `composer verify` green.
 - `resources/views/components/public/programme-card.blade.php` — new: the home
   page and the programmes page both show the card, and ENGINEERING requires a
   component for anything used twice (owner-approved, 2026-10-12)
+- `app/Domain/Enrollment/Models/Course.php` — one method, `description()`, the
+  locale-aware twin of `name()`, so the card does not restate that rule (lead's
+  amendment, 2026-10-12, for the owner to confirm on T12's PR)
 - `lang/en/public.php` — appended
 - `tests/Feature/Public/ProgrammesTest.php`, `PublicPagesTest.php`
 
