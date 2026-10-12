@@ -7,12 +7,15 @@
     is hidden at each width. A page added later is ONE entry below, not two
     edits that can disagree. Every link goes through PublicRoute, never route().
 
-    Each entry is [url, label]. T12 adds About, Programmes and Contact here, and
-    T13 adds Publications.
+    Each entry is [url, label], in the order they are shown: About, Programmes,
+    Verify, Contact (P4-T12). T13 adds Publications.
 --}}
 @php
     $links = [
+        [PublicRoute::url('public.about'), __('public.links.about')],
+        [PublicRoute::url('public.programmes.index'), __('public.links.programmes')],
         [PublicRoute::url('verify.certificates.form'), __('public.links.verify_certificate')],
+        [PublicRoute::url('public.contact'), __('public.links.contact')],
     ];
 @endphp
 

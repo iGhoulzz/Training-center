@@ -1,0 +1,47 @@
+@extends('layouts.public')
+
+{{--
+    One programme. The facts are the card's: hours always, and price and start
+    date only when NextUpcomingBatch found a planned batch. Without one there is
+    no price and no date, only the contact call to action. No seats, capacity or
+    enrolment count, and nothing on the course's own default price: a price with
+    no batch behind it is a promise the centre has not made.
+--}}
+@use('App\Support\PublicRoute')
+@use('Carbon\CarbonImmutable')
+
+@section('title')
+    {{ __('public.page_title', ['page' => $course->name(), 'name' => config('app.name')]) }}
+@endsection
+
+@section('content')
+    <div class="mx-auto max-w-3xl px-4 py-12">
+        <p><a href="{{ PublicRoute::url('public.programmes.index') }}" class="text-sm font-medium text-navy-700 hover:underline">{{ __('public.programmes.back') }}</a></p>
+
+        <h1 class="mt-4 font-serif text-4xl font-semibold">{{ $course->name() }}</h1>
+
+        @if ($course->description() !== '')
+            <p class="mt-4 text-lg text-navy-800">{{ $course->description() }}</p>
+        @endif
+
+        <ul class="mt-8 flex flex-col gap-2 rounded-xl border border-cream-200 bg-white p-6">
+            <li class="font-medium text-navy-700">{{ trans_choice('public.programmes.hours', $card['hours'] ?? $course->total_hours) }}</li>
+
+            @if ($card !== null)
+                <li class="font-serif text-xl font-semibold text-navy-900">{{ __('public.programmes.price', ['amount' => $card['price']->toDecimal()]) }}</li>
+                <li class="text-navy-800">{{ __('public.programmes.starts', ['date' => CarbonImmutable::parse($card['start_date'])->translatedFormat(__('public.programmes.date_format'))]) }}</li>
+            @else
+                <li class="text-navy-800">{{ __('public.programmes.no_intake') }}</li>
+            @endif
+        </ul>
+
+        <section aria-labelledby="programme-ask-heading" class="mt-12">
+            <h2 id="programme-ask-heading" class="font-serif text-2xl font-semibold">{{ __('public.programmes.ask_heading') }}</h2>
+            <p class="mt-3 text-navy-800">{{ __('public.programmes.ask_body') }}</p>
+            <a
+                href="{{ PublicRoute::url('public.contact') }}"
+                class="mt-4 inline-flex items-center rounded-full bg-navy-900 px-6 py-3 font-medium text-cream-50 hover:bg-navy-800"
+            >{{ __('public.programmes.ask_link') }}</a>
+        </section>
+    </div>
+@endsection

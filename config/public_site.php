@@ -18,14 +18,17 @@ declare(strict_types=1);
 | no contact details, as the design draws it. Changing a number is one edit, and
 | the views cannot drift from each other.
 |
-| `map_url` has no default. It stays null until the owner supplies the link, and
-| the contact section (P4-T12) renders it only when it is set.
+| `map_url` defaults to the owner's map link (P4-T12), given as a share link with
+| its `?g_st=ipc` tracking parameter dropped. The contact page renders it as a
+| plain "Get directions" link and embeds nothing, so no third-party origin loads
+| on the page. It is rendered only while it is set: a blank value in `.env` turns
+| the link off.
 */
 
 return [
     'contact' => [
         'email' => env('PUBLIC_CONTACT_EMAIL', 'info@aaclat.ly'),
         'phone' => env('PUBLIC_CONTACT_PHONE', '+218-928421304'),
-        'map_url' => env('PUBLIC_CONTACT_MAP_URL'),
+        'map_url' => env('PUBLIC_CONTACT_MAP_URL', 'https://maps.app.goo.gl/nrs5mzbxjh9A7wci8'),
     ],
 ];
