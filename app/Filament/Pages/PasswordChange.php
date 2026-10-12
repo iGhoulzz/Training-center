@@ -24,6 +24,8 @@ use LogicException;
  */
 class PasswordChange extends Page
 {
+    private const MINIMUM_PASSWORD_LENGTH = 12;
+
     protected static bool $shouldRegisterNavigation = false;
 
     protected string $view = 'filament.pages.password-change';
@@ -50,6 +52,16 @@ class PasswordChange extends Page
 
     /** @var array<string, mixed> */
     public array $data = [];
+
+    public function getTitle(): string
+    {
+        return __('navigation.password_change');
+    }
+
+    public function getSubheading(): string
+    {
+        return __('navigation.password_change_description', ['minimum' => self::MINIMUM_PASSWORD_LENGTH]);
+    }
 
     /**
      * @return array<string, mixed>
@@ -122,7 +134,7 @@ class PasswordChange extends Page
                     ->label(__('auth.new_password'))
                     ->password()
                     ->required()
-                    ->minLength(12)
+                    ->minLength(self::MINIMUM_PASSWORD_LENGTH)
                     ->confirmed(),
                 TextInput::make('password_confirmation')
                     ->label(__('auth.confirm_password'))

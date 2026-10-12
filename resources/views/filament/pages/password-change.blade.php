@@ -1,7 +1,7 @@
-<x-filament-panels::page>
-    <form wire:submit="save">
+<x-filament-panels::page class="tc-password-change">
+    <form wire:submit="save" class="flex flex-col gap-6">
         {{ $this->form }}
-        <x-filament::button type="submit" class="mt-4">
+        <x-filament::button type="submit" class="w-full">
             {{ __('auth.update_password') }}
         </x-filament::button>
     </form>
@@ -19,10 +19,10 @@
         ForcePasswordChange; a POST that the browser makes on its own adds none.
         ForcePasswordChange exempts the logout route by name for this button.
     --}}
-    <form method="POST" action="{{ filament()->getLogoutUrl() }}" class="mt-6">
+    <form method="POST" action="{{ filament()->getLogoutUrl() }}">
         @csrf
 
-        <x-filament::button type="submit" color="gray">
+        <x-filament::button type="submit" color="gray" outlined class="w-full">
             {{ __('auth.log_out') }}
         </x-filament::button>
     </form>
