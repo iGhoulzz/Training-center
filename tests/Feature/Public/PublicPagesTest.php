@@ -2,12 +2,17 @@
 
 declare(strict_types=1);
 
+use App\Domain\Enrollment\Data\PublicProgramme;
+use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Course;
 use App\Support\PublicContact;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Routing\Route as RoutingRoute;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\View;
+use Illuminate\View\ComponentAttributeBag;
 
 uses(RefreshDatabase::class);
 
@@ -243,28 +248,162 @@ it('links to about, programmes and contact from the navigation and the footer', 
         ->and($footer)->toContain(url('/about'))->toContain(url('/programmes'))->toContain(url('/contact'));
 });
 
-it('sets no cookie on any public GET route', function () {
-    // A real id for programmes.show, and a placeholder for any parameter this
-    // file has no fixture for: a 404 on the sessionless group sets no cookie
-    // either, so a route added later is held to the property without an edit here.
-    $course = Course::factory()->create();
+/**
+ * The URL of every public GET route, keyed by route name.
+ *
+ * A real id for programmes.show, and a placeholder for any parameter this file
+ * has no fixture for: a 404 on the sessionless group sets no cookie and is handed
+ * no model either, so a route added later is held to the same properties without
+ * an edit here.
+ *
+ * @return array<string, string>
+ */
+function publicGetRouteUrls(int $programmeId): array
+{
+    $urls = [];
 
-    $routes = collect(Route::getRoutes()->getRoutes())
-        ->filter(fn (RoutingRoute $route): bool => str_starts_with((string) $route->getName(), 'public.') && in_array('GET', $route->methods(), true));
+    foreach (Route::getRoutes()->getRoutes() as $route) {
+        $name = (string) $route->getName();
 
-    expect($routes->map(fn (RoutingRoute $route): string => (string) $route->getName())->all())
-        ->toContain('public.home', 'public.about', 'public.programmes.index', 'public.programmes.show', 'public.contact');
-
-    foreach ($routes as $route) {
-        $parameters = [];
-
-        foreach ($route->parameterNames() as $name) {
-            $parameters[$name] = $route->getName() === 'public.programmes.show' ? $course->id : 'placeholder';
+        if (! str_starts_with($name, 'public.') || ! in_array('GET', $route->methods(), true)) {
+            continue;
         }
 
-        $response = $this->get(route($route->getName(), $parameters));
+        $parameters = [];
 
-        expect($response->headers->getCookies())->toBe([], "{$route->getName()} set a cookie.")
-            ->and($response->headers->has('Set-Cookie'))->toBeFalse("{$route->getName()} sent a Set-Cookie header.");
+        foreach ($route->parameterNames() as $parameter) {
+            $parameters[$parameter] = $name === 'public.programmes.show' ? $programmeId : 'placeholder';
+        }
+
+        $urls[$name] = route($name, $parameters);
+    }
+
+    return $urls;
+}
+
+it('sets no cookie on any public GET route', function () {
+    $course = Course::factory()->create();
+
+    $urls = publicGetRouteUrls($course->id);
+
+    expect(array_keys($urls))->toContain('public.home', 'public.about', 'public.programmes.index', 'public.programmes.show', 'public.contact');
+
+    foreach ($urls as $name => $url) {
+        $response = $this->get($url);
+
+        expect($response->headers->getCookies())->toBe([], "{$name} set a cookie.")
+            ->and($response->headers->has('Set-Cookie'))->toBeFalse("{$name} sent a Set-Cookie header.");
+    }
+});
+
+/**
+ * Every Eloquent model reachable from a value, as path => class.
+ *
+ * Walks arrays, the public properties of objects, and anything iterable (a
+ * Collection, a ComponentAttributeBag), and remembers the objects it has seen so
+ * a cycle ends. A named function with samples below, so it cannot quietly narrow.
+ *
+ * @param  array<int, bool>  $seen
+ * @return array<string, string>
+ */
+function eloquentModelsWithin(mixed $value, string $path = 'data', array &$seen = []): array
+{
+    if ($value instanceof Model) {
+        return [$path => $value::class];
+    }
+
+    $found = [];
+
+    if (is_array($value)) {
+        foreach ($value as $key => $item) {
+            $found += eloquentModelsWithin($item, "{$path}[{$key}]", $seen);
+        }
+
+        return $found;
+    }
+
+    if (! is_object($value) || isset($seen[spl_object_id($value)])) {
+        return $found;
+    }
+
+    $seen[spl_object_id($value)] = true;
+
+    foreach (get_object_vars($value) as $name => $item) {
+        $found += eloquentModelsWithin($item, "{$path}->{$name}", $seen);
+    }
+
+    if ($value instanceof Traversable) {
+        foreach ($value as $key => $item) {
+            $found += eloquentModelsWithin($item, "{$path}[{$key}]", $seen);
+        }
+    }
+
+    return $found;
+}
+
+/**
+ * The data of every view rendered while this request runs, layout, partials and
+ * components included, as [view name, data] pairs.
+ *
+ * A composer on `*` sees each view as it renders. `View::composer()` cannot be
+ * removed, so the listener checks a flag and goes quiet once the request is over.
+ *
+ * @return array<int, array{0: string, 1: array<string, mixed>}>
+ */
+function publicViewDataDuring(Closure $request): array
+{
+    $views = [];
+    $recording = true;
+
+    View::composer('*', function (Illuminate\Contracts\View\View $view) use (&$views, &$recording): void {
+        if ($recording) {
+            $views[] = [$view->name(), $view->getData()];
+        }
+    });
+
+    $request();
+    $recording = false;
+
+    return $views;
+}
+
+it('finds the models the walk exists to find, and leaves everything else alone', function () {
+    $model = Course::factory()->make();
+
+    expect(eloquentModelsWithin($model))->toBe(['data' => Course::class])
+        ->and(eloquentModelsWithin(['a' => ['b' => $model]]))->toBe(['data[a][b]' => Course::class])
+        ->and(eloquentModelsWithin(['card' => (object) ['course' => $model]]))->toBe(['data[card]->course' => Course::class])
+        ->and(eloquentModelsWithin(['rows' => new Collection([$model])]))->toHaveKey('data[rows][0]')
+        ->and(eloquentModelsWithin(['attributes' => new ComponentAttributeBag(['course' => $model])]))->toHaveKey('data[attributes][course]');
+
+    $cycle = new stdClass;
+    $cycle->self = $cycle;
+
+    // The projection, strings, null, and a cycle with nothing in it.
+    expect(eloquentModelsWithin(['programme' => new PublicProgramme(1, 'Name', 'Text', 10, null, null), 'x' => 'y', 'n' => null, 'c' => $cycle]))->toBe([]);
+});
+
+it('hands no Eloquent model to any view on any public route', function () {
+    $planned = Course::factory()->create(['name_en' => 'Walked Course']);
+    Batch::factory()->for($planned)->create(['start_date' => now()->addDays(10)]);
+    Course::factory()->create(['name_en' => 'Walked Fallback']);
+    Course::factory()->inactive()->create();
+
+    foreach (publicGetRouteUrls($planned->id) as $name => $url) {
+        $views = publicViewDataDuring(fn () => $this->get($url));
+
+        // The control: a walk over no views passes by finding nothing.
+        expect($views)->not->toBeEmpty("{$name} rendered no view to walk.");
+
+        $names = array_column($views, 0);
+
+        if ($name === 'public.home' || $name === 'public.programmes.index') {
+            // str_contains: toContain() is variadic, so a message there is read as a second needle.
+            expect(str_contains(implode(' ', $names), 'programme-card'))->toBeTrue("{$name} did not render the card, so its data was not walked.");
+        }
+
+        foreach ($views as [$viewName, $data]) {
+            expect(eloquentModelsWithin($data, $viewName))->toBe([], "{$name}: a view is handed an Eloquent model.");
+        }
     }
 });

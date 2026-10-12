@@ -11,20 +11,20 @@
 @use('App\Support\PublicRoute')
 
 @section('title')
-    {{ __('public.page_title', ['page' => $course->name(), 'name' => config('app.name')]) }}
+    {{ __('public.page_title', ['page' => $programme->name, 'name' => config('app.name')]) }}
 @endsection
 
 @section('content')
     <div class="mx-auto max-w-3xl px-4 py-12">
         <p><a href="{{ PublicRoute::url('public.programmes.index') }}" class="text-sm font-medium text-navy-700 hover:underline">{{ __('public.programmes.back') }}</a></p>
 
-        <h1 class="mt-4 font-serif text-4xl font-semibold">{{ $course->name() }}</h1>
+        <h1 class="mt-4 font-serif text-4xl font-semibold">{{ $programme->name }}</h1>
 
-        @if ($course->description() !== '')
-            <p class="mt-4 text-lg text-navy-800">{{ $course->description() }}</p>
+        @if ($programme->description !== '')
+            <p class="mt-4 text-lg text-navy-800">{{ $programme->description }}</p>
         @endif
 
-        <x-public.programme-facts :course="$course" :card="$card" class="mt-8 rounded-xl border border-cream-200 bg-white p-6" />
+        <x-public.programme-facts :programme="$programme" class="mt-8 rounded-xl border border-cream-200 bg-white p-6" />
 
         <section aria-labelledby="programme-ask-heading" class="mt-12">
             <h2 id="programme-ask-heading" class="font-serif text-2xl font-semibold">{{ __('public.programmes.ask_heading') }}</h2>

@@ -2,8 +2,10 @@
 
 declare(strict_types=1);
 
+use App\Domain\Enrollment\Data\PublicProgramme;
 use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Course;
+use App\Domain\Enrollment\Queries\PublicProgrammeCatalogue;
 use App\Domain\Finance\Services\PricingService;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Events\QueryExecuted;
@@ -246,12 +248,15 @@ it('has no card for an inactive course on either page, and a 404 identical to an
     $unknown = $this->get('/programmes/'.($retired->id + 1000))->assertNotFound();
     // The retired course's CODE is not an address either: the route takes an id.
     $byCode = $this->get('/programmes/RETIRED-1')->assertNotFound();
+    // An id too long for an integer is an unknown id, not a server error.
+    $tooLarge = $this->get('/programmes/99999999999999999999999')->assertNotFound();
 
     // Same body and same headers that matter, so the response does not say which
     // of "retired" and "never existed" this was. Not the rate-limit counters,
     // which fall by one per request.
     expect($inactive->getContent())->toBe($unknown->getContent())
         ->and($byCode->getContent())->toBe($unknown->getContent())
+        ->and($tooLarge->getContent())->toBe($unknown->getContent())
         ->and($inactive->headers->get('Content-Type'))->toBe($unknown->headers->get('Content-Type'))
         ->and($inactive->headers->get('Cache-Control'))->toBe($unknown->headers->get('Cache-Control'))
         ->and($inactive->headers->getCookies())->toBe([])
@@ -402,8 +407,9 @@ it('runs the same number of queries for two courses as for six', function () {
     }
 
     foreach ($counts as $path => $byTotal) {
+        // Two: NextUpcomingBatch's one, and the active courses (or the one course) as the other.
         expect($byTotal[2])->toBe($byTotal[6], "{$path} runs more queries as courses are added.")
-            ->and($byTotal[6])->toBeLessThanOrEqual(4);
+            ->and($byTotal[6])->toBe(2);
     }
 });
 
@@ -463,4 +469,60 @@ it('resolves a course description in the reader locale, with the same rule as th
         ->and($untranslated->description())->toBe('English only')
         // The twin must follow name() exactly: the two cannot disagree about when Arabic applies.
         ->and($course->name())->toBe('الاسم العربي');
+});
+
+it('pins the public programme projection to its exact property list', function () {
+    // Adding a property is how a new column would reach the public pages, so it
+    // must be a deliberate change HERE as well as in PublicProgramme and in the
+    // catalogue line that fills it.
+    $class = new ReflectionClass(PublicProgramme::class);
+
+    $types = [];
+
+    foreach ($class->getProperties() as $property) {
+        expect($property->isPublic())->toBeTrue("{$property->getName()} is not public.")
+            ->and($property->isReadOnly())->toBeTrue("{$property->getName()} is not readonly.");
+
+        $types[$property->getName()] = (string) $property->getType();
+    }
+
+    expect($class->isFinal())->toBeTrue()
+        ->and($class->isReadOnly())->toBeTrue()
+        ->and($types)->toBe([
+            'id' => 'int',
+            'name' => 'string',
+            'description' => 'string',
+            'hours' => 'int',
+            'price' => '?string',
+            'startDate' => '?string',
+        ]);
+});
+
+it('builds each programme by naming its fields, from hand-computed values', function () {
+    $planned = courseWithBatch('2026-10-20',
+        ['name_en' => 'Projected Course', 'description_en' => 'Projected description.', 'total_hours' => 60, 'default_price' => '100.000'],
+        ['price' => '1450.000', 'total_hours' => 48, 'capacity' => 17],
+    );
+    $inheriting = courseWithBatch('2026-11-03',
+        ['name_en' => 'Inheriting Projection', 'description_en' => null, 'total_hours' => 36, 'default_price' => '900.500'],
+        ['price' => null, 'total_hours' => null],
+    );
+    $bare = Course::factory()->create(['name_en' => 'Bare Projection', 'description_en' => 'Bare description.', 'total_hours' => 18, 'default_price' => '321.000']);
+    $retired = courseWithBatch('2026-10-21', ['name_en' => 'Retired Projection', 'is_active' => false]);
+
+    $catalogue = app(PublicProgrammeCatalogue::class);
+
+    $expected = [
+        new PublicProgramme(id: $planned->id, name: 'Projected Course', description: 'Projected description.', hours: 48, price: '1450.000', startDate: '2026-10-20'),
+        new PublicProgramme(id: $inheriting->id, name: 'Inheriting Projection', description: '', hours: 36, price: '900.500', startDate: '2026-11-03'),
+        new PublicProgramme(id: $bare->id, name: 'Bare Projection', description: 'Bare description.', hours: 18, price: null, startDate: null),
+    ];
+
+    expect($catalogue->cards())->toEqual($expected)
+        ->and($catalogue->find($planned->id))->toEqual($expected[0])
+        ->and($catalogue->find($inheriting->id))->toEqual($expected[1])
+        ->and($catalogue->find($bare->id))->toEqual($expected[2])
+        // Inactive and unknown are the same answer, and neither loads a row into a projection.
+        ->and($catalogue->find($retired->id))->toBeNull()
+        ->and($catalogue->find($retired->id + 1000))->toBeNull();
 });

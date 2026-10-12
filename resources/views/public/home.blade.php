@@ -68,7 +68,7 @@
             @else
                 <div class="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
                     @foreach ($programmes as $programme)
-                        <x-public.programme-card :course="$programme['course']" :card="$programme['card']" />
+                        <x-public.programme-card :programme="$programme" />
                     @endforeach
                 </div>
             @endif

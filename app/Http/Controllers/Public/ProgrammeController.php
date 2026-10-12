@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Public;
 
-use App\Domain\Enrollment\Models\Course;
-use App\Domain\Enrollment\Queries\NextUpcomingBatch;
 use App\Domain\Enrollment\Queries\PublicProgrammeCatalogue;
 use App\Http\Controllers\Controller;
 use Illuminate\View\View;
@@ -19,15 +17,16 @@ use Illuminate\View\View;
  * PublicProgrammeCatalogue, which says where each one comes from; this class
  * never works a price out for itself.
  *
+ * NO MODEL REACHES A VIEW. The catalogue hands over PublicProgramme projections,
+ * so a column added to `courses` later cannot be published by default; see
+ * PublicProgramme. There is no route-model binding here for the same reason.
+ *
  * A programme's URL carries its id, not its code: codes are typed by hand with no
  * character rule, and a `/`, `?` or `#` in one would give a link that 404s.
  */
 final class ProgrammeController extends Controller
 {
-    public function __construct(
-        private readonly PublicProgrammeCatalogue $catalogue,
-        private readonly NextUpcomingBatch $nextBatches,
-    ) {}
+    public function __construct(private readonly PublicProgrammeCatalogue $catalogue) {}
 
     public function index(): View
     {
@@ -37,18 +36,22 @@ final class ProgrammeController extends Controller
     /**
      * One programme's page.
      *
-     * A RETIRED COURSE AND AN UNKNOWN ID ARE THE SAME RESPONSE. Route binding
-     * answers an unknown id with Laravel's 404 page, so an inactive course is
-     * answered the same way: a different page here would tell a visitor which
-     * programmes the centre once ran.
+     * A RETIRED COURSE AND AN UNKNOWN ID ARE THE SAME RESPONSE. The catalogue
+     * answers both with null, and both get the same 404 page: a different one
+     * would tell a visitor which programmes the centre once ran.
+     *
+     * THE ID ARRIVES AS A STRING, AND IS CAST HERE. The route's `whereNumber()`
+     * guarantees digits only, and a `(int)` cast saturates a digit string too long
+     * for an integer at the largest one, which no course has: a 404. An `int`
+     * parameter would instead throw a TypeError on such a value and answer 500,
+     * a different response for an id that does not exist.
      */
-    public function show(Course $course): View
+    public function show(string $course): View
     {
-        abort_unless($course->is_active, 404);
+        $programme = $this->catalogue->find((int) $course);
 
-        return view('public.programmes.show', [
-            'course' => $course,
-            'card' => $this->nextBatches->forCourses()[$course->getKey()] ?? null,
-        ]);
+        abort_if($programme === null, 404);
+
+        return view('public.programmes.show', ['programme' => $programme]);
     }
 }
