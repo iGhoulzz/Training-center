@@ -19,7 +19,6 @@ use App\Domain\Enrollment\Filament\Resources\StudentCertificateResource\Pages\Vi
 use App\Domain\Enrollment\Models\Enrollment;
 use App\Domain\Enrollment\Models\StudentCertificate;
 use App\Domain\Finance\Services\ChargeQueryService;
-use App\Domain\Staff\Filament\Resources\UserResource;
 use App\Models\User;
 use BackedEnum;
 use Filament\Actions\Action;
@@ -172,10 +171,7 @@ class StudentCertificateResource extends Resource
                     ->sortable(),
 
                 TextColumn::make('issuedBy.name')
-                    ->label(__('certificates.issued_by'))
-                    ->url(fn (StudentCertificate $record): ?string => $record->issuedBy !== null
-                        && UserResource::canViewAny() && UserResource::canEdit($record->issuedBy)
-                        ? UserResource::getUrl('edit', ['record' => $record->issuedBy]) : null),
+                    ->label(__('certificates.issued_by')),
 
                 TextColumn::make('status')
                     ->label(__('certificates.status'))

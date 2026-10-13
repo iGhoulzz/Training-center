@@ -182,16 +182,21 @@ it('hides the queue from a register reader without the issue permission', functi
     $this->actingAs($actor)->get(CertificateIssuanceQueue::getUrl())->assertForbidden();
 });
 
-it('offers the issuer link only when the actor can reach its actual staff page', function (string $missingPermission) {
+it('keeps the issuer name static even when the actor can edit staff accounts', function (string $missingPermission) {
     $issuer = User::factory()->create();
     $certificate = StudentCertificate::factory()->create(['issued_by' => $issuer->getKey()]);
     $permissions = ['view_any_student_certificate', 'view_any_user', 'update_user'];
     $actor = ($this->actor)($permissions);
     $url = UserResource::getUrl('edit', ['record' => $issuer]);
-    Livewire::actingAs($actor)->test(ListStudentCertificates::class)->assertSee($url, false);
-    $this->actingAs($actor)->get($url)->assertSuccessful();
+    Livewire::actingAs($actor)->test(ListStudentCertificates::class)
+        ->assertTableColumnStateSet('issuedBy.name', $issuer->name, $certificate)
+        ->assertSee($issuer->name)
+        ->assertDontSee($url, false);
     $denied = ($this->actor)(array_values(array_diff($permissions, [$missingPermission])));
-    Livewire::actingAs($denied)->test(ListStudentCertificates::class)->assertDontSee($url, false);
+    Livewire::actingAs($denied)->test(ListStudentCertificates::class)
+        ->assertTableColumnStateSet('issuedBy.name', $issuer->name, $certificate)
+        ->assertSee($issuer->name)
+        ->assertDontSee($url, false);
 })->with(['update_user', 'view_any_user']);
 
 it('keeps certificate snapshots readable without linking to deleted records', function () {
