@@ -1338,11 +1338,19 @@ sessionless, scanners) · the teaser never shows an unpublished article ·
 
   Filament's own topbar elements are kept and styled to the prototype.
 - **Settled in the build (lead, 2026-10-13):**
-  - **Sidebar group labels are gray-400, not the prototype's gray-500.** gray-500
-    measures 3.67:1 on the gray-900 sidebar, under the 4.5:1 small text needs;
-    gray-400 measures 6.99:1. On the verifier, two of the prototype's faint
-    texts rise for the same reason: the row labels from cream .55 to .58, and
-    the note from .45 to .57.
+  - **Faint text rises to 4.5:1, not the prototype's values.** On the admin, the
+    sidebar group labels are gray-400, not gray-500: gray-500 measures 3.67:1 on
+    the gray-900 sidebar and gray-400 6.99:1. The topbar search placeholder
+    follows (gray-500 is 3.32:1 on the pill, gray-400 6.33:1). On the verifier,
+    the page's gold glow reaches under the panel and the result card and moves as
+    the screen narrows, so each text is held to 4.5:1 over navy plus the glow at
+    its full .18, then the panel's tint, then the card's, which holds at every
+    width. The row label rises from cream .55 to .69, the sub-line .66 to .69, the
+    field label .6 to .62, the hint .66 to .69, the note .45 to .62, and the
+    revoked headline from #f0908f to #f3a8a7 (the same hue, lighter, as at 15px it
+    is not large text). Every sentence of prose on those pages is 16px below
+    1024px and the design's size from there, and the note sits inside the panel
+    under the form or the result, as the design draws it.
   - **The user menu stays in the topbar.** Filament 5 offers one position, so
     there is no separate sidebar user block.
   - **The page subheading stays below the heading,** in Filament's order. The
