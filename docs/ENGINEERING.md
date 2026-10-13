@@ -504,8 +504,11 @@ file under `resources/`.
 - **The public-site pages are sessionless, and only those.** This rule covers
   the GET-only route group phase 4's T11 creates: home, about, programmes,
   contact, the publications index, article pages and article downloads. Those
-  views contain no form, no `@csrf`, and no `session()`, `old()` or `auth()`
-  call.
+  views contain no form that submits data, no `@csrf`, and no `session()`,
+  `old()` or `auth()` call. The one form they may hold is a read-only
+  `method="get"` form, such as the publications search, which only writes its
+  fields into the URL and needs neither a session nor a CSRF token (owner,
+  2026-10-12, in T13).
 
   It does **not** apply to the certificate verifier (`resources/views/verify/`),
   whose form posts and needs both its session and its CSRF token, or to either

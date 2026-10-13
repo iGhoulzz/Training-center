@@ -245,7 +245,7 @@ it('shows no directions link when the map url is not set or is not a web link', 
     'not a web url' => ['javascript:alert(1)'],
 ]);
 
-it('links to about, programmes and contact from the navigation and the footer', function () {
+it('links to about, programmes, publications and contact from the navigation and the footer', function () {
     $html = (string) $this->get('/')->assertOk()->getContent();
 
     $nav = publicLinksWithin($html, '<nav aria-label=', '</nav>');
@@ -253,11 +253,11 @@ it('links to about, programmes and contact from the navigation and the footer', 
 
     // The navigation is rendered twice from one list, narrow then wide, so each
     // link appears twice and the order is the list's order.
-    $expected = [url('/about'), url('/programmes'), url('/verify/certificates'), url('/contact')];
+    $expected = [url('/about'), url('/programmes'), url('/publications'), url('/verify/certificates'), url('/contact')];
 
     expect(array_values(array_unique($nav)))->toBe($expected)
         ->and($nav)->toHaveCount(count($expected) * 2)
-        ->and($footer)->toContain(url('/about'))->toContain(url('/programmes'))->toContain(url('/contact'));
+        ->and($footer)->toContain(url('/about'))->toContain(url('/programmes'))->toContain(url('/publications'))->toContain(url('/contact'));
 });
 
 /**

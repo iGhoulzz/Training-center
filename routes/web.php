@@ -5,6 +5,8 @@ declare(strict_types=1);
 use App\Http\Controllers\Finance\ReceiptDownloadController;
 use App\Http\Controllers\Public\PageController;
 use App\Http\Controllers\Public\ProgrammeController;
+use App\Http\Controllers\Public\PublicationController;
+use App\Http\Controllers\Public\PublicationDownloadController;
 use App\Http\Controllers\Staff\StaffCertificateDownloadController;
 use App\Http\Controllers\Staff\StaffProfilePhotoController;
 use App\Http\Controllers\VerifyCertificateController;
@@ -43,12 +45,15 @@ use Illuminate\View\Middleware\ShareErrorsFromSession;
 | the cache layer, and the plan leaves that layer to deployment: the application
 | adds no response cache in phase 4, and no `cache.headers` middleware here.
 |
-| WHAT THAT COSTS, AND WHY IT IS ACCEPTABLE. A page here can hold no form, no
-| `@csrf`, and no `session()`, `old()` or `auth()` call, because the machinery
-| behind each one is gone. So every route is GET, and contact is links rather
-| than a form. PublicGroupTest asserts the GET-only property over the router's
-| own route list, PublicSessionlessTest that a response carries no cookie and
-| that the views contain none of those constructs.
+| WHAT THAT COSTS, AND WHY IT IS ACCEPTABLE. A page here can hold no form that
+| submits data, no `@csrf`, and no `session()`, `old()` or `auth()` call, because
+| the machinery behind each one is gone. So every route is GET, and contact is
+| links rather than a form. The one form allowed is a read-only
+| `method="get"` form, which only writes its fields into the URL: the
+| publications search (owner, 2026-10-12, P4-T13). PublicGroupTest asserts the
+| GET-only property over the router's own route list, and PublicSessionlessTest
+| asserts that a response carries no cookie and that the views contain none of
+| those constructs.
 |
 | NOT SESSIONLESS, AND UNTOUCHED: the private-file group and the verifier group
 | below (the verifier's form posts and needs CSRF), and both Filament panels.
@@ -73,6 +78,18 @@ Route::name('public.')
         Route::get('programmes', [ProgrammeController::class, 'index'])->name('programmes.index');
         Route::get('programmes/{course}', [ProgrammeController::class, 'show'])->whereNumber('course')->name('programmes.show');
         Route::get('contact', [PageController::class, 'contact'])->name('contact');
+
+        // THE SLUG IS DELIBERATELY UNCONSTRAINED, as the verifier's reference below
+        // is: a `->where()` would let a malformed value miss the route altogether,
+        // skipping this group's limiter and taking a different path from an unknown
+        // or unpublished slug. Every value reaches the controller, which answers
+        // all three with the same 404. The download adds its own limiter on top of
+        // the group's.
+        Route::get('publications', [PublicationController::class, 'index'])->name('publications.index');
+        Route::get('publications/{slug}', [PublicationController::class, 'show'])->name('publications.show');
+        Route::get('publications/{slug}/download', PublicationDownloadController::class)
+            ->middleware('throttle:publication-download')
+            ->name('publications.download');
     });
 
 /*

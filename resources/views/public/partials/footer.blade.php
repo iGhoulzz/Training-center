@@ -14,6 +14,7 @@
             <ul class="mt-3 flex flex-col gap-2 text-sm">
                 <li><a href="{{ PublicRoute::url('public.about') }}" class="hover:underline focus-visible:outline-gold-400">{{ __('public.links.about') }}</a></li>
                 <li><a href="{{ PublicRoute::url('public.programmes.index') }}" class="hover:underline focus-visible:outline-gold-400">{{ __('public.links.programmes') }}</a></li>
+                <li><a href="{{ PublicRoute::url('public.publications.index') }}" class="hover:underline focus-visible:outline-gold-400">{{ __('public.links.publications') }}</a></li>
                 <li><a href="{{ PublicRoute::url('public.contact') }}" class="hover:underline focus-visible:outline-gold-400">{{ __('public.links.contact') }}</a></li>
             </ul>
         </nav>
