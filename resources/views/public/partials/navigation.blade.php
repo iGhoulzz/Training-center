@@ -36,7 +36,7 @@
 
 <nav aria-label="{{ __('public.nav.label') }}" class="ms-auto">
     <details class="group relative lg:hidden">
-        <summary class="inline-flex min-h-11 min-w-11 cursor-pointer list-none items-center justify-center rounded-pill border border-navy/20 px-4 text-ui font-semibold text-navy hover:bg-navy/5 group-open:border-navy group-open:bg-navy group-open:text-cream [&::-webkit-details-marker]:hidden">{{ __('public.nav.menu') }}</summary>
+        <summary class="inline-flex min-h-11 min-w-11 cursor-pointer list-none items-center justify-center rounded-pill border border-navy/20 px-4 text-ui font-semibold text-navy hover:bg-navy/5 group-open:border-navy group-open:bg-navy group-open:text-cream group-open:hover:bg-navy-hover [&::-webkit-details-marker]:hidden">{{ __('public.nav.menu') }}</summary>
 
         <ul class="absolute end-0 top-full z-20 mt-2 w-60 rounded-field border border-navy/10 bg-card p-2 shadow-card-hover">
             @foreach ($links as [$href, $label, $current])
@@ -61,7 +61,7 @@
                 <a
                     href="{{ $href }}"
                     @if ($current) aria-current="page" @endif
-                    class="tap-target block text-sm font-medium whitespace-nowrap text-body hover:text-gold-dark aria-[current=page]:text-gold-dark"
+                    class="tap-target block text-sm/[1.6] font-medium whitespace-nowrap text-body hover:text-gold-dark aria-[current=page]:text-gold-dark"
                 >{{ $label }}</a>
             </li>
         @endforeach

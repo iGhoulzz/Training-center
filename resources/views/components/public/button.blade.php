@@ -9,6 +9,11 @@
     and `navy` (solid navy). `size` is `lg` (a hero button), `md`, `sm`, or `nav`
     (the portal pill's measure in the header). All are fully rounded.
 
+    The `nav` size is the design's 42px pill: 11px of padding round a line of
+    `normal` height, because the design draws the pill as a <button> with a `font`
+    shorthand, which resets the line height. Below 1024px it is 44px, the size of
+    a finger (max-lg:min-h-11).
+
     The slot is the label and, when the design has one, an <x-public.icon> beside
     it. The gap between them is the component's. A small button gets an invisible
     44px hit area (tap-target), so it looks as the design draws it. The two dark
@@ -28,6 +33,6 @@
         'px-6 py-3.5 text-ui-lg' => $size === 'lg',
         'px-5 py-3 text-ui' => $size === 'md',
         'tap-target px-4 py-2.5 text-caption' => $size === 'sm',
-        'min-h-11 px-4.75 py-2.75 text-ui' => $size === 'nav',
+        'px-4.75 py-2.75 text-ui leading-[normal] max-lg:min-h-11' => $size === 'nav',
     ]) }}
 >{{ $slot }}</a>

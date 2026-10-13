@@ -512,16 +512,52 @@ it('draws every named icon as a decorative inline image coloured by its text', f
         ->and(count($svg->querySelectorAll('path, circle')))->toBeGreaterThan(0);
 })->with(['phone', 'mail', 'graduation-cap', 'arrow-right', 'download', 'document', 'search', 'pin', 'clock', 'award', 'bar-chart']);
 
-it('sizes an icon and rounds or squares its strokes on request', function () {
-    $round = designSystemDocument(Blade::render('<x-public.icon name="phone" :size="13" :stroke="1.7" />'))->querySelector('svg');
-    $square = designSystemDocument(Blade::render('<x-public.icon name="phone" :round="false" />'))->querySelector('svg');
+it('sizes an icon and sets the shape of its stroke ends and corners, round and round by default', function () {
+    $default = designSystemDocument(Blade::render('<x-public.icon name="phone" :size="13" :stroke="1.7" />'))->querySelector('svg');
+    $plain = designSystemDocument(Blade::render('<x-public.icon name="phone" linecap="butt" linejoin="miter" />'))->querySelector('svg');
+    $capsOnly = designSystemDocument(Blade::render('<x-public.icon name="graduation-cap" linejoin="miter" />'))->querySelector('svg');
 
-    expect($round->getAttribute('width'))->toBe('13')
-        ->and($round->getAttribute('height'))->toBe('13')
-        ->and($round->getAttribute('stroke-width'))->toBe('1.7')
-        ->and($round->getAttribute('stroke-linecap'))->toBe('round')
-        ->and($square->hasAttribute('stroke-linecap'))->toBeFalse()
-        ->and($square->getAttribute('width'))->toBe('16');
+    expect($default->getAttribute('width'))->toBe('13')
+        ->and($default->getAttribute('height'))->toBe('13')
+        ->and($default->getAttribute('stroke-width'))->toBe('1.7')
+        ->and($default->getAttribute('stroke-linecap'))->toBe('round')
+        ->and($default->getAttribute('stroke-linejoin'))->toBe('round')
+        ->and($plain->getAttribute('stroke-linecap'))->toBe('butt')
+        ->and($plain->getAttribute('stroke-linejoin'))->toBe('miter')
+        ->and($plain->getAttribute('width'))->toBe('16')
+        ->and($plain->getAttribute('stroke-width'))->toBe('2')
+        ->and($capsOnly->getAttribute('stroke-linecap'))->toBe('round')
+        ->and($capsOnly->getAttribute('stroke-linejoin'))->toBe('miter');
+});
+
+it('draws the shell icons with the stroke ends and corners the design gives each one', function () {
+    $document = designSystemDocument((string) $this->get('/about')->assertOk()->getContent());
+
+    // The top bar's phone and mail: plain ends and mitred corners, the design draws
+    // neither a linecap nor a linejoin there.
+    $bar = $document->querySelectorAll('ul[aria-label] svg');
+
+    expect(count($bar))->toBe(2);
+
+    foreach ($bar as $icon) {
+        expect($icon->getAttribute('stroke-linecap'))->toBe('butt')
+            ->and($icon->getAttribute('stroke-linejoin'))->toBe('miter')
+            ->and($icon->getAttribute('stroke-width'))->toBe('2')
+            ->and($icon->getAttribute('width'))->toBe('13');
+    }
+
+    // The portal's graduation cap, in the header and in the narrow menu: round
+    // caps and mitred corners, 14px at weight 2.
+    $portal = $document->querySelectorAll('header a svg');
+
+    expect(count($portal))->toBe(2);
+
+    foreach ($portal as $icon) {
+        expect($icon->getAttribute('stroke-linecap'))->toBe('round')
+            ->and($icon->getAttribute('stroke-linejoin'))->toBe('miter')
+            ->and($icon->getAttribute('stroke-width'))->toBe('2')
+            ->and($icon->getAttribute('width'))->toBe('14');
+    }
 });
 
 it('refuses an icon that does not exist rather than drawing an empty box', function () {
@@ -625,18 +661,133 @@ it('marks the link of the section the visitor is in, and no other, on its pages'
     'an article' => ['article', '/publications'],
 ]);
 
-it('keeps the current section marked when the route name carries the Arabic prefix', function () {
-    designSystemTemporaryRoute('/ar-temporary/programmes', 'ar.public.programmes.index', 'public.about');
-    designSystemTemporaryRoute('/ar-temporary/publications/x', 'ar.public.publications.show', 'public.about');
+it('keeps the current section marked when the route name carries the Arabic prefix', function (string $routeName, string $section) {
+    // T18 registers the Arabic copy of each page under `ar.` plus the English name.
+    // The navigation reads only the route's name, so the page the route renders does
+    // not matter, and each name is requested through a route of its own.
+    $uri = '/ar-temporary/'.$routeName;
 
-    foreach (['/ar-temporary/programmes' => '/programmes', '/ar-temporary/publications/x' => '/publications'] as $temporary => $section) {
-        $marked = array_values(array_filter(
-            designSystemNavigationLinks((string) $this->get($temporary)->assertOk()->getContent()),
-            fn (array $link): bool => $link[1] !== null,
-        ));
+    designSystemTemporaryRoute($uri, $routeName, 'public.about');
 
-        expect($marked)->toBe([[url($section), 'page'], [url($section), 'page']], $temporary);
+    $marked = array_values(array_filter(
+        designSystemNavigationLinks((string) $this->get($uri)->assertOk()->getContent()),
+        fn (array $link): bool => $link[1] !== null,
+    ));
+
+    expect($marked)->toBe([[url($section), 'page'], [url($section), 'page']]);
+})->with([
+    'about' => ['ar.public.about', '/about'],
+    'contact' => ['ar.public.contact', '/contact'],
+    'the programme index' => ['ar.public.programmes.index', '/programmes'],
+    'a programme page' => ['ar.public.programmes.show', '/programmes'],
+    'the library' => ['ar.public.publications.index', '/publications'],
+    'an article' => ['ar.public.publications.show', '/publications'],
+    'a download' => ['ar.public.publications.download', '/publications'],
+]);
+
+it('marks no link for a route that is not one of the sections', function () {
+    // The verifier's route is neither a public page nor in the navigation's list of
+    // sections, so a request that arrives under its name marks nothing.
+    designSystemTemporaryRoute('/ar-temporary/verify', 'ar.verify.certificates.form', 'public.about');
+
+    $marked = array_filter(
+        designSystemNavigationLinks((string) $this->get('/ar-temporary/verify')->assertOk()->getContent()),
+        fn (array $link): bool => $link[1] !== null,
+    );
+
+    expect($marked)->toBe([]);
+});
+
+/*
+|--------------------------------------------------------------------------
+| The shell's measures, which a browser confirms and a test can only pin
+|--------------------------------------------------------------------------
+|
+| Heights and hit areas are layout, so the proof of each is a measurement in the
+| browser (the task's report lists them). These pin the classes that produce them,
+| so a later edit that drops one fails here instead of being found by eye.
+*/
+
+it('gives the top bar real 44px links below 1024px and the design 38px bar from there up', function () {
+    $document = designSystemDocument((string) $this->get('/about')->assertOk()->getContent());
+
+    $container = $document->querySelector('ul[aria-label]')->closest('div');
+    $classes = explode(' ', $container->getAttribute('class'));
+
+    // No padding of its own below 1024px, so the 44px links fill the bar; the
+    // design's 9px from there up.
+    expect($classes)->toContain('py-0')->toContain('lg:py-2.25');
+
+    $links = $document->querySelectorAll('ul[aria-label] a');
+
+    expect(count($links))->toBe(2);
+
+    foreach ($links as $link) {
+        $linkClasses = explode(' ', $link->getAttribute('class'));
+
+        // A real box, not the invisible hit area, which the page's top edge and the
+        // sticky header would clip: 44px below 1024px, the design's line from there.
+        expect($linkClasses)->toContain('min-h-11')->toContain('lg:min-h-0')->toContain('items-center')
+            ->not->toContain('tap-target');
     }
+});
+
+it('sizes the portal pill at the design 42px from 1024px and 44px below', function () {
+    $document = designSystemDocument((string) $this->get('/about')->assertOk()->getContent());
+    $login = route('filament.student.auth.login');
+
+    $links = [];
+
+    foreach ($document->querySelectorAll('header a') as $link) {
+        if ($link->getAttribute('href') === $login) {
+            $links[] = $link;
+        }
+    }
+
+    expect($links)->toHaveCount(2);
+
+    foreach ($links as $link) {
+        // `leading-[normal]` is the design's `font` shorthand, which resets the line
+        // height; the minimum height is a finger's, so it applies below 1024px only.
+        expect(explode(' ', $link->getAttribute('class')))
+            ->toContain('leading-[normal]')->toContain('max-lg:min-h-11')->not->toContain('min-h-11');
+    }
+});
+
+it('gives the navigation row the design line height, and the footer portal link the design line height from 1024px', function () {
+    $document = designSystemDocument((string) $this->get('/about')->assertOk()->getContent());
+
+    // The row's links inherit the page's 1.6 in the design (22.4px at 14px), which
+    // is not `text-sm`'s own 20px.
+    $row = $document->querySelectorAll('header nav > ul a');
+
+    expect(count($row))->toBe(5);
+
+    foreach ($row as $link) {
+        expect(explode(' ', $link->getAttribute('class')))->toContain('text-sm/[1.6]')->not->toContain('text-sm');
+    }
+
+    // The footer's portal link is a <button> in the design, whose `font` shorthand
+    // resets the line height; its neighbours are links and keep the page's.
+    $footer = [];
+
+    foreach ($document->querySelectorAll('footer a') as $link) {
+        if ($link->getAttribute('href') === route('filament.student.auth.login')) {
+            $footer[] = $link;
+        }
+    }
+
+    expect($footer)->toHaveCount(1)
+        ->and(explode(' ', $footer[0]->getAttribute('class')))->toContain('lg:leading-[normal]');
+});
+
+it('keeps the open Menu button navy, with its light text, while it is hovered', function () {
+    $summary = designSystemDocument((string) $this->get('/about')->assertOk()->getContent())->querySelector('header nav details summary');
+
+    // The hover tint is 5% navy, which under the open state's cream text would be
+    // 1.1:1. The open and hovered state is a colour of its own.
+    expect(explode(' ', $summary->getAttribute('class')))
+        ->toContain('group-open:bg-navy')->toContain('group-open:text-cream')->toContain('group-open:hover:bg-navy-hover');
 });
 
 it('never marks the verifier link, which is not a page of this layout', function () {

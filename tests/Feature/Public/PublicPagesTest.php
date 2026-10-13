@@ -159,7 +159,7 @@ it('hands the callers classes to the contact links and keeps them left to right'
     $html = (string) $this->get('/contact')->assertOk()->getContent();
 
     // The header's link carries the top bar's classes, the page's its own.
-    $barClasses = 'tap-target whitespace-nowrap text-on-navy hover:text-gold-light focus-visible:outline-gold-light';
+    $barClasses = 'flex min-h-11 items-center whitespace-nowrap text-on-navy hover:text-gold-light focus-visible:outline-gold-light lg:min-h-0';
 
     expect($html)->toContain('<a href="mailto:desk@example.test" dir="ltr" class="'.$barClasses.'">')
         ->toContain('<a href="mailto:desk@example.test" dir="ltr" class="underline hover:text-gold-dark">')

@@ -15,7 +15,14 @@
     sit beside the links, not inside them: they are decoration. The centre's Arabic
     name takes the inline end of the bar. Below 640px it is allowed to wrap, which
     is what keeps a phone from scrolling sideways; from there up it stays on a line.
-    The bar's links are small, so each has an invisible 44px hit area (tap-target).
+
+    TOUCH TARGETS. Below 1024px each contact link is a real 44px box and the bar has
+    no padding of its own, so the boxes fill it: at 768px the bar is one 44px row, and
+    on a phone the Arabic name wraps under the contacts with 8px above and below it.
+    An invisible hit area would not do here: the bar is the first thing on the page, so
+    the part of one above a 20px link would sit off the page and the part below it under
+    the sticky header. From 1024px, where the pointer is precise, the links are the
+    design's own line and the bar is the design's 38px (9px padding).
 
     From 1024px the header is a row of the brand, the links and the portal pill. Below
     that the links fold into the menu (navigation.blade.php), and the pill, which does
@@ -25,25 +32,25 @@
     scrolls sideways.
 --}}
 <div class="bg-navy text-caption text-on-navy">
-    <x-public.container class="flex flex-wrap items-center gap-x-4.5 gap-y-1 py-2.25">
+    <x-public.container class="flex flex-wrap items-center gap-x-4.5 py-0 lg:py-2.25">
         @if ($contact->phone !== '' || $contact->email !== '')
-            <ul aria-label="{{ __('public.header.contact_label') }}" class="flex flex-wrap items-center gap-x-4.5 gap-y-1">
+            <ul aria-label="{{ __('public.header.contact_label') }}" class="flex flex-wrap items-center gap-x-4.5">
                 @if ($contact->phone !== '')
                     <li class="flex items-center gap-1.75">
-                        <x-public.icon name="phone" :size="13" :round="false" class="text-gold" />
-                        <x-public.phone-link class="tap-target whitespace-nowrap text-on-navy hover:text-gold-light focus-visible:outline-gold-light" />
+                        <x-public.icon name="phone" :size="13" linecap="butt" linejoin="miter" class="text-gold" />
+                        <x-public.phone-link class="flex min-h-11 items-center whitespace-nowrap text-on-navy hover:text-gold-light focus-visible:outline-gold-light lg:min-h-0" />
                     </li>
                 @endif
                 @if ($contact->email !== '')
                     <li class="flex items-center gap-1.75">
-                        <x-public.icon name="mail" :size="13" :round="false" class="text-gold" />
-                        <x-public.email-link class="tap-target whitespace-nowrap text-on-navy hover:text-gold-light focus-visible:outline-gold-light" />
+                        <x-public.icon name="mail" :size="13" linecap="butt" linejoin="miter" class="text-gold" />
+                        <x-public.email-link class="flex min-h-11 items-center whitespace-nowrap text-on-navy hover:text-gold-light focus-visible:outline-gold-light lg:min-h-0" />
                     </li>
                 @endif
             </ul>
         @endif
 
-        <span class="ms-auto sm:whitespace-nowrap">
+        <span class="ms-auto py-2 sm:whitespace-nowrap lg:py-0">
             <span lang="ar" dir="rtl" class="font-semibold tracking-[0.02em] text-gold">{{ config('public_site.brand.name_ar') }}</span>
         </span>
     </x-public.container>

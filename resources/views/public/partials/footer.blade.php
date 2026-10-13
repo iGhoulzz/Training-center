@@ -50,7 +50,7 @@
 
             <ul class="flex flex-col text-ui lg:gap-2.25">
                 <li><a href="{{ PublicRoute::url('verify.certificates.form') }}" class="flex min-h-11 items-center text-cream/72 hover:text-gold-light focus-visible:outline-gold-light lg:min-h-0">{{ __('public.links.verify_certificate') }}</a></li>
-                <li><x-public.portal-link variant="footer" class="flex min-h-11 items-center text-cream/72 hover:text-gold-light focus-visible:outline-gold-light lg:min-h-0" /></li>
+                <li><x-public.portal-link variant="footer" class="flex min-h-11 items-center text-cream/72 hover:text-gold-light focus-visible:outline-gold-light lg:min-h-0 lg:leading-[normal]" /></li>
                 <li class="text-cream/72">{{ __('public.portal.note') }}</li>
             </ul>
         </nav>

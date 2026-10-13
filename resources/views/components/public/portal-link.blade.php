@@ -26,7 +26,7 @@
         <a href="{{ $href }}" {{ $attributes }}>{{ __('public.portal.link') }}</a>
     @else
         <x-public.button :href="$href" variant="navy" size="nav" {{ $attributes->class(['shadow-pill', 'w-full' => $variant === 'menu']) }}>
-            <x-public.icon name="graduation-cap" :size="14" class="text-gold" />
+            <x-public.icon name="graduation-cap" :size="14" linejoin="miter" class="text-gold" />
             {{ __('public.portal.link') }}
         </x-public.button>
     @endif

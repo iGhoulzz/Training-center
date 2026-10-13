@@ -6,15 +6,24 @@
     PROPS. `name` is one of the cases below, and a name that is not here throws,
     so a typo fails the first test that renders the page and not silently as an
     empty box. `size` is the width and height in pixels (the design uses 13 to 21).
-    `stroke` is the line weight (the design draws 1.6 to 2.2). `round` gives the
-    strokes the rounded ends and joins most of the design's icons have; the top
-    bar's phone and mail pass false for the plain ends the design draws there.
+    `stroke` is the line weight (the design draws 1.6 to 2.2).
+
+    `linecap` and `linejoin` are the shape of the stroke's ends and corners. The
+    design sets them USE BY USE, not icon by icon (the graduation cap is round and
+    round as a pillar's icon but round and mitred on the portal pill), so they are
+    props, and the defaults are the commonest pair:
+      - round and round (the default): the about pillars (award, bar-chart,
+        graduation-cap), the contact rows (pin, phone, mail, clock) and the document;
+      - round caps, mitred joins (`linejoin="miter"`): the portal pill's graduation
+        cap, the arrow and the download;
+      - plain ends and mitred joins (`linecap="butt" linejoin="miter"`): the top
+        bar's phone and mail, and the search.
 
     The colour is currentColor, so a caller colours the icon with a token class
     (`text-gold`), which also lets a hover on the parent recolour it. Callers add
     their own classes through $attributes.
 --}}
-@props(['name', 'size' => 16, 'stroke' => 2, 'round' => true])
+@props(['name', 'size' => 16, 'stroke' => 2, 'linecap' => 'round', 'linejoin' => 'round'])
 
 <svg
     xmlns="http://www.w3.org/2000/svg"
@@ -24,7 +33,8 @@
     fill="none"
     stroke="currentColor"
     stroke-width="{{ $stroke }}"
-    @if ($round) stroke-linecap="round" stroke-linejoin="round" @endif
+    stroke-linecap="{{ $linecap }}"
+    stroke-linejoin="{{ $linejoin }}"
     aria-hidden="true"
     focusable="false"
     {{ $attributes->class(['shrink-0']) }}
