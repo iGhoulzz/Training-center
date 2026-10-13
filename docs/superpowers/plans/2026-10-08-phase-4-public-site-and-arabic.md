@@ -1030,6 +1030,25 @@ follow the same pattern.
 - **Motion:** the prototype's entrance animations (`asRise`, `asFade`, `asSweep`)
   are CSS-only, behind `motion-safe:`, so a visitor who prefers reduced motion
   sees none.
+- **Right-sized on phones and computers (owner, 2026-10-13).** The prototype is
+  drawn at 1280–1440px. Its layout is fluid: wrapping flex rows, `auto-fit`
+  grids, and `clamp()` headings. So each page is built mobile-first, and the
+  prototype's values are its desktop end:
+  - **Three widths** are checked for every page: 375px (phone), 768px (tablet)
+    and 1440px (desktop).
+  - **No horizontal scroll at any width.** The lead measures
+    `document.documentElement.scrollWidth` against the viewport in the browser,
+    and records the result in the PR.
+  - **Readable on a phone:** body text at least 16px, and headings scaled
+    through `clamp()` as the prototype does.
+  - **Easy to tap:** every link and button has a touch target of at least
+    44×44px.
+  - **The navigation folds on a phone** into T11's no-script `<details>` menu,
+    styled to the design. The "Student portal" button stays reachable at every
+    width.
+  - **Images and the logo scale down** without distortion.
+  - **Tables and long references wrap or scroll inside their own box**, never
+    the page.
 
 **The real brand (owner, 2026-10-13).** This reverses T19's removal of the logo
 and the centre's name.
@@ -1085,8 +1104,10 @@ and the centre's name.
 
 **Done when**
 - The header, navigation and footer match `Public Site.dc.html`'s TOP BAR, NAV and
-  FOOTER at 1440px and 375px. The lead compares them side by side in the browser
-  against the prototype.
+  FOOTER. The lead compares them side by side in the browser against the
+  prototype, at 375, 768 and 1440px.
+- The responsive rules above hold at all three widths, with no horizontal scroll
+  (measured).
 - T15's Done-when holds.
 - No public view or component carries a `style` attribute.
 - Every existing public test passes unchanged, apart from markup assertions that
@@ -1109,8 +1130,8 @@ LIBRARY and ARTICLE sections, with the plan's decisions above. The home page
 gains the design's publications teaser (the latest published articles, through
 `PublicArticleCatalogue`).
 
-**Done when.** Each page matches the prototype at 1440px and 375px, compared side
-by side · every behaviour test of T12 and T13 still passes (projection, query
+**Done when.** Each page matches the prototype side by side, and meets the
+responsive rules at 375, 768 and 1440px, with no horizontal scroll (measured) · every behaviour test of T12 and T13 still passes (projection, query
 counts, sessionless, scanners) · `composer verify` green.
 
 ### Task 20c — The verifier and the admin shell, to the design
@@ -1127,7 +1148,8 @@ counts, sessionless, scanners) · `composer verify` green.
   `tests/Feature/Admin/ThemeShellTest.php` — appended
 
 **Done when.** The verifier's pages and the admin sidebar, topbar and page header
-match their prototypes side by side · `VerificationDisclosureTest` passes
+match their prototypes side by side, and meet the responsive rules at 375, 768
+and 1440px, with the admin sidebar collapsing as Filament does on a phone · `VerificationDisclosureTest` passes
 unchanged · `composer verify` green.
 
 **After Wave 4b:** T16b–T16e restyle against T20c's admin tokens and the
