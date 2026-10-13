@@ -17,6 +17,7 @@ use App\Domain\Enrollment\Exceptions\NoValidCertificateException;
 use App\Domain\Enrollment\Filament\Resources\StudentCertificateResource\Pages\ListStudentCertificates;
 use App\Domain\Enrollment\Filament\Resources\StudentCertificateResource\Pages\ViewStudentCertificate;
 use App\Domain\Enrollment\Models\Enrollment;
+use App\Domain\Enrollment\Models\Student;
 use App\Domain\Enrollment\Models\StudentCertificate;
 use App\Domain\Finance\Services\ChargeQueryService;
 use App\Models\User;
@@ -24,12 +25,16 @@ use BackedEnum;
 use Filament\Actions\Action;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
+use Filament\Forms\Components\TextInput;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Support\Icons\Heroicon;
+use Filament\Tables\Columns\Layout\Split;
+use Filament\Tables\Columns\Layout\Stack;
 use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
@@ -140,50 +145,63 @@ class StudentCertificateResource extends Resource
         return $table
             ->defaultSort('issued_at', 'desc')
             ->columns([
-                TextColumn::make('reference_number')
-                    ->label(__('certificates.reference_number'))
-                    ->searchable()
-                    ->sortable(),
+                Split::make([
+                    Stack::make([
+                        TextColumn::make('student_name')
+                            ->label(__('certificates.student'))
+                            ->searchable()
+                            ->sortable()->weight('semibold')->extraAttributes(['class' => 'text-[13.5px]'])
+                            ->url(fn (StudentCertificate $record): ?string => ! $record->enrollment->student->trashed()
+                                && StudentResource::canViewAny() && StudentResource::canView($record->enrollment->student)
+                                ? StudentResource::getUrl('view', ['record' => $record->enrollment->student]) : null),
 
-                TextColumn::make('student_name')
-                    ->label(__('certificates.student'))
-                    ->searchable()
-                    ->sortable()->weight('semibold')
-                    ->url(fn (StudentCertificate $record): ?string => ! $record->enrollment->student->trashed()
-                        && StudentResource::canViewAny() && StudentResource::canView($record->enrollment->student)
-                        ? StudentResource::getUrl('view', ['record' => $record->enrollment->student]) : null),
+                        TextColumn::make('course_name')
+                            ->label(__('certificates.course'))
+                            ->searchable()
+                            ->sortable()->color('gray')->extraAttributes(['class' => 'text-[11.5px]'])
+                            ->url(fn (StudentCertificate $record): ?string => CourseResource::canViewAny() && CourseResource::canView($record->enrollment->batch->course)
+                                ? CourseResource::getUrl('view', ['record' => $record->enrollment->batch->course]) : null),
+                    ])->space(1),
+                    TextColumn::make('reference_number')
+                        ->label(__('certificates.reference_number'))->searchable()->sortable()
+                        ->color('gray')->extraAttributes(['class' => 'font-mono text-[12.5px]']),
+                    Stack::make([
+                        TextColumn::make('issued_at')
+                            ->label(__('certificates.issued_at'))
+                            ->date()->color('gray')->extraAttributes(['class' => 'text-[12px]'])
+                            ->sortable(),
 
-                TextColumn::make('course_name')
-                    ->label(__('certificates.course'))
-                    ->searchable()
-                    ->sortable()
-                    ->url(fn (StudentCertificate $record): ?string => CourseResource::canViewAny() && CourseResource::canView($record->enrollment->batch->course)
-                        ? CourseResource::getUrl('view', ['record' => $record->enrollment->batch->course]) : null),
+                        TextColumn::make('issuedBy.name')
+                            ->label(__('certificates.issued_by'))->color('gray')->extraAttributes(['class' => 'text-[11px]']),
+                    ])->space(1),
 
-                TextColumn::make('completed_on')
-                    ->label(__('certificates.completed_on'))
-                    ->date()
-                    ->sortable(),
-
-                TextColumn::make('issued_at')
-                    ->label(__('certificates.issued_at'))
-                    ->dateTime()
-                    ->sortable(),
-
-                TextColumn::make('issuedBy.name')
-                    ->label(__('certificates.issued_by')),
-
-                TextColumn::make('status')
-                    ->label(__('certificates.status'))
-                    ->badge()
-                    ->formatStateUsing(fn (CertificateStatus $state): string => $state->label())
-                    ->color(fn (CertificateStatus $state): string => match ($state) {
-                        CertificateStatus::Valid => 'success',
-                        CertificateStatus::Replaced => 'gray',
-                        CertificateStatus::Revoked => 'danger',
-                    }),
+                    TextColumn::make('status')
+                        ->label(__('certificates.status'))
+                        ->badge()
+                        ->formatStateUsing(fn (CertificateStatus $state): string => $state->label())
+                        ->color(fn (CertificateStatus $state): string => match ($state) {
+                            CertificateStatus::Valid => 'success',
+                            CertificateStatus::Replaced => 'gray',
+                            CertificateStatus::Revoked => 'danger',
+                        }),
+                ])->from('md'),
+                TextColumn::make('completed_on')->label(__('certificates.completed_on'))->date()->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
+                Filter::make('student')->label(__('enrollment.student'))
+                    ->schema([TextInput::make('id')->label(__('enrollment.student_id'))->integer()->minValue(1)])
+                    ->query(function (Builder $query, array $data): Builder {
+                        if (blank($data['id'] ?? null)) {
+                            return $query;
+                        }
+                        $id = filter_var($data['id'], FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+                        $student = $id === false ? null : Student::query()->find($id);
+
+                        return $student !== null && Gate::allows('view', $student)
+                            ? $query->whereHas('enrollment', fn (Builder $enrollment): Builder => $enrollment->where('student_id', $id))
+                            : $query->whereRaw('1 = 0');
+                    }),
                 SelectFilter::make('status')
                     ->label(__('certificates.status'))
                     ->options(fn (): array => collect(CertificateStatus::cases())

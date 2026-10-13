@@ -7,21 +7,26 @@ namespace App\Domain\Enrollment\Filament\Resources\StudentResource\Pages;
 use App\Domain\Enrollment\Enums\EnrollmentStatus;
 use App\Domain\Enrollment\Enums\StudentStatus;
 use App\Domain\Enrollment\Filament\Resources\BatchResource;
+use App\Domain\Enrollment\Filament\Resources\StudentCertificateResource;
 use App\Domain\Enrollment\Filament\Resources\StudentResource;
 use App\Domain\Enrollment\Models\Enrollment;
 use App\Domain\Enrollment\Models\Student;
+use App\Domain\Finance\Filament\Resources\ChargeResource;
+use App\Domain\Finance\Filament\Resources\PaymentResource;
 use App\Domain\Finance\Services\StudentBalanceQuery;
 use Filament\Actions\Action;
-use Filament\Infolists\Components\RepeatableEntry;
-use Filament\Infolists\Components\TextEntry;
 use Filament\Resources\Pages\ListRecords;
+use Filament\Schemas\Components\Actions;
 use Filament\Schemas\Components\EmbeddedTable;
 use Filament\Schemas\Components\Grid;
-use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Tabs\Tab;
+use Filament\Schemas\Components\View;
 use Filament\Schemas\Schema;
 use Filament\Tables\Table;
+use Illuminate\Contracts\Pagination\CursorPaginator;
+use Illuminate\Contracts\Pagination\Paginator;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Livewire\Attributes\Computed;
@@ -35,21 +40,74 @@ class ListStudents extends ListRecords
     #[Url(as: 'student')]
     public ?int $selectedStudentId = null;
 
+    /** @var array<string, int> */
+    protected array $tabCounts = [];
+
+    public function rendering(): void
+    {
+        $this->getTableRecords();
+    }
+
+    /**
+     * @param  Builder<Student>  $query
+     * @return Paginator<int, Student>|CursorPaginator<int, Student>
+     */
+    protected function paginateTableQuery(Builder $query): Paginator|CursorPaginator
+    {
+        $total = $query->toBase()->getCountForPagination();
+        if ($query->getQuery()->columns === null) {
+            $query->select($query->qualifyColumn('*'));
+        }
+        $counts = DB::query();
+        $names = [];
+        foreach (['all' => Student::query(), 'active' => Student::query()->where('status', StudentStatus::Active),
+            'prospective' => Student::query()->where('status', StudentStatus::Prospective),
+            'no_portal' => Student::query()->whereNull('user_id')] as $name => $global) {
+            $names[] = $name;
+            $projection = $global->selectRaw('COUNT(*)');
+            $query->selectSub(clone $projection, 'tab_count_'.$name);
+            $counts->selectSub($projection, 'tab_count_'.$name);
+        }
+        if (auth()->user()?->can('view_any_charge')) {
+            $names[] = 'owes_money';
+            $owing = DB::query()->fromSub(app(StudentBalanceQuery::class)->withOutstanding(Student::query()), 'owing_students')
+                ->where(StudentBalanceQuery::OUTSTANDING_ALIAS, '>', 0)->selectRaw('COUNT(*)');
+            $query->selectSub(clone $owing, 'tab_count_owes_money');
+            $counts->selectSub($owing, 'tab_count_owes_money');
+        }
+        /** @var LengthAwarePaginator<int, Student> $records */
+        $records = $query->paginate(perPage: $this->getTableRecordsPerPage() === 'all' ? max(1, $total) : $this->getTableRecordsPerPage(),
+            pageName: $this->getTablePaginationPageName(), total: $total);
+        $first = $records->first();
+        // Empty/out-of-range pages have no row carrying the global tab counts.
+        // Only those pages need a bounded metadata fallback, never a row read.
+        $metadata = $first === null ? $counts->first() : null;
+        foreach ($names as $name) {
+            $alias = 'tab_count_'.$name;
+            $this->tabCounts[$name] = (int) ($first?->getAttribute($alias) ?? $metadata?->{$alias});
+        }
+
+        return $records->onEachSide(0);
+    }
+
     /** @return array<string, Tab> */
     public function getTabs(): array
     {
-        $tabs = ['all' => Tab::make(__('enrollment.all'))];
+        $tabs = ['all' => Tab::make(__('enrollment.all'))->badge(fn (): int => $this->tabCounts['all'] ?? 0)];
         foreach ([StudentStatus::Active, StudentStatus::Prospective] as $status) {
             $tabs[$status->value] = Tab::make($status->label())
+                ->badge(fn (): int => $this->tabCounts[$status->value] ?? 0)
                 ->modifyQueryUsing(fn (Builder $query): Builder => $query->where('status', $status));
         }
         if (auth()->user()?->can('view_any_charge')) {
             $tabs['owes_money'] = Tab::make(__('enrollment.owes_money'))
+                ->badge(fn (): int => $this->tabCounts['owes_money'] ?? 0)
                 ->modifyQueryUsing(fn (Builder $query): Builder => $query->whereIn('students.id',
                     DB::query()->fromSub(app(StudentBalanceQuery::class)->withOutstanding(Student::query()), 'balances')
                         ->select('id')->where(StudentBalanceQuery::OUTSTANDING_ALIAS, '>', 0)));
         }
         $tabs['no_portal'] = Tab::make(__('enrollment.no_portal_login'))
+            ->badge(fn (): int => $this->tabCounts['no_portal'] ?? 0)
             ->modifyQueryUsing(fn (Builder $query): Builder => $query->whereNull('user_id'));
 
         return $tabs;
@@ -100,44 +158,50 @@ class ListStudents extends ListRecords
         ] : [];
     }
 
+    /** @return array<string, mixed> */
+    private function detailViewData(): array
+    {
+        $student = $this->selectedStudent;
+        $jumps = [];
+        if ($student !== null) {
+            foreach ([ChargeResource::class => 'bills_jump', PaymentResource::class => 'receipts_jump', StudentCertificateResource::class => 'certificates_jump'] as $resource => $label) {
+                if ($resource::canViewAny()) {
+                    $jumps[] = ['label' => __('enrollment.'.$label), 'url' => $resource::getUrl('index', ['filters' => ['student' => ['id' => $student->getKey()]]])];
+                }
+            }
+        }
+        $canRead = Gate::allows('viewAny', Enrollment::class);
+
+        return [
+            'student' => $student, 'jumps' => $jumps, 'canReadEnrollments' => $canRead,
+            'fields' => $student ? [
+                __('enrollment.status') => $student->status->label(),
+                __('enrollment.phone') => $student->phone ?? __('enrollment.not_recorded'),
+                __('enrollment.email') => $student->email ?? __('enrollment.not_recorded'),
+                __('enrollment.national_id') => $student->national_id ?? __('enrollment.not_recorded'),
+                __('enrollment.date_of_birth') => $student->date_of_birth?->format('d M Y') ?? __('enrollment.not_recorded'),
+                ...(auth()->user()?->can('view_any_charge') ? [__('enrollment.outstanding') => __('enrollment.money_lyd', ['amount' => $student->getAttribute(StudentBalanceQuery::OUTSTANDING_ALIAS)])] : []),
+            ] : [],
+            'enrollments' => $student && $canRead ? $student->enrollments->map(fn (Enrollment $record): array => [
+                'batch' => $record->batch->code, 'course' => $record->batch->course->name(), 'status' => $record->status->label(),
+                'color' => match ($record->status) {
+                    EnrollmentStatus::Active => 'success', EnrollmentStatus::Completed => 'info', EnrollmentStatus::Withdrawn => 'danger'
+                },
+                'url' => BatchResource::canViewAny() && BatchResource::canView($record->batch) ? BatchResource::getUrl('view', ['record' => $record->batch]) : null,
+            ])->all() : [],
+        ];
+    }
+
     public function content(Schema $schema): Schema
     {
         return $schema->components([
             $this->getTabsContentComponent(),
             Grid::make(['default' => 1, 'xl' => 3])->schema([
                 EmbeddedTable::make()->columnSpan(['xl' => 2]),
-                Section::make(fn (): string => $this->selectedStudent->full_name ?? __('enrollment.select_student'))
+                View::make('filament.enrollment.student-detail')
                     ->key('studentDetail')
-                    ->description(fn (): string => $this->selectedStudent->student_code ?? __('enrollment.select_student_hint'))
-                    ->schema([
-                        TextEntry::make('selectedStatus')->label(__('enrollment.status'))->badge()
-                            ->state(fn (): ?string => $this->selectedStudent?->status->label()),
-                        ...collect(['phone', 'email', 'national_id'])
-                            ->map(fn (string $field): TextEntry => TextEntry::make('selected_'.$field)
-                                ->label(__('enrollment.'.$field))
-                                ->state(fn (): mixed => $this->selectedStudent?->{$field})
-                                ->placeholder(__('enrollment.not_recorded')))->all(),
-                        TextEntry::make('selectedBirthDate')->label(__('enrollment.date_of_birth'))
-                            ->state(fn (): mixed => $this->selectedStudent?->date_of_birth)->date()
-                            ->placeholder(__('enrollment.not_recorded')),
-                        TextEntry::make('selectedOutstanding')->label(__('enrollment.outstanding'))
-                            ->state(fn (): ?string => $this->selectedStudent ? __('enrollment.money_lyd', [
-                                'amount' => $this->selectedStudent->getAttribute(StudentBalanceQuery::OUTSTANDING_ALIAS),
-                            ]) : null)
-                            ->visible(fn (): bool => auth()->user()?->can('view_any_charge') ?? false),
-                        RepeatableEntry::make('selectedEnrollments')->label(__('enrollment.enrollments'))
-                            ->state(fn (): mixed => $this->selectedStudent->enrollments ?? [])
-                            ->visible(fn (): bool => Gate::allows('viewAny', Enrollment::class))
-                            ->schema([
-                                TextEntry::make('batch.code')->label(__('enrollment.batch'))
-                                    ->url(fn (Enrollment $record): ?string => BatchResource::canViewAny() && BatchResource::canView($record->batch)
-                                        ? BatchResource::getUrl('view', ['record' => $record->batch]) : null),
-                                TextEntry::make('status')->label(__('enrollment.status'))
-                                    ->formatStateUsing(fn (EnrollmentStatus $state): string => $state->label())->badge(),
-                            ]),
-                    ])
-                    ->footerActions([fn (): array => $this->detailActions()])
-                    ->registerActions([fn (): array => $this->detailActions()])
+                    ->viewData(fn (): array => $this->detailViewData())
+                    ->schema([Actions::make(fn (): array => $this->detailActions())->key('actions')])
                     ->extraAttributes(['class' => 'xl:sticky xl:[inset-block-start:6rem] self-start']),
             ]),
         ]);

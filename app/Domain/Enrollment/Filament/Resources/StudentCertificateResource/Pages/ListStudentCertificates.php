@@ -42,6 +42,7 @@ class ListStudentCertificates extends ListRecords
             if ($count > 0) {
                 $components[] = Callout::make(trans_choice('certificates.queue_pending', $count, ['count' => $count]))
                     ->warning()->description(__('certificates.outstanding_balance_hint'))
+                    ->extraAttributes(['class' => 'rounded-[14px] border border-amber-400/28 bg-amber-400/7 px-[18px] py-4'])
                     ->actions([Action::make('reviewQueue')->label(__('certificates.review_queue'))
                         ->url(CertificateIssuanceQueue::getUrl())]);
             }
