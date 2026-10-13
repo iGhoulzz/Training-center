@@ -16,7 +16,8 @@
 
     THE FONTS ARE LOADED ONLY WHEN THEY HAVE BEEN BUILT, and the guard is the public
     layout's, computed the same way and ahead of the markup. CI runs the suite before
-    it builds assets, and Vite::fonts() fails on a manifest that does not exist.
+    it builds assets, and Vite::fonts() throws when a fonts manifest exists but lists
+    none of the families asked for, as a leftover one from an older build does.
     Without a build the page is complete and falls back to system fonts. With one,
     every tag it emits is on this origin.
 

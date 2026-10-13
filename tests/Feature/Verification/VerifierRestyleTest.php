@@ -336,8 +336,9 @@ it('loads the fonts only inside the built-assets guard, computed as the public l
     $source = (string) file_get_contents(resource_path("views/verify/{$file}.blade.php"));
     $code = (string) preg_replace('/\{\{--.*?--\}\}/s', ' ', $source);
 
-    // CI runs the suite before it builds assets, so a font call outside the guard would
-    // ask for a manifest that does not exist and fail every verifier page.
+    // CI runs the suite before it builds assets, and Vite::fonts() throws on a fonts
+    // manifest that lists none of the families asked for (a leftover from an older
+    // build), so a font call outside the guard can fail every verifier page.
     expect(preg_match('/@if\s*\(\s*\$stylesheetBuilt\s*\)(.*?)@endif/s', $code, $guarded))->toBe(1)
         ->and($guarded[1])->toContain('Vite::fonts(')->toContain("'instrument-serif'")->toContain("'ibm-plex-sans-arabic'")
         ->and(substr_count($code, 'Vite::fonts('))->toBe(1)
@@ -350,7 +351,13 @@ it('emits no font tag without a build, and only same-origin ones with it, the sa
     $originalPublicPath = public_path();
     $unbuilt = sys_get_temp_dir().DIRECTORY_SEPARATOR.'training-center-verifier-unbuilt-'.Str::uuid();
     $built = sys_get_temp_dir().DIRECTORY_SEPARATOR.'training-center-verifier-built-'.Str::uuid();
-    File::makeDirectory($unbuilt);
+    File::makeDirectory($unbuilt.'/build', recursive: true);
+    // A fonts manifest left by an older build: it lists neither of the page's families,
+    // and there is no build manifest beside it. Read unguarded, it makes Vite::fonts() throw.
+    File::put($unbuilt.'/build/fonts-manifest.json', json_encode([
+        'version' => 1,
+        'families' => ['instrument-sans' => ['name' => 'Instrument Sans']],
+    ], JSON_THROW_ON_ERROR));
     File::makeDirectory($built.'/build', recursive: true);
     File::put($built.'/build/manifest.json', '{}');
     File::put($built.'/build/fonts-manifest.json', json_encode([
@@ -366,13 +373,16 @@ it('emits no font tag without a build, and only same-origin ones with it, the sa
     ], JSON_THROW_ON_ERROR));
 
     try {
-        // No build: nothing for the fonts to read, and the page is still complete.
+        // No build: the guard keeps the stale manifest from being read, and the page is
+        // still complete.
         app()->usePublicPath($unbuilt);
 
         foreach ($pages as $label => $url) {
-            $html = (string) $this->get($url)->getContent();
+            $response = $this->get($url);
+            $html = (string) $response->getContent();
 
-            expect($html)->toContain('<h1>')
+            expect($response->getStatusCode())->toBe($label === 'miss' ? 404 : 200)
+                ->and($html)->toContain('<h1>')
                 ->not->toContain('rel="preload"')
                 ->not->toContain('@font-face');
         }
