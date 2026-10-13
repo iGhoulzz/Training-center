@@ -23,8 +23,6 @@ use Filament\Pages\Page;
 use Filament\Panel;
 use Filament\PanelProvider;
 use Filament\Resources\Resource;
-use Filament\Support\Colors\Color;
-use Filament\Support\Enums\Width;
 use Filament\View\PanelsRenderHook;
 use Illuminate\Contracts\Support\Htmlable;
 use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
@@ -33,10 +31,34 @@ use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
 use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Session\Middleware\StartSession;
 use Illuminate\Support\Facades\Vite;
+use Illuminate\Support\HtmlString;
 use Illuminate\View\Middleware\ShareErrorsFromSession;
 
 class AdminPanelProvider extends PanelProvider
 {
+    /*
+     * THE PANEL'S COLOURS, AS THE DESIGN GIVES THEM (P4-T20c). The handoff README's panel
+     * table and the prototype use Tailwind 3's hex shades: gray 950 for the page, 900 for
+     * a surface, 50 for text, 400 and 500 for the muted and dim text; amber 500 for primary
+     * with 400 on hover; and the 400 shade of green, blue and red for success, info and
+     * danger. Filament's built-in Color constants are Tailwind 4's palettes, which are
+     * OKLCH re-tunings of the same names (its amber is visibly more saturated), so none of
+     * them is used. Every shade is registered, because Filament reaches for 50 to 950.
+     *
+     * Filament stores a hex as OKLCH to three decimals, so a shade can come back one or two
+     * units of 255 off on a channel: seven of the amber ones do. ThemeShellTest compares the
+     * stored value.
+     */
+    private const GRAY = [50 => '#f9fafb', 100 => '#f3f4f6', 200 => '#e5e7eb', 300 => '#d1d5db', 400 => '#9ca3af', 500 => '#6b7280', 600 => '#4b5563', 700 => '#374151', 800 => '#1f2937', 900 => '#111827', 950 => '#030712'];
+
+    private const AMBER = [50 => '#fffbeb', 100 => '#fef3c7', 200 => '#fde68a', 300 => '#fcd34d', 400 => '#fbbf24', 500 => '#f59e0b', 600 => '#d97706', 700 => '#b45309', 800 => '#92400e', 900 => '#78350f', 950 => '#451a03'];
+
+    private const GREEN = [50 => '#f0fdf4', 100 => '#dcfce7', 200 => '#bbf7d0', 300 => '#86efac', 400 => '#4ade80', 500 => '#22c55e', 600 => '#16a34a', 700 => '#15803d', 800 => '#166534', 900 => '#14532d', 950 => '#052e16'];
+
+    private const BLUE = [50 => '#eff6ff', 100 => '#dbeafe', 200 => '#bfdbfe', 300 => '#93c5fd', 400 => '#60a5fa', 500 => '#3b82f6', 600 => '#2563eb', 700 => '#1d4ed8', 800 => '#1e40af', 900 => '#1e3a8a', 950 => '#172554'];
+
+    private const RED = [50 => '#fef2f2', 100 => '#fee2e2', 200 => '#fecaca', 300 => '#fca5a5', 400 => '#f87171', 500 => '#ef4444', 600 => '#dc2626', 700 => '#b91c1c', 800 => '#991b1b', 900 => '#7f1d1d', 950 => '#450a0a'];
+
     public function panel(Panel $panel): Panel
     {
         // Match the public layout's fallback in a checkout whose assets are not built yet.
@@ -54,15 +76,21 @@ class AdminPanelProvider extends PanelProvider
             ->font('Instrument Sans', provider: LocalFontProvider::class)
             ->renderHook(PanelsRenderHook::STYLES_AFTER, fn (): Htmlable => Vite::fonts('instrument-sans'))
             ->sidebarWidth('16.125rem')
-            ->maxContentWidth(Width::Full)
+            // 1440px, the prototype's main column. The class is defined in theme.css.
+            ->maxContentWidth('tc-width-admin')
+            // The brand is the centre's own (config/public_site.php), never app.name. The logo
+            // is a view: the 28px circle and the short name the prototype draws.
+            ->brandName(fn (): string => (string) config('public_site.brand.short_name'))
+            ->brandLogo(fn (): Htmlable => new HtmlString(view('filament.admin.brand')->render()))
+            ->brandLogoHeight('1.75rem')
             ->collapsibleNavigationGroups(false)
             ->colors([
-                'primary' => Color::Amber,
-                'gray' => Color::Gray,
-                'success' => Color::Green,
-                'info' => Color::Blue,
-                'warning' => Color::Amber,
-                'danger' => Color::Red,
+                'primary' => self::AMBER,
+                'gray' => self::GRAY,
+                'success' => self::GREEN,
+                'info' => self::BLUE,
+                'warning' => self::AMBER,
+                'danger' => self::RED,
             ])
             ->navigation(function (NavigationBuilder $builder): NavigationBuilder {
                 // The shell owns groups by destination, overriding each page/resource's getNavigationGroup().

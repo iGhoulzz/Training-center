@@ -1,3 +1,22 @@
+/*
+ * The admin panel's theme: the shell, to the design (P4-T16a, corrected in P4-T20c).
+ *
+ * EVERY VALUE BELOW WAS READ FROM THE OWNER'S PROTOTYPE (Filament Revamp.dc.html, kept
+ * outside the repository) and the handoff README's "Design tokens: Panel (dark)", then
+ * written as a Tailwind utility on the Filament class that draws the part. The colours
+ * are the panel's own registered palettes (AdminPanelProvider::colors()): `gray-*` is
+ * Tailwind 3's gray (950 the page, 900 a surface, 50 text, 400 muted, 500 dim) and
+ * `primary-*` its amber (500 the primary, 400 the hover and the active text). Neither is
+ * Tailwind 4's re-tuned palette, so a rule says `primary-500`, never the default palette's name for it.
+ *
+ * A VALUE THAT IS NOT A SHADE OF THOSE PALETTES IS A TOKEN, defined once in @theme and
+ * named by role: the on-primary text, the hairlines and fills the design draws as white
+ * at a low opacity, the scrollbar thumb and the content width. A rule below never writes
+ * a colour of its own: ThemeShellTest scans for one.
+ *
+ * Logical utilities only (ms-, me-, ps-, pe-, start-, end-, text-start); LocalizationTest
+ * enforces it. Each rule targets one of Filament's documented `fi-` hook classes.
+ */
 @import '../../../../vendor/filament/filament/resources/css/theme.css';
 
 @source '../../../../app/Filament/**/*';
@@ -6,10 +25,45 @@
 @source '../../../../resources/views/finance/**/*';
 @source '../../../../resources/views/components/**/*';
 
+@theme {
+    /* The text on a primary button: near-black, warm, so it reads on amber. */
+    --color-on-primary: #1c1204;
+
+    /*
+     * The design's lines and fills, white at a low opacity. A hairline is a 1px border or
+     * ring; the soft one is the brand row's. A hover fill is a sidebar item's, and the
+     * subtle fill is a field's, such as the search pill.
+     */
+    --color-hairline: rgb(255 255 255 / 0.1);
+    --color-hairline-soft: rgb(255 255 255 / 0.06);
+    --color-hairline-faint: rgb(255 255 255 / 0.08);
+    --color-fill-hover: rgb(255 255 255 / 0.06);
+    --color-fill-subtle: rgb(255 255 255 / 0.04);
+    --color-scrollbar: rgb(255 255 255 / 0.12);
+
+    /* The content column: 1440px, the prototype's main. `max-w-admin`. */
+    --container-admin: 90rem;
+}
+
+/* The prototype's global scrollbar: 10px, with a rounded translucent thumb. */
+@layer base {
+    ::-webkit-scrollbar {
+        width: 10px;
+        height: 10px;
+    }
+
+    ::-webkit-scrollbar-thumb {
+        background: var(--color-scrollbar);
+        border-radius: 8px;
+    }
+}
+
 @layer components {
+    /* The page: gray-950 under gray-50 text, at the prototype's 14px base. */
     .fi-body {
         @apply bg-gray-950 text-gray-50;
 
+        font-size: 0.875rem;
         font-variant-numeric: tabular-nums;
     }
 
@@ -19,59 +73,219 @@
         @apply bg-gray-900;
     }
 
+    /*
+     * THE TOPBAR: 64px, gray-900, a hairline under it, 32px of padding on the inline
+     * sides. Its bottom line is drawn by ::after, because at 1024px and up the brand sits
+     * in the topbar's first cell (the prototype draws it at the top of the sidebar) and
+     * that cell carries the softer line the brand row has. The line starts where the
+     * sidebar ends; below 1024px there is no sidebar beside it, and it runs full width.
+     */
     .fi-topbar {
-        @apply shadow-none ring-0;
-
-        border-block-end: 1px solid rgb(255 255 255 / 10%);
+        @apply relative px-4 shadow-none ring-0 md:px-6 lg:ps-0 lg:pe-8;
     }
 
-    .fi-sidebar {
-        border-inline-end: 1px solid rgb(255 255 255 / 10%);
+    .fi-topbar::after {
+        content: '';
+        position: absolute;
+        inset-inline: 0;
+        inset-block-end: 0;
+        border-block-end: 1px solid var(--color-hairline);
+        pointer-events: none;
     }
 
-    .fi-sidebar-nav {
-        @apply px-3 py-6;
-    }
-
-    .fi-sidebar-nav-groups {
-        @apply gap-y-6;
-    }
-
-    .fi-sidebar-group-label {
-        @apply text-[11px] font-medium tracking-wider text-gray-400 uppercase;
-    }
-
-    .fi-sidebar-item-btn {
-        @apply gap-3 rounded-lg px-3 py-2;
-    }
-
-    .fi-sidebar-item-label {
-        @apply text-[13px] font-medium text-gray-300;
-    }
-
-    .fi-sidebar-item.fi-active > .fi-sidebar-item-btn {
-        @apply bg-amber-500/15;
-
-        & > .fi-icon,
-        & > .fi-sidebar-item-label {
-            @apply text-amber-400;
+    @media (min-width: 64rem) {
+        .fi-topbar::after {
+            inset-inline-start: var(--sidebar-width);
         }
     }
 
+    /*
+     * THE BRAND ROW, from 1024px: the sidebar's width (258px), 64px tall, 20px of padding
+     * and a 10px gap, a soft hairline under it and the sidebar's own line beside it. Below
+     * 1024px the brand is in the sidebar's header, which is styled to the same row.
+     */
+    .fi-topbar-start {
+        @apply gap-x-2.5 self-stretch px-5;
+
+        inline-size: var(--sidebar-width);
+        margin-inline-end: 0;
+        border-inline-end: 1px solid var(--color-hairline);
+        border-block-end: 1px solid var(--color-hairline-soft);
+
+        & .fi-logo {
+            margin-inline-start: 0;
+        }
+    }
+
+    .fi-body-has-topbar .fi-sidebar-header {
+        @apply justify-start bg-gray-900 px-5 shadow-none ring-0;
+
+        border-block-end: 1px solid var(--color-hairline-soft);
+    }
+
+    /*
+     * The brand view (resources/views/filament/admin/brand.blade.php): the seal as a 28px
+     * circle and the short name in the 14px base at 600, tracked in by .01em.
+     */
+    .tc-brand {
+        @apply flex h-full items-center gap-x-2.5 text-gray-50;
+    }
+
+    .tc-brand-mark {
+        @apply size-7 shrink-0 rounded-full object-cover object-center;
+    }
+
+    .tc-brand-name {
+        @apply text-[14px] font-semibold tracking-[-0.01em];
+
+        line-height: normal;
+    }
+
+    /*
+     * The topbar's right-hand side: the search pill from the start of the column and the
+     * user's avatar at its end. 16px between them, as the prototype has.
+     */
+    .fi-topbar-end {
+        @apply flex-1 justify-between gap-x-4;
+
+        margin-inline-start: 0;
+    }
+
+    @media (min-width: 64rem) {
+        .fi-topbar-end {
+            padding-inline-start: 2rem;
+        }
+    }
+
+    /*
+     * THE SEARCH PILL: up to 420px wide, a 10px radius, white at 4% with a white 8%
+     * line, 13px text and a 16px icon, on 12px of inline padding and 9px of block
+     * padding. The text stays at Filament's size where the pointer is a finger, so
+     * a phone does not zoom into it.
+     */
+    .fi-topbar .fi-global-search-ctn {
+        flex: 1 1 10rem;
+        min-inline-size: 0;
+        max-inline-size: 26.25rem;
+    }
+
+    .fi-topbar .fi-global-search .fi-input-wrp {
+        @apply rounded-[10px] bg-fill-subtle shadow-none ring-hairline-faint;
+    }
+
+    .fi-topbar .fi-global-search input.fi-input {
+        @apply py-2.25 leading-[normal];
+    }
+
+    .fi-topbar .fi-global-search .fi-input-wrp-prefix.fi-inline {
+        @apply pe-2.5;
+    }
+
+    .fi-topbar .fi-global-search .fi-input-wrp-prefix > .fi-icon {
+        @apply size-4 text-gray-500;
+    }
+
+    @media (hover: hover) and (pointer: fine) {
+        .fi-topbar .fi-global-search input.fi-input {
+            @apply text-[13px];
+        }
+    }
+
+    /* The user's avatar: a 34px circle on gray-700. */
+    .fi-topbar .fi-user-avatar {
+        @apply size-8.5 rounded-full bg-gray-700;
+    }
+
+    /* THE SIDEBAR: 258px (AdminPanelProvider::sidebarWidth()), gray-900, a hairline on its inline end. */
+    .fi-sidebar {
+        border-inline-end: 1px solid var(--color-hairline);
+    }
+
+    /* The nav: 14px above and below, 12px beside, and a 2px gap between every label and item. */
+    .fi-sidebar-nav {
+        @apply gap-y-0.5 px-3 py-3.5;
+    }
+
+    .fi-sidebar-nav-groups {
+        @apply mx-0 gap-y-0.5;
+    }
+
+    .fi-sidebar-group,
+    .fi-sidebar-group-items {
+        @apply gap-y-0.5;
+    }
+
+    /* A group label: 16px above, 6px below, 10px beside; 11px, 600, tracked .08em, in capitals, gray-500. */
+    .fi-sidebar-group-btn {
+        @apply px-2.5 pt-4 pb-1.5;
+    }
+
+    .fi-sidebar-group-label {
+        @apply text-[11px] font-semibold tracking-[0.08em] text-gray-500 uppercase;
+
+        line-height: normal;
+    }
+
+    /*
+     * A nav item: 9px by 10px of padding, an 8px radius, an 11px gap, 14px at 500 in gray-400.
+     * The icon and the label take the item's colour, so hovering or activating the item
+     * recolours both. Its icon is 18px at .9 opacity.
+     */
+    .fi-sidebar-item-btn {
+        @apply gap-x-2.75 rounded-lg px-2.5 py-2.25 text-gray-400;
+
+        & > .fi-icon {
+            @apply size-4.5 text-inherit opacity-90;
+        }
+
+        & > .fi-sidebar-item-label {
+            @apply text-[14px] font-medium text-inherit;
+
+            line-height: normal;
+        }
+    }
+
+    /* Hover and keyboard focus: white at 6% and gray-50 text. */
     .fi-sidebar-item.fi-sidebar-item-has-url > .fi-sidebar-item-btn {
-        @apply hover:bg-white/5 focus-visible:bg-white/5;
+        &:hover,
+        &:focus-visible {
+            @apply bg-fill-hover text-gray-50;
+        }
     }
 
+    /* The current page: primary-500 at 13% behind primary-400 text and icon. */
+    .fi-sidebar-item.fi-active > .fi-sidebar-item-btn {
+        @apply bg-primary-500/13 text-primary-400;
+
+        & > .fi-icon,
+        & > .fi-sidebar-item-label {
+            @apply text-inherit;
+        }
+    }
+
+    /* The prototype's hover replaces the active state's colours too, so the current page's item hovers like any other. */
     .fi-sidebar-item.fi-active.fi-sidebar-item-has-url > .fi-sidebar-item-btn {
-        @apply hover:bg-amber-500/20 focus-visible:bg-amber-500/20;
+        &:hover,
+        &:focus-visible {
+            @apply bg-fill-hover text-gray-50;
+        }
     }
 
+    /* THE PAGE HEADING: 28px, 600, tracked in by .025em, gray-50. The subheading is 12.5px in gray-400. */
     .fi-header-heading {
         @apply text-[28px] font-semibold tracking-[-0.025em] text-gray-50;
+
+        line-height: normal;
+        text-wrap: balance;
     }
 
     .fi-header-subheading {
-        @apply text-[13px] leading-6 text-gray-400;
+        @apply mt-1 text-[12.5px] leading-normal text-gray-400;
+    }
+
+    /* THE MAIN COLUMN: 24px between the heading and the page, and at most 1440px wide (the panel puts this class on <main>). */
+    .tc-width-admin {
+        @apply max-w-admin;
     }
 
     .fi-page-header-main-ctn,
@@ -83,7 +297,7 @@
     .fi-ta-ctn,
     .fi-modal-window,
     .fi-dropdown-panel {
-        @apply rounded-[14px] bg-gray-900 shadow-none ring-white/10;
+        @apply rounded-[14px] bg-gray-900 shadow-none ring-hairline;
     }
 
     .fi-section-header-heading {
@@ -95,21 +309,22 @@
         @apply rounded-[10px];
     }
 
+    /* The primary button: primary-500, primary-400 on hover, with the on-primary text and icon. */
     .fi-btn.fi-color-primary:not(.fi-outlined):not(label) {
-        @apply bg-amber-500 text-[#1c1204];
+        @apply bg-primary-500 text-on-primary;
 
         &.fi-force-enabled,
         &:not(.fi-disabled):not([disabled]) {
-            @apply hover:bg-amber-400;
+            @apply hover:bg-primary-400;
         }
 
         & > .fi-icon {
-            @apply text-[#1c1204];
+            @apply text-on-primary;
         }
     }
 
     .fi-simple-main {
-        @apply rounded-2xl p-6 ring-1 ring-white/10 sm:p-8;
+        @apply rounded-2xl p-6 ring-1 ring-hairline sm:p-8;
     }
 
     .tc-password-change .fi-page-header-main-ctn {
@@ -123,6 +338,6 @@
     .fi-sidebar-item-btn:focus-visible,
     .fi-topbar a:focus-visible,
     .fi-topbar button:focus-visible {
-        @apply outline-2 outline-offset-2 outline-amber-400;
+        @apply outline-2 outline-offset-2 outline-primary-400;
     }
 }
