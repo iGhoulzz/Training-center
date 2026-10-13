@@ -22,10 +22,10 @@
     full-width row instead, so the portal note is not squeezed into a strip.
 
     CONTRAST. Every text colour here is at least 4.5:1 on the navy (WCAG's formula,
-    the colour composited over #0d2745). The design draws the copyright line at 50%
-    cream, which measures 4.54:1: it passes by 0.04, so it is set a little higher, at
-    55% (5.19:1), and not left on the line. The 68% and 72% lines measure 7.17:1 and
-    7.87:1, the gold headings 6.39:1 and the cream brand name 13.97:1.
+    the colour composited over #0d2745). The copyright line is the design's 50%
+    cream, which measures 4.54:1, so it passes as drawn and is kept exact; 49% would
+    not (4.42:1). The 68% and 72% lines measure 7.17:1 and 7.87:1, the gold headings
+    6.39:1 and the cream brand name 13.97:1.
 --}}
 <footer class="bg-navy text-cream/68">
     <x-public.container class="flex flex-wrap gap-11 pt-13 pb-7.5">
@@ -57,7 +57,7 @@
     </x-public.container>
 
     <div class="border-t border-cream/11">
-        <x-public.container class="py-4.5 text-caption text-cream/55">
+        <x-public.container class="py-4.5 text-caption text-cream/50">
             <p>{{ __('public.footer.copyright', ['year' => CentreCalendar::yearOf(now()), 'name' => config('public_site.brand.name')]) }}</p>
         </x-public.container>
     </div>

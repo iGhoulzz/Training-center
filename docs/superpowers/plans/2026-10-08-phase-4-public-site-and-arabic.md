@@ -1192,10 +1192,11 @@ and the centre's name.
   centred `object-fit: cover` circle, as the prototype draws it.
 - **The brand link's accessible name** is the centre's full English name. The
   visible short name would otherwise be read letter by letter.
-- **The footer's copyright line** is cream at 50% on navy in the prototype,
-  which measures about 4.4:1 against the 4.5:1 that ENGINEERING requires for
-  small text. Its opacity rises to the lowest value that passes. Any other pair
-  below 4.5:1 is treated the same way and listed in the PR.
+- **Contrast.** Every text colour on the shell measures at least 4.5:1 as drawn,
+  so none is changed. The faintest is the footer's copyright line: cream at 50%
+  on navy, 4.54:1. An earlier draft of this plan said about 4.4:1; that was a
+  miscalculation. A pair below 4.5:1 would have its opacity raised to the lowest
+  value that passes, and be listed in the PR.
 - **Touch targets:**
   - Links in a row (the top bar, the navigation row, the footer's bottom line)
     get an invisible hit area of at least 44×44px, so they look as drawn.

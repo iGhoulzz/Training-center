@@ -29,7 +29,7 @@
 
 @source '../views/layouts/public.blade.php';
 @source '../views/public';
-@source '../views/components';
+@source '../views/components/public';
 
 @theme {
     /*
