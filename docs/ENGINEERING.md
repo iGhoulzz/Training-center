@@ -520,7 +520,8 @@ file under `resources/`.
   - nothing scrolls sideways;
   - running text is at least 16px, the prototype's base, and form inputs are
     too, so a phone does not zoom into them;
-  - every link and button has a touch target of at least 44×44px.
+  - below 1024px, the widths a finger uses, every link and button has a touch
+    target of at least 44×44px.
 - **Blade components for anything used twice**, under
   `resources/views/components/`. A partial included with variables is not a
   component.

@@ -1034,9 +1034,10 @@ follow the same pattern.
 - **Tokens:**
   - Tailwind 4 `@theme` variables in `resources/css/public.css`, named by role
     (`navy`, `navy-hover`, `gold`, `gold-light`, `gold-dark`, `cream`, `ink`,
-    `body`, `body-secondary`, `meta`, the success and danger hues), plus the type
-    scale, radii and shadows. Values are the README's and the prototype's,
-    exactly.
+    `body`, `body-secondary`, `meta`), plus the type scale, radii and shadows.
+    Values are the README's and the prototype's, exactly. A hue the prototype
+    uses for one state only, such as the success and danger colours, becomes a
+    token in the task whose page first shows it.
   - The admin's tokens live in `resources/css/filament/admin/theme.css`, from
     `Filament Revamp.dc.html` and the README's admin table.
 - **Fonts:** Instrument Serif and IBM Plex Sans Arabic on the public site (IBM
@@ -1045,16 +1046,14 @@ follow the same pattern.
   `vite.config.js`, as T16a does), so no third-party origin loads at runtime.
 - **Components** live under `resources/views/components/public/`. Each takes
   props and slots, merges caller classes through `$attributes`, and holds no
-  business logic. A component exists for anything used twice:
-  - `button` (primary, outline and ghost variants; it renders a link);
-  - `eyebrow`;
-  - `section-heading`;
-  - `container`;
-  - `card`;
-  - `chip` / `badge`;
-  - `icon` (the prototype's SVG paths, by name);
-  - `brand` (logo and name);
-  - and what the pages show is repeated.
+  business logic. A component exists for anything used twice, and is created by
+  the task that first uses it, so none ships without a caller:
+  - **T20a** creates what the shell uses: `container`, `button` (a link, in the
+    prototype's variants), `icon` (the prototype's SVG paths, by name), `brand`
+    (logo and name, in its header and footer forms) and `portal-link`. It also
+    brings T11–T13's components onto the tokens.
+  - **T20b** creates the page-level parts: `eyebrow`, `section-heading`, `card`,
+    `chip` and `badge`, and anything else the pages repeat.
 - **No inline `style` attribute** in a public view or component. A test enforces
   it, and that test is how "not pasted" stays true.
 - **Motion:** the prototype's entrance animations (`asRise`, `asFade`, `asSweep`)
@@ -1071,8 +1070,8 @@ follow the same pattern.
     and records the result in the PR.
   - **Readable on a phone:** body text at least 16px, and headings scaled
     through `clamp()` as the prototype does.
-  - **Easy to tap:** every link and button has a touch target of at least
-    44×44px.
+  - **Easy to tap:** below 1024px, every link and button has a touch target of
+    at least 44×44px.
   - **The navigation folds on a phone** into T11's no-script `<details>` menu,
     styled to the design. The "Student portal" button stays reachable at every
     width.
@@ -1121,6 +1120,9 @@ and the centre's name.
 - `config/public_site.php` — `brand`; `.env.example` — `APP_NAME`
 - `resources/views/components/public/*` — the component library (new, and T11–T13's
   components brought onto it)
+- `resources/views/public/**` (the pages) — **class renames only**, from T11's
+  palette to the new tokens, so no page names a token that no longer exists.
+  Each page's rebuild is T20b's.
 - `resources/views/layouts/public.blade.php`,
   `resources/views/public/partials/{header,navigation,footer}.blade.php` —
   rebuilt to the prototype's top bar, sticky nav, portal button and footer
@@ -1153,6 +1155,17 @@ and the centre's name.
   centred `object-fit: cover` circle, as the prototype draws it.
 - **The brand link's accessible name** is the centre's full English name. The
   visible short name would otherwise be read letter by letter.
+- **The footer's copyright line** is cream at 50% on navy in the prototype,
+  which measures about 4.4:1 against the 4.5:1 that ENGINEERING requires for
+  small text. Its opacity rises to the lowest value that passes. Any other pair
+  below 4.5:1 is treated the same way and listed in the PR.
+- **Touch targets:**
+  - Links in a row (the top bar, the navigation row, the footer's bottom line)
+    get an invisible hit area of at least 44×44px, so they look as drawn.
+  - Stacked links (the menu panel, and the footer's columns below 1024px) are
+    44px rows.
+  - From 1024px, the footer's columns keep the prototype's spacing, 32px from
+    one link to the next. A pointer that precise does not need the larger rows.
 
 **Done when**
 - The header, navigation and footer match `Public Site.dc.html`'s TOP BAR, NAV and
