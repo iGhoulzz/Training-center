@@ -9,19 +9,19 @@
 @use('App\Support\PublicRoute')
 
 @section('title')
-    {{ __('public.page_title', ['page' => __('public.programmes.heading'), 'name' => config('app.name')]) }}
+    {{ __('public.page_title', ['page' => __('public.programmes.heading'), 'name' => config('public_site.brand.name')]) }}
 @endsection
 
 @section('content')
     <div class="mx-auto max-w-6xl px-4 py-12">
-        <h1 class="font-serif text-4xl font-semibold">{{ __('public.programmes.heading') }}</h1>
-        <p class="mt-4 max-w-2xl text-lg text-navy-800">{{ __('public.programmes.intro') }}</p>
+        <h1 class="font-display text-4xl text-navy">{{ __('public.programmes.heading') }}</h1>
+        <p class="mt-4 max-w-2xl text-lg text-body">{{ __('public.programmes.intro') }}</p>
 
         @if ($programmes === [])
-            <p class="mt-10 text-navy-800">{{ __('public.programmes.empty') }}</p>
+            <p class="mt-10 text-body">{{ __('public.programmes.empty') }}</p>
             <a
                 href="{{ PublicRoute::url('public.contact') }}"
-                class="mt-4 inline-flex items-center rounded-full border border-navy-800 px-4 py-2 text-sm font-medium hover:bg-cream-100"
+                class="mt-4 inline-flex items-center rounded-pill border border-navy/20 px-4 py-2 text-sm font-medium text-navy hover:bg-navy hover:text-cream"
             >{{ __('public.links.contact') }}</a>
         @else
             <div class="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
