@@ -433,3 +433,29 @@ it('preserves batch pagination and honest global badges without ghost rows on mi
     $page->searchTable('never-matches-a-batch')->assertCountTableRecords(0);
     expect((int) $page->instance()->getTabs()['active']->getBadge())->toBe(12);
 });
+
+it('rounds capacity meters and changes tone only at the prototype threshold', function (int $active, int $capacity, ?int $percent, int $fill, string $tone) {
+    $batch = Batch::factory()->create(['capacity' => $capacity]);
+    $actor = ($this->actor)(['view_any_batch']);
+    $column = Livewire::actingAs($actor)->test(ListBatches::class)->instance()->getTable()->getColumn('enrolment_load');
+    $batch->setAttribute(Batch::ACTIVE_ENROLLMENTS_COUNT, $active);
+    $column->record($batch);
+    expect($column->getViewData()['tone'])->toBe($tone);
+    $html = $column->toHtml();
+    expect($html)->toContain('width="'.$fill.'" height="6" rx="3"');
+    if ($percent !== null) {
+        expect($html)->toContain(__('enrollment.meter_percent', ['value' => $percent]));
+    } else {
+        expect($html)->not->toContain('%');
+    }
+    if ($active > $capacity && $capacity > 0) {
+        expect($html)->toContain(__('enrollment.over_capacity_warning'));
+    }
+})->with([
+    'eighty stays green' => [8, 10, 80, 80, 'success'],
+    'fraction rounds up' => [2, 3, 67, 67, 'success'],
+    'below amber boundary' => [178, 200, 89, 89, 'success'],
+    'half rounds into amber' => [179, 200, 90, 90, 'primary'],
+    'over capacity stays flagged and clipped' => [4, 3, 133, 100, 'warning'],
+    'zero capacity stays unlimited' => [3, 0, null, 0, 'success'],
+]);

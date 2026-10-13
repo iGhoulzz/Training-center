@@ -441,7 +441,7 @@ class BatchResource extends Resource
                     ->viewData(fn (Batch $record): array => [
                         'value' => $record->activeEnrollmentCount(), 'maximum' => $record->capacity,
                         'label' => __('enrollment.enrolment_load_value', ['active' => $record->activeEnrollmentCount(), 'capacity' => $record->capacity > 0 ? $record->capacity : __('enrollment.no_capacity_limit_short')]),
-                        'tone' => $record->isOverCapacity() ? 'warning' : ($record->capacity > 0 && $record->activeEnrollmentCount() * 100 >= $record->capacity * 80 ? 'primary' : 'success'),
+                        'tone' => $record->isOverCapacity() ? 'warning' : ($record->capacity > 0 && intdiv($record->activeEnrollmentCount() * 100 + intdiv($record->capacity, 2), $record->capacity) >= 90 ? 'primary' : 'success'),
                         'note' => $record->isOverCapacity() ? __('enrollment.over_capacity_warning') : null, 'percentage' => true,
                     ]),
 
