@@ -144,7 +144,7 @@ first attempt.
 | `app/Domain/Staff/Filament/Resources/ActivityResource.php` | **T16e → T17** | T16e restyles; T17 routes `describeProperties()` and `describeChanges()` through `activity.field.*` |
 | `app/Domain/Finance/Exports/ReportDataBuilder.php` | **T04 only** | `profit()` gains the expenses column |
 | `app/Providers/Filament/StudentPanelProvider.php` | **T18 only** | The guest-locale middleware |
-| `docs/design/design_handoff_training_centre/` | **T19 → T20a** | Read-only reference for every other task. T20a notes in `docs/design/README.md` that the real logo and name are now committed (owner, 2026-10-13) |
+| `docs/design/design_handoff_training_centre/` | **T19 → T20a** | Read-only reference for every other task. T20a notes in `docs/design/README.md` that the real logo and name are now committed (owner, 2026-10-13), and corrects the handoff README's "Assets" sentence and "Files" row, which said the logo is not committed |
 | `database/seeders/RolePermissionSeeder.php` | **T03 → T04** | T03 adds the article permissions, T04 the expense and category permissions. T04 rebases on T03 and must not reorder T03's rows |
 | `app/Providers/Filament/AdminPanelProvider.php` | **T03 → T09 → T16a → T20c → T18** | T03 adds `discoverResources` for `Domain/Publications`; T09 adds `discoverPages` for `Domain/Enrollment/Filament/Pages`; T16a owns the theme, colours and navigation; T20c sets the real brand logo and name and checks the shell's tokens against the prototype; T18 adds the guest-locale middleware. Each adds its own lines and edits no other task's |
 | `app/Providers/AppServiceProvider.php` | **T11 → T13** | T11 registers the `public-site` rate limiter, T13 the `publication-download` limiter. Nothing else in the file is touched |
@@ -1151,7 +1151,9 @@ and the centre's name.
   components brought onto it)
 - `resources/views/public/**` (the pages) — **class renames only**, from T11's
   palette to the new tokens, so no page names a token that no longer exists.
-  Each page's rebuild is T20b's.
+  Each page's rebuild is T20b's. The one exception is `home.blade.php`: the
+  page's "TC" placeholder mark, and the grid that held it, come out with the
+  `public.brand.mark` key they used, which T20a deletes.
 - `resources/views/layouts/public.blade.php`,
   `resources/views/public/partials/{header,navigation,footer}.blade.php` —
   rebuilt to the prototype's top bar, sticky nav, portal button and footer
@@ -1159,7 +1161,10 @@ and the centre's name.
 - `lang/en/public.php` — appended
 - `docs/ENGINEERING.md` — "Frontend (phase 4)": the design-system rule (seam, after
   T13)
-- `docs/design/README.md` — the brand note (seam, after T19)
+- `docs/design/README.md` — the brand note (seam, after T19). Also, in
+  `docs/design/design_handoff_training_centre/README.md`, the "Assets" sentence
+  and the "Files" table row. Both said the real logo is not committed, so the
+  README would contradict itself if only one were changed.
 - `tests/Feature/Public/DesignSystemTest.php` — no inline `style` in public views
   and components, the logo served, and the brand from config
 - Existing tests, **only the assertions that name the shell's or the
@@ -1197,9 +1202,16 @@ and the centre's name.
   on navy, 4.54:1. An earlier draft of this plan said about 4.4:1; that was a
   miscalculation. A pair below 4.5:1 would have its opacity raised to the lowest
   value that passes, and be listed in the PR.
+- **Every shell link changes colour on hover.** In the prototype, each link's
+  inline colour overrides its own global `a:hover`, so only the Publications
+  link and the footer's "Student portal" react. That is an artefact of the
+  prototype's inline styles, not a design choice, and a link that gives no
+  feedback is harder to use.
 - **Touch targets:**
   - Links in a row (the top bar, the navigation row, the footer's bottom line)
-    get an invisible hit area of at least 44×44px, so they look as drawn.
+    get an invisible hit area of at least 44×44px, so they look as drawn. Below
+    1024px, the top bar's links are real 44px boxes instead. An invisible area
+    there would start above the page and end under the sticky header.
   - Stacked links (the menu panel, and the footer's columns below 1024px) are
     44px rows.
   - From 1024px, the footer's columns keep the prototype's spacing, 32px from
