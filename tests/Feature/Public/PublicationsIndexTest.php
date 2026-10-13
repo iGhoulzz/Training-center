@@ -1052,11 +1052,14 @@ it('puts Publications in the navigation between Programmes and the verifier, and
     $nav = substr($html, (int) strpos($html, '<nav aria-label='), (int) strpos($html, '</nav>') - (int) strpos($html, '<nav aria-label='));
     $footer = substr($html, (int) strpos($html, '<footer'), (int) strpos($html, '</footer>') - (int) strpos($html, '<footer'));
 
-    // The navigation is rendered twice from one list, narrow then wide.
+    // The navigation is rendered twice from one list, narrow then wide. The narrow
+    // menu's last item is the student portal's sign-in (P4-T15), which the wide row
+    // does not repeat.
     $expected = [url('/about'), url('/programmes'), url('/publications'), url('/verify/certificates'), url('/contact')];
+    $portal = route('filament.student.auth.login');
 
-    expect(array_values(array_unique(array_column(libraryAnchors($nav), 'href'))))->toBe($expected)
-        ->and(array_column(libraryAnchors($nav), 'href'))->toHaveCount(count($expected) * 2)
+    expect(array_values(array_unique(array_column(libraryAnchors($nav), 'href'))))->toBe([...$expected, $portal])
+        ->and(array_column(libraryAnchors($nav), 'href'))->toHaveCount(count($expected) * 2 + 1)
         ->and(array_column(libraryAnchors($footer), 'href'))->toContain(url('/publications'));
 });
 

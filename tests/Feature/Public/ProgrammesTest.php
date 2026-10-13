@@ -366,11 +366,18 @@ it('never shows seats, capacity or an enrolment count', function () {
     courseWithBatch('2026-10-20', ['name_en' => 'Busy Course'], ['capacity' => 17]);
 
     foreach (['/', '/programmes', '/programmes/'.Course::query()->firstOrFail()->id] as $path) {
-        $text = strtolower((string) $this->get($path)->assertOk()->getContent());
+        $page = strtolower((string) $this->get($path)->assertOk()->getContent());
+        preg_match('/<main\b.*?<\/main>/s', $page, $main);
 
-        foreach (['seat', 'capacity', 'enrol'] as $word) {
-            expect(str_contains($text, $word))->toBeFalse("{$path} mentions [{$word}].");
+        // Seats and capacity are checked across the whole page. "enrol" is checked in
+        // the page's own <main>: the footer's portal note, the design's own copy,
+        // says a login is issued "when you enrol", which names no seat, place or count.
+        foreach (['seat', 'capacity'] as $word) {
+            expect(str_contains($page, $word))->toBeFalse("{$path} mentions [{$word}].");
         }
+
+        expect($main)->not->toBeEmpty("{$path} has no <main> to check.")
+            ->and(str_contains($main[0], 'enrol'))->toBeFalse("{$path} mentions [enrol].");
     }
 });
 
