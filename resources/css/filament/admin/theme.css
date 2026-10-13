@@ -173,8 +173,13 @@
         @apply rounded-[10px] bg-fill-subtle shadow-none ring-hairline-faint;
     }
 
+    /*
+     * The placeholder is gray-400 where Filament's dark theme draws gray-500: gray-500 is
+     * 3.32:1 on the pill (white at 4% over the gray-900 topbar), and small text needs 4.5:1.
+     * gray-400 is 6.3:1. The same reasoning as the group labels.
+     */
     .fi-topbar .fi-global-search input.fi-input {
-        @apply py-2.25 leading-[normal];
+        @apply py-2.25 leading-[normal] placeholder:text-gray-400;
     }
 
     .fi-topbar .fi-global-search .fi-input-wrp-prefix.fi-inline {
@@ -288,9 +293,19 @@
         @apply mt-1 text-[12.5px] leading-normal text-gray-400;
     }
 
-    /* THE MAIN COLUMN: 24px between the heading and the page, and at most 1440px wide (the panel puts this class on <main>). */
+    /*
+     * THE MAIN COLUMN: 24px between the heading and the page, and at most 1440px wide (the
+     * panel puts this class on <main>). Filament centres <main> with auto inline margins; the
+     * prototype's main has none, so it sits at the start of its column. The start margin is
+     * zero and the end margin stays auto: beyond 1440px the column is its maximum width, at
+     * the start, in either direction.
+     */
     .tc-width-admin {
         @apply max-w-admin;
+    }
+
+    .fi-main {
+        @apply ms-0;
     }
 
     .fi-page-header-main-ctn,
@@ -340,7 +355,10 @@
         @apply text-2xl;
     }
 
+    /* The brand link below 1024px is in the sidebar's header, not the topbar, so it is named too. */
     .fi-sidebar-item-btn:focus-visible,
+    .fi-sidebar-header a:focus-visible,
+    .fi-sidebar-header button:focus-visible,
     .fi-topbar a:focus-visible,
     .fi-topbar button:focus-visible {
         @apply outline-2 outline-offset-2 outline-primary-400;

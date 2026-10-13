@@ -559,3 +559,79 @@ it('gives the content its 1440px width, and the shell its measurements, as token
         }
     }
 });
+
+/**
+ * The body of the first rule in theme.css whose selector list is exactly this, or null.
+ */
+function adminThemeRuleBody(string $css, string $selector): ?string
+{
+    $code = (string) preg_replace('~/\*.*?\*/~s', ' ', $css);
+
+    if (preg_match('/(?<![\w.-])'.preg_quote($selector, '/').'\s*\{(.*?)\n    \}/s', $code, $match) === 1) {
+        return $match[1];
+    }
+
+    return null;
+}
+
+it('lifts the topbar search placeholder to gray-400, because gray-500 is 3.32:1 on the pill', function () {
+    $css = (string) file_get_contents(resource_path('css/filament/admin/theme.css'));
+    $rule = adminThemeRuleBody($css, '.fi-topbar .fi-global-search input.fi-input');
+
+    expect($rule)->not->toBeNull()
+        ->and(str_contains((string) $rule, 'placeholder:text-gray-400'))->toBeTrue()
+        ->and(str_contains((string) $rule, 'placeholder:text-gray-500'))->toBeFalse();
+
+    // Hand-computed from the README's panel values: gray-400 #9ca3af on the pill, which is
+    // white at 4% (the --color-fill-subtle token) over the gray-900 topbar, #111827.
+    $luminance = function (array $colour): float {
+        [$red, $green, $blue] = array_map(
+            fn (float $channel): float => ($channel / 255) <= 0.04045 ? ($channel / 255) / 12.92 : ((($channel / 255) + 0.055) / 1.055) ** 2.4,
+            $colour,
+        );
+
+        return 0.2126 * $red + 0.7152 * $green + 0.0722 * $blue;
+    };
+    $surface = [0x11, 0x18, 0x27];
+    $pill = array_map(fn (int $channel): float => 255 * 0.04 + $channel * (1 - 0.04), $surface);
+
+    $ratio = fn (array $text): float => (max($luminance($text), $luminance($pill)) + 0.05) / (min($luminance($text), $luminance($pill)) + 0.05);
+
+    expect(str_contains($css, '--color-fill-subtle: rgb(255 255 255 / 0.04);'))->toBeTrue()
+        ->and($ratio([0x6B, 0x72, 0x80]))->toBeLessThan(4.5)
+        ->and($ratio([0x9C, 0xA3, 0xAF]))->toBeGreaterThanOrEqual(4.5);
+});
+
+it('gives the brand link in the sidebar header the same focus ring as the topbar\'s', function () {
+    $css = (string) file_get_contents(resource_path('css/filament/admin/theme.css'));
+    $code = (string) preg_replace('~/\*.*?\*/~s', ' ', $css);
+
+    // The rule that draws the ring, with every selector it covers.
+    expect(preg_match('/((?:[^{}]+,\s*)*[^{},]+)\{[^}]*outline-primary-400[^}]*\}/s', $code, $rule))->toBe(1);
+
+    $selectors = array_map('trim', explode(',', $rule[1]));
+
+    expect($selectors)->toContain('.fi-topbar a:focus-visible')
+        ->toContain('.fi-sidebar-header a:focus-visible');
+
+    // The brand link below 1024px lives in that header, so the selector reaches it.
+    $actor = User::factory()->create(['is_active' => true]);
+    $actor->givePermissionTo('access_admin_panel');
+
+    $html = renderedWithoutLivewireState($this->actingAs($actor)->get('/admin')->assertSuccessful());
+    $document = HTMLDocument::createFromString($html, LIBXML_NOERROR);
+
+    expect($document->querySelector('.fi-sidebar-header a .tc-brand'))->not->toBeNull();
+});
+
+it('aligns the content column to the start, not the middle, beyond its 1440px maximum', function () {
+    $css = (string) file_get_contents(resource_path('css/filament/admin/theme.css'));
+    $rule = adminThemeRuleBody($css, '.fi-main');
+
+    // Filament centres <main> with margin-inline: auto. The prototype's main has no auto
+    // margins, so it sits at the start of its column; the logical start margin is zero, and
+    // the end margin stays auto, so the column is as wide as its maximum and no wider.
+    expect($rule)->not->toBeNull()
+        ->and(str_contains((string) $rule, 'ms-0'))->toBeTrue()
+        ->and(str_contains((string) $rule, 'ml-'))->toBeFalse();
+});
