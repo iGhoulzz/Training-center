@@ -60,16 +60,16 @@
             --mark-line: rgb(201 164 76 / .5);
 
             /*
-             * Text: the cream at the opacities the design uses, each checked against
-             * WCAG 4.5:1 over the navy page and its panel. The row label is the design's
-             * .55 raised to .58 and the note its .45 raised to .57; the placeholder has
-             * no value in the design.
+             * Text: the cream at the opacities the design uses, each held to WCAG 4.5:1 over
+             * the WORST the page can put behind it, which is navy plus the glow at its full
+             * .18 (the glow moves, and reaches the panel, as the screen narrows) under the
+             * panel's tint. The label is the design's .6 raised to .62, the hint .66 to .69
+             * and the note .45 to .62; the placeholder has no value in the design.
              */
             --text-intro: rgb(250 246 236 / .74);
-            --text-label: rgb(250 246 236 / .6);
-            --text-sub: rgb(250 246 236 / .66);
-            --text-row-label: rgb(250 246 236 / .58);
-            --text-note: rgb(250 246 236 / .57);
+            --text-label: rgb(250 246 236 / .62);
+            --text-sub: rgb(250 246 236 / .69);
+            --text-note: rgb(250 246 236 / .62);
             --text-placeholder: rgb(250 246 236 / .6);
         }
 
@@ -186,8 +186,7 @@
 
         .note {
             margin: 0;
-            margin-block-start: 1.375rem;
-            max-inline-size: 480px;
+            margin-block-start: 18px;
             font-size: 1rem;
             line-height: 1.6;
             color: var(--text-note);
@@ -256,7 +255,7 @@
         }
 
         .button:hover { background: var(--gold-light); color: var(--ink); }
-        .hint { margin: 0; margin-block-start: 10px; font-size: .78125rem; line-height: 1.6; color: var(--text-sub); }
+        .hint { margin: 0; margin-block-start: 10px; font-size: 1rem; line-height: 1.6; color: var(--text-sub); }
         @media (min-width: 30rem) {
             .button { flex: none; }
         }
@@ -265,6 +264,7 @@
         }
         @media (min-width: 64rem) {
             .intro { font-size: .96875rem; }
+            .hint { font-size: .78125rem; }
             .note { font-size: .78125rem; }
         }
     </style>
@@ -288,7 +288,6 @@
             <p class="eyebrow">{{ __('verify.eyebrow') }}</p>
             <h1>{{ __('verify.form_heading') }}</h1>
             <p class="intro">{{ __('verify.form_intro') }}</p>
-            <p class="note">{{ __('verify.privacy_note') }}</p>
         </div>
         <div class="panel">
             <form method="POST" action="{{ route('verify.certificates.submit') }}">
@@ -310,6 +309,7 @@
                 </div>
                 <p class="hint" id="reference-help">{{ __('verify.reference_hint') }}</p>
             </form>
+            <p class="note">{{ __('verify.privacy_note') }}</p>
         </div>
     </main>
 </body>

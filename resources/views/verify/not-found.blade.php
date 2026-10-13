@@ -68,13 +68,15 @@
             --mark-line: rgb(201 164 76 / .5);
 
             /*
-             * Text: the cream at the opacities the design uses, each checked against
-             * WCAG 4.5:1 over the navy page and the result card. The note is the
-             * design's .45 raised to .57.
+             * Text: the cream at the opacities the design uses, each held to WCAG 4.5:1 over
+             * the WORST the page can put behind it, which is navy plus the glow at its full
+             * .18 (the glow moves, and reaches the panel, as the screen narrows) under the
+             * panel's tint and then the card's. The sub-line is the design's .66 raised to
+             * .69 and the note .45 to .62.
              */
             --text-intro: rgb(250 246 236 / .74);
-            --text-sub: rgb(250 246 236 / .66);
-            --text-note: rgb(250 246 236 / .57);
+            --text-sub: rgb(250 246 236 / .69);
+            --text-note: rgb(250 246 236 / .62);
 
             /*
              * The neutral result colours, from the design's RESULTS: a missing
@@ -199,8 +201,7 @@
 
         .note {
             margin: 0;
-            margin-block-start: 1.375rem;
-            max-inline-size: 480px;
+            margin-block-start: 18px;
             font-size: 1rem;
             line-height: 1.6;
             color: var(--text-note);
@@ -301,7 +302,6 @@
             <p class="eyebrow">{{ __('verify.eyebrow') }}</p>
             <h1>{{ __('verify.show_heading') }}</h1>
             <p class="intro">{{ __('verify.result_intro') }}</p>
-            <p class="note">{{ __('verify.privacy_note') }}</p>
         </div>
         <div class="panel">
             <section class="result" aria-labelledby="result-heading">
@@ -320,6 +320,7 @@
             <p class="actions">
                 <a class="button" href="{{ route('verify.certificates.form') }}">{{ __('verify.verify_another') }}</a>
             </p>
+            <p class="note">{{ __('verify.privacy_note') }}</p>
         </div>
     </main>
 </body>

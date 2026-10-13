@@ -58,14 +58,18 @@
             --mark-line: rgb(201 164 76 / .5);
 
             /*
-             * Text: the cream at the opacities the design uses, each checked against
-             * WCAG 4.5:1 over the navy page and the result card. The row label is the
-             * design's .55 raised to .58 and the note its .45 raised to .57.
+             * Text: the cream at the opacities the design uses, each held to WCAG 4.5:1 over
+             * the WORST the page can put behind it, which is navy plus the glow at its full
+             * .18 (the glow moves, and reaches the panel, as the screen narrows) under the
+             * panel's tint and then the card's. The row label is the design's .55 raised to
+             * .69, the sub-line .66 to .69 and the note .45 to .62. The revoked headline is
+             * the design's #f0908f lightened to #f3a8a7, the same hue, because at 15px it is
+             * not large text and #f0908f measured 3.74:1 there.
              */
             --text-intro: rgb(250 246 236 / .74);
-            --text-sub: rgb(250 246 236 / .66);
-            --text-row-label: rgb(250 246 236 / .58);
-            --text-note: rgb(250 246 236 / .57);
+            --text-sub: rgb(250 246 236 / .69);
+            --text-row-label: rgb(250 246 236 / .69);
+            --text-note: rgb(250 246 236 / .62);
 
             /*
              * The result colours, from the design's RESULTS: the headline and mark, the
@@ -84,7 +88,7 @@
             --replaced-fill: rgb(201 164 76 / .12);
             --replaced-line: rgb(201 164 76 / .45);
             --replaced-mark: rgb(201 164 76 / .24);
-            --revoked-fg: #f0908f;
+            --revoked-fg: #f3a8a7;
             --revoked-fill: rgb(224 102 102 / .12);
             --revoked-line: rgb(224 102 102 / .42);
             --revoked-mark: rgb(224 102 102 / .22);
@@ -203,8 +207,7 @@
 
         .note {
             margin: 0;
-            margin-block-start: 1.375rem;
-            max-inline-size: 480px;
+            margin-block-start: 18px;
             font-size: 1rem;
             line-height: 1.6;
             color: var(--text-note);
@@ -289,7 +292,7 @@
 
         .result-text { flex: 1; min-inline-size: 0; }
         h2 { margin: 0; font-size: .9375rem; font-weight: 600; color: var(--status-fg); }
-        .status-message { margin: 0; margin-block-start: 2px; font-size: .78125rem; color: var(--text-sub); }
+        .status-message { margin: 0; margin-block-start: 2px; font-size: 1rem; color: var(--text-sub); }
         dl {
             display: flex;
             flex-direction: column;
@@ -314,6 +317,7 @@
         @media (min-width: 64rem) {
             .intro { font-size: .96875rem; }
             .note { font-size: .78125rem; }
+            .status-message { font-size: .78125rem; }
         }
         @media (prefers-reduced-motion: no-preference) {
             .result { animation: result-in .3s ease both; }
@@ -343,7 +347,6 @@
             <p class="eyebrow">{{ __('verify.eyebrow') }}</p>
             <h1>{{ __('verify.show_heading') }}</h1>
             <p class="intro">{{ __('verify.result_intro') }}</p>
-            <p class="note">{{ __('verify.privacy_note') }}</p>
         </div>
         <div class="panel">
             <section class="result result--{{ $view->status->value }}" aria-labelledby="result-heading">
@@ -394,6 +397,7 @@
             <p class="actions">
                 <a class="button" href="{{ route('verify.certificates.form') }}">{{ __('verify.verify_another') }}</a>
             </p>
+            <p class="note">{{ __('verify.privacy_note') }}</p>
         </div>
     </main>
 </body>

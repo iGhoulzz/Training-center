@@ -424,13 +424,13 @@ it('gives each certificate state its own colours', function (string $state, stri
     $document = verifierDesignDocument((string) $this->get(route('verify.certificates.show', ['reference' => $certificate->reference_number]))->getContent());
     $card = $document->querySelector('section.result');
 
-    // Hand-written from the design's RESULTS: valid #7bd8a0, replaced #e0c179, revoked #f0908f.
+    // Hand-written from the design's RESULTS: valid #7bd8a0, replaced #e0c179, revoked #f0908f lightened to #f3a8a7 (the same hue) so the 15px headline holds 4.5:1 under the glow.
     expect($card?->classList->contains("result--{$state}"))->toBeTrue()
         ->and(verifierDesignTokens(verifierDesignCss($document))["--{$state}-fg"])->toBe($foreground);
 })->with([
     'valid' => ['valid', '#7bd8a0'],
     'replaced' => ['replaced', '#e0c179'],
-    'revoked' => ['revoked', '#f0908f'],
+    'revoked' => ['revoked', '#f3a8a7'],
 ]);
 
 it('draws the miss in the neutral colours, with no status modifier', function () {
@@ -457,28 +457,31 @@ it('carries no inline style attribute on any verifier page or in its source', fu
     }
 });
 
-it('keeps every text colour at 4.5:1 over the navy page, its glow, its panel and the result card', function () {
+it('keeps every text colour at 4.5:1 over the worst the page\'s glow can put behind it', function () {
     foreach (verifierDesignPages() as $label => $url) {
         $document = verifierDesignDocument((string) $this->get($url)->getContent());
         $tokens = verifierDesignTokens(verifierDesignCss($document));
         $colour = fn (string $name): array => verifierDesignColour($name, $tokens);
 
-        // The page is navy under the gradient; the glow is the gradient at its brightest
-        // point, the worst case behind the text in the left column. The panel is a tint
-        // over the page, and the field a tint over the panel.
-        $page = $colour('--navy');
-        $glow = verifierDesignOver($colour('--glow'), $page);
-        $panel = verifierDesignOver($colour('--panel-fill'), $page);
+        // THE WORST CASE, NOT THE TYPICAL ONE. The body's gradient is a gold glow at .18 at
+        // its centre, fading to nothing at 45% of the way to the farthest corner. The page
+        // is as tall and wide as the screen, so that radius is about 590px at 1440 by 900 and
+        // the glow moves, and reaches the panel, as the screen narrows. So no text may be
+        // tested over plain navy: every pair is composited over navy plus the glow at its
+        // full peak, then the panel's tint, then the field's or the status card's tint over
+        // that. Light text on a lighter ground only gets worse, so what holds here holds at
+        // every width. (A review measured the real render at 1440, 768 and 375px: a pair
+        // tested over plain navy had passed here and measured 4.16 to 4.44 there.)
+        $glow = verifierDesignOver($colour('--glow'), $colour('--navy'));
+        $panel = verifierDesignOver($colour('--panel-fill'), $glow);
 
         $pairs = [
-            'cream on the page' => [$colour('--cream'), $page],
             'cream on the glow' => [$colour('--cream'), $glow],
-            'the eyebrow on the page' => [$colour('--gold'), $page],
             'the eyebrow on the glow' => [$colour('--gold'), $glow],
-            'the intro on the page' => [$colour('--text-intro'), $page],
             'the intro on the glow' => [$colour('--text-intro'), $glow],
-            'the note on the page' => [$colour('--text-note'), $page],
-            'the note on the glow' => [$colour('--text-note'), $glow],
+            'the back link on the glow' => [$colour('--text-intro'), $glow],
+            'the Arabic name on the glow' => [$colour('--gold'), $glow],
+            'the note on the panel' => [$colour('--text-note'), $panel],
             'the button text on gold' => [$colour('--ink'), $colour('--gold')],
             'the button text on gold, hovered' => [$colour('--ink'), $colour('--gold-light')],
         ];
@@ -512,6 +515,15 @@ it('keeps every text colour at 4.5:1 over the navy page, its glow, its panel and
             expect(verifierDesignContrast(verifierDesignOver($foreground, $background), $background))
                 ->toBeGreaterThanOrEqual(4.5, "{$label}: {$name} is under 4.5:1.");
         }
+
+        // The status mark is a shape, not text: 3:1 against the fill it sits on.
+        foreach (($label === 'result' ? ['neutral', 'valid', 'replaced', 'revoked'] : ($label === 'miss' ? ['neutral'] : [])) as $state) {
+            $card = verifierDesignOver($colour("--{$state}-fill"), $panel);
+            $mark = verifierDesignOver($colour("--{$state}-mark"), $card);
+
+            expect(verifierDesignContrast(verifierDesignOver($colour("--{$state}-fg"), $mark), $mark))
+                ->toBeGreaterThanOrEqual(3.0, "{$label}: the {$state} mark is under 3:1.");
+        }
     }
 });
 
@@ -534,32 +546,35 @@ it('gives every link and button a touch target of at least 44px', function (stri
     }
 })->with(['form', 'show', 'not-found']);
 
-it('sets sentences of prose at 16px below 1024px and at the design\'s size from there', function (string $file) {
+it('sets every sentence of prose at 16px below 1024px and at the design\'s size from there', function (string $file, array $prose) {
     $source = (string) file_get_contents(resource_path("views/verify/{$file}.blade.php"));
 
-    // Hand-written from the design: the intro is 15.5px (.96875rem) and the note 12.5px
-    // (.78125rem) on a desktop; below 1024px, running text is at least 16px (1rem).
+    // Hand-written from the design: the intro is 15.5px (.96875rem) and a note, a hint or a
+    // status line 12.5px (.78125rem) on a desktop; below 1024px, running text is 16px (1rem).
+    // A sentence is prose even when the design draws it as a caption: the hint under the
+    // input, the sentence under a certificate's status (design 7.3 requires the revocation
+    // date in it) and the note are all sentences.
     preg_match('/@media \(min-width: 64rem\) \{(.*?)\n        \}/s', $source, $desktop);
 
-    foreach (['.intro' => '.96875rem', '.note' => '.78125rem'] as $selector => $designSize) {
+    foreach ($prose as $selector => $designSize) {
         preg_match('/(?<![\w-])'.preg_quote($selector, '/').'\s*\{([^}]*)\}/', $source, $base);
 
         expect(str_contains($base[1] ?? '', 'font-size: 1rem;'))->toBeTrue("{$file}: {$selector} is not 16px below 1024px.")
             ->and(str_contains($desktop[1] ?? '', "{$selector} { font-size: {$designSize}; }"))->toBeTrue("{$file}: {$selector} is not the design's size from 1024px.");
     }
+})->with([
+    'form' => ['form', ['.intro' => '.96875rem', '.hint' => '.78125rem', '.note' => '.78125rem']],
+    'show' => ['show', ['.intro' => '.96875rem', '.status-message' => '.78125rem', '.note' => '.78125rem']],
+    'not-found' => ['not-found', ['.intro' => '.96875rem', '.status-message' => '.78125rem', '.note' => '.78125rem']],
+]);
 
-    // The miss's body is two sentences, so it is prose as well; the sub-line under a
-    // found certificate's status is one sentence and stays the design's caption.
-    if ($file === 'not-found') {
-        preg_match('/\.status-message\s*\{([^}]*)\}/', $source, $message);
+it('draws the privacy note inside the panel, under the form or the result, and not in the intro column', function (string $page) {
+    $document = verifierDesignDocument((string) $this->get(verifierDesignPages()[$page])->getContent());
+    $notes = $document->querySelectorAll('.note');
 
-        expect(str_contains($message[1] ?? '', 'font-size: 1rem;'))->toBeTrue()
-            ->and(str_contains($desktop[1] ?? '', '.status-message { font-size: .78125rem; }'))->toBeTrue();
-    }
-
-    if ($file === 'show') {
-        preg_match('/\.status-message\s*\{([^}]*)\}/', $source, $message);
-
-        expect(str_contains($message[1] ?? '', 'font-size: .78125rem;'))->toBeTrue();
-    }
-})->with(['form', 'show', 'not-found']);
+    // The design draws it in the panel, 18px under the input row; the sentence is unchanged.
+    expect(count($notes))->toBe(1)
+        ->and(trim($notes[0]->textContent))->toBe('Verification shows certificate details only. Student contact details and financial information are kept private.')
+        ->and($document->querySelector('.panel .note'))->not->toBeNull()
+        ->and($document->querySelector('.lede .note'))->toBeNull();
+})->with(['form', 'result', 'miss']);
