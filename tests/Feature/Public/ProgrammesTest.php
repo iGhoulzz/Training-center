@@ -365,19 +365,23 @@ it('shows the same facts on a card and on its programme page', function () {
 it('never shows seats, capacity or an enrolment count', function () {
     courseWithBatch('2026-10-20', ['name_en' => 'Busy Course'], ['capacity' => 17]);
 
+    // The one sentence on any of these pages that may say "enrol" is the footer's
+    // portal note, the design's own copy: a login is issued "when you enrol", which
+    // names no seat, place or count. It is cut out by its exact rendered text, and the
+    // rest of the page, header and footer included, is held to the old rule.
+    $note = e(__('public.portal.note'));
+
     foreach (['/', '/programmes', '/programmes/'.Course::query()->firstOrFail()->id] as $path) {
-        $page = strtolower((string) $this->get($path)->assertOk()->getContent());
-        preg_match('/<main\b.*?<\/main>/s', $page, $main);
+        $html = (string) $this->get($path)->assertOk()->getContent();
 
-        // Seats and capacity are checked across the whole page. "enrol" is checked in
-        // the page's own <main>: the footer's portal note, the design's own copy,
-        // says a login is issued "when you enrol", which names no seat, place or count.
-        foreach (['seat', 'capacity'] as $word) {
-            expect(str_contains($page, $word))->toBeFalse("{$path} mentions [{$word}].");
+        // The control: a cut that found nothing would pass for having cut the note.
+        expect(substr_count($html, $note))->toBe(1, "{$path} does not render the portal note exactly once.");
+
+        $text = strtolower(str_replace($note, '', $html));
+
+        foreach (['seat', 'capacity', 'enrol'] as $word) {
+            expect(str_contains($text, $word))->toBeFalse("{$path} mentions [{$word}].");
         }
-
-        expect($main)->not->toBeEmpty("{$path} has no <main> to check.")
-            ->and(str_contains($main[0], 'enrol'))->toBeFalse("{$path} mentions [enrol].");
     }
 });
 
