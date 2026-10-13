@@ -1075,12 +1075,21 @@ follow the same pattern.
   - **No horizontal scroll at any width.** The lead measures
     `document.documentElement.scrollWidth` against the viewport in the browser,
     and records the result in the PR.
-  - **Readable on a phone (public site):** running text and form inputs at
-    least 16px, the public prototype's own base, and headings scaled through
-    `clamp()` as the prototype does. The admin prototype's base is 14px, and the
-    admin keeps it. Filament already raises its inputs to 16px on touch devices
-    so a phone does not zoom into them. "Match exactly" therefore has one
-    meaning: each surface matches its own prototype.
+  - **Readable on a phone (public site):**
+    - Below 1024px, running text is at least 16px, the public prototype's own
+      base. Running text means sentences of prose wherever they sit, the
+      footer's description and portal note included. Links, headings, labels and
+      captions keep the prototype's sizes, and headings scale through `clamp()`
+      as the prototype does.
+    - From 1024px, every element takes the prototype's own size. This is the
+      same split as the touch targets (Codex's review of #102, 2026-10-13).
+    - Form inputs are at least 16px at every width.
+    - The admin prototype's base is 14px, and the admin keeps it. Filament
+      already raises its inputs to 16px on touch devices so a phone does not
+      zoom into them.
+    - "Match exactly" therefore has one meaning: on a desktop, each surface
+      matches its own prototype; below 1024px, the readability and touch floors
+      apply on top of it.
   - **The admin (T20c, T16b–T16e):** no horizontal page scroll; the sidebar
     collapses as Filament does on a phone; tables scroll inside their own box.
   - **Easy to tap:** below 1024px, every link and button has a touch target of

@@ -92,35 +92,105 @@ function designSystemFirstInlineStyle(string $source): ?string
 }
 
 /**
+ * The CSS named colours (CSS Color 4), as a regex alternation.
+ *
+ * `transparent` and `currentColor` are left out on purpose: neither is a raw colour.
+ * One is no colour at all, and the other is how an icon takes the colour of its text.
+ */
+function designSystemNamedColours(): string
+{
+    return 'aliceblue|antiquewhite|aqua|aquamarine|azure|beige|bisque|black|blanchedalmond|blue|blueviolet|brown|'
+        .'burlywood|cadetblue|chartreuse|chocolate|coral|cornflowerblue|cornsilk|crimson|cyan|darkblue|darkcyan|'
+        .'darkgoldenrod|darkgray|darkgreen|darkgrey|darkkhaki|darkmagenta|darkolivegreen|darkorange|darkorchid|'
+        .'darkred|darksalmon|darkseagreen|darkslateblue|darkslategray|darkslategrey|darkturquoise|darkviolet|'
+        .'deeppink|deepskyblue|dimgray|dimgrey|dodgerblue|firebrick|floralwhite|forestgreen|fuchsia|gainsboro|'
+        .'ghostwhite|gold|goldenrod|gray|green|greenyellow|grey|honeydew|hotpink|indianred|indigo|ivory|khaki|'
+        .'lavender|lavenderblush|lawngreen|lemonchiffon|lightblue|lightcoral|lightcyan|lightgoldenrodyellow|'
+        .'lightgray|lightgreen|lightgrey|lightpink|lightsalmon|lightseagreen|lightskyblue|lightslategray|'
+        .'lightslategrey|lightsteelblue|lightyellow|lime|limegreen|linen|magenta|maroon|mediumaquamarine|'
+        .'mediumblue|mediumorchid|mediumpurple|mediumseagreen|mediumslateblue|mediumspringgreen|'
+        .'mediumturquoise|mediumvioletred|midnightblue|mintcream|mistyrose|moccasin|navajowhite|navy|oldlace|'
+        .'olive|olivedrab|orange|orangered|orchid|palegoldenrod|palegreen|paleturquoise|palevioletred|'
+        .'papayawhip|peachpuff|peru|pink|plum|powderblue|purple|rebeccapurple|red|rosybrown|royalblue|'
+        .'saddlebrown|salmon|sandybrown|seagreen|seashell|sienna|silver|skyblue|slateblue|slategray|slategrey|'
+        .'snow|springgreen|steelblue|tan|teal|thistle|tomato|turquoise|violet|wheat|white|whitesmoke|yellow|'
+        .'yellowgreen';
+}
+
+/**
+ * Whether this text holds a colour value: a hex colour, a colour function or a named
+ * colour.
+ *
+ * A name counts only as a whole word of letters. The test is "no letter or hyphen on
+ * either side", so `var(--color-gold)` and `text-navy` are token references and not
+ * the named colours `gold` and `navy`. An underscore, Tailwind's space in an
+ * arbitrary value, does separate words: `0_0_0_1px_red` holds `red`.
+ */
+function designSystemColourValueIn(string $text): ?string
+{
+    $patterns = [
+        '/#[0-9a-f]{3,8}(?![0-9a-z])/i',
+        '/(?<![a-z-])(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color|color-mix|light-dark)\s*\(/i',
+        '/(?<![a-z-])(?:'.designSystemNamedColours().')(?![a-z-])/i',
+    ];
+
+    foreach ($patterns as $pattern) {
+        if (preg_match($pattern, $text, $match) === 1) {
+            return $match[0];
+        }
+    }
+
+    return null;
+}
+
+/**
  * The first raw colour in this source, or null.
  *
- * A raw colour is one the design system's tokens did not supply: an arbitrary-value
- * utility (`text-[#0d2745]`, `bg-[rgb(1,2,3)]`, `border-[color:red]`), a hex or
- * functional colour inside a class attribute, or a colour attribute on an SVG
- * (`fill="#fff"`). `currentColor` is not one: it is how an icon takes the colour of
- * its text. An `href="#main"` anchor is not one either, because the scan reads the
- * inside of `class` and the colour attributes and nothing else. A Blade comment
- * is removed first.
+ * A raw colour is one the design system's tokens did not supply. Three places can
+ * hold one:
+ *
+ * - An arbitrary value or arbitrary property in a class, wherever its class string
+ *   is written: a `class` attribute, an `@class` array, or `$attributes->class()`.
+ *   Examples are `text-[#0d2745]`, `text-[red]`, `bg-[oklch(0.3_0.1_250)]`,
+ *   `shadow-[0_2px_rgba(0,0,0,.1)]` and `[color:red]`, and a `color:` type hint
+ *   (`bg-[color:var(--x)]`) counts as well. A bracket group with no space, quote or
+ *   bracket inside it is how Tailwind writes one, and a PHP array or index never
+ *   looks like that.
+ * - A colour attribute (`fill`, `stroke`, `color`, `stop-color`, `flood-color`,
+ *   `lighting-color`, `bgcolor`) with any value except `none`, `currentColor`,
+ *   `inherit`, `transparent` or a `url(#…)` paint reference. That includes a Blade
+ *   echo, which could print anything.
+ * - A hex or functional colour written straight into a class attribute.
+ *
+ * An `href="#main"` anchor is not a colour, because the scan reads only these three
+ * places. A Blade comment is removed first.
  */
 function designSystemFirstRawColour(string $source): ?string
 {
     $code = (string) preg_replace('/\{\{--.*?--\}\}/s', ' ', $source);
 
-    $patterns = [
-        '/-\[\s*(?:#|(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\s*\(|color\s*:)/i',
-        '/(?<![\w-])(?:fill|stroke|color|stop-color|flood-color)\s*=\s*["\']\s*(?:#|(?:rgba?|hsla?)\s*\()/i',
-    ];
+    preg_match_all('/(?<=[\w:\/.-])\[([^\]\[\s"\']+)\]|(?<=[\s"\'])\[([a-z-]+:[^\]\[\s"\']+)\]/i', $code, $brackets, PREG_SET_ORDER);
 
-    foreach ($patterns as $pattern) {
-        if (preg_match($pattern, $code, $match) === 1) {
-            return trim($match[0]);
+    foreach ($brackets as $bracket) {
+        $value = ($bracket[1] ?? '') !== '' ? $bracket[1] : ($bracket[2] ?? '');
+
+        if (preg_match('/(?:^|[^a-z-])color\s*:/i', $value) === 1 || designSystemColourValueIn($value) !== null) {
+            return $bracket[0];
+        }
+    }
+
+    preg_match_all('/(?<![\w-])(?:fill|stroke|color|stop-color|flood-color|lighting-color|bgcolor)\s*=\s*(["\'])(.*?)\1/is', $code, $attributes, PREG_SET_ORDER);
+
+    foreach ($attributes as $attribute) {
+        if (preg_match('/^\s*(?:none|currentcolor|inherit|transparent|url\(\s*#[\w-]+\s*\))\s*$/i', $attribute[2]) !== 1) {
+            return trim($attribute[0]);
         }
     }
 
     preg_match_all('/\bclass\s*=\s*"([^"]*)"/i', $code, $classes);
 
     foreach ($classes[1] as $value) {
-        if (preg_match('/#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?)\s*\(/i', $value, $match) === 1) {
+        if (preg_match('/#[0-9a-f]{3,8}\b|(?<![a-z-])(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color|color-mix)\s*\(/i', $value, $match) === 1) {
             return trim($match[0]);
         }
     }
@@ -304,6 +374,27 @@ it('catches every raw colour', function (string $sample) {
     "<svg stroke='#0d2745'>",
     '<svg stop-color="rgb(1,2,3)">',
     '{{-- a note --}}<p class="text-[#fff]">',
+    // Named colours and the other colour syntaxes Tailwind compiles (Codex, #102).
+    '<p class="text-[red]">',
+    '<p class="hover:bg-[RebeccaPurple]">',
+    '<p class="border-[gold]">',
+    '<p class="shadow-[0_2px_12px_rgba(13,39,69,.04)]">',
+    '<p class="shadow-[0_0_0_1px_red]">',
+    '<p class="bg-[linear-gradient(red,blue)]">',
+    '<p class="text-[color-mix(in_srgb,#fff,#000)]">',
+    '<p class="text-[hwb(0_0%_0%)]">',
+    '<p class="[color:red]">',
+    '<p class="lg:[background:#fff]">',
+    "@class(['p-4', 'text-[red]' => \$on])",
+    "\$attributes->class(['bg-[oklch(0.3_0.1_250)]'])",
+    '<svg fill="red">',
+    '<svg fill="RED">',
+    '<svg fill="oklch(0.3 0.1 250)">',
+    '<svg stroke="hsl(1 2% 3%)">',
+    '<stop stop-color="blue" />',
+    '<svg fill="{{ $colour }}">',
+    '<feFlood flood-color="black" />',
+    '<td bgcolor="#eee">',
 ]);
 
 it('leaves every token and every non-colour alone', function (string $sample) {
@@ -321,6 +412,15 @@ it('leaves every token and every non-colour alone', function (string $sample) {
     '<p class="[&::-webkit-details-marker]:hidden aria-[current=page]:text-gold-dark">',
     '<p data-colour="#fff">',
     '{{-- Never text-[#fff] or class="#fff". --}}',
+    '<svg fill="currentcolor" stroke="inherit">',
+    '<svg fill="url(#seal-gradient)">',
+    '<svg stroke-width="2" stroke-linecap="round" stroke-linejoin="miter">',
+    '<p class="text-[13.5px] leading-[1.75] max-w-[390px] text-sm/[1.6]">',
+    // A token named like a CSS colour is a token: `gold` and `navy` here are ours.
+    '<p class="text-gold bg-navy/5 border-gold/50 bg-[var(--color-navy)]">',
+    "@props(['variant' => 'header'])",
+    "<?php \$links[0]; \$row['red']; ?>",
+    '<p class="data-[state=open]:block group-[.is-red]:p-4">',
 ]);
 
 it('uses no raw colour in any public view or component', function () {
@@ -374,6 +474,39 @@ it('names no colour from outside the design system in any public view or compone
     }
 
     expect($offenders)->toBeEmpty("Use a token from resources/css/public.css:\n  ".implode("\n  ", $offenders));
+});
+
+/*
+|--------------------------------------------------------------------------
+| Readable on a phone
+|--------------------------------------------------------------------------
+|
+| Below 1024px, sentences of prose are at least 16px wherever they sit; from 1024px
+| they take the design's own size (docs/ENGINEERING.md, "Frontend (phase 4)"). The
+| shell's prose is the footer's description and its portal note: each must carry
+| the 16px base as its unprefixed size and the design's 13.5px only from `lg:`. A
+| bare `text-ui` would make it 13.5px on a phone.
+*/
+
+it('sets the footer prose at 16px below 1024px and at the design size from there', function () {
+    $html = (string) $this->get('/')->assertOk()->getContent();
+    $document = designSystemDocument($html);
+
+    $prose = [
+        // The first paragraph in the footer; the copyright line is the last.
+        'description' => $document->querySelector('footer p'),
+        'portal note' => $document->querySelector('nav[aria-labelledby="footer-services-heading"] li:last-child'),
+    ];
+
+    foreach ($prose as $label => $element) {
+        expect($element)->not->toBeNull("The footer's {$label} was not found.");
+
+        $classes = preg_split('/\s+/', trim((string) $element->getAttribute('class'))) ?: [];
+
+        expect(in_array('text-base', $classes, true))->toBeTrue("The footer's {$label} is not 16px on a phone.")
+            ->and(in_array('lg:text-ui', $classes, true))->toBeTrue("The footer's {$label} is not the design's size from 1024px.")
+            ->and(array_intersect(['text-ui', 'text-caption', 'text-sm', 'text-xs'], $classes))->toBeEmpty("The footer's {$label} is smaller than 16px on a phone.");
+    }
 });
 
 /*

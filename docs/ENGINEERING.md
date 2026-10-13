@@ -518,10 +518,15 @@ file under `resources/`.
   mobile-first, with the prototype's values as the desktop end. At 375, 768 and
   1440px, on both surfaces, nothing scrolls sideways, and a table scrolls inside
   its own box. Each surface matches its own prototype's type scale:
-  - **The public site:** running text is at least 16px, the public prototype's
-    base. Form inputs are too, so a phone does not zoom into them. Below
-    1024px, the widths a finger uses, every link and button has a touch target
-    of at least 44×44px.
+  - **The public site, below 1024px** (the widths a phone or tablet uses):
+    - running text is at least 16px, the public prototype's base. Running text
+      means sentences of prose wherever they sit, the footer's included. Links,
+      headings, labels and captions keep the prototype's sizes at every width.
+    - every link and button has a touch target of at least 44×44px.
+  - **The public site, from 1024px:** each element takes the prototype's own
+    size, as the design draws it.
+  - **Form inputs:** at least 16px at every width, so a phone does not zoom
+    into them.
   - **The admin:** it keeps the admin prototype's 14px base. Filament already
     raises its inputs to 16px on touch devices, and its sidebar collapses on a
     phone.
