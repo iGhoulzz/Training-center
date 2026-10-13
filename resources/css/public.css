@@ -177,11 +177,21 @@
  *
  * Smooth scrolling is only for a visitor with no reduced-motion preference. The
  * padding keeps an in-page target (the skip link's #main) clear of the sticky
- * header.
+ * header, and so it has to be at least as tall as the header is. The header is
+ * 73px (4.6rem) until a screen is too narrow for the brand and the Menu button
+ * side by side, about 356px, where its row wraps to 127px (7.9rem). The 23rem
+ * query leaves the margin a slower font could need. A header whose height changes
+ * has to change these two numbers with it.
  */
 @layer base {
     html {
         scroll-padding-block-start: 5rem;
+    }
+
+    @media (width < 23rem) {
+        html {
+            scroll-padding-block-start: 8rem;
+        }
     }
 
     @media (prefers-reduced-motion: no-preference) {
@@ -231,6 +241,11 @@
  * in both directions. Use it on a link that is a flex item or inline-flex (an
  * inline box has no box to resolve against), and never on an element with
  * `overflow: hidden`, which would clip the extension.
+ *
+ * IT NEEDS ROOM AROUND THE ELEMENT. The extension is only usable where nothing else
+ * sits over it. A link at the very top of the page, or next to the sticky header,
+ * loses part of it off the page or under the header, which is why the top bar's
+ * links are real 44px boxes instead (header.blade.php).
  */
 @utility tap-target {
     position: relative;
