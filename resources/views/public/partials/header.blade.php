@@ -20,6 +20,9 @@
     From 1024px the header is a row of the brand, the links and the portal pill. Below
     that the links fold into the menu (navigation.blade.php), and the pill, which does
     not fit beside the brand on a phone, moves into that menu's last item below 640px.
+    The row may wrap, as the design's does, so on a screen narrower than the brand and
+    the Menu button together (320px) the button drops under the brand and nothing
+    scrolls sideways.
 --}}
 <div class="bg-navy text-caption text-on-navy">
     <x-public.container class="flex flex-wrap items-center gap-x-4.5 gap-y-1 py-2.25">
@@ -47,7 +50,7 @@
 </div>
 
 <header class="sticky top-0 z-50 border-b border-navy/10 bg-cream/92 backdrop-blur-md">
-    <x-public.container class="flex items-center gap-4 py-3.25">
+    <x-public.container class="flex flex-wrap items-center gap-x-4 gap-y-2.5 py-3.25">
         <a href="{{ PublicRoute::url('public.home') }}" class="flex-none rounded-control">
             <x-public.brand />
         </a>
