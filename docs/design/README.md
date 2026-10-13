@@ -61,7 +61,12 @@ The repository is public and MIT licensed, so the handoff was cleaned before it 
 committed.
 
 - The centre's real logo is replaced by a neutral "TC" disc, and the real centre
-  name, in English and Arabic, by "Training Centre".
+  name, in English and Arabic, by "Training Centre". **That is true of the
+  screenshots and the written documents here, and of nothing else.** The owner
+  reversed it for the product on 2026-10-13: the real logo is committed as
+  `public/images/brand/asclst-logo.jpg`, and the real name, in English and Arabic,
+  is in `config/public_site.php` (`brand`), so the built site shows both. The
+  screenshots keep the placeholder.
 - Contact details are replaced with fake ones: the street address, the telephone
   numbers, the public email address and the staff-style email addresses. The sample
   people's names in the prototypes are invented and were kept.

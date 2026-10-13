@@ -1,15 +1,59 @@
 {{--
-    The brand lockup: the decorative mark beside the centre's name. The header
-    wraps it in the link to the home page and the footer shows it as it is, so
-    it takes no props: the two places do not differ.
+    The brand lockup: the centre's seal beside its name, as the design draws it in
+    the header and in the footer. Every value (name, short name, tagline, Arabic
+    name, logo path) comes from config/public_site.php, so it is changed in one
+    place and no view holds the centre's name.
 
-    The mark is aria-hidden, so a screen reader hears the centre's name once
-    rather than "TC" and then the name.
+    PROPS. `variant` is `header` (the default: a 46px seal, the short name in the
+    display face over the tagline, on the cream bar) or `footer` (a 44px seal, the
+    short name in cream over the Arabic name, on navy).
+
+    ACCESSIBILITY. The seal is decoration, so its alt text is empty. The visible
+    short name and tagline are hidden from assistive technology, and a visually
+    hidden span carries the full English name, so a link around the header lockup is
+    announced as the centre's name and the short name is not read letter by letter.
+    The Arabic name is a different language and direction, so it carries
+    lang="ar" and dir="rtl"; it sits in an element that keeps the page's direction,
+    which is what lets its line start where the short name above it does.
+
+    The lockup is spans only, so it is valid inside the header's link as it is. It
+    takes no caller classes: the two places differ only by `variant`.
 --}}
-<span class="flex items-center gap-3">
-    <span
-        aria-hidden="true"
-        class="grid size-10 place-items-center rounded-full bg-navy-800 font-serif text-lg text-gold-400 ring-1 ring-gold-500"
-    >{{ __('public.brand.mark') }}</span>
-    <span class="font-serif text-lg font-semibold">{{ config('app.name') }}</span>
-</span>
+@props(['variant' => 'header'])
+
+@if ($variant === 'footer')
+    <span class="flex items-center gap-3">
+        <img
+            src="{{ asset(config('public_site.brand.logo')) }}"
+            alt=""
+            width="44"
+            height="44"
+            loading="lazy"
+            decoding="async"
+            class="size-11 shrink-0 rounded-pill border-[1.5px] border-gold/50 object-cover object-center"
+        >
+        <span class="flex flex-col">
+            <span aria-hidden="true" class="font-display text-brand-sm text-cream">{{ config('public_site.brand.short_name') }}</span>
+            <span class="sr-only">{{ config('public_site.brand.name') }}</span>
+            <span class="text-label font-semibold tracking-normal text-gold">
+                <span lang="ar" dir="rtl">{{ config('public_site.brand.name_ar') }}</span>
+            </span>
+        </span>
+    </span>
+@else
+    <span class="flex items-center gap-3">
+        <img
+            src="{{ asset(config('public_site.brand.logo')) }}"
+            alt=""
+            width="46"
+            height="46"
+            decoding="async"
+            class="size-11.5 shrink-0 rounded-pill border-[1.5px] border-gold/55 object-cover object-center"
+        >
+        <span aria-hidden="true" class="flex flex-col leading-[1.15]">
+            <span class="font-display text-brand text-navy">{{ config('public_site.brand.short_name') }}</span>
+            <span class="text-tagline text-subtitle uppercase">{{ config('public_site.brand.tagline') }}</span>
+        </span>
+        <span class="sr-only">{{ config('public_site.brand.name') }}</span>
+    </span>
+@endif

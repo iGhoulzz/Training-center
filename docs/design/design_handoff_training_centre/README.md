@@ -198,7 +198,7 @@ Layout: `max-width: 1200px` with 24 px gutters; article and its header `max-widt
 
 ## Assets
 
-- The centre's seal, supplied by the client (the real file is not committed; the screenshots show a "TC" disc in its place). Used in the nav (46 px circle), hero (258 px circle, floating), footer (44 px) and the portal modal (52 px). Always circular with a `rgba(201,164,76,.5)` hairline. Get a transparent PNG or SVG from the client before launch; the supplied file is a JPEG on a cream ground, which is why every use is a circular crop.
+- The centre's seal, supplied by the client. The real file is committed as `public/images/brand/asclst-logo.jpg` (owner, 2026-10-13); the screenshots here still show a "TC" disc in its place. Used in the nav (46 px circle), hero (258 px circle, floating), footer (44 px) and the portal modal (52 px). Always circular with a `rgba(201,164,76,.5)` hairline. Get a transparent PNG or SVG from the client before launch; the supplied file is a JPEG on a cream ground, which is why every use is a circular crop.
 - `image-slot.js` — the drop-target web component used for the contact map placeholder (not committed). **Prototype tooling only; do not ship it.** Replace with a real embedded map (or a static map image) of the centre's location, with the centre pinned.
 - Icons are inline SVG strokes at 1.5–2.2 weight. In the build use the codebase's existing icon set (Filament ships Heroicons).
 - Fonts are loaded from Google Fonts. Self-host both families for a Libyan audience — latency to Google's CDN is unreliable there and the Arabic subset is large.
@@ -213,7 +213,7 @@ Layout: `max-width: 1200px` with 24 px gutters; article and its header `max-widt
 | `TASKS.md` | Ordered implementation plan, shared components, and how to drive Claude Code / Codex through it |
 | `Filament Revamp.dc.html`, `Public Site.dc.html` | The two interactive prototypes (not committed; the screenshots replace them) |
 | `support.js`, `image-slot.js` | The design tool's runtime and the map placeholder component (not committed; no licence) |
-| the centre's seal image | The real logo (not committed) |
+| the centre's seal image | The real logo, committed as `public/images/brand/asclst-logo.jpg` (owner, 2026-10-13) |
 | `github.md` | The design tool's repo sync log (not committed) |
 
 The screenshots in `screens/` show every screen. The interactive prototypes are not part of this repository.
