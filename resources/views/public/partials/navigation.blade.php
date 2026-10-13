@@ -8,12 +8,13 @@
     edits that can disagree. Every link goes through PublicRoute, never route().
 
     Each entry is [url, label], in the order they are shown: About, Programmes,
-    Verify, Contact (P4-T12). T13 adds Publications.
+    Publications, Verify, Contact (P4-T12, P4-T13).
 --}}
 @php
     $links = [
         [PublicRoute::url('public.about'), __('public.links.about')],
         [PublicRoute::url('public.programmes.index'), __('public.links.programmes')],
+        [PublicRoute::url('public.publications.index'), __('public.links.publications')],
         [PublicRoute::url('verify.certificates.form'), __('public.links.verify_certificate')],
         [PublicRoute::url('public.contact'), __('public.links.contact')],
     ];
