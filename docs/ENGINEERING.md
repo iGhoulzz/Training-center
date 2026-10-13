@@ -532,10 +532,12 @@ file under `resources/`.
   the GET-only route group phase 4's T11 creates: home, about, programmes,
   contact, the publications index, article pages and article downloads. Those
   views contain no form that submits data, no `@csrf`, and no `session()`,
-  `old()` or `auth()` call. The one form they may hold is a read-only
-  `method="get"` form, such as the publications search, which only writes its
-  fields into the URL and needs neither a session nor a CSRF token (owner,
-  2026-10-12, in T13).
+  `old()` or `auth()` call. The only kind of form they may hold is a read-only
+  `method="get"` form, which only writes its fields into the URL and needs
+  neither a session nor a CSRF token. The publications search is one (owner,
+  2026-10-12, in T13). The home page's verifier box is another (owner,
+  2026-10-13): it hands the reference to the verifier's own GET route, and the
+  lookup runs there.
 
   It does **not** apply to the certificate verifier (`resources/views/verify/`),
   whose form posts and needs both its session and its CSRF token, or to either

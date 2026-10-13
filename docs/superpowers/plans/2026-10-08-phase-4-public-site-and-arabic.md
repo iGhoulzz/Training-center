@@ -139,7 +139,7 @@ first attempt.
 | File or surface | Tasks, in order | Rule |
 |---|---|---|
 | `docs/superpowers/specs/2026-07-20-training-center-dashboard-design.md` | **T01 only** | No other task edits the spec. A task that finds the spec wrong stops and raises it; the fix is a spec amendment, not a quiet edit inside a feature PR |
-| `docs/ENGINEERING.md` | **T01 → T13 → T20a** | T01: the download-counter exception, in the write-boundary section. T13: one sentence in "Frontend (phase 4)" allowing a read-only `method="get"` form on the public pages, for the publications search (owner, 2026-10-12). T20a: in "Frontend (phase 4)", the design's code as the visual specification, the design system and the responsive rule replace "reference, not specification", and "Verified by eye" names the three widths (owner, 2026-10-13). Nothing else |
+| `docs/ENGINEERING.md` | **T01 → T13 → T20a** | T01: the download-counter exception, in the write-boundary section. T13: one sentence in "Frontend (phase 4)" allowing a read-only `method="get"` form on the public pages, for the publications search (owner, 2026-10-12). T20a: in "Frontend (phase 4)", the design's code as the visual specification, the design system and the responsive rule replace "reference, not specification", and "Verified by eye" names the three widths (owner, 2026-10-13). T13's sentence reads "the only kind of form", because the home page's verifier box is a second read-only GET form (owner, 2026-10-13). Nothing else |
 | `lang/en/activity.php` | **T03 → T04 → T17** | T03 adds the `Article` record-type label, T04 `Expense` and `ExpenseCategory`, and T17 the `activity.field.*` group. `LocalizationTest` fails without the labels, so each lands with its model |
 | `app/Domain/Staff/Filament/Resources/ActivityResource.php` | **T16e → T17** | T16e restyles; T17 routes `describeProperties()` and `describeChanges()` through `activity.field.*` |
 | `app/Domain/Finance/Exports/ReportDataBuilder.php` | **T04 only** | `profit()` gains the expenses column |
@@ -148,7 +148,7 @@ first attempt.
 | `database/seeders/RolePermissionSeeder.php` | **T03 → T04** | T03 adds the article permissions, T04 the expense and category permissions. T04 rebases on T03 and must not reorder T03's rows |
 | `app/Providers/Filament/AdminPanelProvider.php` | **T03 → T09 → T16a → T20c → T18** | T03 adds `discoverResources` for `Domain/Publications`; T09 adds `discoverPages` for `Domain/Enrollment/Filament/Pages`; T16a owns the theme, colours and navigation; T20c sets the real brand logo and name and checks the shell's tokens against the prototype; T18 adds the guest-locale middleware. Each adds its own lines and edits no other task's |
 | `app/Providers/AppServiceProvider.php` | **T11 → T13** | T11 registers the `public-site` rate limiter, T13 the `publication-download` limiter. Nothing else in the file is touched |
-| `routes/web.php` | **T11 → T12 → T13 → T20b → T18** | T11 creates the sessionless public group; T12 and T13 add routes inside it and may not alter the group or its middleware. T15, folded into T20a, adds no route: its portal entry is a link. T20b adds one GET redirect route inside the existing verifier group, under its middleware and limiter, **only if the owner chooses the home page's verifier box**. T18 adds the `/ar` copies of the public group and the `/ar/` verifier routes **inside the existing verifier group**, under the same middleware and the same named limiter, **named `ar.` plus the English name** so the English names never move. **No task touches the private-file group** |
+| `routes/web.php` | **T11 → T12 → T13 → T20b → T18** | T11 creates the sessionless public group; T12 and T13 add routes inside it and may not alter the group or its middleware. T15, folded into T20a, adds no route: its portal entry is a link. T20b adds one GET route, `verify.certificates.lookup`, inside the existing verifier group, under its middleware and limiter, routed to the unchanged `VerifyCertificateController::submit()`, for the home page's verifier box (owner, 2026-10-13). Its path stays outside `verify/certificates/{reference}`. T18 adds the `/ar` copies of the public group and the `/ar/` verifier routes **inside the existing verifier group**, under the same middleware and the same named limiter, **named `ar.` plus the English name** so the English names never move. **No task touches the private-file group** |
 | `resources/css/app.css`, `vite.config.js` | **T11 → T16a → T20a → T18** | T11 adds the public site's stylesheet entry; T16a the Filament theme entry; T20a the public site's self-hosted fonts; T18 the direction work over both |
 | `resources/css/public.css` | **T11 → T20a → T20b → T18** | T11 creates it; T20a replaces its palette with the design system's tokens; T20b appends the tokens a page first needs and edits none of T20a's; T18 the direction work |
 | `app/Http/Controllers/Public/PageController.php` | **T12 → T20b** | T12 creates it; T20b adds the home teaser's articles to `home()` |
@@ -1118,10 +1118,26 @@ and the centre's name.
 - No download toast.
 - "Request a seat" is a contact link.
 - The verifier's "Try…" buttons are not built.
-- **Open, for the owner before T20b:** the design's home page has a verifier box
-  with an input. The default is the design's card with a link to the verifier.
-  The alternative is a GET form to a small public redirect route that sends
-  `?reference=` to `verify.certificates.show`.
+- **The home page's verifier box is built as drawn (owner, 2026-10-13).**
+  - **What it is:** the design's reference input and gold "Verify" button, as a
+    read-only `method="get"` form.
+  - **Where the result shows:** on the verifier's own result page. The design
+    shows it inside the home page, which needs a script. Running the lookup
+    outside the verifier would also leave the verifier's limiter and uniform
+    misses.
+  - **The route:** the form submits to one new GET route in the existing
+    verifier group, `verify.certificates.lookup`, under that group's middleware
+    and its `certificate-verification` limiter. It is routed to the existing
+    `VerifyCertificateController::submit()`, unchanged. That method already
+    reads `reference` from the request, normalises it, redirects a well-formed
+    value to `verify.certificates.show`, and returns the uniform miss for
+    anything else. The new route therefore adds no second copy of the
+    reference rule, and no controller is edited.
+  - **The path must not fall under `verify/certificates/{reference}`.** That
+    segment is deliberately unconstrained, so an overlapping path would be read
+    as a reference.
+  - The placeholder shows the real reference format, not the prototype's
+    `CERT-…`.
 
 ### Task 20a — Design foundation, the brand, the shell, and T15
 **Owner: Claude · `p4/t20a-design-foundation` · depends on T13 (it rebuilds T13's nav entry)**
@@ -1222,12 +1238,19 @@ and the centre's name.
   - The same file, `tests/Feature/Public/ProgrammesTest.php` and
     `tests/Feature/Public/PublicationsIndexTest.php` change only where they
     assert markup the design changes, each change listed in the PR.
-- **Only if the owner chooses the verifier box** (the open decision above):
-  - `routes/web.php`: one GET route inside the existing verifier group, under its
-    middleware and limiter;
-  - a new invokable controller that redirects `?reference=` to
-    `verify.certificates.show`, and does no lookup itself;
-  - its test.
+- **The verifier box (owner, 2026-10-13; see the decision above):**
+  - `routes/web.php`: one GET route, `verify.certificates.lookup`, inside the
+    existing verifier group and routed to the unchanged
+    `VerifyCertificateController::submit()` (seam, after T13);
+  - `tests/Feature/Verification/VerifierLookupRouteTest.php` (new). It checks
+    that:
+    - a well-formed reference redirects to `verify.certificates.show` exactly as
+      the POST does;
+    - an empty or malformed one returns a miss byte-identical to `show()`'s,
+      headers included;
+    - the route carries the group's response headers and shares the
+      `certificate-verification` limiter's budget;
+    - the home form's `action` resolves to the route by name.
 
 **Does.** Each page section by section against the prototype's HERO, ABOUT,
 PROGRAMMES, CERTIFICATE VERIFIER, PUBLICATIONS TEASER, CONTACT, PUBLICATIONS
