@@ -178,6 +178,7 @@
             margin: 0;
             margin-block-start: 1rem;
             max-inline-size: 480px;
+            font-size: 1rem;
             line-height: 1.8;
             color: var(--text-intro);
             text-wrap: pretty;
@@ -187,7 +188,7 @@
             margin: 0;
             margin-block-start: 1.375rem;
             max-inline-size: 480px;
-            font-size: .78125rem;
+            font-size: 1rem;
             line-height: 1.6;
             color: var(--text-note);
         }
@@ -261,6 +262,10 @@
         }
         @media (min-width: 48rem) {
             main { padding-block: 5rem; }
+        }
+        @media (min-width: 64rem) {
+            .intro { font-size: .96875rem; }
+            .note { font-size: .78125rem; }
         }
     </style>
 </head>

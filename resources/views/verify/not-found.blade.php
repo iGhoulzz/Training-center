@@ -191,6 +191,7 @@
             margin: 0;
             margin-block-start: 1rem;
             max-inline-size: 480px;
+            font-size: 1rem;
             line-height: 1.8;
             color: var(--text-intro);
             text-wrap: pretty;
@@ -200,7 +201,7 @@
             margin: 0;
             margin-block-start: 1.375rem;
             max-inline-size: 480px;
-            font-size: .78125rem;
+            font-size: 1rem;
             line-height: 1.6;
             color: var(--text-note);
         }
@@ -263,9 +264,14 @@
 
         .result-text { flex: 1; min-inline-size: 0; }
         h2 { margin: 0; font-size: .9375rem; font-weight: 600; color: var(--status-fg); }
-        .status-message { margin: 0; margin-block-start: 2px; font-size: .78125rem; color: var(--text-sub); }
+        .status-message { margin: 0; margin-block-start: 2px; font-size: 1rem; color: var(--text-sub); }
         @media (min-width: 48rem) {
             main { padding-block: 5rem; }
+        }
+        @media (min-width: 64rem) {
+            .intro { font-size: .96875rem; }
+            .note { font-size: .78125rem; }
+            .status-message { font-size: .78125rem; }
         }
         @media (prefers-reduced-motion: no-preference) {
             .result { animation: result-in .3s ease both; }

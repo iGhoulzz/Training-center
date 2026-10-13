@@ -533,3 +533,33 @@ it('gives every link and button a touch target of at least 44px', function (stri
         expect($input[1] ?? '')->toContain('min-block-size: 44px')->toContain('font-size: 1rem');
     }
 })->with(['form', 'show', 'not-found']);
+
+it('sets sentences of prose at 16px below 1024px and at the design\'s size from there', function (string $file) {
+    $source = (string) file_get_contents(resource_path("views/verify/{$file}.blade.php"));
+
+    // Hand-written from the design: the intro is 15.5px (.96875rem) and the note 12.5px
+    // (.78125rem) on a desktop; below 1024px, running text is at least 16px (1rem).
+    preg_match('/@media \(min-width: 64rem\) \{(.*?)\n        \}/s', $source, $desktop);
+
+    foreach (['.intro' => '.96875rem', '.note' => '.78125rem'] as $selector => $designSize) {
+        preg_match('/(?<![\w-])'.preg_quote($selector, '/').'\s*\{([^}]*)\}/', $source, $base);
+
+        expect(str_contains($base[1] ?? '', 'font-size: 1rem;'))->toBeTrue("{$file}: {$selector} is not 16px below 1024px.")
+            ->and(str_contains($desktop[1] ?? '', "{$selector} { font-size: {$designSize}; }"))->toBeTrue("{$file}: {$selector} is not the design's size from 1024px.");
+    }
+
+    // The miss's body is two sentences, so it is prose as well; the sub-line under a
+    // found certificate's status is one sentence and stays the design's caption.
+    if ($file === 'not-found') {
+        preg_match('/\.status-message\s*\{([^}]*)\}/', $source, $message);
+
+        expect(str_contains($message[1] ?? '', 'font-size: 1rem;'))->toBeTrue()
+            ->and(str_contains($desktop[1] ?? '', '.status-message { font-size: .78125rem; }'))->toBeTrue();
+    }
+
+    if ($file === 'show') {
+        preg_match('/\.status-message\s*\{([^}]*)\}/', $source, $message);
+
+        expect(str_contains($message[1] ?? '', 'font-size: .78125rem;'))->toBeTrue();
+    }
+})->with(['form', 'show', 'not-found']);
