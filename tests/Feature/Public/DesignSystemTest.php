@@ -179,10 +179,13 @@ function designSystemFirstRawColour(string $source): ?string
         }
     }
 
-    preg_match_all('/(?<![\w-])(?:fill|stroke|color|stop-color|flood-color|lighting-color|bgcolor)\s*=\s*(["\'])(.*?)\1/is', $code, $attributes, PREG_SET_ORDER);
+    // Quoted or unquoted: `fill=red` is as valid in HTML as `fill="red"` (Codex, #102).
+    preg_match_all('/(?<![\w-])(?:fill|stroke|color|stop-color|flood-color|lighting-color|bgcolor)\s*=\s*(?:(["\'])(.*?)\1|([^\s"\'=<>`]+))/is', $code, $attributes, PREG_SET_ORDER);
 
     foreach ($attributes as $attribute) {
-        if (preg_match('/^\s*(?:none|currentcolor|inherit|transparent|url\(\s*#[\w-]+\s*\))\s*$/i', $attribute[2]) !== 1) {
+        $value = ($attribute[1] ?? '') !== '' ? ($attribute[2] ?? '') : ($attribute[3] ?? '');
+
+        if (preg_match('/^\s*(?:none|currentcolor|inherit|transparent|url\(\s*#[\w-]+\s*\))\s*$/i', $value) !== 1) {
             return trim($attribute[0]);
         }
     }
@@ -395,6 +398,12 @@ it('catches every raw colour', function (string $sample) {
     '<svg fill="{{ $colour }}">',
     '<feFlood flood-color="black" />',
     '<td bgcolor="#eee">',
+    // Unquoted attribute values (Codex, #102, second pass).
+    '<svg fill=red>',
+    '<path stroke=blue />',
+    '<svg fill=#fff>',
+    '<svg fill=oklch(0.3_0.1_250)>',
+    '<svg stroke={{ $colour }}>',
 ]);
 
 it('leaves every token and every non-colour alone', function (string $sample) {
@@ -413,6 +422,8 @@ it('leaves every token and every non-colour alone', function (string $sample) {
     '<p data-colour="#fff">',
     '{{-- Never text-[#fff] or class="#fff". --}}',
     '<svg fill="currentcolor" stroke="inherit">',
+    '<svg fill=none stroke=currentColor>',
+    '<svg fill=url(#seal-gradient)>',
     '<svg fill="url(#seal-gradient)">',
     '<svg stroke-width="2" stroke-linecap="round" stroke-linejoin="miter">',
     '<p class="text-[13.5px] leading-[1.75] max-w-[390px] text-sm/[1.6]">',
