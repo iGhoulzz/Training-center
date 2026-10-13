@@ -546,7 +546,8 @@ it('gives the content its 1440px width, and the shell its measurements, as token
     foreach ([
         '.fi-sidebar-item-btn' => ['gap-x-2.75', 'rounded-lg', 'px-2.5', 'py-2.25'],
         '.fi-sidebar-group-btn' => ['px-2.5', 'pt-4', 'pb-1.5'],
-        '.fi-sidebar-group-label' => ['text-[11px]', 'font-semibold', 'tracking-[0.08em]', 'uppercase', 'text-gray-500'],
+        // gray-400, not the prototype's gray-500: that is 3.67:1 on gray-900, under 4.5:1.
+        '.fi-sidebar-group-label' => ['text-[11px]', 'font-semibold', 'tracking-[0.08em]', 'uppercase', 'text-gray-400'],
         '.fi-sidebar-nav' => ['px-3', 'py-3.5'],
         '.fi-header-heading' => ['text-[28px]', 'font-semibold', 'tracking-[-0.025em]', 'text-gray-50'],
         '.fi-header-subheading' => ['text-[12.5px]', 'text-gray-400'],

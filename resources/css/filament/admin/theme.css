@@ -215,13 +215,18 @@
         @apply gap-y-0.5;
     }
 
-    /* A group label: 16px above, 6px below, 10px beside; 11px, 600, tracked .08em, in capitals, gray-500. */
+    /*
+     * A group label: 16px above, 6px below, 10px beside; 11px, 600, tracked .08em, in capitals.
+     * The prototype draws it gray-500, which is 3.67:1 on the gray-900 sidebar, and small text
+     * needs 4.5:1 (ENGINEERING: the prototype's look does not override contrast). gray-400, the
+     * next shade up, is 6.99:1.
+     */
     .fi-sidebar-group-btn {
         @apply px-2.5 pt-4 pb-1.5;
     }
 
     .fi-sidebar-group-label {
-        @apply text-[11px] font-semibold tracking-[0.08em] text-gray-500 uppercase;
+        @apply text-[11px] font-semibold tracking-[0.08em] text-gray-400 uppercase;
 
         line-height: normal;
     }

@@ -1337,6 +1337,19 @@ sessionless, scanners) · the teaser never shows an unpublished article ·
     natively.
 
   Filament's own topbar elements are kept and styled to the prototype.
+- **Settled in the build (lead, 2026-10-13):**
+  - **Sidebar group labels are gray-400, not the prototype's gray-500.** gray-500
+    measures 3.67:1 on the gray-900 sidebar, under the 4.5:1 small text needs;
+    gray-400 measures 6.99:1. On the verifier, two of the prototype's faint
+    texts rise for the same reason: the row labels from cream .55 to .58, and
+    the note from .45 to .57.
+  - **The user menu stays in the topbar.** Filament 5 offers one position, so
+    there is no separate sidebar user block.
+  - **The page subheading stays below the heading,** in Filament's order. The
+    prototype's context line above the title would put a page's long
+    explanation first.
+  - **Filament's default avatar loads from ui-avatars.com,** a third-party
+    origin. That was true before this task, and it is left to a follow-up.
 
 **Done when.** The verifier's pages and the admin sidebar, topbar and page header
 match their prototypes side by side at 375, 768 and 1440px. The verifier meets
