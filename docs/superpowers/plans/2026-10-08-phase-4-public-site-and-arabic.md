@@ -139,7 +139,7 @@ first attempt.
 | File or surface | Tasks, in order | Rule |
 |---|---|---|
 | `docs/superpowers/specs/2026-07-20-training-center-dashboard-design.md` | **T01 only** | No other task edits the spec. A task that finds the spec wrong stops and raises it; the fix is a spec amendment, not a quiet edit inside a feature PR |
-| `docs/ENGINEERING.md` | **T01 → T13** | T01: the download-counter exception, in the write-boundary section. T13: one sentence in "Frontend (phase 4)" allowing a read-only `method="get"` form on the public pages, for the publications search (owner, 2026-10-12). Nothing else |
+| `docs/ENGINEERING.md` | **T01 → T13 → T20a** | T01: the download-counter exception, in the write-boundary section. T13: one sentence in "Frontend (phase 4)" allowing a read-only `method="get"` form on the public pages, for the publications search (owner, 2026-10-12). T20a: in "Frontend (phase 4)", the design's code as the visual specification, the design system and the responsive rule replace "reference, not specification", and "Verified by eye" names the three widths (owner, 2026-10-13). Nothing else |
 | `lang/en/activity.php` | **T03 → T04 → T17** | T03 adds the `Article` record-type label, T04 `Expense` and `ExpenseCategory`, and T17 the `activity.field.*` group. `LocalizationTest` fails without the labels, so each lands with its model |
 | `app/Domain/Staff/Filament/Resources/ActivityResource.php` | **T16e → T17** | T16e restyles; T17 routes `describeProperties()` and `describeChanges()` through `activity.field.*` |
 | `app/Domain/Finance/Exports/ReportDataBuilder.php` | **T04 only** | `profit()` gains the expenses column |
@@ -1131,6 +1131,28 @@ and the centre's name.
 - `docs/design/README.md` — the brand note (seam, after T19)
 - `tests/Feature/Public/DesignSystemTest.php` — no inline `style` in public views
   and components, the logo served, and the brand from config
+
+**Decisions where the prototype cannot be built as drawn (lead, 2026-10-13)**
+- **The portal opens the student panel's own login page.** The prototype's
+  sign-in modal is a form, so it is not built (T15). The header's "Student
+  portal" pill and the footer's link both go to that page. T15's note, that a
+  portal login needs an email on the student record, takes the prototype's own
+  modal copy. It replaces the footer's "Corporate training" line, which names a
+  service the centre has not confirmed.
+- **The navigation folds below 1024px.** The prototype's row (brand, five links
+  and the portal pill) needs about 900px.
+  - **Below 1024px:** the links move into T11's `<details>` menu.
+  - **From 640px:** the portal pill stays in the bar beside the menu.
+  - **Below 640px:** the pill does not fit beside the lockup, so it is the last
+    item of the menu panel.
+- **The current page's link** carries `aria-current="page"` and the gold-dark
+  colour the prototype gives the active Publications link.
+- **The footer leaves out "Tripoli, Libya"**, because there is no address until
+  the owner sends one (T12).
+- **The logo is committed as supplied** (1408×768 JPEG, 58 KB). Every use is a
+  centred `object-fit: cover` circle, as the prototype draws it.
+- **The brand link's accessible name** is the centre's full English name. The
+  visible short name would otherwise be read letter by letter.
 
 **Done when**
 - The header, navigation and footer match `Public Site.dc.html`'s TOP BAR, NAV and
