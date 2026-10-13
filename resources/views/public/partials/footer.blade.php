@@ -18,6 +18,11 @@
     TOUCH TARGETS. Below 1024px a link is a 44px row. From 1024px, where the pointer
     is precise, the rows shrink to the design's own 9px gap.
 
+    RUNNING TEXT. The description and the portal note are sentences, so below 1024px
+    they are 16px, the floor ENGINEERING sets for reading on a phone. From 1024px they
+    are the design's 13.5px. The links, headings and copyright line are labels and
+    keep the design's sizes at every width.
+
     The design's two link columns are 180px wide. On a phone each takes its own
     full-width row instead, so the portal note is not squeezed into a strip.
 
@@ -31,7 +36,7 @@
     <x-public.container class="flex flex-wrap gap-11 pt-13 pb-7.5">
         <div class="min-w-0 flex-[1_1_300px]">
             <x-public.brand variant="footer" />
-            <p class="mt-4 max-w-97.5 text-ui leading-[1.75]">{{ __('public.footer.description') }}</p>
+            <p class="mt-4 max-w-97.5 text-base leading-[1.75] lg:text-ui">{{ __('public.footer.description') }}</p>
         </div>
 
         <nav aria-labelledby="footer-centre-heading" class="flex-[1_1_100%] sm:flex-[0_1_180px]">
@@ -51,7 +56,7 @@
             <ul class="flex flex-col text-ui lg:gap-2.25">
                 <li><a href="{{ PublicRoute::url('verify.certificates.form') }}" class="flex min-h-11 items-center text-cream/72 hover:text-gold-light focus-visible:outline-gold-light lg:min-h-0">{{ __('public.links.verify_certificate') }}</a></li>
                 <li><x-public.portal-link variant="footer" class="flex min-h-11 items-center text-cream/72 hover:text-gold-light focus-visible:outline-gold-light lg:min-h-0 lg:leading-[normal]" /></li>
-                <li class="text-cream/72">{{ __('public.portal.note') }}</li>
+                <li class="text-base text-cream/72 lg:text-ui">{{ __('public.portal.note') }}</li>
             </ul>
         </nav>
     </x-public.container>
