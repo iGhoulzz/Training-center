@@ -1043,6 +1043,7 @@ it('detects the hardcoded labels it is meant to detect', function (string $sampl
     "protected static string | UnitEnum | null \$navigationGroup = 'Finance';",
     "protected static string|UnitEnum|null \$navigationGroup = 'Finance';",
     "->breadcrumb('Edit')",
+    "@php \$field->label('Students'); @endphp",
 ]);
 
 it('leaves translated and non-label calls alone', function (string $sample) {
@@ -1073,9 +1074,18 @@ it('leaves translated and non-label calls alone', function (string $sample) {
  */
 function firstHardcodedBladeExpressionString(string $expression): ?string
 {
+    return hardcodedBladeExpressionStrings($expression)[0] ?? null;
+}
+
+/**
+ * @return list<string> Quoted literal text outside translation calls.
+ */
+function hardcodedBladeExpressionStrings(string $expression): array
+{
     $tokens = token_get_all("<?php {$expression};");
     $translationDepth = [false];
     $pendingTranslationCall = false;
+    $literals = [];
 
     foreach ($tokens as $token) {
         if (is_array($token)) {
@@ -1089,9 +1099,11 @@ function firstHardcodedBladeExpressionString(string $expression): ?string
                 continue;
             }
 
-            if ($token[0] === T_CONSTANT_ENCAPSED_STRING) {
+            if (in_array($token[0], [T_CONSTANT_ENCAPSED_STRING, T_ENCAPSED_AND_WHITESPACE], true)) {
                 if (! end($translationDepth) && preg_match('/\p{L}{2,}/u', $token[1]) === 1) {
-                    return $token[1];
+                    $literals[] = $token[0] === T_CONSTANT_ENCAPSED_STRING
+                        ? $token[1]
+                        : '"'.$token[1].'"';
                 }
 
                 $pendingTranslationCall = false;
@@ -1124,7 +1136,7 @@ function firstHardcodedBladeExpressionString(string $expression): ?string
         $pendingTranslationCall = false;
     }
 
-    return null;
+    return $literals;
 }
 
 /**
@@ -1145,6 +1157,44 @@ function firstHardcodedBladeExpressionString(string $expression): ?string
  */
 function firstHardcodedBladeString(string $source): ?string
 {
+    /*
+     * Block PHP is setup, not markup: -> and => must never supply an HTML >.
+     * Keep literal echo/print output under the same markup checks, and leave
+     * inline @php(...) to the directive rule below so it cannot swallow markup
+     * before a later block. firstHardcodedLabel() still scans the original PHP.
+     */
+    $source = (string) preg_replace_callback(
+        '/(?<!@)@php\b(?!\s*\()(.*?)@endphp/s',
+        static function (array $match): string {
+            $output = '';
+            $emitting = false;
+
+            foreach (token_get_all("<?php {$match[1]}") as $token) {
+                if (is_array($token) && in_array($token[0], [T_ECHO, T_PRINT], true)) {
+                    $emitting = true;
+
+                    continue;
+                }
+
+                if ($emitting) {
+                    $output .= is_array($token) ? $token[1] : $token;
+
+                    if ($token === ';') {
+                        $emitting = false;
+                    }
+                }
+            }
+
+            $literals = hardcodedBladeExpressionStrings($output);
+
+            return $literals === [] ? ' ' : '<span>'.implode('', array_map(
+                static fn (string $literal): string => substr($literal, 1, -1),
+                $literals,
+            )).'</span>';
+        },
+        $source,
+    );
+
     $stripped = (string) preg_replace(
         [
             '/<script\b[^>]*>.*?<\/script>/is',
@@ -1253,6 +1303,19 @@ it('detects hardcoded text in a Blade template', function (string $sample) {
     // Bound PHP may still contain literal user-facing strings.
     '<x-field :label="\'Student name\'" />',
     '<x-callout :description="$danger ? \'Delete forever\' : __(\'staff.name\')" />',
+    'text before PHP setup' => '<p>Students</p>@php $value = $money->toDecimal(); @endphp',
+    'text after PHP setup' => '@php $value = $money->toDecimal(); @endphp<p>Students</p>',
+    'attribute before PHP setup' => '<input placeholder="Students">@php $tones = ["primary" => "amber"]; @endphp',
+    'attribute after PHP setup' => '@php $tones = ["primary" => "amber"]; @endphp<input placeholder="Students">',
+    'inline PHP before block and text' => '@php($value = 1)<p>Students</p>@php $value = $money->toDecimal(); @endphp',
+    'echoed HTML in PHP' => '@php echo "<h1>Students</h1>"; @endphp',
+    'printed HTML in PHP' => '@php print "<input placeholder=\'Students\'>"; @endphp',
+    'echo after setup' => '@php $value = $money->toDecimal(); echo "<h1>Students</h1>"; @endphp',
+    'echo with surrounding markup' => '<p>@php echo "Students"; @endphp</p>',
+    'print in an expression' => '@php $written = print "<h1>Students</h1>"; @endphp',
+    'concatenated echoed HTML' => '@php echo "<h1>"."Students"."</h1>"; @endphp',
+    'interpolated echoed HTML' => '@php echo "<h1>Students {$name}</h1>"; @endphp',
+    'heredoc printed HTML' => "@php print <<<HTML\n<h1>Students {\$name}</h1>\nHTML;\n@endphp",
 ]);
 
 it('leaves translated and non-prose Blade alone', function (string $sample) {
@@ -1281,6 +1344,15 @@ it('leaves translated and non-prose Blade alone', function (string $sample) {
     '<x-field :label="$active ? __(\'staff.name\') : __(\'staff.user\')" />',
     '<x-field :label="__(\'staff.name\', [\'name\' => $name])" />',
     '<input placeholder="{{ __(\'staff.user\') }}">',
+    'PHP method chain setup' => '@php $initials = collect($parts)->map(fn ($part) => mb_substr($part, 0, 1))->join(""); @endphp<span>{{ $initials }}</span>',
+    'PHP associative array setup' => '@php $tones = ["primary" => "text-amber-500"]; @endphp<div>{{ $tones[$tone] }}</div>',
+    'PHP money setup' => '@php $decimal = $amount->toDecimal(); @endphp<span>{{ $decimal }}</span>',
+    'PHP setup inside markup' => '<div>@php $value = $money->toDecimal(); @endphp{{ $value }}</div>',
+    'multiple PHP setup blocks' => '@php $value = $money->toDecimal(); @endphp<div>{{ $value }}</div>@php $tones = ["primary" => "amber"]; @endphp<span>{{ $tone }}</span>',
+    'inline PHP followed by a block' => '@php($value = $money->toDecimal())<span>{{ $value }}</span>@php $tones = ["primary" => "amber"]; @endphp<div>{{ $tone }}</div>',
+    'translated PHP echo' => '<span>@php echo __("staff.name"); @endphp</span>',
+    'translated PHP print' => '<span>@php print __("staff.name"); @endphp</span>',
+    'PHP echo with empty markup' => '@php echo "<span></span>"; @endphp',
 ]);
 
 it('has no hardcoded user-facing strings in the application', function () {
