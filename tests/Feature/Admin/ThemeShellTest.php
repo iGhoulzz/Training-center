@@ -392,28 +392,86 @@ function adminThemeWithoutTokenDefinitions(string $css): string
 }
 
 /**
- * The first raw colour in this stylesheet's rules, or null: a hex value, a colour
- * function, a colour utility from Tailwind's default palette (or white or black), or
- * an arbitrary-value colour. `gray-*` and `primary-*` are the panel's own registered
- * palettes, and `on-primary`, `hairline` and the rest are this file's tokens.
+ * The CSS named colours (CSS Color 4), as a regex alternation; the same list as the
+ * public guard's in tests/Feature/Public/DesignSystemTest.php. `transparent` and
+ * `currentColor` are left out: neither is a raw colour.
+ */
+function adminThemeNamedColours(): string
+{
+    return 'aliceblue|antiquewhite|aqua|aquamarine|azure|beige|bisque|black|blanchedalmond|blue|blueviolet|brown|'
+        .'burlywood|cadetblue|chartreuse|chocolate|coral|cornflowerblue|cornsilk|crimson|cyan|darkblue|darkcyan|'
+        .'darkgoldenrod|darkgray|darkgreen|darkgrey|darkkhaki|darkmagenta|darkolivegreen|darkorange|darkorchid|'
+        .'darkred|darksalmon|darkseagreen|darkslateblue|darkslategray|darkslategrey|darkturquoise|darkviolet|'
+        .'deeppink|deepskyblue|dimgray|dimgrey|dodgerblue|firebrick|floralwhite|forestgreen|fuchsia|gainsboro|'
+        .'ghostwhite|gold|goldenrod|gray|green|greenyellow|grey|honeydew|hotpink|indianred|indigo|ivory|khaki|'
+        .'lavender|lavenderblush|lawngreen|lemonchiffon|lightblue|lightcoral|lightcyan|lightgoldenrodyellow|'
+        .'lightgray|lightgreen|lightgrey|lightpink|lightsalmon|lightseagreen|lightskyblue|lightslategray|'
+        .'lightslategrey|lightsteelblue|lightyellow|lime|limegreen|linen|magenta|maroon|mediumaquamarine|'
+        .'mediumblue|mediumorchid|mediumpurple|mediumseagreen|mediumslateblue|mediumspringgreen|'
+        .'mediumturquoise|mediumvioletred|midnightblue|mintcream|mistyrose|moccasin|navajowhite|navy|oldlace|'
+        .'olive|olivedrab|orange|orangered|orchid|palegoldenrod|palegreen|paleturquoise|palevioletred|'
+        .'papayawhip|peachpuff|peru|pink|plum|powderblue|purple|rebeccapurple|red|rosybrown|royalblue|'
+        .'saddlebrown|salmon|sandybrown|seagreen|seashell|sienna|silver|skyblue|slateblue|slategray|slategrey|'
+        .'snow|springgreen|steelblue|tan|teal|thistle|tomato|turquoise|violet|wheat|white|whitesmoke|yellow|'
+        .'yellowgreen';
+}
+
+/**
+ * The first raw colour in this stylesheet's rules, or null. Comments, quoted strings
+ * and the @theme blocks (where the design's values are defined) are set aside first.
+ *
+ * - A hex value or a colour function anywhere.
+ * - A colour utility from Tailwind's default palette, or white or black. `gray-*` and
+ *   `primary-*` are the panel's own registered palettes, and `on-primary`, `hairline`
+ *   and the rest are this file's tokens.
+ * - Inside an `@apply`, any arbitrary value or arbitrary property holding a hex, a
+ *   colour function or a named colour: `text-[red]`, `bg-[rebeccapurple]`,
+ *   `shadow-[0_0_0_1px_red]`, `[color:red]`.
+ * - In a declaration, a named colour as a value: `color: red`, `border: 1px solid navy`.
+ *
+ * A name counts only as a whole word, with no letter or hyphen on either side, so
+ * `var(--color-gold)`, `text-gray-50` and `background-color` are not colours.
+ * Attribute selectors are never read, because only @apply bodies and declarations are.
  */
 function adminThemeFirstRawColour(string $css): ?string
 {
-    $code = adminThemeWithoutTokenDefinitions($css);
+    $code = (string) preg_replace('/"[^"]*"|\'[^\']*\'/', '""', adminThemeWithoutTokenDefinitions($css));
     $palette = 'slate|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose';
     $utility = '(?:bg|text|border|ring|outline|fill|stroke|from|to|via|divide|decoration|accent|caret|shadow|placeholder)';
+    $named = '/(?<![a-z-])(?:'.adminThemeNamedColours().')(?![a-z-])/i';
 
     $patterns = [
         '/#[0-9a-f]{3,8}\b/i',
         '/\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color-mix|color)\s*\(/i',
         '/(?<![\w-])(?:[a-z-]+:)*'.$utility.'-(?:'.$palette.')-\d{2,3}(?![\w-])/i',
         '/(?<![\w-])(?:[a-z-]+:)*'.$utility.'-(?:white|black)(?![\w-])/i',
-        '/-\[\s*(?:#|(?:rgba?|hsla?)\s*\()/i',
     ];
 
     foreach ($patterns as $pattern) {
         if (preg_match($pattern, $code, $match) === 1) {
             return trim($match[0]);
+        }
+    }
+
+    preg_match_all('/@apply\s+([^;}]*)/i', $code, $applies);
+
+    foreach ($applies[1] as $apply) {
+        preg_match_all('/\[([^\]\[]+)\]/', $apply, $brackets, PREG_SET_ORDER);
+
+        foreach ($brackets as $bracket) {
+            if (preg_match($named, $bracket[1]) === 1) {
+                return $bracket[0];
+            }
+        }
+    }
+
+    $declarations = (string) preg_replace('/@apply\s+[^;}]*/i', ' ', $code);
+
+    preg_match_all('/(?<![\w-])(-{0,2}[a-z][\w-]*)\s*:\s*([^;{}]*)(?=[;}])/i', $declarations, $matches, PREG_SET_ORDER);
+
+    foreach ($matches as $declaration) {
+        if (preg_match($named, $declaration[2]) === 1) {
+            return trim($declaration[0]);
         }
     }
 
@@ -436,6 +494,17 @@ it('catches every raw colour the admin theme may not use', function (string $sam
     '.a { @apply bg-black/50; }',
     '.a { @apply text-[#1c1204]; }',
     '.a { @apply bg-[rgb(1,2,3)]; }',
+    // Named colours (Codex, #103).
+    '.a { color: red; }',
+    '.a{color:RED}',
+    '.a { border: 1px solid navy; }',
+    '.a { box-shadow: 0 0 0 1px gold; }',
+    '.a { --x: tomato; }',
+    '.a { @apply text-[red]; }',
+    '.a { @apply bg-[rebeccapurple]; }',
+    '.a { @apply hover:bg-[White]; }',
+    '.a { @apply shadow-[0_0_0_1px_red]; }',
+    '.a { @apply [color:red]; }',
 ]);
 
 it('leaves the admin theme\'s own tokens and registered palettes alone', function (string $sample) {
@@ -449,6 +518,13 @@ it('leaves the admin theme\'s own tokens and registered palettes alone', functio
     '@theme { --color-on-primary: #1c1204; --color-hairline: rgb(255 255 255 / 0.1); } .a { @apply text-on-primary; }',
     '/* never #fff, rgb(1 2 3) or bg-amber-500 */ .a { @apply text-gray-50; }',
     '.a { @apply white-space-nowrap; } .b { content: "#"; }',
+    '.a { content: "red"; font-family: "Gold Sans"; }',
+    '.a { transition-property: color, background-color; color: currentColor; }',
+    '.a { border-color: var(--color-gold); scrollbar-color: var(--color-scrollbar) transparent; }',
+    '.a { @apply text-[11px] tracking-[0.08em] leading-[normal] rounded-[10px]; }',
+    '.a { @apply [&_svg]:size-4 aria-[current=page]:text-primary-400; }',
+    '[data-tone=red] .a:hover { @apply text-gray-400; }',
+    '@media (hover: hover) and (pointer: fine) { .a { @apply text-[13px]; } }',
 ]);
 
 it('keeps amber and every raw colour out of the admin theme\'s rules', function () {
