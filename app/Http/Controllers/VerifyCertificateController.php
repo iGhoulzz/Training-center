@@ -109,7 +109,7 @@ final class VerifyCertificateController extends Controller
             courseName: $certificate->course_name,
             completedOn: CentreCalendar::localise($certificate->completed_on)->format('Y-m-d'),
             issuedAt: CentreCalendar::localise($certificate->issued_at)->format('Y-m-d H:i'),
-            centreName: (string) config('app.name'),
+            centreName: (string) config('public_site.brand.name'),
             revokedOn: $revokedOn,
         );
 

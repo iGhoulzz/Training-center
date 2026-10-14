@@ -99,6 +99,10 @@ it('renders the not-found result directly for a malformed submission, without re
 */
 
 it('renders the certificate for a valid reference', function () {
+    // The confirming centre is the brand's full name (P4-T20c). A sentinel, so a page
+    // that read app.name, now the short display name, cannot pass.
+    config(['public_site.brand.name' => 'SENTINEL-CONFIRMING-CENTRE']);
+
     $certificate = StudentCertificate::factory()->create([
         'student_name' => 'Amina Zarrouk',
         'course_name' => 'Welding Level 1',
@@ -115,7 +119,9 @@ it('renders the certificate for a valid reference', function () {
     // CentreCalendar. 2026-05-02 20:30 UTC is 2026-05-02 22:30 in Tripoli.
     $response->assertSee('2026-05-01');
     $response->assertSee('2026-05-02 22:30');
-    $response->assertSee((string) config('app.name'));
+    // In order, after the "Confirmed by" label: the page header also prints the brand
+    // name (hidden text), so the sentinel alone is on the page whatever the controller read.
+    $response->assertSeeInOrder(['Confirmed by', 'SENTINEL-CONFIRMING-CENTRE']);
 });
 
 it('accepts a lowercase reference in the URL for the lookup too', function () {

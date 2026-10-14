@@ -162,7 +162,7 @@ first attempt.
 | `resources/views/verify/*` | **T14 → T20c → T18** | T14 restyles; T20c brings them to the prototype's exact values and the real brand; T18 makes them directional and converts their three `route()` call sites to `PublicRoute`, **and the six `url('/')` links T14's headers added** (two a page), which no `route()` search finds. Both keep them standalone and scriptless |
 | `resources/views/public/**` (pages), `resources/views/components/public/*` | **T11 → T12 → T13 → T20a → T20b → T18** | T11–T13 build the pages and components; T20a defines the design system (tokens, components, no inline `style`) and brings the existing components onto it; T20b rebuilds the pages to the prototype. Every later public page uses the system, and none adds an inline `style` |
 | `resources/css/filament/admin/theme.css` | **T16a → T20c** | T16a creates the admin theme; T20c checks every token against `Filament Revamp.dc.html`. T16b–T16e read it and do not edit it |
-| `app/Http/Controllers/VerifyCertificateController.php` | **T18 only** | One line: the `submit()` redirect goes through `PublicRoute`. The lookup, the normalisation and the uniform miss are untouched |
+| `app/Http/Controllers/VerifyCertificateController.php` | **T20c → T18** | T20c (lead's amendment, 2026-10-13): one line, so the result's `centreName` reads `config('public_site.brand.name')` and not `app.name`, which is now the short display name. T18: one line, the `submit()` redirect goes through `PublicRoute`. In neither task do the lookup, the normalisation or the uniform miss move |
 | `app/Support/PublicRoute.php` | **T11 only** | Complete from the start, so T18 adds routes and a locale without editing it |
 | `app/Domain/Enrollment/Models/Batch.php` | **T05 only** | Scopes beside the existing predicates |
 | `app/Domain/Enrollment/Services/EnrollmentQueryService.php`, `app/Domain/Finance/Data/EnrollmentBalance.php`, `app/Domain/Finance/Filament/Portal/Pages/MyBalance.php`, `resources/views/portal/my-balance.blade.php`, `lang/en/portal.php`, `tests/Feature/Finance/StudentBalanceQueryTest.php`, `tests/Feature/Portal/MyBalancePageTest.php`, `tests/Feature/Portal/PortalQueryCountTest.php` | **T05 only** | Owner-approved scope expansion (2026-10-10): show localized course names and batch codes on balance rows now. Ownership, existing unbilled-row handling and fixed query counts are preserved regression behavior |
@@ -1296,8 +1296,68 @@ sessionless, scanners) · the teaser never shows an unpublished article ·
 - `resources/css/filament/admin/theme.css`, `app/Providers/Filament/AdminPanelProvider.php`
   — the brand logo and name, and the shell tokens checked against
   `Filament Revamp.dc.html` (seam, after T16a)
+- `resources/views/filament/admin/brand.blade.php` — new: the panel's brand (the
+  logo and the short name), if Filament's brand hook takes a view
+- `app/Http/Controllers/VerifyCertificateController.php` — **one line**
+  (lead's amendment, 2026-10-13; seam, before T18). A valid certificate's
+  "confirmed by" line takes the centre's name from `config('app.name')`. Since
+  T20a, that setting holds the short display name, "A.S.C.L.S.T". The line reads
+  `config('public_site.brand.name')` instead, so a verified certificate names
+  the centre in full. Nothing else in the controller moves: not the lookup, not
+  the normalisation, not the uniform miss.
 - `tests/Feature/Verification/VerifierRestyleTest.php`,
-  `tests/Feature/Admin/ThemeShellTest.php` — appended
+  `tests/Feature/Admin/ThemeShellTest.php` — appended. In
+  `VerifierRestyleTest.php` and `tests/Feature/Verification/VerifyCertificateTest.php`,
+  only the assertions that expect `config('app.name')` as the confirming
+  centre change, to the brand name, with a sentinel value.
+
+**Decisions (lead, 2026-10-13)**
+- **The verifier's header** shows the brand as the public footer draws it on navy:
+  the 44px logo, the short name in Instrument Serif, and the Arabic name in gold.
+  It is restated in the page's inline CSS, because these pages load no
+  stylesheet. The logo is a same-origin image, which `VerificationDisclosureTest`
+  allows.
+- **The verifier's panels and result card** take their values from the public
+  prototype's CERTIFICATE VERIFIER section. That is the only verifier the design
+  draws.
+- **The admin's brand** is the logo as a 28px circle and the short name. That is
+  the prototype's 28px mark and name, with the placeholder "TC" square and
+  "Tripoli Training Centre" replaced by the real ones. The full English name does
+  not fit the 258px sidebar.
+- **The admin's colours** are registered with the README's exact values, as
+  Tailwind 3's hex shades: gray 50–950, primary amber (#f59e0b, hover #fbbf24,
+  on-primary #1c1204), success #4ade80, info #60a5fa, warning #fbbf24 and danger
+  #f87171. Tailwind 4's built-in palettes are OKLCH re-tunings, and their amber
+  differs visibly. `theme.css` uses the registered `primary-*` colours, never
+  `amber-*`.
+- **Not built:**
+  - the prototype's Today/Proposed toggle (owner, 2026-10-10);
+  - the topbar's "⌘K" hint, which would add a keyboard shortcut;
+  - the sidebar's user block, unless Filament renders the user menu there
+    natively.
+
+  Filament's own topbar elements are kept and styled to the prototype.
+- **Settled in the build (lead, 2026-10-13):**
+  - **Faint text rises to 4.5:1, not the prototype's values.** On the admin, the
+    sidebar group labels are gray-400, not gray-500: gray-500 measures 3.67:1 on
+    the gray-900 sidebar and gray-400 6.99:1. The topbar search placeholder
+    follows (gray-500 is 3.32:1 on the pill, gray-400 6.33:1). On the verifier,
+    the page's gold glow reaches under the panel and the result card and moves as
+    the screen narrows, so each text is held to 4.5:1 over navy plus the glow at
+    its full .18, then the panel's tint, then the card's, which holds at every
+    width. The row label rises from cream .55 to .69, the sub-line .66 to .69, the
+    field label .6 to .62, the hint .66 to .69, the note .45 to .62, and the
+    revoked headline from #f0908f to #f3a8a7 (the same hue, lighter, as at 15px it
+    is not large text). Every sentence of prose on those pages is 16px below
+    1024px and the design's size from there, and the note sits inside the panel
+    under the form or the result, as the design draws it.
+  - **The user menu stays in the topbar.** Filament 5 offers one position, so
+    there is no separate sidebar user block.
+  - **The page subheading stays below the heading,** in Filament's order. The
+    prototype's context line above the title would put a page's long
+    explanation first.
+  - **Filament's default avatar loads from ui-avatars.com,** a third-party
+    origin. That was true before this task, and it is left to a follow-up.
 
 **Done when.** The verifier's pages and the admin sidebar, topbar and page header
 match their prototypes side by side at 375, 768 and 1440px. The verifier meets
