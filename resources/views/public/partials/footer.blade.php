@@ -1,34 +1,69 @@
 @use('App\Support\CentreCalendar')
 @use('App\Support\PublicRoute')
 
-<footer class="bg-navy-900 text-cream-100">
-    <div class="mx-auto grid max-w-6xl gap-8 px-4 py-10 md:grid-cols-[2fr_1fr_1fr]">
-        <div>
-            <x-public.brand />
-            <p class="mt-3 max-w-md text-sm text-cream-200">{{ __('public.footer.description') }}</p>
+{{--
+    The footer, as the design draws it: the brand and a line about the centre, two
+    columns of links, and the copyright line under a hairline.
+
+    THE LINKS. Centre: About, Programmes, Publications, Contact. Services: the
+    verifier, the student portal (the same component the header uses, so the portal
+    URL is built in one place) and the note that says a student may have no login.
+    The design's "Corporate training" line named a service the centre has not
+    confirmed, and the design's "Tripoli, Libya" line is left out until the owner
+    sends an address.
+
+    THE DESCRIPTION is the draft key already in lang/en/public.php. The design's own
+    sentence claims an accreditation the centre has not confirmed, so it is not copied.
+
+    TOUCH TARGETS. Below 1024px a link is a 44px row. From 1024px, where the pointer
+    is precise, the rows shrink to the design's own 9px gap.
+
+    RUNNING TEXT. The description and the portal note are sentences, so below 1024px
+    they are 16px, the floor ENGINEERING sets for reading on a phone. From 1024px they
+    are the design's 13.5px. The links, headings and copyright line are labels and
+    keep the design's sizes at every width.
+
+    The design's two link columns are 180px wide. On a phone each takes its own
+    full-width row instead, so the portal note is not squeezed into a strip.
+
+    CONTRAST. Every text colour here is at least 4.5:1 on the navy (WCAG's formula,
+    the colour composited over #0d2745). The copyright line is the design's 50%
+    cream, which measures 4.54:1, so it passes as drawn and is kept exact; 49% would
+    not (4.42:1). The 68% and 72% lines measure 7.17:1 and 7.87:1, the gold headings
+    6.39:1 and the cream brand name 13.97:1.
+--}}
+<footer class="bg-navy text-cream/68">
+    <x-public.container class="flex flex-wrap gap-11 pt-13 pb-7.5">
+        <div class="min-w-0 flex-[1_1_300px]">
+            <x-public.brand variant="footer" />
+            <p class="mt-4 max-w-97.5 text-base leading-[1.75] lg:text-ui">{{ __('public.footer.description') }}</p>
         </div>
 
-        <nav aria-labelledby="footer-centre-heading">
-            <h2 id="footer-centre-heading" class="text-sm font-semibold uppercase tracking-wider text-gold-400">{{ __('public.footer.centre_heading') }}</h2>
+        <nav aria-labelledby="footer-centre-heading" class="flex-[1_1_100%] sm:flex-[0_1_180px]">
+            <h2 id="footer-centre-heading" class="mb-3.25 text-label text-gold uppercase">{{ __('public.footer.centre_heading') }}</h2>
 
-            <ul class="mt-3 flex flex-col gap-2 text-sm">
-                <li><a href="{{ PublicRoute::url('public.about') }}" class="hover:underline focus-visible:outline-gold-400">{{ __('public.links.about') }}</a></li>
-                <li><a href="{{ PublicRoute::url('public.programmes.index') }}" class="hover:underline focus-visible:outline-gold-400">{{ __('public.links.programmes') }}</a></li>
-                <li><a href="{{ PublicRoute::url('public.publications.index') }}" class="hover:underline focus-visible:outline-gold-400">{{ __('public.links.publications') }}</a></li>
-                <li><a href="{{ PublicRoute::url('public.contact') }}" class="hover:underline focus-visible:outline-gold-400">{{ __('public.links.contact') }}</a></li>
+            <ul class="flex flex-col text-ui lg:gap-2.25">
+                <li><a href="{{ PublicRoute::url('public.about') }}" class="flex min-h-11 items-center text-cream/72 hover:text-gold-light focus-visible:outline-gold-light lg:min-h-0">{{ __('public.links.about') }}</a></li>
+                <li><a href="{{ PublicRoute::url('public.programmes.index') }}" class="flex min-h-11 items-center text-cream/72 hover:text-gold-light focus-visible:outline-gold-light lg:min-h-0">{{ __('public.links.programmes') }}</a></li>
+                <li><a href="{{ PublicRoute::url('public.publications.index') }}" class="flex min-h-11 items-center text-cream/72 hover:text-gold-light focus-visible:outline-gold-light lg:min-h-0">{{ __('public.links.publications') }}</a></li>
+                <li><a href="{{ PublicRoute::url('public.contact') }}" class="flex min-h-11 items-center text-cream/72 hover:text-gold-light focus-visible:outline-gold-light lg:min-h-0">{{ __('public.links.contact') }}</a></li>
             </ul>
         </nav>
 
-        <nav aria-labelledby="footer-services-heading">
-            <h2 id="footer-services-heading" class="text-sm font-semibold uppercase tracking-wider text-gold-400">{{ __('public.footer.services_heading') }}</h2>
+        <nav aria-labelledby="footer-services-heading" class="flex-[1_1_100%] sm:flex-[0_1_180px]">
+            <h2 id="footer-services-heading" class="mb-3.25 text-label text-gold uppercase">{{ __('public.footer.services_heading') }}</h2>
 
-            <ul class="mt-3 flex flex-col gap-2 text-sm">
-                <li><a href="{{ PublicRoute::url('verify.certificates.form') }}" class="hover:underline focus-visible:outline-gold-400">{{ __('public.links.verify_certificate') }}</a></li>
+            <ul class="flex flex-col text-ui lg:gap-2.25">
+                <li><a href="{{ PublicRoute::url('verify.certificates.form') }}" class="flex min-h-11 items-center text-cream/72 hover:text-gold-light focus-visible:outline-gold-light lg:min-h-0">{{ __('public.links.verify_certificate') }}</a></li>
+                <li><x-public.portal-link variant="footer" class="flex min-h-11 items-center text-cream/72 hover:text-gold-light focus-visible:outline-gold-light lg:min-h-0 lg:leading-[normal]" /></li>
+                <li class="text-base text-cream/72 lg:text-ui">{{ __('public.portal.note') }}</li>
             </ul>
         </nav>
-    </div>
+    </x-public.container>
 
-    <div class="border-t border-cream-100/15">
-        <p class="mx-auto max-w-6xl px-4 py-4 text-sm text-cream-200">{{ __('public.footer.copyright', ['year' => CentreCalendar::yearOf(now()), 'name' => config('app.name')]) }}</p>
+    <div class="border-t border-cream/11">
+        <x-public.container class="py-4.5 text-caption text-cream/50">
+            <p>{{ __('public.footer.copyright', ['year' => CentreCalendar::yearOf(now()), 'name' => config('public_site.brand.name')]) }}</p>
+        </x-public.container>
     </div>
 </footer>

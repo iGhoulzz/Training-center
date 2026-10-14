@@ -15,13 +15,13 @@
 
 @use('App\Support\PublicRoute')
 
-<article class="flex h-full flex-col rounded-xl border border-cream-200 bg-cream-50 p-6 shadow-sm">
-    <h{{ $level }} class="font-serif text-xl font-semibold text-navy-900">
+<article class="flex h-full flex-col rounded-card border border-navy/9 bg-cream p-6 shadow-card">
+    <h{{ $level }} class="font-display text-xl text-navy">
         <a href="{{ PublicRoute::url('public.programmes.show', ['course' => $programme->id]) }}" class="hover:underline">{{ $programme->name }}</a>
     </h{{ $level }}>
 
     @if ($programme->description !== '')
-        <p class="mt-3 text-sm text-navy-800">{{ $programme->description }}</p>
+        <p class="mt-3 text-sm text-body">{{ $programme->description }}</p>
     @endif
 
     <div class="mt-auto pt-5">
@@ -30,7 +30,7 @@
         @if ($programme->price === null)
             <a
                 href="{{ PublicRoute::url('public.contact') }}"
-                class="mt-3 inline-flex items-center rounded-full border border-navy-800 px-4 py-2 text-sm font-medium text-navy-900 hover:bg-cream-100"
+                class="mt-3 inline-flex items-center rounded-pill border border-navy/20 px-4 py-2 text-sm font-medium text-navy hover:bg-navy hover:text-cream"
             >{{ __('public.programmes.contact_cta') }}</a>
         @endif
     </div>

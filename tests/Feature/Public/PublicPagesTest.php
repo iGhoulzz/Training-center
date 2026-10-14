@@ -46,7 +46,7 @@ beforeEach(function (): void {
 
 beforeEach(function () {
     config([
-        'app.name' => 'Test Centre',
+        'public_site.brand.name' => 'Test Centre',
         'public_site.contact.email' => 'desk@example.test',
         'public_site.contact.phone' => '+218 91 234 5678',
         'public_site.contact.map_url' => 'https://maps.example.test/place/abc',
@@ -158,11 +158,13 @@ it('prints the same email and telephone links in the header and in the page body
 it('hands the callers classes to the contact links and keeps them left to right', function () {
     $html = (string) $this->get('/contact')->assertOk()->getContent();
 
-    // The header's link carries the header's classes, the page's its own.
-    expect($html)->toContain('<a href="mailto:desk@example.test" dir="ltr" class="hover:text-gold-400 focus-visible:outline-gold-400">')
-        ->toContain('<a href="mailto:desk@example.test" dir="ltr" class="underline hover:text-navy-700">')
-        ->toContain('<a href="tel:+218912345678" dir="ltr" class="hover:text-gold-400 focus-visible:outline-gold-400">')
-        ->toContain('<a href="tel:+218912345678" dir="ltr" class="underline hover:text-navy-700">');
+    // The header's link carries the top bar's classes, the page's its own.
+    $barClasses = 'flex min-h-11 items-center whitespace-nowrap text-on-navy hover:text-gold-light focus-visible:outline-gold-light lg:min-h-0';
+
+    expect($html)->toContain('<a href="mailto:desk@example.test" dir="ltr" class="'.$barClasses.'">')
+        ->toContain('<a href="mailto:desk@example.test" dir="ltr" class="underline hover:text-gold-dark">')
+        ->toContain('<a href="tel:+218912345678" dir="ltr" class="'.$barClasses.'">')
+        ->toContain('<a href="tel:+218912345678" dir="ltr" class="underline hover:text-gold-dark">');
 });
 
 it('renders no contact link, and no bar for them, when none is configured', function () {
@@ -252,11 +254,13 @@ it('links to about, programmes, publications and contact from the navigation and
     $footer = publicLinksWithin($html, '<footer', '</footer>');
 
     // The navigation is rendered twice from one list, narrow then wide, so each
-    // link appears twice and the order is the list's order.
+    // link appears twice and the order is the list's order. The narrow menu's last
+    // item is the student portal's sign-in (P4-T15), which the wide row does not repeat.
     $expected = [url('/about'), url('/programmes'), url('/publications'), url('/verify/certificates'), url('/contact')];
+    $portal = route('filament.student.auth.login');
 
-    expect(array_values(array_unique($nav)))->toBe($expected)
-        ->and($nav)->toHaveCount(count($expected) * 2)
+    expect(array_values(array_unique($nav)))->toBe([...$expected, $portal])
+        ->and($nav)->toHaveCount(count($expected) * 2 + 1)
         ->and($footer)->toContain(url('/about'))->toContain(url('/programmes'))->toContain(url('/publications'))->toContain(url('/contact'));
 });
 

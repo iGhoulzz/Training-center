@@ -25,12 +25,12 @@
 @use('Carbon\CarbonImmutable')
 
 <ul data-programme-facts {{ $attributes->class(['flex flex-col gap-1']) }}>
-    <li class="text-sm font-medium text-navy-700">{{ trans_choice('public.programmes.hours', $programme->hours) }}</li>
+    <li class="text-sm font-medium text-meta">{{ trans_choice('public.programmes.hours', $programme->hours) }}</li>
 
     @if ($programme->price !== null)
-        <li class="font-serif text-lg font-semibold text-navy-900">{{ __('public.programmes.price', ['amount' => $programme->price]) }}</li>
-        <li class="text-sm text-navy-800">{{ __('public.programmes.starts', ['date' => CarbonImmutable::parse($programme->startDate)->translatedFormat(__('public.programmes.date_format'))]) }}</li>
+        <li class="font-display text-lg text-navy">{{ __('public.programmes.price', ['amount' => $programme->price]) }}</li>
+        <li class="text-sm text-body">{{ __('public.programmes.starts', ['date' => CarbonImmutable::parse($programme->startDate)->translatedFormat(__('public.programmes.date_format'))]) }}</li>
     @else
-        <li class="text-sm text-navy-800">{{ __('public.programmes.no_intake') }}</li>
+        <li class="text-sm text-body">{{ __('public.programmes.no_intake') }}</li>
     @endif
 </ul>

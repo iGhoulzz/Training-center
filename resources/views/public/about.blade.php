@@ -9,31 +9,31 @@
 @use('App\Support\PublicRoute')
 
 @section('title')
-    {{ __('public.page_title', ['page' => __('public.about.heading'), 'name' => config('app.name')]) }}
+    {{ __('public.page_title', ['page' => __('public.about.heading'), 'name' => config('public_site.brand.name')]) }}
 @endsection
 
 @section('content')
     <div class="mx-auto max-w-3xl px-4 py-12">
-        <h1 class="font-serif text-4xl font-semibold">{{ __('public.about.heading') }}</h1>
+        <h1 class="font-display text-4xl text-navy">{{ __('public.about.heading') }}</h1>
 
-        <p class="mt-6 text-lg text-navy-800">{{ __('public.about.intro') }}</p>
-        <p class="mt-4 text-lg text-navy-800">{{ __('public.about.register') }}</p>
-        <p class="mt-4 text-lg text-navy-800">{{ __('public.about.questions') }}</p>
+        <p class="mt-6 text-lg text-body">{{ __('public.about.intro') }}</p>
+        <p class="mt-4 text-lg text-body">{{ __('public.about.register') }}</p>
+        <p class="mt-4 text-lg text-body">{{ __('public.about.questions') }}</p>
 
-        <section aria-labelledby="about-certification-heading" class="mt-10 rounded-xl border border-cream-200 bg-white p-6">
-            <h2 id="about-certification-heading" class="font-serif text-2xl font-semibold">{{ __('public.about.certification_heading') }}</h2>
-            <p class="mt-3 text-navy-800">{{ __('public.about.certification_body') }}</p>
-            <a href="{{ PublicRoute::url('verify.certificates.form') }}" class="mt-4 inline-block font-medium text-navy-700 underline hover:text-navy-900">{{ __('public.links.verify_certificate') }}</a>
+        <section aria-labelledby="about-certification-heading" class="mt-10 rounded-card border border-navy/9 bg-card p-6">
+            <h2 id="about-certification-heading" class="font-display text-2xl text-navy">{{ __('public.about.certification_heading') }}</h2>
+            <p class="mt-3 text-body">{{ __('public.about.certification_body') }}</p>
+            <a href="{{ PublicRoute::url('verify.certificates.form') }}" class="mt-4 inline-block font-medium text-navy underline hover:text-gold-dark">{{ __('public.links.verify_certificate') }}</a>
         </section>
 
         <div class="mt-10 flex flex-wrap gap-3">
             <a
                 href="{{ PublicRoute::url('public.programmes.index') }}"
-                class="inline-flex items-center rounded-full bg-navy-900 px-6 py-3 font-medium text-cream-50 hover:bg-navy-800"
+                class="inline-flex items-center rounded-pill bg-navy px-6 py-3 font-medium text-cream hover:bg-navy-hover"
             >{{ __('public.about.programmes_link') }}</a>
             <a
                 href="{{ PublicRoute::url('public.contact') }}"
-                class="inline-flex items-center rounded-full border border-navy-800 px-6 py-3 font-medium hover:bg-cream-100"
+                class="inline-flex items-center rounded-pill border border-navy/20 px-6 py-3 font-medium text-navy hover:bg-navy hover:text-cream"
             >{{ __('public.about.contact_link') }}</a>
         </div>
     </div>

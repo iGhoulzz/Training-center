@@ -19,6 +19,6 @@
 @use('Carbon\CarbonImmutable')
 
 <p class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-    <span class="rounded-full bg-cream-100 px-3 py-1 font-semibold text-navy-800">{{ $topic }}</span>
-    <time datetime="{{ $issuedOn }}" class="text-navy-700">{{ __('publications.public.issued', ['date' => CarbonImmutable::parse($issuedOn)->translatedFormat(__('publications.public.date_format'))]) }}</time>
+    <span class="rounded-pill bg-gold/15 px-3 py-1 font-semibold text-subtitle">{{ $topic }}</span>
+    <time datetime="{{ $issuedOn }}" class="text-meta">{{ __('publications.public.issued', ['date' => CarbonImmutable::parse($issuedOn)->translatedFormat(__('publications.public.date_format'))]) }}</time>
 </p>

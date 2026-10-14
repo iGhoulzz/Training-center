@@ -19,48 +19,48 @@
 @use('Carbon\CarbonImmutable')
 
 @section('title')
-    {{ __('public.page_title', ['page' => $article->title, 'name' => config('app.name')]) }}
+    {{ __('public.page_title', ['page' => $article->title, 'name' => config('public_site.brand.name')]) }}
 @endsection
 
 @section('content')
     <div class="mx-auto max-w-3xl px-4 py-12">
-        <p><a href="{{ PublicRoute::url('public.publications.index') }}" class="text-sm font-medium text-navy-700 hover:underline">{{ __('publications.public.back') }}</a></p>
+        <p><a href="{{ PublicRoute::url('public.publications.index') }}" class="text-sm font-medium text-navy hover:underline">{{ __('publications.public.back') }}</a></p>
 
         <div class="mt-6">
             <x-public.article-meta :topic="$article->topic" :issued-on="$article->issuedOn" />
         </div>
 
-        <h1 class="mt-4 font-serif text-4xl font-semibold">{{ $article->title }}</h1>
-        <p class="mt-3 text-navy-700">{{ $article->authors }}</p>
+        <h1 class="mt-4 font-display text-4xl text-navy">{{ $article->title }}</h1>
+        <p class="mt-3 text-meta">{{ $article->authors }}</p>
 
-        <section aria-labelledby="article-download-heading" class="mt-8 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-cream-200 bg-white p-6">
+        <section aria-labelledby="article-download-heading" class="mt-8 flex flex-wrap items-center justify-between gap-4 rounded-card border border-navy/9 bg-card p-6">
             <div>
-                <h2 id="article-download-heading" class="font-semibold text-navy-900">{{ __('publications.public.download_heading') }}</h2>
-                <p class="mt-1 text-sm text-navy-700">{{ trans_choice('publications.public.downloads', $article->downloadCount) }}</p>
-                <p class="text-sm text-navy-700">{{ __('publications.public.downloads_note') }}</p>
+                <h2 id="article-download-heading" class="font-semibold text-navy">{{ __('publications.public.download_heading') }}</h2>
+                <p class="mt-1 text-sm text-meta">{{ trans_choice('publications.public.downloads', $article->downloadCount) }}</p>
+                <p class="text-sm text-meta">{{ __('publications.public.downloads_note') }}</p>
             </div>
 
             <a
                 href="{{ PublicRoute::url('public.publications.download', ['slug' => $article->slug]) }}"
-                class="inline-flex items-center rounded-full bg-navy-900 px-6 py-3 font-medium text-cream-50 hover:bg-navy-800"
+                class="inline-flex items-center rounded-pill bg-navy px-6 py-3 font-medium text-cream hover:bg-navy-hover"
             >{{ __('publications.public.download_pdf') }}</a>
         </section>
 
-        <p class="mt-8 whitespace-pre-line text-lg text-navy-800">{{ $article->description }}</p>
+        <p class="mt-8 whitespace-pre-line text-lg text-body">{{ $article->description }}</p>
 
         @if ($related !== [])
-            <section aria-labelledby="article-more-heading" class="mt-12 border-t border-cream-200 pt-8">
-                <h2 id="article-more-heading" class="text-sm font-semibold uppercase tracking-wider text-navy-700">{{ __('publications.public.more_in', ['topic' => $article->topic]) }}</h2>
+            <section aria-labelledby="article-more-heading" class="mt-12 border-t border-navy/9 pt-8">
+                <h2 id="article-more-heading" class="text-sm font-semibold uppercase tracking-wider text-gold-dark">{{ __('publications.public.more_in', ['topic' => $article->topic]) }}</h2>
 
                 <ul class="mt-4 flex flex-col gap-3">
                     @foreach ($related as $other)
                         <li>
                             <a
                                 href="{{ PublicRoute::url('public.publications.show', ['slug' => $other->slug]) }}"
-                                class="block rounded-xl border border-cream-200 bg-white p-4 hover:bg-cream-100"
+                                class="block rounded-card border border-navy/9 bg-card p-4 hover:bg-cream"
                             >
-                                <span class="block font-serif text-lg font-semibold text-navy-900">{{ $other->title }}</span>
-                                <span class="block text-sm text-navy-700">{{ CarbonImmutable::parse($other->issuedOn)->translatedFormat(__('publications.public.date_format')) }}</span>
+                                <span class="block font-display text-lg text-navy">{{ $other->title }}</span>
+                                <span class="block text-sm text-meta">{{ CarbonImmutable::parse($other->issuedOn)->translatedFormat(__('publications.public.date_format')) }}</span>
                             </a>
                         </li>
                     @endforeach

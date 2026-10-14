@@ -139,23 +139,29 @@ first attempt.
 | File or surface | Tasks, in order | Rule |
 |---|---|---|
 | `docs/superpowers/specs/2026-07-20-training-center-dashboard-design.md` | **T01 only** | No other task edits the spec. A task that finds the spec wrong stops and raises it; the fix is a spec amendment, not a quiet edit inside a feature PR |
-| `docs/ENGINEERING.md` | **T01 → T13** | T01: the download-counter exception, in the write-boundary section. T13: one sentence in "Frontend (phase 4)" allowing a read-only `method="get"` form on the public pages, for the publications search (owner, 2026-10-12). Nothing else |
+| `docs/ENGINEERING.md` | **T01 → T13 → T20a** | T01: the download-counter exception, in the write-boundary section. T13: one sentence in "Frontend (phase 4)" allowing a read-only `method="get"` form on the public pages, for the publications search (owner, 2026-10-12). T20a: in "Frontend (phase 4)", the design's code as the visual specification, the design system and the responsive rule replace "reference, not specification", and "Verified by eye" names the three widths (owner, 2026-10-13). T13's sentence reads "the only kind of form", because the home page's verifier box is a second read-only GET form (owner, 2026-10-13). Nothing else |
 | `lang/en/activity.php` | **T03 → T04 → T17** | T03 adds the `Article` record-type label, T04 `Expense` and `ExpenseCategory`, and T17 the `activity.field.*` group. `LocalizationTest` fails without the labels, so each lands with its model |
 | `app/Domain/Staff/Filament/Resources/ActivityResource.php` | **T16e → T17** | T16e restyles; T17 routes `describeProperties()` and `describeChanges()` through `activity.field.*` |
 | `app/Domain/Finance/Exports/ReportDataBuilder.php` | **T04 only** | `profit()` gains the expenses column |
 | `app/Providers/Filament/StudentPanelProvider.php` | **T18 only** | The guest-locale middleware |
-| `docs/design/design_handoff_training_centre/` | **T19 only** | Read-only reference for every other task |
+| `docs/design/design_handoff_training_centre/` | **T19 → T20a** | Read-only reference for every other task. T20a notes in `docs/design/README.md` that the real logo and name are now committed (owner, 2026-10-13), and corrects the handoff README's "Assets" sentence and "Files" row, which said the logo is not committed |
 | `database/seeders/RolePermissionSeeder.php` | **T03 → T04** | T03 adds the article permissions, T04 the expense and category permissions. T04 rebases on T03 and must not reorder T03's rows |
-| `app/Providers/Filament/AdminPanelProvider.php` | **T03 → T09 → T16a → T18** | T03 adds `discoverResources` for `Domain/Publications`; T09 adds `discoverPages` for `Domain/Enrollment/Filament/Pages`; T16a owns the theme, colours and navigation; T18 adds the guest-locale middleware. Each adds its own lines and edits no other task's |
+| `app/Providers/Filament/AdminPanelProvider.php` | **T03 → T09 → T16a → T20c → T18** | T03 adds `discoverResources` for `Domain/Publications`; T09 adds `discoverPages` for `Domain/Enrollment/Filament/Pages`; T16a owns the theme, colours and navigation; T20c sets the real brand logo and name and checks the shell's tokens against the prototype; T18 adds the guest-locale middleware. Each adds its own lines and edits no other task's |
 | `app/Providers/AppServiceProvider.php` | **T11 → T13** | T11 registers the `public-site` rate limiter, T13 the `publication-download` limiter. Nothing else in the file is touched |
-| `routes/web.php` | **T11 → T12 → T13 → T15 → T18** | T11 creates the sessionless public group; T12, T13 and T15 add routes inside it and may not alter the group or its middleware. T18 adds the `/ar` copies of the public group and the `/ar/` verifier routes **inside the existing verifier group**, under the same middleware and the same named limiter, **named `ar.` plus the English name** so the English names never move. **No task touches the private-file group** |
-| `resources/css/app.css`, `vite.config.js` | **T11 → T16a → T18** | T11 adds the public site's stylesheet entry; T16a the Filament theme entry; T18 the direction work over both |
-| `resources/views/layouts/public.blade.php` | **T11 → T18** | T11 creates it; T18 makes it directional. The verifier does **not** use it — see T14 |
-| `resources/views/public/partials/header.blade.php` | **T11 → T12 → T15 → T18** | T11 creates it; T12 replaces its own copy of the contact-link rule with the shared contact components (lead's amendment, 2026-10-12, from T12's pre-push review); T15 adds the portal link; T18 makes that link carry the locale |
-| `resources/views/public/partials/navigation.blade.php`, `footer.blade.php` | **T11 → T12 → T13** | Owner-approved amendment (2026-10-12). T11 creates them, linking only to pages that exist: the home page and the verifier. T12 adds About, Programmes and Contact; T13 adds Publications. Each adds its own links through `PublicRoute` and edits no other task's |
-| `resources/views/public/home.blade.php` | **T11 → T12** | T11 creates a minimal page at `public.home` so `/` has somewhere to go once `welcome.blade.php` is deleted; T12 replaces it with the real home page |
-| `config/public_site.php`, `.env.example` | **T11 → T12** | Owner-approved amendment (2026-10-12). T11 creates the public contact details: the centre's real public email and telephone as committed defaults, each overridable from `.env`, plus a map-link key that defaults to null. T12 sets the map link's default once the owner provides it, and touches nothing else |
-| `resources/views/verify/*` | **T14 → T18** | T14 restyles; T18 makes them directional and converts their three `route()` call sites to `PublicRoute`, **and the six `url('/')` links T14's headers added** (two a page), which no `route()` search finds. Both keep them standalone and scriptless |
+| `routes/web.php` | **T11 → T12 → T13 → T20b → T18** | T11 creates the sessionless public group; T12 and T13 add routes inside it and may not alter the group or its middleware. T15, folded into T20a, adds no route: its portal entry is a link. T20b adds one GET route, `verify.certificates.lookup`, inside the existing verifier group, under its middleware and limiter, routed to the unchanged `VerifyCertificateController::submit()`, for the home page's verifier box (owner, 2026-10-13). Its path stays outside `verify/certificates/{reference}`. T18 adds the `/ar` copies of the public group and the `/ar/` verifier routes **inside the existing verifier group**, under the same middleware and the same named limiter, **named `ar.` plus the English name** so the English names never move. **No task touches the private-file group** |
+| `resources/css/app.css`, `vite.config.js` | **T11 → T16a → T20a → T18** | T11 adds the public site's stylesheet entry; T16a the Filament theme entry; T20a the public site's self-hosted fonts; T18 the direction work over both |
+| `resources/css/public.css` | **T11 → T20a → T20b → T18** | T11 creates it; T20a replaces its palette with the design system's tokens; T20b appends the tokens a page first needs and edits none of T20a's; T18 the direction work |
+| `app/Http/Controllers/Public/PageController.php` | **T12 → T20b** | T12 creates it; T20b adds the home teaser's articles to `home()` |
+| `app/Domain/Publications/Queries/PublicArticleCatalogue.php` | **T13 → T20b** | T13 creates it; T20b adds a bounded, published-only `latest()` and changes no existing method |
+| `tests/Feature/Public/PublicPagesTest.php`, `ProgrammesTest.php`, `PublicationsIndexTest.php`, `PublicSessionlessTest.php` | **T11–T13 → T20a → T20b** | T20a and T20b change only the assertions that name markup they rebuild, and list each one in their PR; T20b adds the teaser's tests to `PublicPagesTest.php` |
+| `resources/views/layouts/public.blade.php` | **T11 → T20a → T18** | T11 creates it; T20a rebuilds it to the design; T18 makes it directional. The verifier does **not** use it — see T14 |
+| `resources/views/public/partials/header.blade.php` | **T11 → T12 → T20a (with T15) → T18** | T11 creates it; T12 replaces its own copy of the contact-link rule with the shared contact components (lead's amendment, 2026-10-12, from T12's pre-push review); T20a rebuilds it to the design and adds T15's portal link (T15 folded in, owner, 2026-10-13); T18 makes that link carry the locale |
+| `resources/views/public/partials/navigation.blade.php`, `footer.blade.php` | **T11 → T12 → T13 → T20a** | Owner-approved amendment (2026-10-12). T11 creates them, linking only to pages that exist: the home page and the verifier. T12 adds About, Programmes and Contact; T13 adds Publications. Each adds its own links through `PublicRoute` and edits no other task's. T20a then rebuilds both to the design, keeping every link |
+| `resources/views/public/home.blade.php` | **T11 → T12 → T20b** | T11 creates a minimal page at `public.home` so `/` has somewhere to go once `welcome.blade.php` is deleted; T12 replaces it with the real home page; T20b rebuilds it to the design |
+| `config/public_site.php`, `.env.example` | **T11 → T12 → T20a** | Owner-approved amendment (2026-10-12). T11 creates the public contact details: the centre's real public email and telephone as committed defaults, each overridable from `.env`, plus a map-link key that defaults to null. T12 sets the map link's default once the owner provides it, and touches nothing else. T20a adds `brand` (the real name, owner, 2026-10-13) and sets `APP_NAME` |
+| `resources/views/verify/*` | **T14 → T20c → T18** | T14 restyles; T20c brings them to the prototype's exact values and the real brand; T18 makes them directional and converts their three `route()` call sites to `PublicRoute`, **and the six `url('/')` links T14's headers added** (two a page), which no `route()` search finds. Both keep them standalone and scriptless |
+| `resources/views/public/**` (pages), `resources/views/components/public/*` | **T11 → T12 → T13 → T20a → T20b → T18** | T11–T13 build the pages and components; T20a defines the design system (tokens, components, no inline `style`) and brings the existing components onto it; T20b rebuilds the pages to the prototype. Every later public page uses the system, and none adds an inline `style` |
+| `resources/css/filament/admin/theme.css` | **T16a → T20c** | T16a creates the admin theme; T20c checks every token against `Filament Revamp.dc.html`. T16b–T16e read it and do not edit it |
 | `app/Http/Controllers/VerifyCertificateController.php` | **T18 only** | One line: the `submit()` redirect goes through `PublicRoute`. The lookup, the normalisation and the uniform miss are untouched |
 | `app/Support/PublicRoute.php` | **T11 only** | Complete from the start, so T18 adds routes and a locale without editing it |
 | `app/Domain/Enrollment/Models/Batch.php` | **T05 only** | Scopes beside the existing predicates |
@@ -979,6 +985,10 @@ certificate shows its revocation date · no contact-hours field renders ·
 `composer verify` green.
 
 ### Task 15 — Portal sign-in from the public site
+**Folded into T20a (owner, 2026-10-13).** T20a rebuilds the header the portal
+button sits in, so T15's link, copy and tests land there. The section below is
+kept as T15's contract, and T20a's Done-when includes it.
+
 **Owner: Claude · `p4/t15-portal-entry` · depends on T11**
 
 **File scope**
@@ -995,8 +1005,309 @@ says a student with no email cannot be issued a login.
 
 **Done when**
 
-The link resolves to the student panel's login route by name · no form exists on
-any public page, asserted across the group · `composer verify` green.
+The link resolves to the student panel's login route by name · no public page
+holds a sign-in form or any form that submits data, asserted across the group;
+the only form allowed is T13's read-only `method="get"` search (owner,
+2026-10-12), which `PublicSessionlessTest` already permits and nothing else ·
+`composer verify` green.
+
+---
+
+## Wave 4b — Design fidelity and the real brand (owner, 2026-10-13)
+
+**Why this wave exists.** T11–T13 built the public site from the design's
+screenshots, with approximate values: navy `#0c2043` against the design's
+`#0d2745`, cream `#fdfaf2` against `#faf6ec`, and system fonts where the design
+uses Instrument Serif and IBM Plex Sans Arabic. The handoff README already lists
+the exact values ("High-fidelity… recreate them faithfully"), and the lead's
+briefs did not point at them. The owner wants the built frontend to match the
+design exactly, with the real logo and name, and every later frontend task to
+follow the same pattern.
+
+**The spec is the design's code, read, not pasted.**
+- The owner's original prototypes live outside the repository, at
+  `C:/Users/User/Desktop/Training-center-design-original/design_handoff_training_centre/`
+  (`Public Site.dc.html`, `Filament Revamp.dc.html`, `assets/asclst-logo.jpg`).
+- Every size, colour, spacing value, radius, shadow, hover state and font is taken
+  from those files exactly, alongside the README's token tables.
+- **The files themselves are never committed.** The design tool's runtime
+  (`support.js`, `image-slot.js`) carries no licence.
+- The prototype's markup is inline styles, one copy for each use. It is rebuilt
+  as tokens and Blade components, never pasted. ENGINEERING's frontend rules
+  still apply: logical properties, every string in lang, sessionless public
+  pages, accessibility, and no script.
+
+**The design system (T20a defines it; every later frontend task uses it).**
+- **Tokens:**
+  - Tailwind 4 `@theme` variables in `resources/css/public.css`, named by role
+    (`navy`, `navy-hover`, `gold`, `gold-light`, `gold-dark`, `cream`, `ink`,
+    `body`, `body-secondary`, `meta`), plus the type scale, radii and shadows.
+    Values are the README's and the prototype's, exactly. A hue the prototype
+    uses for one state only, such as the success and danger colours, becomes a
+    token in the task whose page first shows it.
+  - The admin's tokens live in `resources/css/filament/admin/theme.css`, from
+    `Filament Revamp.dc.html` and the README's admin table.
+- **Fonts:** Instrument Serif and IBM Plex Sans Arabic on the public site (IBM
+  Plex Sans Arabic also covers the Arabic of T17); Instrument Sans on the admin.
+  All are self-hosted through the build (the `bunny()` fonts in
+  `vite.config.js`, as T16a does), so no third-party origin loads at runtime.
+- **Components** live under `resources/views/components/public/`. Each takes
+  props and slots, merges caller classes through `$attributes`, and holds no
+  business logic. A component exists for anything used twice, and is created by
+  the task that first uses it, so none ships without a caller:
+  - **T20a** creates what the shell uses: `container`, `button` (a link, in the
+    prototype's variants), `icon` (the prototype's SVG paths, by name), `brand`
+    (logo and name, in its header and footer forms) and `portal-link`. It also
+    brings T11–T13's components onto the tokens.
+  - **T20b** creates the page-level parts: `eyebrow`, `section-heading`, `card`,
+    `chip` and `badge`, and anything else the pages repeat.
+- **No inline `style` attribute** in a public view or component. A test enforces
+  it, and that test is how "not pasted" stays true.
+- **Motion:** the prototype's entrance animations (`asRise`, `asFade`, `asSweep`)
+  are CSS-only, behind `motion-safe:`, so a visitor who prefers reduced motion
+  sees none.
+- **Right-sized on phones and computers (owner, 2026-10-13).** The prototype is
+  drawn at 1280–1440px. Its layout is fluid: wrapping flex rows, `auto-fit`
+  grids, and `clamp()` headings. So each page is built mobile-first, and the
+  prototype's values are its desktop end:
+  - **Three widths** are checked for every page: 375px (phone), 768px (tablet)
+    and 1440px (desktop).
+  - **No horizontal scroll at any width.** The lead measures
+    `document.documentElement.scrollWidth` against the viewport in the browser,
+    and records the result in the PR.
+  - **Readable on a phone (public site):**
+    - Below 1024px, running text is at least 16px, the public prototype's own
+      base. Running text means sentences of prose wherever they sit, the
+      footer's description and portal note included. Links, headings, labels and
+      captions keep the prototype's sizes, and headings scale through `clamp()`
+      as the prototype does.
+    - From 1024px, every element takes the prototype's own size. This is the
+      same split as the touch targets (Codex's review of #102, 2026-10-13).
+    - Form inputs are at least 16px at every width.
+    - The admin prototype's base is 14px, and the admin keeps it. Filament
+      already raises its inputs to 16px on touch devices so a phone does not
+      zoom into them.
+    - "Match exactly" therefore has one meaning: on a desktop, each surface
+      matches its own prototype; below 1024px, the readability and touch floors
+      apply on top of it.
+  - **The admin (T20c, T16b–T16e):** no horizontal page scroll; the sidebar
+    collapses as Filament does on a phone; tables scroll inside their own box.
+  - **Easy to tap:** below 1024px, every link and button has a touch target of
+    at least 44×44px.
+  - **The navigation folds on a phone** into T11's no-script `<details>` menu,
+    styled to the design. The "Student portal" button stays reachable at every
+    width.
+  - **Images and the logo scale down** without distortion.
+  - **Tables and long references wrap or scroll inside their own box**, never
+    the page.
+
+**The real brand (owner, 2026-10-13).** This reverses T19's removal of the logo
+and the centre's name.
+- **The logo,** `assets/asclst-logo.jpg`, is committed under `public/images/brand/`.
+  It is shown exactly as the prototype shows it: a circle with `object-fit:
+  cover`, at 46px in the nav, 258px in the hero, and 44 and 52px elsewhere. A
+  centre-square crop sized for those uses is allowed. It looks the same and
+  sends fewer bytes.
+- **The name, as the logo states it:**
+  - English: "Arab Specialist Center for Legal Studies and Training";
+  - short: "A.S.C.L.S.T";
+  - tagline: "Legal Studies & Training";
+  - Arabic: "المركز العربي التخصصي للدراسات القانونية والتدريب".
+
+  These are proper nouns, so they go in `config/public_site.php` (`brand`), not
+  in lang. `APP_NAME` in `.env.example` becomes the short name.
+- **`docs/design/README.md`** says the logo and name are now committed (owner,
+  2026-10-13). The committed screenshots keep their placeholder.
+
+**Decided by the plan, not by the design:**
+- No seats pill (conflict 1).
+- No stats strip: its figures are placeholders.
+- The draft copy stays in lang until the owner sends theirs (T12).
+- No embedded map: a directions link instead (T12).
+- No download toast.
+- "Request a seat" is a contact link.
+- The verifier's "Try…" buttons are not built.
+- **The home page's verifier box is built as drawn (owner, 2026-10-13).**
+  - **What it is:** the design's reference input and gold "Verify" button, as a
+    read-only `method="get"` form.
+  - **Where the result shows:** on the verifier's own result page. The design
+    shows it inside the home page, which needs a script. Running the lookup
+    outside the verifier would also leave the verifier's limiter and uniform
+    misses.
+  - **The route:** the form submits to one new GET route in the existing
+    verifier group, `verify.certificates.lookup`, under that group's middleware
+    and its `certificate-verification` limiter. It is routed to the existing
+    `VerifyCertificateController::submit()`, unchanged. That method already
+    reads `reference` from the request, normalises it, redirects a well-formed
+    value to `verify.certificates.show`, and returns the uniform miss for
+    anything else. The new route therefore adds no second copy of the
+    reference rule, and no controller is edited.
+  - **The path must not fall under `verify/certificates/{reference}`.** That
+    segment is deliberately unconstrained, so an overlapping path would be read
+    as a reference.
+  - The placeholder shows the real reference format, not the prototype's
+    `CERT-…`.
+
+### Task 20a — Design foundation, the brand, the shell, and T15
+**Owner: Claude · `p4/t20a-design-foundation` · depends on T13 (it rebuilds T13's nav entry)**
+
+**File scope**
+- `resources/css/public.css` — the tokens; `vite.config.js` — the two public font
+  families (seam, after T16a)
+- `public/images/brand/` — the logo (new)
+- `config/public_site.php` — `brand`; `.env.example` — `APP_NAME`
+- `resources/views/components/public/*` — the component library (new, and T11–T13's
+  components brought onto it)
+- `resources/views/public/**` (the pages) — **class renames only**, from T11's
+  palette to the new tokens, so no page names a token that no longer exists.
+  Each page's rebuild is T20b's. The one exception is `home.blade.php`: the
+  page's "TC" placeholder mark, and the grid that held it, come out with the
+  `public.brand.mark` key they used, which T20a deletes.
+- `resources/views/layouts/public.blade.php`,
+  `resources/views/public/partials/{header,navigation,footer}.blade.php` —
+  rebuilt to the prototype's top bar, sticky nav, portal button and footer
+- T15's link, copy and `tests/Feature/Public/PortalEntryTest.php`
+- `lang/en/public.php` — appended
+- `docs/ENGINEERING.md` — "Frontend (phase 4)": the design-system rule (seam, after
+  T13)
+- `docs/design/README.md` — the brand note (seam, after T19). Also, in
+  `docs/design/design_handoff_training_centre/README.md`, the "Assets" sentence
+  and the "Files" table row. Both said the real logo is not committed, so the
+  README would contradict itself if only one were changed.
+- `tests/Feature/Public/DesignSystemTest.php` — no inline `style` in public views
+  and components, the logo served, and the brand from config
+- Existing tests, **only the assertions that name the shell's or the
+  components' old markup** (each change listed in the PR):
+  `tests/Feature/Public/PublicPagesTest.php` (it pins the old colour classes on
+  the contact links, the hidden contact bar and the old `app.name` title),
+  `tests/Feature/Public/PublicationsIndexTest.php` (the article-meta fragment
+  and the navigation and footer slices), `tests/Feature/Public/ProgrammesTest.php`,
+  and `tests/Feature/Public/PublicSessionlessTest.php` (only to share its
+  group-wide form check with `PortalEntryTest`)
+
+**Decisions where the prototype cannot be built as drawn (lead, 2026-10-13)**
+- **The portal opens the student panel's own login page.** The prototype's
+  sign-in modal is a form, so it is not built (T15). The header's "Student
+  portal" pill and the footer's link both go to that page. T15's note, that a
+  portal login needs an email on the student record, takes the prototype's own
+  modal copy. It replaces the footer's "Corporate training" line, which names a
+  service the centre has not confirmed.
+- **The navigation folds below 1024px.** The prototype's row (brand, five links
+  and the portal pill) needs about 900px.
+  - **Below 1024px:** the links move into T11's `<details>` menu.
+  - **From 640px:** the portal pill stays in the bar beside the menu.
+  - **Below 640px:** the pill does not fit beside the lockup, so it is the last
+    item of the menu panel.
+- **The current page's link** carries `aria-current="page"` and the gold-dark
+  colour the prototype gives the active Publications link.
+- **The footer leaves out "Tripoli, Libya"**, because there is no address until
+  the owner sends one (T12).
+- **The logo is committed as supplied** (1408×768 JPEG, 58 KB). Every use is a
+  centred `object-fit: cover` circle, as the prototype draws it.
+- **The brand link's accessible name** is the centre's full English name. The
+  visible short name would otherwise be read letter by letter.
+- **Contrast.** Every text colour on the shell measures at least 4.5:1 as drawn,
+  so none is changed. The faintest is the footer's copyright line: cream at 50%
+  on navy, 4.54:1. An earlier draft of this plan said about 4.4:1; that was a
+  miscalculation. A pair below 4.5:1 would have its opacity raised to the lowest
+  value that passes, and be listed in the PR.
+- **Every shell link changes colour on hover.** In the prototype, each link's
+  inline colour overrides its own global `a:hover`, so only the Publications
+  link and the footer's "Student portal" react. That is an artefact of the
+  prototype's inline styles, not a design choice, and a link that gives no
+  feedback is harder to use.
+- **Touch targets:**
+  - Links in a row (the top bar, the navigation row, the footer's bottom line)
+    get an invisible hit area of at least 44×44px, so they look as drawn. Below
+    1024px, the top bar's links are real 44px boxes instead. An invisible area
+    there would start above the page and end under the sticky header.
+  - Stacked links (the menu panel, and the footer's columns below 1024px) are
+    44px rows.
+  - From 1024px, the footer's columns keep the prototype's spacing, 32px from
+    one link to the next. A pointer that precise does not need the larger rows.
+
+**Done when**
+- The header, navigation and footer match `Public Site.dc.html`'s TOP BAR, NAV and
+  FOOTER. The lead compares them side by side in the browser against the
+  prototype, at 375, 768 and 1440px.
+- The responsive rules above hold at all three widths, with no horizontal scroll
+  (measured).
+- T15's Done-when holds.
+- No public view or component carries a `style` attribute.
+- Every existing public test passes unchanged, apart from markup assertions that
+  name the old structure, each listed in the PR.
+- `composer verify` green.
+
+### Task 20b — The public pages, to the design
+**Owner: Claude · `p4/t20b-public-pages-fidelity` · depends on T20a**
+
+**File scope**
+- `resources/views/public/{home,about,contact}.blade.php`,
+  `programmes/{index,show}.blade.php`, `publications/{index,show}.blade.php`
+- `resources/views/components/public/*` — page-level components, on T20a's system
+- `resources/css/public.css` — appended: a token a page first needs, such as a
+  state hue (seam, after T20a)
+- `app/Http/Controllers/Public/PageController.php` — `home()` also passes the
+  teaser's articles (seam, after T12)
+- `app/Domain/Publications/Queries/PublicArticleCatalogue.php` — a bounded
+  `latest(int $limit)`: published articles only, newest first, as `PublicArticle`
+  projections (seam, after T13)
+- `lang/en/public.php`, `lang/en/publications.php` — appended
+- Tests:
+  - `tests/Feature/Public/PublicPagesTest.php`: the home teaser shows
+    published articles only, at most the limit, newest first, as projections. The
+    home page's query count is fixed, whatever the number of articles.
+  - The same file, `tests/Feature/Public/ProgrammesTest.php` and
+    `tests/Feature/Public/PublicationsIndexTest.php` change only where they
+    assert markup the design changes, each change listed in the PR.
+- **The verifier box (owner, 2026-10-13; see the decision above):**
+  - `routes/web.php`: one GET route, `verify.certificates.lookup`, inside the
+    existing verifier group and routed to the unchanged
+    `VerifyCertificateController::submit()` (seam, after T13);
+  - `tests/Feature/Verification/VerifierLookupRouteTest.php` (new). It checks
+    that:
+    - a well-formed reference redirects to `verify.certificates.show` exactly as
+      the POST does;
+    - an empty or malformed one returns a miss byte-identical to `show()`'s,
+      headers included;
+    - the route carries the group's response headers and shares the
+      `certificate-verification` limiter's budget;
+    - the home form's `action` resolves to the route by name.
+
+**Does.** Each page section by section against the prototype's HERO, ABOUT,
+PROGRAMMES, CERTIFICATE VERIFIER, PUBLICATIONS TEASER, CONTACT, PUBLICATIONS
+LIBRARY and ARTICLE sections, with the plan's decisions above. The home page
+gains the design's publications teaser: the latest published articles, through
+`PublicArticleCatalogue::latest()`.
+
+**Done when.** Each page matches the prototype side by side, and meets the
+responsive rules at 375, 768 and 1440px, with no horizontal scroll (measured) ·
+every behaviour test of T12 and T13 still passes (projection, query counts,
+sessionless, scanners) · the teaser never shows an unpublished article ·
+`composer verify` green.
+
+### Task 20c — The verifier and the admin shell, to the design
+**Owner: Claude · `p4/t20c-verifier-admin-fidelity` · depends on T20a**
+
+**File scope**
+- `resources/views/verify/*` — the prototype's verifier styling and the real brand
+  (seam, after T14). They stay standalone, with inline CSS and no script, and
+  the fonts come from this origin only.
+- `resources/css/filament/admin/theme.css`, `app/Providers/Filament/AdminPanelProvider.php`
+  — the brand logo and name, and the shell tokens checked against
+  `Filament Revamp.dc.html` (seam, after T16a)
+- `tests/Feature/Verification/VerifierRestyleTest.php`,
+  `tests/Feature/Admin/ThemeShellTest.php` — appended
+
+**Done when.** The verifier's pages and the admin sidebar, topbar and page header
+match their prototypes side by side at 375, 768 and 1440px. The verifier meets
+the public site's responsive rules; the admin meets the admin's (its 14px base,
+no horizontal page scroll, the sidebar collapsing as Filament does on a phone) ·
+`VerificationDisclosureTest` passes unchanged · `composer verify` green.
+
+**After Wave 4b:** T16b–T16e restyle against T20c's admin tokens and the
+prototype's code, not its screenshots. Each brief names the prototype's sections
+for its screens.
 
 ---
 
@@ -1004,8 +1315,9 @@ any public page, asserted across the group · `composer verify` green.
 
 Round 1 had this as one task over roughly twenty screens. It is five, split by
 domain so each PR is reviewable and each carries the contract rules that belong
-to its screens. **T16a lands first; T16b–T16e then run one at a time**, because
-each restyles against T16a's theme and none may edit it.
+to its screens. **T16a lands first, then T20c corrects its tokens against the
+prototype; T16b–T16e then run one at a time**, because each restyles against
+that theme and none may edit it.
 
 The contract's rules are the acceptance criteria. **A revamp that makes any of
 them read differently has broken the system while passing its own tests**, so
@@ -1030,7 +1342,7 @@ by listing the panel's registered pages · the theme stylesheet uses logical
 properties only · `composer verify` green.
 
 ### Task 16b — Students, courses, batches, enrollments, certificates
-**Owner: Claude · `p4/t16b-admin-enrollment` · depends on T16a**
+**Owner: Claude · `p4/t16b-admin-enrollment` · depends on T16a and T20c**
 
 **File scope**
 - `app/Domain/Enrollment/Filament/Resources/` — all four resources, their `Pages/`
@@ -1044,7 +1356,7 @@ an outstanding balance never blocks a certificate · a student with no email get
 no portal login.
 
 ### Task 16c — Money screens
-**Owner: Claude · `p4/t16c-admin-finance` · depends on T16a**
+**Owner: Claude · `p4/t16c-admin-finance` · depends on T16a and T20c**
 
 **File scope**
 - `app/Domain/Finance/Filament/Resources/` — Charge, Discount, Payment, PayrollRun,
@@ -1061,7 +1373,7 @@ its Actions · no money field uses `->numeric()`, whose float cast this project 
 already paid for.
 
 ### Task 16d — Reports, finance hub, export history
-**Owner: Claude · `p4/t16d-admin-reports` · depends on T16a**
+**Owner: Claude · `p4/t16d-admin-reports` · depends on T16a and T20c**
 
 **File scope**
 - `app/Domain/Finance/Filament/Pages/Reports/*` (seam, after T10)
@@ -1075,7 +1387,7 @@ is re-checked at download · every chart still plots its report's own figures ·
 the profit definition on screen matches §8.
 
 ### Task 16e — Staff, roles, activity log
-**Owner: Claude · `p4/t16e-admin-staff` · depends on T16a**
+**Owner: Claude · `p4/t16e-admin-staff` · depends on T16a and T20c**
 
 **File scope**
 - `app/Domain/Staff/Filament/Resources/` — Activity, Role, StaffProfile, User, with

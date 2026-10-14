@@ -1,5 +1,5 @@
 /*
- * The public site's stylesheet (P4-T11).
+ * The public site's stylesheet and design system (P4-T11, rebuilt in T20a).
  *
  * Its own entry, separate from app.css, so a visitor to the public pages
  * downloads only what those pages use. `source(none)` turns off Tailwind's
@@ -7,45 +7,253 @@
  * including the panels', and the three @source lines name the only places this
  * stylesheet may take a class from.
  *
- * System font stacks only. No font file is bundled and no third-party origin is
- * requested at runtime. Logical utilities only (ms-, me-, ps-, pe-, start-, end-,
- * text-start); resources/css/README.md and LocalizationTest enforce it.
+ * THE TOKENS BELOW ARE THE DESIGN'S, EXACTLY. Every value was read from the
+ * owner's prototype (Public Site.dc.html, kept outside the repository) and the
+ * handoff README's "Design tokens", then named by ROLE, never by shade: a view
+ * says `bg-navy` or `text-body`, so a colour is changed here once and never
+ * hunted through the markup. A view never writes a raw colour: DesignSystemTest
+ * scans for one. The prototype's translucent values (rgba(13,39,69,.1) and the
+ * like) are opacity modifiers on these tokens (`border-navy/10`, `text-cream/68`)
+ * rather than tokens of their own.
+ *
+ * A hue the prototype uses for one state only, such as the verifier's success
+ * and danger colours or a seat pill, becomes a token in the task whose page first
+ * shows it, not here.
+ *
+ * Fonts are self-hosted by the build (vite.config.js) and loaded by the layout, so
+ * no third-party origin is requested at runtime. Logical utilities only (ms-, me-,
+ * ps-, pe-, start-, end-, text-start); resources/css/README.md and
+ * LocalizationTest enforce it.
  */
 @import 'tailwindcss' source(none);
 
 @source '../views/layouts/public.blade.php';
 @source '../views/public';
-@source '../views/components';
+@source '../views/components/public';
 
-/*
- * The palette is the design handoff's: deep navy, gold and cream. The values are
- * chosen for contrast rather than copied from the prototype: navy text on cream
- * and gold or cream text on navy clear WCAG AA for body text. Gold is never used
- * as text on cream, where it would not.
- */
 @theme {
-    --color-navy-900: #0c2043;
-    --color-navy-800: #12294d;
-    --color-navy-700: #1d3a68;
-    --color-gold-500: #c9a24a;
-    --color-gold-400: #d9b865;
-    --color-cream-50: #fdfaf2;
-    --color-cream-100: #f8f2e3;
-    --color-cream-200: #e8dfc6;
+    /*
+     * Colour. Navy is the primary; gold is an accent that is never text on cream
+     * (gold-dark is the eyebrow and link colour there); cream is the page.
+     */
+    --color-navy: #0d2745;
+    --color-navy-hover: #143a63;
+    --color-gold: #c9a44c;
+    --color-gold-light: #e0c179;
+    --color-gold-dark: #806119;
+    --color-cream: #faf6ec;
+    --color-card: #ffffff;
+    --color-ink: #14181f;
+    --color-body: #3d4654;
+    --color-body-secondary: #5b6474;
+    --color-meta: #67707e;
+    --color-subtitle: #6f5f3f;
+    --color-on-navy: #e7dcc2;
 
-    --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans',
-        sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
-    --font-serif: ui-serif, Georgia, Cambria, 'Times New Roman', Times, serif;
+    /*
+     * Type. Instrument Serif is the display face and IBM Plex Sans Arabic the UI
+     * face; it also carries every Arabic glyph the pages show. The stacks fall back
+     * to system fonts, so text is readable while a font loads.
+     */
+    --font-display: 'Instrument Serif', Georgia, 'Times New Roman', Times, serif;
+    --font-sans: 'IBM Plex Sans Arabic', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue',
+        Arial, 'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+
+    /*
+     * The type scale. Each size carries the line-height, tracking and weight the
+     * design pairs with it, so `text-display` alone is the prototype's H1. Sizes
+     * are in rem (the prototype's px at the browser's default 16px) so a visitor's
+     * own text size still applies; the middle term of each clamp() is the
+     * prototype's own, so a heading scales between its phone and desktop size.
+     */
+    --text-display: clamp(2.375rem, 5.4vw, 4rem); /* H1: 38px to 64px */
+    --text-display--line-height: 1.06;
+    --text-display--letter-spacing: -0.015em;
+    --text-heading: clamp(1.75rem, 3.4vw, 2.5rem); /* H2: 28px to 40px */
+    --text-heading--line-height: 1.15;
+    --text-article: clamp(1.875rem, 4.2vw, 2.875rem); /* an article's H1: 30px to 46px */
+    --text-article--line-height: 1.1;
+    --text-eyebrow: 0.78125rem; /* 12.5px; the caller adds `uppercase` */
+    --text-eyebrow--letter-spacing: 0.14em;
+    --text-eyebrow--font-weight: 700;
+    --text-label: 0.71875rem; /* 11.5px: a column heading or a field label */
+    --text-label--letter-spacing: 0.1em;
+    --text-label--font-weight: 700;
+    --text-caption: 0.78125rem; /* 12.5px: the top bar, a note, the copyright line */
+    --text-ui: 0.84375rem; /* 13.5px: a button, a footer link, a card's description */
+    --text-ui-lg: 0.90625rem; /* 14.5px: a large button */
+    --text-brand: 1.25rem; /* 20px: the lockup's short name in the header */
+    --text-brand--letter-spacing: 0.06em;
+    --text-brand-sm: 1.1875rem; /* 19px: the same name in the footer */
+    --text-brand-sm--letter-spacing: 0.06em;
+    --text-tagline: 0.625rem; /* 10px: the line under the short name; the caller adds `uppercase` */
+    --text-tagline--letter-spacing: 0.13em;
+    --text-tagline--font-weight: 600;
+
+    /* Shape. Radii by what is rounded, shadows by what is lifted. */
+    --radius-pill: 999px;
+    --radius-control: 10px; /* a solid button */
+    --radius-field: 12px; /* an input */
+    --radius-card-sm: 16px;
+    --radius-card: 18px;
+    --radius-panel: 20px;
+
+    --shadow-card: 0 2px 12px rgb(13 39 69 / 0.04);
+    --shadow-card-hover: 0 8px 26px rgb(13 39 69 / 0.09);
+    --shadow-pill: 0 2px 14px rgb(13 39 69 / 0.22);
+    --shadow-gold: 0 6px 22px rgb(201 164 76 / 0.28);
+
+    /* Layout. `max-w-site` is the page; `max-w-narrow` is an article and its header. */
+    --container-site: 75rem; /* 1200px */
+    --container-narrow: 53.75rem; /* 860px */
+
+    /*
+     * Motion. The prototype's entrance animations, applied only under
+     * `motion-safe:`, so a visitor who prefers reduced motion sees none of them.
+     * `asSweep` grows a bar from its start edge: a user of it sets the transform
+     * origin by direction, as `origin-left rtl:origin-right` does.
+     */
+    --animate-rise: asRise 0.6s ease both;
+    --animate-rise-slow: asRise 0.8s ease both;
+    --animate-fade: asFade 0.2s ease both;
+    --animate-sweep: asSweep 0.7s ease both;
+    --animate-float: asFloat 7s ease-in-out infinite;
+
+    @keyframes asRise {
+        from {
+            opacity: 0;
+            transform: translateY(14px);
+        }
+
+        to {
+            opacity: 1;
+            transform: none;
+        }
+    }
+
+    @keyframes asFade {
+        from {
+            opacity: 0;
+        }
+
+        to {
+            opacity: 1;
+        }
+    }
+
+    @keyframes asSweep {
+        from {
+            transform: scaleX(0);
+        }
+
+        to {
+            transform: scaleX(1);
+        }
+    }
+
+    @keyframes asFloat {
+        0%,
+        100% {
+            transform: translateY(0);
+        }
+
+        50% {
+            transform: translateY(-9px);
+        }
+    }
 }
 
 /*
+ * The prototype's global rules, as the base layer.
+ *
  * A visible focus ring on every interactive element, navy by default. On a navy
  * surface that ring would vanish, so those elements set their own with
- * `focus-visible:outline-gold-400`, which wins over this base rule.
+ * `focus-visible:outline-gold-light`, which wins over this base rule.
+ *
+ * A link is navy with no underline and turns gold-dark on hover, as the prototype
+ * draws every `a`. A link on a dark surface or one with its own palette (a button)
+ * sets its colour with a utility, which wins over this layer in the state it
+ * names and in every other.
+ *
+ * Smooth scrolling is only for a visitor with no reduced-motion preference. The
+ * padding keeps an in-page target (the skip link's #main) clear of the sticky
+ * header, and so it has to be at least as tall as the header is. The header is
+ * 73px (4.6rem) until a screen is too narrow for the brand and the Menu button
+ * side by side, about 356px, where its row wraps to 127px (7.9rem). The 23rem
+ * query leaves the margin a slower font could need. A header whose height changes
+ * has to change these two numbers with it.
  */
 @layer base {
+    html {
+        scroll-padding-block-start: 5rem;
+    }
+
+    @media (width < 23rem) {
+        html {
+            scroll-padding-block-start: 8rem;
+        }
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+        html {
+            scroll-behavior: smooth;
+        }
+    }
+
+    body {
+        background-color: var(--color-cream);
+        color: var(--color-ink);
+        font-size: 1rem;
+        line-height: 1.6;
+    }
+
+    a {
+        color: var(--color-navy);
+        text-decoration: none;
+    }
+
+    a:hover {
+        color: var(--color-gold-dark);
+    }
+
+    ::selection {
+        background-color: var(--color-gold);
+        color: var(--color-navy);
+    }
+
     :focus-visible {
-        outline: 2px solid var(--color-navy-700);
+        outline: 2px solid var(--color-navy-hover);
         outline-offset: 2px;
+    }
+}
+
+/*
+ * An invisible hit area of at least 44 by 44px around a small link, so a finger
+ * can land on it without the link looking any bigger (ENGINEERING.md,
+ * "Frontend (phase 4)": 44px targets below 1024px).
+ *
+ * The element is its own positioning context and a pseudo-element covers it. Each
+ * axis insets by min(0px, 50% - 22px): for an element at least 44px along that
+ * axis the term is zero and the hit area is the element itself, and for a smaller
+ * one it is the (negative) amount that grows the area to exactly 44px, evenly on
+ * both sides. A percentage inset resolves against the element's own size on that
+ * axis, which is why no per-element number is needed. Logical axes, so it holds
+ * in both directions. Use it on a link that is a flex item or inline-flex (an
+ * inline box has no box to resolve against), and never on an element with
+ * `overflow: hidden`, which would clip the extension.
+ *
+ * IT NEEDS ROOM AROUND THE ELEMENT. The extension is only usable where nothing else
+ * sits over it. A link at the very top of the page, or next to the sticky header,
+ * loses part of it off the page or under the header, which is why the top bar's
+ * links are real 44px boxes instead (header.blade.php).
+ */
+@utility tap-target {
+    position: relative;
+
+    &::after {
+        content: '';
+        position: absolute;
+        inset-block: min(0px, calc(50% - 22px));
+        inset-inline: min(0px, calc(50% - 22px));
     }
 }

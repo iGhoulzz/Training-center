@@ -493,11 +493,43 @@ file under `resources/`.
   rather than `tailwind.config.js`, and Livewire as Filament ships it. Look each
   one up with Boost's `search-docs` before using it. Most published examples are
   for older majors.
-- **The design handoff is reference, not specification.** Where it disagrees with
-  the spec, the spec wins (`docs/design/README.md` lists the known conflicts).
-  The prototypes' CSS is not copied in. It is rewritten as Tailwind utilities
-  under the logical-property rule above, because the prototypes were not written
-  to this repository's standard.
+- **The design's code is the visual specification (owner, 2026-10-13).** The
+  owner's prototypes (`Public Site.dc.html` and `Filament Revamp.dc.html`, kept
+  outside the repository because the design tool's runtime carries no licence)
+  fix every colour, size, spacing value, radius, shadow, font and hover state,
+  and a built screen matches them exactly. The committed screenshots are for
+  orientation only. Where a prototype disagrees with the spec or the plan, those
+  win (`docs/design/README.md` and the plan's Wave 4b list the known conflicts).
+  The prototypes' inline CSS is never pasted in: each value becomes a token or a
+  component, under the logical-property rule above.
+- **One design system, used by every public page (T20a).**
+  - **Tokens:** Tailwind `@theme` variables in `resources/css/public.css`, named
+    by role (`navy`, `gold`, `cream`, `ink` and so on). The admin's tokens are in
+    `resources/css/filament/admin/theme.css`. A public view uses a token, never a
+    raw colour value.
+  - **Components:** the parts live in `resources/views/components/public/`:
+    button, eyebrow, section heading, container, card, chip, icon and brand,
+    among others.
+  - **No inline `style` attribute** in a public view or component.
+    `DesignSystemTest` enforces it.
+  - **Fonts** are self-hosted through the build, so no third-party origin loads.
+  - **Animation** runs only under `motion-safe:`.
+- **Right-sized on phones and computers (owner, 2026-10-13).** Pages are built
+  mobile-first, with the prototype's values as the desktop end. At 375, 768 and
+  1440px, on both surfaces, nothing scrolls sideways, and a table scrolls inside
+  its own box. Each surface matches its own prototype's type scale:
+  - **The public site, below 1024px** (the widths a phone or tablet uses):
+    - running text is at least 16px, the public prototype's base. Running text
+      means sentences of prose wherever they sit, the footer's included. Links,
+      headings, labels and captions keep the prototype's sizes at every width.
+    - every link and button has a touch target of at least 44×44px.
+  - **The public site, from 1024px:** each element takes the prototype's own
+    size, as the design draws it.
+  - **Form inputs:** at least 16px at every width, so a phone does not zoom
+    into them.
+  - **The admin:** it keeps the admin prototype's 14px base. Filament already
+    raises its inputs to 16px on touch devices, and its sidebar collapses on a
+    phone.
 - **Blade components for anything used twice**, under
   `resources/views/components/`. A partial included with variables is not a
   component.
@@ -505,10 +537,12 @@ file under `resources/`.
   the GET-only route group phase 4's T11 creates: home, about, programmes,
   contact, the publications index, article pages and article downloads. Those
   views contain no form that submits data, no `@csrf`, and no `session()`,
-  `old()` or `auth()` call. The one form they may hold is a read-only
-  `method="get"` form, such as the publications search, which only writes its
-  fields into the URL and needs neither a session nor a CSRF token (owner,
-  2026-10-12, in T13).
+  `old()` or `auth()` call. The only kind of form they may hold is a read-only
+  `method="get"` form, which only writes its fields into the URL and needs
+  neither a session nor a CSRF token. The publications search is one (owner,
+  2026-10-12, in T13). The home page's verifier box is another (owner,
+  2026-10-13): it hands the reference to the verifier's own GET route, and the
+  lookup runs there.
 
   It does **not** apply to the certificate verifier (`resources/views/verify/`),
   whose form posts and needs both its session and its CSRF token, or to either
@@ -520,9 +554,10 @@ file under `resources/`.
   focus, and contrast that holds in both themes. The prototype's look does not
   override any of these.
 - **Verified by eye as well as by test.** Before a frontend PR opens, the lead
-  views each changed screen in the browser pane at desktop and phone width, and
-  at `dir="rtl"` once T18 has landed. A test proves the markup and data; it does
-  not prove the page looks right.
+  views each changed screen in the browser pane beside its prototype, at 375,
+  768 and 1440px. Once T18 has landed, the lead also checks each screen at
+  `dir="rtl"`. A test proves the markup and data; it does not prove the page
+  looks right.
 
 ---
 

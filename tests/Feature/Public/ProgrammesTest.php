@@ -365,8 +365,19 @@ it('shows the same facts on a card and on its programme page', function () {
 it('never shows seats, capacity or an enrolment count', function () {
     courseWithBatch('2026-10-20', ['name_en' => 'Busy Course'], ['capacity' => 17]);
 
+    // The one sentence on any of these pages that may say "enrol" is the footer's
+    // portal note, the design's own copy: a login is issued "when you enrol", which
+    // names no seat, place or count. It is cut out by its exact rendered text, and the
+    // rest of the page, header and footer included, is held to the old rule.
+    $note = e(__('public.portal.note'));
+
     foreach (['/', '/programmes', '/programmes/'.Course::query()->firstOrFail()->id] as $path) {
-        $text = strtolower((string) $this->get($path)->assertOk()->getContent());
+        $html = (string) $this->get($path)->assertOk()->getContent();
+
+        // The control: a cut that found nothing would pass for having cut the note.
+        expect(substr_count($html, $note))->toBe(1, "{$path} does not render the portal note exactly once.");
+
+        $text = strtolower(str_replace($note, '', $html));
 
         foreach (['seat', 'capacity', 'enrol'] as $word) {
             expect(str_contains($text, $word))->toBeFalse("{$path} mentions [{$word}].");

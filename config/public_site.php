@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 /*
 |--------------------------------------------------------------------------
-| The public site's published contact details (phase 4, P4-T11)
+| The public site's brand and published contact details (phase 4, P4-T11, T20a)
 |--------------------------------------------------------------------------
 |
 | What the centre prints for the public to reach it. The values below are the
@@ -23,9 +23,27 @@ declare(strict_types=1);
 | plain "Get directions" link and embeds nothing, so no third-party origin loads
 | on the page. It is rendered only while it is set: a blank value in `.env` turns
 | the link off.
+|
+| `brand` is the centre's name as its logo states it (owner, 2026-10-13): plain
+| values with no env() behind them, because a proper noun is not a deployment
+| setting. They are config and not lang because they are names, not sentences, and
+| the Arabic name is the same text on every page. Every public view reads the name
+| from here and never from `app.name`, which is the short display name the rest of
+| the application uses (APP_NAME). The `logo` is a path under public/, resolved with
+| asset(). `short_name` and `tagline` are shown in the header; `name` is the page
+| title and the accessible name of the home link; `name_ar` is Arabic, so a view
+| that prints it marks it `lang="ar" dir="rtl"`.
 */
 
 return [
+    'brand' => [
+        'name' => 'Arab Specialist Center for Legal Studies and Training',
+        'short_name' => 'A.S.C.L.S.T',
+        'tagline' => 'Legal Studies & Training',
+        'name_ar' => 'المركز العربي التخصصي للدراسات القانونية والتدريب',
+        'logo' => 'images/brand/asclst-logo.jpg',
+    ],
+
     'contact' => [
         'email' => env('PUBLIC_CONTACT_EMAIL', 'info@aaclat.ly'),
         'phone' => env('PUBLIC_CONTACT_PHONE', '+218-928421304'),

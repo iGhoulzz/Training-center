@@ -13,8 +13,9 @@ declare(strict_types=1);
 |
 | Whole sentences, never fragments assembled in code: the copyright line and the
 | home heading carry named placeholders so a translator can reorder them. The
-| centre's name is config('app.name') and its contact details are in
-| config/public_site.php, so neither is a string here.
+| centre's name, in English and in Arabic, and its contact details are in
+| config/public_site.php (proper nouns, not sentences), so none of them is a
+| string here.
 */
 
 return [
@@ -24,12 +25,6 @@ return [
 
     'skip_to_content' => 'Skip to the main content',
 
-    'brand' => [
-        // A decorative two-letter mark beside the name. It is aria-hidden, so
-        // a screen reader hears the centre's name once, not "TC" and then the name.
-        'mark' => 'TC',
-    ],
-
     'header' => [
         'contact_label' => 'Contact details',
     ],
@@ -37,6 +32,20 @@ return [
     'nav' => [
         'label' => 'Main navigation',
         'menu' => 'Menu',
+        // The design's short label for the verifier in the navigation row. The
+        // footer and the pages say "Verify a certificate" (links.verify_certificate).
+        'verify' => 'Verify',
+    ],
+
+    /*
+    | The student portal's entry on the public site (P4-T15, folded into T20a). A
+    | link to the student panel's own login page, never a form: a public page holds
+    | no session, so a form posted from it would carry no CSRF token. The note is the
+    | design's own sign-in copy and says why a student may have no login.
+    */
+    'portal' => [
+        'link' => 'Student portal',
+        'note' => 'No login yet? The registrar issues one when you enrol — a portal account needs an email on your student record.',
     ],
 
     // A page's <title>: the page's own name, then the centre's. A key rather than
@@ -55,7 +64,7 @@ return [
         'description' => 'Training courses, with certificates anyone can check in the public register.',
         'centre_heading' => 'Centre',
         'services_heading' => 'Services',
-        'copyright' => '© :year :name. All rights reserved.',
+        'copyright' => '© :year :name',
     ],
 
     /*
