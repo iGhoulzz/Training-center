@@ -450,6 +450,25 @@ it('counts the chips from published articles only, one per topic, alphabetically
         ->toBe(['ALLSENT 4', 'Electronics 1', 'Safety 1', 'Welding 2']);
 });
 
+it('sets the chip count back far enough to be read: 74% on a white chip, the design\'s 55% on the selected one', function () {
+    libraryArticle(['topic' => 'Welding']);
+    libraryArticle(['topic' => 'Safety']);
+
+    $html = libraryBody($this->get('/publications?topic=Welding')->assertOk());
+
+    // The design draws 55% on every chip. On the white chip that is 2.86:1 against the
+    // 4.5:1 a small number needs (the body colour at 55% over white), and 74% is the
+    // lowest whole step that reaches it (4.57:1); the selected navy chip keeps 55%,
+    // which is 5.19:1 (the contrast table in the task report).
+    expect(libraryAnchor($html, 'Welding 1')['attributes'])->toContain('aria-current="true"');
+
+    preg_match_all('/<a\b[^>]*>([^<]*) <span class="(opacity-\d+)">(\d+)<\/span><\/a>/', $html, $chips, PREG_SET_ORDER);
+
+    $byLabel = array_column(array_map(fn (array $chip): array => [trim($chip[1]), $chip[2]], $chips), 1, 0);
+
+    expect($byLabel)->toBe(['ALLSENT' => 'opacity-74', 'Safety' => 'opacity-74', 'Welding' => 'opacity-55']);
+});
+
 it('keeps the search and the sort on every chip, and the search and the topic on the sort button', function () {
     libraryArticle(['title_en' => 'Weld Guide', 'topic' => 'Welding']);
     libraryArticle(['title_en' => 'Safe Guide', 'topic' => 'Safety']);
