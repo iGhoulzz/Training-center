@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Domain\Finance\Filament\Resources;
 
+use App\Domain\Enrollment\Models\Student;
+use App\Domain\Enrollment\Services\EnrollmentQueryService;
 use App\Domain\Finance\Actions\AdjustChargeAction;
 use App\Domain\Finance\Actions\WriteOffChargeAction;
 use App\Domain\Finance\Data\AdjustChargeData;
@@ -28,6 +30,8 @@ use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\TernaryFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 
 /**
  * Bills — read-plus-two-actions, never created or edited through the panel
@@ -258,6 +262,24 @@ class ChargeResource extends Resource
                         : null),
             ])
             ->filters([
+                Filter::make('student')->label(__('enrollment.student'))
+                    ->schema([TextInput::make('id')->label(__('enrollment.student_id'))->integer()->minValue(1)])
+                    ->query(function (Builder $query, array $data): Builder {
+                        if (blank($data['id'] ?? null)) {
+                            return $query;
+                        }
+                        $id = filter_var($data['id'], FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+                        $student = $id === false ? null : Student::query()->find($id);
+                        if ($student === null || ! Gate::allows('view', $student)) {
+                            return $query->whereRaw('1 = 0');
+                        }
+                        $ids = app(EnrollmentQueryService::class)->scopeToStudent(
+                            DB::table('charges as selected_charges')->select('selected_charges.id'),
+                            'selected_charges.enrollment_id', (int) $id,
+                        );
+
+                        return $query->whereIn('charges.id', $ids);
+                    }),
                 /*
                  * whereRaw, NOT having() — and this cost a real defect to learn.
                  *

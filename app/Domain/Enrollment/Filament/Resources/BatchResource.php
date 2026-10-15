@@ -16,6 +16,7 @@ use App\Domain\Enrollment\Filament\Resources\BatchResource\RelationManagers\Enro
 use App\Domain\Enrollment\Filament\Resources\BatchResource\RelationManagers\InstructorsRelationManager;
 use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Course;
+use App\Domain\Finance\Support\Money;
 use App\Models\User;
 use BackedEnum;
 use Filament\Actions\DeleteAction;
@@ -23,10 +24,17 @@ use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
+use Filament\Resources\Pages\CreateRecord;
 use Filament\Resources\Resource;
+use Filament\Schemas\Components\Group;
+use Filament\Schemas\Components\Section;
+use Filament\Schemas\Components\Utilities\Get;
+use Filament\Schemas\Components\View;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Columns\ViewColumn;
+use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 
@@ -149,6 +157,7 @@ class BatchResource extends Resource
              * batches as over capacity that are not.
              */
             ->withCount([
+                'enrollments', 'instructors',
                 /*
                  * The condition is spelled out rather than calling
                  * Enrollment::scopeActive(). withCount() hands the closure a
@@ -164,11 +173,16 @@ class BatchResource extends Resource
 
     public static function form(Schema $schema): Schema
     {
-        return $schema->components([
-            Select::make('course_id')
-                ->label(__('enrollment.course'))
-                ->required()
-                /*
+        return $schema->columns(['default' => 1, 'lg' => 3])->extraAttributes(['class' => 'gap-4 items-start'])->components([
+            Group::make()->columnSpan(['lg' => 2])
+                ->extraAttributes(['class' => 'gap-[15px] [&_.fi-section-content]:p-[18px] [&_.fi-section-header]:px-[18px] [&_.fi-section-header]:py-[18px] [&_.fi-fo-field-label-content]:text-[12px] [&_.fi-input]:text-[13.5px] [&_.fi-input-wrp]:rounded-[9px] [&_.fi-sc-has-gap]:gap-[13px]'])
+                ->schema([
+                    Section::make(__('enrollment.batch_details'))->columns(2)->schema([
+                        Select::make('course_id')
+                            ->live()
+                            ->label(__('enrollment.course'))
+                            ->required()
+                            /*
                  * The parent course is chosen once, at creation, and is then
                  * IMMUTABLE.
                  *
@@ -187,9 +201,9 @@ class BatchResource extends Resource
                  * is a deliberate Action with its own authorization and its own
                  * handling of the dependent rows — not an ordinary edit.
                  */
-                ->disabled(fn (?Batch $record): bool => $record !== null)
-                ->dehydrated(fn (?Batch $record): bool => $record === null)
-                /*
+                            ->disabled(fn (?Batch $record): bool => $record !== null)
+                            ->dehydrated(fn (?Batch $record): bool => $record === null)
+                            /*
                  * Only courses the centre still offers — EXCEPT the one this
                  * batch already belongs to. Without that exception, retiring a
                  * course makes every existing batch of it unsaveable: the
@@ -197,58 +211,65 @@ class BatchResource extends Resource
                  * rejects it as invalid and an unrelated edit to the batch
                  * cannot be saved at all.
                  */
-                ->options(fn (?Batch $record): array => self::searchCourses('', $record?->course_id))
-                ->searchable()
-                ->getSearchResultsUsing(fn (string $search, ?Batch $record): array => self::searchCourses(
-                    $search,
-                    $record?->course_id,
-                ))
-                ->getOptionLabelUsing(fn (mixed $value, ?Batch $record): ?string => self::courseOptionLabel(
-                    $value,
-                    $record?->course_id,
-                )),
+                            ->options(fn (?Batch $record): array => self::searchCourses('', $record?->course_id))
+                            ->searchable()
+                            ->getSearchResultsUsing(fn (string $search, ?Batch $record): array => self::searchCourses(
+                                $search,
+                                $record?->course_id,
+                            ))
+                            ->getOptionLabelUsing(fn (mixed $value, ?Batch $record): ?string => self::courseOptionLabel(
+                                $value,
+                                $record?->course_id,
+                            )),
 
-            TextInput::make('code')
-                ->label(__('enrollment.batch_code'))
-                // Blank on create is generated by CreateWithIdentifierCodeAction
-                // (P35-T09); a typed value stands. An edit must keep a value:
-                // the column is NOT NULL.
-                ->required(fn (string $operation): bool => $operation === 'edit')
-                ->placeholder(fn (string $operation): ?string => $operation === 'create'
-                    ? __('enrollment.identifier_code_hint')
-                    : null)
-                ->maxLength(40)
-                // The code is quoted at the desk and printed on schedules, so a
-                // duplicate is a real-world ambiguity, not just a broken index.
-                ->unique(ignoreRecord: true),
+                        TextInput::make('code')
+                            ->live(onBlur: true)
+                            ->label(__('enrollment.batch_code'))
+                            // Blank on create is generated by CreateWithIdentifierCodeAction
+                            // (P35-T09); a typed value stands. An edit must keep a value:
+                            // the column is NOT NULL.
+                            ->required(fn (string $operation): bool => $operation === 'edit')
+                            ->placeholder(fn (string $operation): ?string => $operation === 'create'
+                                ? __('enrollment.identifier_code_hint')
+                                : null)
+                            ->maxLength(40)
+                            // The code is quoted at the desk and printed on schedules, so a
+                            // duplicate is a real-world ambiguity, not just a broken index.
+                            ->unique(ignoreRecord: true),
 
-            Select::make('status')
-                ->label(__('enrollment.status'))
-                ->options(fn (): array => collect(BatchStatus::cases())
-                    ->mapWithKeys(fn (BatchStatus $case): array => [$case->value => $case->label()])
-                    ->all())
-                ->default(BatchStatus::Planned->value)
-                ->required(),
+                        Select::make('status')
+                            ->live()
+                            ->label(__('enrollment.status'))
+                            ->options(fn (): array => collect(BatchStatus::cases())
+                                ->mapWithKeys(fn (BatchStatus $case): array => [$case->value => $case->label()])
+                                ->all())
+                            ->default(BatchStatus::Planned->value)
+                            ->required(),
+                    ]),
+                    Section::make(__('enrollment.schedule'))->columns(2)->schema([
 
-            DatePicker::make('start_date')
-                ->label(__('enrollment.start_date')),
+                        DatePicker::make('start_date')
+                            ->live()
+                            ->label(__('enrollment.start_date')),
 
-            DatePicker::make('end_date')
-                ->label(__('enrollment.end_date'))
-                // A schedule that ends before it starts is a data-entry slip,
-                // not a state the centre can be in.
-                ->afterOrEqual('start_date'),
+                        DatePicker::make('end_date')
+                            ->live()
+                            ->label(__('enrollment.end_date'))
+                            // A schedule that ends before it starts is a data-entry slip,
+                            // not a state the centre can be in.
+                            ->afterOrEqual('start_date'),
 
-            TextInput::make('capacity')
-                ->label(__('enrollment.capacity'))
-                ->helperText(__('enrollment.capacity_hint'))
-                ->numeric()
-                ->integer()
-                ->minValue(0)
-                // unsignedSmallInteger: 65535 is the column's ceiling.
-                ->maxValue(65535)
-                ->default(0)
-                /*
+                        TextInput::make('capacity')
+                            ->live(onBlur: true)
+                            ->label(__('enrollment.capacity'))
+                            ->helperText(__('enrollment.capacity_hint'))
+                            ->numeric()
+                            ->integer()
+                            ->minValue(0)
+                            // unsignedSmallInteger: 65535 is the column's ceiling.
+                            ->maxValue(65535)
+                            ->default(0)
+                            /*
                  * Required, because the column is NOT NULL. Clearing the box
                  * previously sent an empty string, which reached MySQL as NULL
                  * and surfaced as a raw QueryException rather than a field
@@ -260,29 +281,51 @@ class BatchResource extends Resource
                  * says so — so requiring a value costs nothing and removes the
                  * crash.
                  */
-                ->required(),
+                            ->required(),
 
-            // Deliberately optional, with NO default. Empty means inherit from
-            // the course; a zero here would look like a decision and would stop
-            // inheriting for good.
-            TextInput::make('total_hours')
-                ->label(__('enrollment.total_hours'))
-                ->helperText(__('enrollment.total_hours_batch_hint'))
-                ->numeric()
-                ->integer()
-                ->minValue(0)
-                ->maxValue(65535)
-                ->placeholder(__('enrollment.inherits_from_course')),
+                        // Deliberately optional, with NO default. Empty means inherit from
+                        // the course; a zero here would look like a decision and would stop
+                        // inheriting for good.
+                        TextInput::make('total_hours')
+                            ->live(onBlur: true)
+                            ->label(__('enrollment.total_hours'))
+                            ->helperText(__('enrollment.total_hours_batch_hint'))
+                            ->numeric()
+                            ->integer()
+                            ->minValue(0)
+                            ->maxValue(65535)
+                            ->placeholder(__('enrollment.inherits_from_course')),
 
-            TextInput::make('price')
-                ->label(__('pricing.batch_price'))
-                ->helperText(__('pricing.batch_price_hint'))
-                ->numeric()
-                ->minValue(0)
-                ->rules(['nullable', 'decimal:0,3', 'max:999999999.999'])
-                ->placeholder(__('pricing.inherits_course_price'))
-                ->visible(fn (): bool => auth()->user()?->can('manage_pricing') ?? false)
-                ->dehydrated(false),
+                        TextInput::make('price')
+                            ->live(onBlur: true)
+                            ->label(__('pricing.batch_price'))
+                            ->helperText(__('pricing.batch_price_hint'))
+                            ->numeric()
+                            ->minValue(0)
+                            ->rules(['nullable', 'decimal:0,3', 'max:999999999.999'])
+                            ->placeholder(__('pricing.inherits_course_price'))
+                            ->visible(fn (): bool => auth()->user()?->can('manage_pricing') ?? false)
+                            ->dehydrated(false),
+                    ]),
+                    Group::make()->schema(fn ($livewire): array => $livewire instanceof CreateRecord ? [$livewire->getFormActionsContentComponent()] : []),
+                ]),
+            View::make('filament.enrollment.create-consequences')->viewData(function (Get $get): array {
+                $courseId = filter_var($get('course_id'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+                $course = $courseId === false ? null : Course::query()->find($courseId);
+                $price = filled($get('price')) ? (string) $get('price') : $course?->default_price;
+
+                return [
+                    'heading' => __('enrollment.batch_preview'), 'name' => $get('code') ?: __('enrollment.new_batch'),
+                    'secondary' => $course?->name() ?? __('enrollment.select_course'),
+                    'facts' => [__('enrollment.total_hours') => filled($get('total_hours')) ? $get('total_hours') : ($course->total_hours ?? __('enrollment.not_recorded')),
+                        __('enrollment.capacity') => $get('capacity') ?: __('enrollment.no_capacity_limit_short'),
+                        ...(auth()->user()->can('manage_pricing') ? [__('pricing.batch_price') => preg_match('/^\d{1,9}(?:\.\d{1,3})?$/D', (string) $price) === 1 ? Money::fromDecimal((string) $price) : __('enrollment.not_recorded')] : [])],
+                    'notices' => [
+                        ['tone' => 'neutral', 'text' => $course && blank($get('total_hours')) ? __('enrollment.inherited_from', ['course' => $course->name()]) : __('enrollment.batch_inheritance_hint')],
+                        ['tone' => 'warning', 'text' => __('enrollment.capacity_hint')],
+                    ],
+                ];
+            })->visible(fn (string $operation): bool => $operation !== 'view'),
         ]);
     }
 
@@ -318,13 +361,15 @@ class BatchResource extends Resource
                 TextColumn::make('code')
                     ->label(__('enrollment.batch_code'))
                     ->searchable()
-                    ->sortable(),
+                    ->sortable()
+                    ->weight('semibold')
+                    ->description(fn (Batch $record): string => $record->course->name()),
 
                 // The course code, sortable and searchable through the relation.
                 TextColumn::make('course.code')
                     ->label(__('enrollment.course'))
                     ->searchable()
-                    ->sortable(),
+                    ->sortable()->toggleable(isToggledHiddenByDefault: true),
 
                 TextColumn::make('status')
                     ->label(__('enrollment.status'))
@@ -333,6 +378,7 @@ class BatchResource extends Resource
                     ->sortable(),
 
                 TextColumn::make('start_date')
+                    ->hidden()
                     ->label(__('enrollment.start_date'))
                     ->date()
                     ->placeholder(__('enrollment.no_date'))
@@ -343,6 +389,7 @@ class BatchResource extends Resource
                 // "What finishes soonest" is not a question this list is asked,
                 // so an index would be dead weight rather than a fix.
                 TextColumn::make('end_date')
+                    ->hidden()
                     ->label(__('enrollment.end_date'))
                     ->date()
                     ->placeholder(__('enrollment.no_date')),
@@ -351,7 +398,7 @@ class BatchResource extends Resource
                 // room size is not a use case.
                 TextColumn::make('capacity')
                     ->label(__('enrollment.capacity'))
-                    ->numeric(),
+                    ->numeric()->toggleable(isToggledHiddenByDefault: true),
 
                 /*
                  * Seats taken against seats available — "3 / 2".
@@ -369,7 +416,21 @@ class BatchResource extends Resource
                  * fault. A batch with no stated capacity shows an em dash rather
                  * than "3 / 0", which would look like a violated limit.
                  */
-                TextColumn::make('enrolment_load')
+                ViewColumn::make('schedule')->label(__('enrollment.schedule'))->view('filament.enrollment.columns.batch-schedule')
+                    ->viewData(function (Batch $record): array {
+                        $start = $record->start_date;
+                        $end = $record->end_date;
+                        $duration = $start && $end ? (int) $start->diff($end)->days : 0;
+                        $yearStart = $start?->copy()->startOfYear();
+                        $yearDays = $yearStart ? (int) $yearStart->diff($yearStart->copy()->addYear())->days : 365;
+                        $offset = $start && $yearStart ? intdiv((int) $yearStart->diff($start)->days * 100, $yearDays) : 0;
+
+                        return ['duration' => $duration, 'offset' => $offset, 'span' => min(100 - $offset, max(1, intdiv($duration * 100, $yearDays))),
+                            'range' => ($start?->format('d M') ?? __('enrollment.no_date')).' → '.($end?->format('d M Y') ?? __('enrollment.no_date'))];
+                    }),
+                TextColumn::make('enrolment_load')->view('filament.enrollment.columns.batch-load')
+                    ->color(fn (Batch $record): string => $record->isOverCapacity() ? 'warning' : 'gray')
+                    ->tooltip(fn (Batch $record): ?string => $record->isOverCapacity() ? __('enrollment.over_capacity_warning') : null)
                     ->label(__('enrollment.enrolment_load'))
                     ->state(fn (Batch $record): string => __('enrollment.enrolment_load_value', [
                         'active' => $record->activeEnrollmentCount(),
@@ -377,11 +438,12 @@ class BatchResource extends Resource
                             ? (string) $record->capacity
                             : __('enrollment.no_capacity_limit_short'),
                     ]))
-                    ->badge()
-                    ->color(fn (Batch $record): string => $record->isOverCapacity() ? 'warning' : 'gray')
-                    ->tooltip(fn (Batch $record): ?string => $record->isOverCapacity()
-                        ? __('enrollment.over_capacity_warning')
-                        : null),
+                    ->viewData(fn (Batch $record): array => [
+                        'value' => $record->activeEnrollmentCount(), 'maximum' => $record->capacity,
+                        'label' => __('enrollment.enrolment_load_value', ['active' => $record->activeEnrollmentCount(), 'capacity' => $record->capacity > 0 ? $record->capacity : __('enrollment.no_capacity_limit_short')]),
+                        'tone' => $record->isOverCapacity() ? 'warning' : ($record->capacity > 0 && intdiv($record->activeEnrollmentCount() * 100 + intdiv($record->capacity, 2), $record->capacity) >= 90 ? 'primary' : 'success'),
+                        'note' => $record->isOverCapacity() ? __('enrollment.over_capacity_warning') : null, 'percentage' => true,
+                    ]),
 
                 // The INHERITED figure, not the raw column: a batch with a null
                 // total_hours shows its course's hours, which is what anyone
@@ -389,7 +451,7 @@ class BatchResource extends Resource
                 // an accessor resolved in PHP, not a column the database can
                 // order by.
                 TextColumn::make('effective_total_hours')
-                    ->label(__('enrollment.total_hours')),
+                    ->label(__('enrollment.total_hours'))->toggleable(isToggledHiddenByDefault: true),
 
                 /*
                  * Assigned hours against the batch total — "18 / 30".
@@ -407,18 +469,26 @@ class BatchResource extends Resource
                  * per row. Not sortable: it is a sub-query alias, not a column
                  * with an index behind it.
                  */
-                TextColumn::make('hour_allocation')
-                    ->label(__('enrollment.hour_allocation'))
-                    ->state(fn (Batch $record): string => $record->totalAssignedHours()
-                        .' / '.$record->effective_total_hours)
-                    ->badge()
+                TextColumn::make('hour_allocation')->view('filament.enrollment.columns.batch-load')
                     ->color(fn (Batch $record): string => $record->hasHourMismatch() ? 'warning' : 'success')
-                    ->tooltip(fn (Batch $record): ?string => $record->hasHourMismatch()
-                        ? __('enrollment.hour_mismatch_hint')
-                        : null),
+                    ->tooltip(fn (Batch $record): ?string => $record->hasHourMismatch() ? __('enrollment.hour_mismatch_hint') : null)
+                    ->label(__('enrollment.hour_allocation'))
+                    ->state(fn (Batch $record): string => __('enrollment.hours_fraction', [
+                        'assigned' => $record->totalAssignedHours(), 'total' => $record->effective_total_hours,
+                    ]))
+                    ->viewData(fn (Batch $record): array => [
+                        'value' => $record->totalAssignedHours(), 'maximum' => $record->effective_total_hours,
+                        'label' => __('enrollment.hours_fraction', ['assigned' => $record->totalAssignedHours(), 'total' => $record->effective_total_hours]),
+                        'tone' => $record->hasHourMismatch() ? 'warning' : 'success',
+                        'note' => $record->hasHourMismatch() ? __('enrollment.hour_mismatch_hint') : __('enrollment.hours_matched'), 'percentage' => false,
+                    ]),
 
                 // Deliberately absent from the table: pricing is changed from
                 // the guarded form field, not inline from a listing.
+            ])
+            ->filters([
+                SelectFilter::make('course_id')->label(__('enrollment.course'))->searchable()
+                    ->relationship('course', 'code'),
             ])
             /*
              * Soonest first, undated last.
@@ -502,8 +572,8 @@ class BatchResource extends Resource
     public static function getRelations(): array
     {
         return [
-            InstructorsRelationManager::class,
             EnrollmentsRelationManager::class,
+            InstructorsRelationManager::class,
         ];
     }
 

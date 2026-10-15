@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Finance\Filament\Resources;
 
+use App\Domain\Enrollment\Models\Student;
 use App\Domain\Finance\Actions\ReversePaymentAction;
 use App\Domain\Finance\Exceptions\PaymentAlreadyReversedException;
 use App\Domain\Finance\Filament\Resources\PaymentResource\Pages\ListPayments;
@@ -13,14 +14,17 @@ use App\Models\User;
 use BackedEnum;
 use Filament\Actions\Action;
 use Filament\Forms\Components\Textarea;
+use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\TernaryFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\Gate;
 
 /**
  * Payments — listed and viewed, never created or edited through the panel.
@@ -242,6 +246,18 @@ class PaymentResource extends Resource
                         : null),
             ])
             ->filters([
+                Filter::make('student')->label(__('enrollment.student'))
+                    ->schema([TextInput::make('id')->label(__('enrollment.student_id'))->integer()->minValue(1)])
+                    ->query(function (Builder $query, array $data): Builder {
+                        if (blank($data['id'] ?? null)) {
+                            return $query;
+                        }
+                        $id = filter_var($data['id'], FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+                        $student = $id === false ? null : Student::query()->find($id);
+
+                        return $student !== null && Gate::allows('view', $student)
+                            ? $query->where('payments.student_id', $id) : $query->whereRaw('1 = 0');
+                    }),
                 // TernaryFilter::nullable() wires whereNotNull()/whereNull()
                 // on the filter's own name, which is a real column here —
                 // no HAVING involved, unlike ChargeResource's outstanding

@@ -7,6 +7,7 @@ namespace App\Domain\Finance\Reports;
 use App\Domain\Enrollment\Services\EnrollmentQueryService;
 use App\Domain\Finance\Support\Money;
 use App\Domain\Finance\Support\ReportPeriod;
+use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -85,6 +86,13 @@ final class RevenueReport
         );
     }
 
+    /** The same cash-basis aggregate, composable without executing a read. */
+    public function courseTotalsQuery(ReportPeriod $period): Builder
+    {
+        return $this->groupedQuery($period, EnrollmentQueryService::DIMENSION_COURSE,
+            EnrollmentQueryService::COURSE_ID, EnrollmentQueryService::COURSE_CODE);
+    }
+
     /**
      * Revenue for the period, grouped by batch.
      *
@@ -117,6 +125,15 @@ final class RevenueReport
         string $idAlias,
         string $codeAlias,
     ): Collection {
+        return $this->groupedQuery($period, $dimension, $idAlias, $codeAlias)->get()->map(fn (object $row): array => [
+            'id' => (int) $row->{$idAlias},
+            'code' => (string) $row->{$codeAlias},
+            'total' => Money::fromDecimal((string) $row->total_amount),
+        ]);
+    }
+
+    private function groupedQuery(ReportPeriod $period, string $dimension, string $idAlias, string $codeAlias): Builder
+    {
         $query = DB::table('payment_allocations')
             ->join('payments', 'payments.id', '=', 'payment_allocations.payment_id')
             ->join('charges', 'charges.id', '=', 'payment_allocations.charge_id')
@@ -127,12 +144,6 @@ final class RevenueReport
 
         $this->enrollments->joinCatalogueTo($query, 'charges.enrollment_id', [$dimension]);
 
-        $query->groupBy($idAlias, $codeAlias)->orderBy($idAlias);
-
-        return $query->get()->map(fn (object $row): array => [
-            'id' => (int) $row->{$idAlias},
-            'code' => (string) $row->{$codeAlias},
-            'total' => Money::fromDecimal((string) $row->total_amount),
-        ]);
+        return $query->groupBy($idAlias, $codeAlias)->orderBy($idAlias);
     }
 }

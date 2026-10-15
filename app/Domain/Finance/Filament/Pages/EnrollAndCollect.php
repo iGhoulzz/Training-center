@@ -285,7 +285,18 @@ class EnrollAndCollect extends Page
 
     public function mount(): void
     {
-        $this->form->fill();
+        $state = [];
+        $studentId = filter_var(request()->query('student'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        $batchId = filter_var(request()->query('batch'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        if ($studentId !== false && ($student = Student::query()->find($studentId)) !== null
+            && Gate::allows('view', $student)) {
+            $state['student_id'] = $studentId;
+        }
+        if ($batchId !== false && ($batch = Batch::query()->open()->find($batchId)) !== null
+            && Gate::allows('view', $batch)) {
+            $state['batch_id'] = $batchId;
+        }
+        $this->form->fill($state);
     }
 
     public function form(Schema $schema): Schema

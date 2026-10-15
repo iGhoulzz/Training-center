@@ -20,6 +20,12 @@ declare(strict_types=1);
 */
 
 return [
+    'queue_pending' => '{1} :count completed enrolment awaiting certificate issuance|[2,*] :count completed enrolments awaiting certificate issuance',
+    'review_queue' => 'Review queue',
+    'register' => 'Certificate register',
+    'queue_hint' => 'Completed enrolments without a valid certificate. Outstanding balances never block issuance.',
+    'printed_details' => 'Printed certificate details',
+    'issuance_record' => 'Issuance record',
     // CertificateStatus::label() — the three, and only three, values
     // chk_student_certificates_status admits.
     'certificate_status' => [

@@ -8,10 +8,18 @@ use App\Domain\Enrollment\Actions\CreateWithIdentifierCodeAction;
 use App\Domain\Enrollment\Exceptions\IdentifierCodeAlreadyUsedException;
 use App\Domain\Enrollment\Exceptions\IdentifierCodeExhaustedException;
 use App\Domain\Enrollment\Filament\Resources\BatchResource;
+use App\Domain\Enrollment\Models\Course;
 use App\Domain\Finance\Filament\Concerns\WritesPricingThroughActions;
+use App\Domain\Finance\Filament\Pages\EnrollAndCollect;
 use App\Models\User;
+use Filament\Actions\Action;
+use Filament\Actions\ActionGroup;
 use Filament\Resources\Pages\CreateRecord;
+use Filament\Schemas\Components\Component;
+use Filament\Schemas\Components\EmbeddedSchema;
+use Filament\Schemas\Components\Form;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -35,6 +43,43 @@ class CreateBatch extends CreateRecord
      * bool is a fatal incompatible-property-type error.
      */
     protected ?bool $hasDatabaseTransactions = true;
+
+    protected bool $chainAfterCreation = false;
+
+    public function getFormContentComponent(): Component
+    {
+        return Form::make([EmbeddedSchema::make('form')])->id('form')->livewireSubmitHandler('create');
+    }
+
+    protected function afterFill(): void
+    {
+        $courseId = filter_var(request()->query('course'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        $course = $courseId === false ? null : Course::query()->active()->find($courseId);
+        if ($course && Gate::allows('view', $course)) {
+            $this->form->fill([...$this->data, 'course_id' => $course->getKey()]);
+        }
+    }
+
+    /** @return array<Action|ActionGroup> */
+    protected function getFormActions(): array
+    {
+        return [
+            ...parent::getFormActions(),
+            Action::make('createAndEnroll')->label(__('enrollment.create_and_enroll'))->color('gray')
+                ->authorize(fn (): bool => BatchResource::canCreate() && auth()->user()->can('view_batch') && EnrollAndCollect::canAccess())
+                ->action(function (): void {
+                    $this->chainAfterCreation = true;
+                    $this->create();
+                }),
+        ];
+    }
+
+    protected function getRedirectUrl(): string
+    {
+        return $this->chainAfterCreation
+            ? EnrollAndCollect::getUrl(['batch' => $this->record->getKey()])
+            : parent::getRedirectUrl();
+    }
 
     /**
      * @param  array<string, mixed>  $data

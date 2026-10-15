@@ -46,13 +46,21 @@ class CertificateIssuanceQueue extends Page implements HasTable
         return __('certificates.queue_title');
     }
 
+    /** @return array<Action> */
+    protected function getHeaderActions(): array
+    {
+        return [Action::make('register')->label(__('certificates.register'))
+            ->visible(fn (): bool => StudentCertificateResource::canViewAny())
+            ->url(fn (): string => StudentCertificateResource::getUrl('index'))];
+    }
+
     public function table(Table $table): Table
     {
         return $table
             ->query(app(IssuanceQueueQuery::class)->query())
             ->columns([
                 TextColumn::make('student.student_code')->label(__('certificates.queue_student_code')),
-                TextColumn::make('student.full_name')->label(__('certificates.student')),
+                TextColumn::make('student.full_name')->label(__('certificates.student'))->weight('semibold'),
                 TextColumn::make('batch.course.name_en')
                     ->label(__('certificates.course'))
                     ->formatStateUsing(fn (Enrollment $record): string => $record->batch->course->name()),

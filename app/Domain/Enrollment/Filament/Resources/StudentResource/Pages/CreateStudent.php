@@ -8,8 +8,14 @@ use App\Domain\Enrollment\Actions\CreateWithIdentifierCodeAction;
 use App\Domain\Enrollment\Exceptions\IdentifierCodeAlreadyUsedException;
 use App\Domain\Enrollment\Exceptions\IdentifierCodeExhaustedException;
 use App\Domain\Enrollment\Filament\Resources\StudentResource;
+use App\Domain\Finance\Filament\Pages\EnrollAndCollect;
 use App\Models\User;
+use Filament\Actions\Action;
+use Filament\Actions\ActionGroup;
 use Filament\Resources\Pages\CreateRecord;
+use Filament\Schemas\Components\Component;
+use Filament\Schemas\Components\EmbeddedSchema;
+use Filament\Schemas\Components\Form;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Validation\ValidationException;
 
@@ -37,6 +43,39 @@ class CreateStudent extends CreateRecord
      * bool is a fatal incompatible-property-type error.
      */
     protected ?bool $hasDatabaseTransactions = true;
+
+    protected bool $chainAfterCreation = false;
+
+    protected function hasFullWidthFormActions(): bool
+    {
+        return true;
+    }
+
+    public function getFormContentComponent(): Component
+    {
+        return Form::make([EmbeddedSchema::make('form')])->id('form')->livewireSubmitHandler('create');
+    }
+
+    /** @return array<Action|ActionGroup> */
+    protected function getFormActions(): array
+    {
+        return [
+            ...parent::getFormActions(),
+            Action::make('createAndEnroll')->label(__('enrollment.create_and_enroll'))->color('gray')
+                ->authorize(fn (): bool => StudentResource::canCreate() && auth()->user()->can('view_student') && EnrollAndCollect::canAccess())
+                ->action(function (): void {
+                    $this->chainAfterCreation = true;
+                    $this->create();
+                }),
+        ];
+    }
+
+    protected function getRedirectUrl(): string
+    {
+        return $this->chainAfterCreation
+            ? EnrollAndCollect::getUrl(['student' => $this->record->getKey()])
+            : parent::getRedirectUrl();
+    }
 
     /**
      * @param  array<string, mixed>  $data

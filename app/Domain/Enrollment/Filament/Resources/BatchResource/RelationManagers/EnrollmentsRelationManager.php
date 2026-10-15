@@ -15,6 +15,7 @@ use App\Domain\Enrollment\Exceptions\EnrollmentHasCertificateException;
 use App\Domain\Enrollment\Exceptions\EnrollmentNotCompletableException;
 use App\Domain\Enrollment\Exceptions\EnrollmentNotWithdrawableException;
 use App\Domain\Enrollment\Exceptions\StudentNotEnrollableException;
+use App\Domain\Enrollment\Filament\Resources\StudentResource;
 use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Enrollment;
 use App\Domain\Enrollment\Models\Student;
@@ -23,6 +24,7 @@ use App\Domain\Enrollment\Support\EnrollmentUpdateRule;
 use App\Domain\Finance\Actions\EnrollAndBillAction;
 use App\Domain\Finance\Data\EnrollAndBillData;
 use App\Domain\Finance\Exceptions\ChargeAlreadyCommittedException;
+use App\Domain\Finance\Filament\Resources\ChargeResource;
 use App\Domain\Finance\Services\StudentBalanceQuery;
 use App\Models\User;
 use Filament\Actions\Action;
@@ -32,6 +34,7 @@ use Filament\Notifications\Notification;
 use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Columns\ViewColumn;
 use Filament\Tables\Table;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
@@ -59,6 +62,11 @@ use Illuminate\Support\Facades\Gate;
              */
 class EnrollmentsRelationManager extends RelationManager
 {
+    public static function getBadge(Model $ownerRecord, string $pageClass): ?string
+    {
+        return (string) (int) $ownerRecord->getAttribute('enrollments_count');
+    }
+
     protected static string $relationship = 'enrollments';
 
     protected static ?string $relatedResource = null;
@@ -166,7 +174,13 @@ class EnrollmentsRelationManager extends RelationManager
                  * student_code and enrolled_at are sortable instead, and both are
                  * real indexed columns.
                  */
-                TextColumn::make('student.full_name')
+                ViewColumn::make('student.full_name')->view('filament.enrollment.columns.person')
+                    ->viewData(fn (Enrollment $record): array => [
+                        'name' => $record->student->full_name, 'identity' => $record->student_id, 'size' => 'roster',
+                        'secondary' => $record->student->student_code,
+                        'url' => StudentResource::canViewAny() && StudentResource::canView($record->student)
+                            ? StudentResource::getUrl('index', ['student' => $record->student_id]) : null,
+                    ])
                     ->label(__('enrollment.student'))
                     ->searchable(query: fn (Builder $query, string $search): Builder => $query
                         ->whereHas('student', fn (Builder $student): Builder => $student
@@ -191,6 +205,14 @@ class EnrollmentsRelationManager extends RelationManager
                     ->label(__('enrollment.enrolled_at'))
                     ->date()
                     ->sortable(),
+
+                TextColumn::make('student.'.StudentBalanceQuery::OUTSTANDING_ALIAS)
+                    ->label(__('enrollment.outstanding'))
+                    ->visible(fn (): bool => auth()->user()?->can('view_any_charge') ?? false)
+                    ->formatStateUsing(fn (string $state): string => __('enrollment.money_lyd', ['amount' => $state]))
+                    ->url(fn (Enrollment $record): ?string => ChargeResource::canViewAny() && StudentResource::canView($record->student)
+                        ? ChargeResource::getUrl('index', ['filters' => ['student' => ['id' => $record->student_id]]]) : null)
+                    ->color('warning'),
             ])
             ->headerActions([$this->enrollAction()])
             ->recordActions([$this->withdrawAction(), $this->deleteAction()])
