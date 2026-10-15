@@ -748,6 +748,8 @@ it('takes the home heading from the centres name, with the phrase in it set apar
 
 it('shows a contact row only for a detail that is set, and the directions card only while a map link is set', function () {
     replacePublicLine('public.contact.directions_title', 'SENTINEL-DIRECTIONS-TITLE');
+    replacePublicLine('public.contact.phone_label', 'SENTINEL-PHONE-LABEL');
+    replacePublicLine('public.contact.email_label', 'SENTINEL-EMAIL-LABEL');
 
     foreach (['/', '/contact'] as $path) {
         // Email and map only.
@@ -757,6 +759,8 @@ it('shows a contact row only for a detail that is set, and the directions card o
 
         expect(substr_count($html, 'mailto:desk@example.test'))->toBe(2, "{$path}: the header and the block each link the email")
             ->and(str_contains($html, 'tel:'))->toBeFalse("{$path}: a telephone row with no telephone")
+            ->and(str_contains($html, 'SENTINEL-PHONE-LABEL'))->toBeFalse("{$path}: a telephone row with no telephone")
+            ->and(substr_count($html, 'SENTINEL-EMAIL-LABEL'))->toBe(1, "{$path}: the email row")
             ->and(str_contains($html, 'SENTINEL-DIRECTIONS-TITLE'))->toBeTrue("{$path}: no directions card with a map link");
 
         // Telephone only, no map: no email row and no card.
@@ -766,6 +770,8 @@ it('shows a contact row only for a detail that is set, and the directions card o
 
         expect(substr_count($html, 'tel:+218912345678'))->toBe(2, "{$path}: the header and the block each link the telephone")
             ->and(str_contains($html, 'mailto:'))->toBeFalse("{$path}: an email row with no email")
+            ->and(str_contains($html, 'SENTINEL-EMAIL-LABEL'))->toBeFalse("{$path}: an email row with no email")
+            ->and(substr_count($html, 'SENTINEL-PHONE-LABEL'))->toBe(1, "{$path}: the telephone row")
             ->and(str_contains($html, 'SENTINEL-DIRECTIONS-TITLE'))->toBeFalse("{$path}: a directions card with no map link")
             ->and(str_contains($html, 'target="_blank"'))->toBeFalse();
     }
