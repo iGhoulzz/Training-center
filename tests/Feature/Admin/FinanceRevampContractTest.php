@@ -180,6 +180,25 @@ it('shows both tender methods in the payment row without requiring payment detai
     Livewire::actingAs(($this->actor)([]))->test(ListPayments::class)->assertForbidden();
 });
 
+it('keeps deleted student payment identity visible without an unusable student link or extra reads', function () {
+    $actor = ($this->actor)(['view_any_payment', 'view_student', 'view_any_student']);
+    $payment = Payment::factory()->create();
+    $student = $payment->student;
+    $page = Livewire::actingAs($actor)->test(ListPayments::class);
+    $record = $page->instance()->getTableRecords()->first();
+    expect($page->instance()->getTable()->getColumn('student.full_name')->record($record)->getUrl())->not->toBeNull();
+    $student->delete();
+    $page = Livewire::actingAs($actor)->test(ListPayments::class);
+    $record = $page->instance()->getTableRecords()->first();
+    $column = $page->instance()->getTable()->getColumn('student.full_name')->record($record);
+    DB::enableQueryLog();
+    $url = $column->getUrl();
+    $queries = DB::getQueryLog();
+    DB::disableQueryLog();
+    expect($url)->toBeNull()->and($queries)->toBeEmpty();
+    expect(preg_replace('/\s+wire:snapshot="[^"]*"/', '', $page->html()))->toContain(e($student->full_name));
+});
+
 it('shows the exact frozen payroll total and line count on each run card', function () {
     $actor = ($this->actor)(['view_any_payroll_run']);
     $run = PayrollRun::factory()->create();

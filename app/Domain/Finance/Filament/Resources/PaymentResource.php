@@ -207,7 +207,7 @@ class PaymentResource extends Resource
 
                         TextColumn::make('student.full_name')
                             ->label(__('payments.student'))->weight('semibold')
-                            ->url(fn (Payment $record): ?string => auth()->user()?->can('view_student') && auth()->user()->can('view_any_student')
+                            ->url(fn (Payment $record): ?string => auth()->user()?->can('view_student') && auth()->user()->can('view_any_student') && ! $record->student->trashed()
                                 ? StudentResource::getUrl('index', ['student' => $record->student_id]) : null),
 
                         TextColumn::make('received_at')

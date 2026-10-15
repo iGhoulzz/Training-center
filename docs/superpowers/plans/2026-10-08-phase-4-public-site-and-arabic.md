@@ -168,7 +168,8 @@ first attempt.
 | `app/Domain/Enrollment/Services/EnrollmentQueryService.php` | **T05 → T16c** | T05 supplies portal balance labels; owner-approved T16c expansion (2026-10-15) adds a batched/joined student-name projection for charge rows. Existing portal behavior and fixed query counts stay unchanged; Finance does not traverse `enrollment.student` |
 | `app/Domain/Finance/Data/EnrollmentBalance.php`, `app/Domain/Finance/Filament/Portal/Pages/MyBalance.php`, `resources/views/portal/my-balance.blade.php`, `lang/en/portal.php`, `tests/Feature/Finance/StudentBalanceQueryTest.php`, `tests/Feature/Portal/MyBalancePageTest.php`, `tests/Feature/Portal/PortalQueryCountTest.php` | **T05 only** | Owner-approved scope expansion (2026-10-10): show localized course names and batch codes on balance rows now. Ownership, existing unbilled-row handling and fixed query counts are preserved regression behavior |
 | `app/Domain/Finance/Reports/OutstandingAgedReport.php` | **T16c** | Owner-approved expansion (2026-10-15): bounded SQL totals for the Charges header, sharing the report's existing ageing definitions, write-off and reversal treatment. No full-report hydration to build four cards; existing report results remain unchanged |
-| `app/Domain/Finance/Services/StudentBalanceQuery.php` | **T05 → T06** | T05 adds portal balance labels; owner-approved T06 expansion (2026-10-11) adds the batched staff-list projection without changing portal behavior |
+| `app/Domain/Finance/Services/StudentBalanceQuery.php` | **T05 → T06 → T16c** | T05 adds portal balance labels; owner-approved T06 expansion (2026-10-11) adds the batched staff-list projection. Owner-approved T16c expansion (2026-10-15) addresses measured optimizer-dependent full charge scans in that projection, without changing balance semantics or portal behavior |
+| `tests/Feature/Performance/ListQueryCountTest.php` | **T06 → T16c** | T06 creates the list query budgets; owner-approved T16c expansion (2026-10-15) may strengthen the selected-student EXPLAIN regression for the measured query-plan fix. Existing no-full-scan and exact-balance assertions must not be weakened |
 | `app/Domain/Finance/Reports/ProfitReport.php` | **T04 → T10** | T04 teaches it expenses; T10 charts what it returns and must not change what the figure means |
 | `app/Domain/Finance/Filament/Pages/Reports/*` | **T04 (`ProfitReportPage` subheading only) → T10 → T16d** | T04 shows the Profit definition under the page title and touches nothing else there; T10 adds the charts; T16d restyles. T16d must not change what a chart plots |
 | `lang/en/*` other than `activity.php` | Every task, each in its own catalogue | No task ships a user-facing string without an English key. A task adding to an existing catalogue appends its own keys and edits nobody else's |
@@ -1436,6 +1437,11 @@ no portal login.
 - `resources/css/filament/admin/theme.css` — owner-approved token-only addition
   (2026-10-15): the missing orange ageing-card colour `#fb923c`; existing theme
   rules remain unchanged
+- `app/Domain/Finance/Services/StudentBalanceQuery.php`,
+  `tests/Feature/Performance/ListQueryCountTest.php` — owner-approved narrow
+  investigation/fix (2026-10-15) of the existing selected-student projection's
+  optimizer-dependent full charge scans, recorded in a separate commit. Preserve
+  balance semantics and the no-full-scan assertion; no broader performance work
 
 **Owner-approved expansion (2026-10-15).** The Charges cards keep the report's
 existing buckets: **0–30** (including not-yet-due charges), **31–60**, **61–90**
@@ -1444,7 +1450,8 @@ the four aggregate groups; rendering the cards must not hydrate every
 outstanding charge. Student names come through the published enrollment query
 boundary, never through a per-row lookup. The already-scoped
 `FinanceRevampContractTest` proves boundary parity, write-off/reversal treatment
-and bounded hydration; existing report and query-count tests stay unchanged.
+and bounded hydration; existing report tests stay unchanged. Query-count tests
+stay unchanged except the separately approved selected-student regression above.
 Native Filament header schemas need no additional Blade or widget file.
 
 **Contract rules asserted:** a second installment against one bill is refused ·
