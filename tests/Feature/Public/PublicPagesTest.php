@@ -9,6 +9,7 @@ use App\Domain\Publications\Data\PublicArticle;
 use App\Domain\Publications\Models\Article;
 use App\Domain\Publications\Queries\PublicArticleCatalogue;
 use App\Support\PublicContact;
+use Dom\HTMLDocument;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -163,13 +164,15 @@ it('prints the same email and telephone links in the header and in the page body
 it('hands the callers classes to the contact links and keeps them left to right', function () {
     $html = (string) $this->get('/contact')->assertOk()->getContent();
 
-    // The header's link carries the top bar's classes, the page's its own.
+    // The header's link carries the top bar's classes, the page's its own: the design's
+    // contact value (15px ink, gold-dark on hover) with a 44px target.
     $barClasses = 'flex min-h-11 items-center whitespace-nowrap text-on-navy hover:text-gold-light focus-visible:outline-gold-light lg:min-h-0';
+    $pageClasses = 'tap-target inline-flex items-center text-copy font-medium text-ink hover:text-gold-dark';
 
     expect($html)->toContain('<a href="mailto:desk@example.test" dir="ltr" class="'.$barClasses.'">')
-        ->toContain('<a href="mailto:desk@example.test" dir="ltr" class="underline hover:text-gold-dark">')
+        ->toContain('<a href="mailto:desk@example.test" dir="ltr" class="'.$pageClasses.'">')
         ->toContain('<a href="tel:+218912345678" dir="ltr" class="'.$barClasses.'">')
-        ->toContain('<a href="tel:+218912345678" dir="ltr" class="underline hover:text-gold-dark">');
+        ->toContain('<a href="tel:+218912345678" dir="ltr" class="'.$pageClasses.'">');
 });
 
 it('renders no contact link, and no bar for them, when none is configured', function () {
@@ -618,4 +621,244 @@ it('returns exactly the limit when there are more published articles than that',
 
     expect(array_map(fn (PublicArticle $article): string => $article->slug, $result))
         ->toBe(['teaser-direct-newest', 'teaser-direct-middle']);
+});
+
+/*
+|--------------------------------------------------------------------------
+| The home page, section by section (P4-T20b)
+|--------------------------------------------------------------------------
+|
+| The teaser in the MARKUP: the data tests above prove what the controller hands the
+| view, these prove what the page prints from it. Every title, slug and date below is
+| written out by hand, and the unpublished article carries the newest date of all and a
+| sentinel title, so a teaser that listed it would put it first.
+*/
+
+/**
+ * The HTML of the home page's publications teaser section, or '' when there is none.
+ */
+function homeTeaserSection(string $html): string
+{
+    preg_match('/<section id="publications".*?<\/section>/s', $html, $match);
+
+    return $match[0] ?? '';
+}
+
+it('prints the three newest published articles in the home teaser, in order, each linked to its page and its download', function () {
+    teaserArticle('markup-fourth-oldest', '2025-03-01', ['title_en' => 'Teaser Fourth Oldest']);
+    teaserArticle('markup-third', '2025-09-01', ['title_en' => 'Teaser Third']);
+    teaserArticle('markup-second', '2026-01-15', ['title_en' => 'Teaser Second']);
+    teaserArticle('markup-first', '2026-06-20', ['title_en' => 'Teaser First']);
+    Article::factory()->create(['slug' => 'markup-unpublished', 'title_en' => 'SENTINEL-UNPUBLISHED-TEASER', 'issued_on' => '2026-09-30']);
+
+    $html = (string) test()->get('/')->assertOk()->getContent();
+    $section = homeTeaserSection($html);
+
+    preg_match_all('/<h3\b[^>]*>\s*<a\b[^>]*>(.*?)<\/a>/s', $section, $titles);
+
+    expect($section)->not->toBe('')
+        ->and($titles[1])->toBe(['Teaser First', 'Teaser Second', 'Teaser Third'])
+        ->and(substr_count($section, '<article'))->toBe(3)
+        ->and(str_contains($html, 'Teaser Fourth Oldest'))->toBeFalse('The fourth article is on the home page.')
+        ->and(str_contains($html, 'SENTINEL-UNPUBLISHED-TEASER'))->toBeFalse('An unpublished article is on the home page.');
+
+    // Hand-built URLs: the page and the download of each of the three.
+    foreach (['markup-first', 'markup-second', 'markup-third'] as $slug) {
+        expect($section)->toContain('href="'.url('/publications/'.$slug).'"')
+            ->toContain('href="'.url('/publications/'.$slug.'/download').'"');
+    }
+
+    foreach (['markup-fourth-oldest', 'markup-unpublished'] as $slug) {
+        expect(str_contains($html, '/publications/'.$slug))->toBeFalse("{$slug} is linked from the home page.");
+    }
+});
+
+it('shows no teaser section at all while nothing is published', function () {
+    Article::factory()->create(['title_en' => 'SENTINEL-NOT-PUBLISHED-YET', 'issued_on' => '2026-09-30']);
+    replacePublicLine('public.home.publications_title', 'SENTINEL-TEASER-HEADING');
+
+    $html = (string) test()->get('/')->assertOk()->getContent();
+
+    expect(str_contains($html, 'id="publications"'))->toBeFalse()
+        ->and(str_contains($html, 'SENTINEL-TEASER-HEADING'))->toBeFalse()
+        ->and(str_contains($html, 'SENTINEL-NOT-PUBLISHED-YET'))->toBeFalse();
+
+    teaserArticle('now-published', '2026-01-01', ['title_en' => 'Now Published']);
+
+    $published = (string) test()->get('/')->assertOk()->getContent();
+
+    // The control: the section does appear the moment there is something to show.
+    expect(str_contains($published, 'id="publications"'))->toBeTrue()
+        ->and(str_contains($published, 'SENTINEL-TEASER-HEADING'))->toBeTrue();
+});
+
+it('lays the home page out as the design does, and points the hero at its own sections', function () {
+    teaserArticle('layout-article', '2026-01-01');
+
+    $html = (string) test()->get('/')->assertOk()->getContent();
+    $document = HTMLDocument::createFromString($html, LIBXML_NOERROR);
+
+    // The sections in the order the design draws them. The hero and About carry no id.
+    $positions = array_map(fn (string $id): int|false => strpos($html, 'id="'.$id.'"'), ['programmes', 'verify', 'publications', 'contact']);
+
+    expect($positions)->each->not->toBeFalse()
+        ->and($positions[0])->toBeLessThan($positions[1])
+        ->and($positions[1])->toBeLessThan($positions[2])
+        ->and($positions[2])->toBeLessThan($positions[3]);
+
+    // The hero's two buttons stay on the page: they scroll to the programmes and the verifier.
+    $hero = $document->querySelector('main > section');
+
+    expect($hero->querySelector('a[href="#programmes"]'))->not->toBeNull()
+        ->and($hero->querySelector('a[href="#verify"]'))->not->toBeNull()
+        ->and($document->querySelector('main #programmes'))->not->toBeNull()
+        ->and($document->querySelector('main #verify'))->not->toBeNull();
+
+    // The seal is decoration (the h1 already names the centre) and both glows and both
+    // circles are hidden from assistive technology.
+    $seal = $hero->querySelector('img');
+
+    expect($seal->getAttribute('alt'))->toBe('')
+        ->and($seal->getAttribute('src'))->toBe(url('/images/brand/asclst-logo.jpg'))
+        ->and(count($hero->querySelectorAll('div[aria-hidden="true"]')))->toBeGreaterThanOrEqual(5);
+});
+
+it('sets the emphasis phrase of the home heading in italic gold wherever it appears, and escapes every part', function (string $heading, string $expectedInnerHtml) {
+    replacePublicLine('public.home.heading', $heading);
+
+    preg_match('/<h1\b[^>]*>(.*?)<\/h1>/s', (string) test()->get('/')->assertOk()->getContent(), $match);
+
+    // Written by hand from the phrase "Legal Studies", which is the key's default.
+    expect(trim($match[1]))->toBe($expectedInnerHtml);
+})->with([
+    'in the middle' => ['Before Legal Studies After', 'Before <span class="text-gold-light italic">Legal Studies</span> After'],
+    'at the start' => ['Legal Studies First', '<span class="text-gold-light italic">Legal Studies</span> First'],
+    'at the end' => ['Last Legal Studies', 'Last <span class="text-gold-light italic">Legal Studies</span>'],
+    'with markup around it' => ['A <i>& B</i> Legal Studies <u>C</u>', 'A &lt;i&gt;&amp; B&lt;/i&gt; <span class="text-gold-light italic">Legal Studies</span> &lt;u&gt;C&lt;/u&gt;'],
+    'not in the name' => ['Plain Heading Only', 'Plain Heading Only'],
+]);
+
+it('takes the home heading from the centres name, with the phrase in it set apart', function () {
+    config(['public_site.brand.name' => 'The Legal Studies Centre']);
+
+    preg_match('/<h1\b[^>]*>(.*?)<\/h1>/s', (string) test()->get('/')->assertOk()->getContent(), $match);
+
+    expect(trim($match[1]))->toBe('The <span class="text-gold-light italic">Legal Studies</span> Centre');
+});
+
+it('shows a contact row only for a detail that is set, and the directions card only while a map link is set', function () {
+    replacePublicLine('public.contact.directions_title', 'SENTINEL-DIRECTIONS-TITLE');
+
+    foreach (['/', '/contact'] as $path) {
+        // Email and map only.
+        config(['public_site.contact.phone' => '', 'public_site.contact.email' => 'desk@example.test', 'public_site.contact.map_url' => 'https://maps.example.test/place/abc']);
+
+        $html = (string) test()->get($path)->assertOk()->getContent();
+
+        expect(substr_count($html, 'mailto:desk@example.test'))->toBe(2, "{$path}: the header and the block each link the email")
+            ->and(str_contains($html, 'tel:'))->toBeFalse("{$path}: a telephone row with no telephone")
+            ->and(str_contains($html, 'SENTINEL-DIRECTIONS-TITLE'))->toBeTrue("{$path}: no directions card with a map link");
+
+        // Telephone only, no map: no email row and no card.
+        config(['public_site.contact.phone' => '+218 91 234 5678', 'public_site.contact.email' => '', 'public_site.contact.map_url' => '']);
+
+        $html = (string) test()->get($path)->assertOk()->getContent();
+
+        expect(substr_count($html, 'tel:+218912345678'))->toBe(2, "{$path}: the header and the block each link the telephone")
+            ->and(str_contains($html, 'mailto:'))->toBeFalse("{$path}: an email row with no email")
+            ->and(str_contains($html, 'SENTINEL-DIRECTIONS-TITLE'))->toBeFalse("{$path}: a directions card with no map link")
+            ->and(str_contains($html, 'target="_blank"'))->toBeFalse();
+    }
+});
+
+it('draws no contact section on the home page and no body on the contact page when nothing is configured', function () {
+    config(['public_site.contact.phone' => '', 'public_site.contact.email' => '', 'public_site.contact.map_url' => '']);
+
+    $home = (string) test()->get('/')->assertOk()->getContent();
+    $contact = (string) test()->get('/contact')->assertOk()->getContent();
+
+    expect(str_contains($home, 'id="contact"'))->toBeFalse()
+        ->and(str_contains($home, 'home-contact-heading'))->toBeFalse()
+        ->and(str_contains($contact, 'contact-heading'))->toBeFalse();
+});
+
+/*
+|--------------------------------------------------------------------------
+| The pages that borrow the library's header, and the components they share
+|--------------------------------------------------------------------------
+*/
+
+it('opens About, Programmes, Contact and a programme with the navy header band, as a section and not a second banner', function () {
+    $course = Course::factory()->create(['name_en' => 'Banner Course']);
+
+    foreach (['/about', '/programmes', '/contact', '/programmes/'.$course->id] as $path) {
+        $document = HTMLDocument::createFromString((string) test()->get($path)->assertOk()->getContent(), LIBXML_NOERROR);
+
+        $h1s = $document->querySelectorAll('h1');
+        $band = $h1s[0]->closest('section');
+
+        // One h1, inside a navy section of <main>; the layout's <header> stays the only one.
+        expect(count($h1s))->toBe(1, $path)
+            ->and($band)->not->toBeNull("{$path}: the h1 is not in a section")
+            ->and(explode(' ', $band->getAttribute('class')))->toContain('bg-navy')
+            ->and($band->closest('main'))->not->toBeNull()
+            ->and(count($document->querySelectorAll('header')))->toBe(1, $path);
+    }
+});
+
+it('draws the left arrow the back link needs', function () {
+    $svg = HTMLDocument::createFromString(Blade::render('<x-public.icon name="arrow-left" class="rtl:-scale-x-100" />'), LIBXML_NOERROR)->querySelector('svg');
+
+    // The mirror of the right arrow's path, by hand.
+    expect($svg->querySelector('path')->getAttribute('d'))->toBe('M19 12H5m6-6-6 6 6 6')
+        ->and($svg->getAttribute('aria-hidden'))->toBe('true')
+        ->and($svg->getAttribute('class'))->toContain('rtl:-scale-x-100');
+});
+
+it('draws the price in the display face with its currency as a smaller span after a real space', function () {
+    $course = Course::factory()->create(['name_en' => 'Priced Course', 'total_hours' => 30]);
+    Batch::factory()->for($course)->create(['start_date' => now()->addDays(10), 'price' => '1450.000']);
+
+    $html = (string) test()->get('/')->assertOk()->getContent();
+
+    // The amount exactly as held, one space, then the currency in its own span with no
+    // margin of its own (a real space separates them).
+    preg_match('/<li class="([^"]*)">1450\.000 <span class="([^"]*)">LYD<\/span><\/li>/', $html, $match);
+
+    expect($match)->not->toBe([], 'The price is not printed as the amount, a space and the currency span.')
+        ->and(explode(' ', $match[1]))->toContain('font-display')->toContain('text-price')
+        ->and(explode(' ', $match[2]))->toContain('font-sans')->toContain('text-small')
+        ->and(preg_match('/(^| )-?[mp][se]?-/', $match[2]))->toBe(0, 'The currency span carries its own margin.');
+});
+
+it('keeps every button variant the shell uses exactly as it was', function (string $variant, string $size, string $variantClasses, string $sizeClasses) {
+    $link = HTMLDocument::createFromString(Blade::render('<x-public.button href="/x" variant="'.$variant.'" size="'.$size.'">Go</x-public.button>'), LIBXML_NOERROR)->querySelector('a');
+
+    // The classes the component rendered before the squarer variants were added, written
+    // out by hand: the base, the colour scheme, and the size.
+    $expected = explode(' ', 'inline-flex items-center justify-center gap-2 rounded-pill font-semibold whitespace-nowrap '.$variantClasses.' '.$sizeClasses);
+    $actual = explode(' ', $link->getAttribute('class'));
+
+    sort($expected);
+    sort($actual);
+
+    expect($actual)->toBe($expected);
+})->with(function () {
+    $variants = [
+        'primary' => 'bg-gold text-ink shadow-gold hover:bg-gold-light focus-visible:outline-gold-light',
+        'ghost' => 'border border-cream/30 text-cream hover:bg-cream/10 focus-visible:outline-gold-light',
+        'outline' => 'border border-navy/20 text-navy hover:bg-navy hover:text-cream',
+        'navy' => 'bg-navy text-cream hover:bg-navy-hover',
+    ];
+    $sizes = [
+        'md' => 'px-5 py-3 text-ui',
+        'sm' => 'tap-target px-4 py-2.5 text-caption',
+        'nav' => 'px-4.75 py-2.75 text-ui leading-[normal] max-lg:min-h-11',
+    ];
+
+    foreach ($variants as $variant => $variantClasses) {
+        foreach ($sizes as $size => $sizeClasses) {
+            yield "{$variant} {$size}" => [$variant, $size, $variantClasses, $sizeClasses];
+        }
+    }
 });

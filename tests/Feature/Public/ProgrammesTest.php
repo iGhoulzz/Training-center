@@ -85,16 +85,28 @@ function programmeCardHtml(string $html, string $name): string
 }
 
 /**
- * The inside of the first programme-facts list in this HTML, whitespace collapsed.
+ * The inside of every programme-facts list in this HTML, whitespace collapsed and
+ * joined with a space, in page order.
  *
- * The list's own tag is left out because the caller's classes differ between a
- * card and the programme page; what must not differ is what it says.
+ * A card holds the facts in two lists, the hours at its top and the price and start
+ * date at its foot, because the design puts its name and description between them; the
+ * programme page holds one list. Read together, in order, they must say the same thing.
+ * The lists' own tags are left out because the caller's classes differ between a card
+ * and the programme page; what must not differ is what they say.
  */
 function programmeFactsFragment(string $html): string
 {
-    preg_match('/<ul\b[^>]*\bdata-programme-facts\b[^>]*>(.*?)<\/ul>/s', $html, $match);
+    preg_match_all('/<ul\b[^>]*\bdata-programme-facts\b[^>]*>(.*?)<\/ul>/s', $html, $matches);
 
-    return trim((string) preg_replace('/\s+/', ' ', $match[1] ?? ''));
+    return trim((string) preg_replace('/\s+/', ' ', implode(' ', $matches[1])));
+}
+
+/**
+ * The visible text of a page, whitespace collapsed.
+ */
+function programmePageText(string $html): string
+{
+    return trim((string) preg_replace('/\s+/', ' ', html_entity_decode(strip_tags($html))));
 }
 
 /**
@@ -365,19 +377,28 @@ it('shows the same facts on a card and on its programme page', function () {
 it('never shows seats, capacity or an enrolment count', function () {
     courseWithBatch('2026-10-20', ['name_en' => 'Busy Course'], ['capacity' => 17]);
 
-    // The one sentence on any of these pages that may say "enrol" is the footer's
-    // portal note, the design's own copy: a login is issued "when you enrol", which
-    // names no seat, place or count. It is cut out by its exact rendered text, and the
-    // rest of the page, header and footer included, is held to the old rule.
+    // The sentences on these pages that may say "enrol" or "seat", each cut out by its
+    // exact rendered text and counted. The footer's portal note is the design's own copy
+    // (a login is issued "when you enrol"); on the home page the design's "Open for
+    // enrolment" heading and "Request a seat" button are the plan's decided copy. None
+    // names a seat, a place or a count. The rest of the page, header and footer
+    // included, is held to the old rule.
     $note = e(__('public.portal.note'));
+    $allowed = [
+        '/' => [$note => 1, e(__('public.home.programmes_title')) => 1, e(__('public.home.request_seat')) => 1],
+        '/programmes' => [$note => 1],
+        '/programmes/'.Course::query()->firstOrFail()->id => [$note => 1],
+    ];
 
-    foreach (['/', '/programmes', '/programmes/'.Course::query()->firstOrFail()->id] as $path) {
+    foreach ($allowed as $path => $sentences) {
         $html = (string) $this->get($path)->assertOk()->getContent();
 
-        // The control: a cut that found nothing would pass for having cut the note.
-        expect(substr_count($html, $note))->toBe(1, "{$path} does not render the portal note exactly once.");
+        // The control: a cut that found nothing would pass for having cut the sentence.
+        foreach ($sentences as $sentence => $times) {
+            expect(substr_count($html, $sentence))->toBe($times, "{$path} does not render [{$sentence}] {$times} time(s).");
+        }
 
-        $text = strtolower(str_replace($note, '', $html));
+        $text = strtolower(str_replace(array_keys($sentences), '', $html));
 
         foreach (['seat', 'capacity', 'enrol'] as $word) {
             expect(str_contains($text, $word))->toBeFalse("{$path} mentions [{$word}].");
@@ -444,8 +465,11 @@ it('shows the programme page with its details, or the contact call to action whe
     $detail = (string) $this->get('/programmes/'.$detailCourse->id)->assertOk()->getContent();
     $bare = (string) $this->get('/programmes/'.$bareCourse->id)->assertOk()->getContent();
 
+    // The price and its currency are two elements (the currency is its own smaller
+    // span, set off by a space), so the price is read from the page's text.
     expect(preg_match_all('/<h1\b[^>]*>\s*Detail Course\s*<\/h1>/s', $detail))->toBe(1)
-        ->and($detail)->toContain('The detail description.')->toContain('30 hours')->toContain('640.125 LYD')->toContain('Starts 20 Oct 2026')
+        ->and($detail)->toContain('The detail description.')->toContain('30 hours')->toContain('Starts 20 Oct 2026')
+        ->and(programmePageText($detail))->toContain('640.125 LYD')
         ->and(preg_match_all('/<h1\b[^>]*>\s*Bare Course\s*<\/h1>/s', $bare))->toBe(1)
         ->and($bare)->toContain('The bare description.')->toContain('18 hours')->toContain('href="'.url('/contact').'"')
         ->and(str_contains($bare, 'LYD'))->toBeFalse()

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Http\Controllers\VerifyCertificateController;
 use App\Http\Middleware\VerificationResponseHeaders;
+use Dom\HTMLDocument;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Testing\TestResponse;
@@ -169,4 +170,40 @@ it('spends the same budget the other way round: nine results and a lookup make t
         ->assertStatus(404);
 
     $this->get(route('verify.certificates.form'))->assertStatus(429);
+});
+
+it('draws the home page verifier as one read-only GET form to the lookup, with a labelled required reference and no token', function () {
+    $html = (string) $this->get('/')->assertOk()->getContent();
+    $document = HTMLDocument::createFromString($html, LIBXML_NOERROR);
+
+    $forms = $document->querySelectorAll('form');
+
+    // Exactly one form on the home page, and a read-only one: the sessionless group
+    // may hold nothing that submits data.
+    expect(count($forms))->toBe(1);
+
+    $form = $forms[0];
+
+    // The action is written out by hand AND resolved by name, so neither a moved route
+    // nor a hardcoded path can satisfy the test on its own.
+    expect(strtolower($form->getAttribute('method')))->toBe('get')
+        ->and($form->getAttribute('action'))->toBe(url('/verify/lookup'))
+        ->and($form->getAttribute('action'))->toBe(route('verify.certificates.lookup'));
+
+    $input = $form->querySelector('input[name="reference"]');
+
+    expect($input)->not->toBeNull('The form has no input named reference.')
+        ->and($input->hasAttribute('required'))->toBeTrue()
+        ->and($input->getAttribute('id'))->not->toBe('');
+
+    // A label that points at the input, by its id, from inside the form.
+    $label = $form->querySelector('label[for="'.$input->getAttribute('id').'"]');
+
+    expect($label)->not->toBeNull('No label points at the reference input.')
+        ->and(trim((string) $label->textContent))->not->toBe('');
+
+    // A sessionless page has no token to send.
+    expect($document->querySelectorAll('input[name="_token"]')->length)->toBe(0)
+        ->and(str_contains(strtolower($html), 'csrf'))->toBeFalse()
+        ->and(str_contains(strtolower($html), '_token'))->toBeFalse();
 });
