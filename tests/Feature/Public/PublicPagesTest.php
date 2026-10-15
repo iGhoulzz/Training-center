@@ -5,11 +5,16 @@ declare(strict_types=1);
 use App\Domain\Enrollment\Data\PublicProgramme;
 use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Course;
+use App\Domain\Publications\Data\PublicArticle;
+use App\Domain\Publications\Models\Article;
+use App\Domain\Publications\Queries\PublicArticleCatalogue;
 use App\Support\PublicContact;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Blade;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\View;
 use Illuminate\View\ComponentAttributeBag;
@@ -422,4 +427,195 @@ it('hands no Eloquent model to any view on any public route', function () {
             expect(eloquentModelsWithin($data, $viewName))->toBe([], "{$name}: a view is handed an Eloquent model.");
         }
     }
+});
+
+/*
+|--------------------------------------------------------------------------
+| The home page's publications teaser (P4-T20b)
+|--------------------------------------------------------------------------
+|
+| The home page is handed the latest published articles as `articles` view data,
+| through PublicArticleCatalogue::latest(). What is asserted is the data the
+| controller hands over, not the markup, so the teaser's design can change without
+| these tests moving: published ones only, at most the limit, newest first (a tie
+| on the issue date broken by the publication time), each a PublicArticle, and a
+| query count that does not grow with the number of articles.
+|
+| Every expected slug list is written out by hand from dates chosen here, never
+| sorted by code from the same rows, and the "unpublished" row carries a sentinel
+| title and the newest issue date of all, so it would lead the list if the filter
+| went missing.
+*/
+
+/**
+ * Every SQL statement the application ran while $work ran.
+ *
+ * `DB::listen` cannot be unregistered, so the listener checks a flag and goes
+ * quiet once the work is over.
+ *
+ * @return array<int, string>
+ */
+function homeTeaserSqlStatementsDuring(Closure $work): array
+{
+    $statements = [];
+    $recording = true;
+
+    DB::listen(function (QueryExecuted $query) use (&$statements, &$recording): void {
+        if ($recording) {
+            $statements[] = $query->sql;
+        }
+    });
+
+    $work();
+    $recording = false;
+
+    return $statements;
+}
+
+/**
+ * The home page's `articles` view data, as the controller handed it over.
+ *
+ * @return array<int, PublicArticle>
+ */
+function homeTeaserArticles(): array
+{
+    $articles = test()->get('/')->assertOk()->viewData('articles');
+
+    expect($articles)->toBeArray();
+
+    return $articles;
+}
+
+/**
+ * The slugs of the home page's articles, in the order the page holds them.
+ *
+ * @return array<int, string>
+ */
+function homeTeaserSlugs(): array
+{
+    return array_map(fn (PublicArticle $article): string => $article->slug, homeTeaserArticles());
+}
+
+/**
+ * Create a published article with a hand-chosen slug and issue date.
+ *
+ * @param  array<string, mixed>  $attributes
+ */
+function teaserArticle(string $slug, string $issuedOn, array $attributes = []): Article
+{
+    return Article::factory()->published()->create(['slug' => $slug, 'issued_on' => $issuedOn] + $attributes);
+}
+
+it('hands the home page published articles only', function () {
+    teaserArticle('teaser-published-march', '2026-03-01');
+    teaserArticle('teaser-published-january', '2026-01-01');
+
+    // Newer than every published article, so a missing filter puts it first.
+    Article::factory()->create([
+        'slug' => 'teaser-sentinel-unpublished',
+        'title_en' => 'SENTINEL-UNPUBLISHED-TITLE',
+        'issued_on' => '2026-09-30',
+    ]);
+
+    $articles = homeTeaserArticles();
+
+    expect(array_column($articles, 'slug'))->toBe(['teaser-published-march', 'teaser-published-january'])
+        ->and(implode(' ', array_column($articles, 'title')))->not->toContain('SENTINEL-UNPUBLISHED-TITLE');
+});
+
+it('hands the home page at most three articles, the newest three', function () {
+    teaserArticle('teaser-limit-2026-01', '2026-01-10');
+    teaserArticle('teaser-limit-2026-05', '2026-05-10');
+    teaserArticle('teaser-limit-2026-03', '2026-03-10');
+    teaserArticle('teaser-limit-2026-04', '2026-04-10');
+    teaserArticle('teaser-limit-2026-02', '2026-02-10');
+
+    expect(homeTeaserSlugs())->toBe(['teaser-limit-2026-05', 'teaser-limit-2026-04', 'teaser-limit-2026-03']);
+});
+
+it('hands the home page its articles newest issue date first', function () {
+    // Inserted out of order, so neither the id nor the insertion order is the answer.
+    teaserArticle('teaser-order-middle', '2025-06-15');
+    teaserArticle('teaser-order-oldest', '2024-02-01');
+    teaserArticle('teaser-order-newest', '2026-08-20');
+
+    expect(homeTeaserSlugs())->toBe(['teaser-order-newest', 'teaser-order-middle', 'teaser-order-oldest']);
+});
+
+it('breaks a tie on the issue date by the later publication time', function () {
+    // The earlier-published row is inserted SECOND, so it has the higher id: a
+    // tie-break that fell through to the id would put it first.
+    teaserArticle('teaser-tie-published-later', '2026-04-10', ['published_at' => '2026-04-12 09:00:00']);
+    teaserArticle('teaser-tie-published-earlier', '2026-04-10', ['published_at' => '2026-04-11 09:00:00']);
+    teaserArticle('teaser-tie-issued-before', '2026-04-09', ['published_at' => '2026-04-20 09:00:00']);
+
+    expect(homeTeaserSlugs())->toBe(['teaser-tie-published-later', 'teaser-tie-published-earlier', 'teaser-tie-issued-before']);
+});
+
+it('hands the home page each article as a PublicArticle projection', function () {
+    teaserArticle('teaser-projection-one', '2026-02-02', ['title_en' => 'Teaser Projection One']);
+
+    $articles = homeTeaserArticles();
+
+    expect($articles)->toHaveCount(1)
+        ->and($articles[0])->toBeInstanceOf(PublicArticle::class)
+        ->and($articles[0]->slug)->toBe('teaser-projection-one')
+        ->and($articles[0]->title)->toBe('Teaser Projection One')
+        ->and($articles[0]->issuedOn)->toBe('2026-02-02');
+});
+
+it('runs the same number of queries for the home page with no articles, one or five', function () {
+    $statements = [];
+
+    $statements[0] = homeTeaserSqlStatementsDuring(fn () => test()->get('/')->assertOk());
+
+    teaserArticle('teaser-count-1', '2026-01-01');
+    $statements[1] = homeTeaserSqlStatementsDuring(fn () => test()->get('/')->assertOk());
+
+    foreach (range(2, 5) as $number) {
+        teaserArticle("teaser-count-{$number}", "2026-01-0{$number}");
+    }
+
+    $statements[5] = homeTeaserSqlStatementsDuring(fn () => test()->get('/')->assertOk());
+
+    expect(count($statements[0]))->toBeGreaterThan(0)
+        ->and(count($statements[1]))->toBe(count($statements[0]))
+        ->and(count($statements[5]))->toBe(count($statements[0]));
+
+    // And the articles are read in one statement, whatever there are.
+    $articleReads = array_filter($statements[5], fn (string $sql): bool => str_contains($sql, '`articles`'));
+
+    expect($articleReads)->toHaveCount(1);
+});
+
+it('returns nothing, and runs no query, for a limit below one', function (int $limit) {
+    teaserArticle('teaser-bound-a', '2026-01-01');
+    teaserArticle('teaser-bound-b', '2026-02-01');
+    teaserArticle('teaser-bound-c', '2026-03-01');
+
+    $catalogue = app(PublicArticleCatalogue::class);
+    $result = null;
+
+    $statements = homeTeaserSqlStatementsDuring(function () use ($catalogue, $limit, &$result): void {
+        $result = $catalogue->latest($limit);
+    });
+
+    // Laravel's limit() ignores a negative value, so without the guard a
+    // negative limit would read all three published rows.
+    expect($result)->toBe([])
+        ->and($statements)->toBe([]);
+})->with([
+    'zero' => [0],
+    'minus one' => [-1],
+]);
+
+it('returns exactly the limit when there are more published articles than that', function () {
+    teaserArticle('teaser-direct-oldest', '2026-01-01');
+    teaserArticle('teaser-direct-newest', '2026-03-01');
+    teaserArticle('teaser-direct-middle', '2026-02-01');
+
+    $result = app(PublicArticleCatalogue::class)->latest(2);
+
+    expect(array_map(fn (PublicArticle $article): string => $article->slug, $result))
+        ->toBe(['teaser-direct-newest', 'teaser-direct-middle']);
 });

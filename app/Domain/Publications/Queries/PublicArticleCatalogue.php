@@ -25,7 +25,8 @@ use Illuminate\Database\Eloquent\Builder;
  *
  * A CONSTANT NUMBER OF QUERIES. The index is a count and a page (page()) plus one
  * GROUP BY for the chips (topics()); a card never queries. Two articles on the
- * page or twelve run the same three statements.
+ * page or twelve run the same three statements. The home page's teaser (latest())
+ * is one statement however many articles there are, and none for a limit below one.
  *
  * SEARCH IS LITERAL TEXT, NOT A PATTERN. The visitor's words are matched with
  * LIKE against the title, description, topic and authors, in both languages, and
@@ -174,6 +175,38 @@ final class PublicArticleCatalogue
             ->published()
             ->where('topic', $topic)
             ->where('slug', '!=', $exceptSlug)
+            ->orderByDesc('issued_on')
+            ->orderByDesc('published_at')
+            ->orderByDesc('id')
+            ->limit($limit)
+            ->get(self::COLUMNS)
+            ->map(fn (Article $article): PublicArticle => $this->project($article))
+            ->values()
+            ->all();
+    }
+
+    /**
+     * The latest published articles, newest first, for the home page's teaser.
+     *
+     * The order is the index's "newest" order and moreInTopic()'s: issue date, then
+     * publication time, then id, each descending, so equal dates never come back in
+     * whatever order the database happened to choose.
+     *
+     * BOUNDED, AND A LIMIT BELOW ONE READS NOTHING. Laravel's limit() silently
+     * ignores a negative value, so latest(-1) would otherwise read every published
+     * article; it answers an empty list instead, without a query. A limit of zero
+     * gets the same answer and also costs no query.
+     *
+     * @return list<PublicArticle>
+     */
+    public function latest(int $limit): array
+    {
+        if ($limit < 1) {
+            return [];
+        }
+
+        return Article::query()
+            ->published()
             ->orderByDesc('issued_on')
             ->orderByDesc('published_at')
             ->orderByDesc('id')

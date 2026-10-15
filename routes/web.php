@@ -161,6 +161,16 @@ Route::middleware([VerificationResponseHeaders::class, 'throttle:certificate-ver
         Route::post('verify/certificates', [VerifyCertificateController::class, 'submit'])
             ->name('verify.certificates.submit');
 
+        // The home page's verifier box, a read-only `method="get"` form (owner,
+        // 2026-10-13). It runs the unchanged submit(), which reads `reference` from
+        // the request, normalises it, redirects a well-formed value to the result
+        // page and returns the uniform miss for anything else, so the reference
+        // rule has no second copy. THE PATH STAYS OUTSIDE
+        // `verify/certificates/{reference}`: that segment is deliberately
+        // unconstrained and would read `lookup` as a reference.
+        Route::get('verify/lookup', [VerifyCertificateController::class, 'submit'])
+            ->name('verify.certificates.lookup');
+
         Route::get('verify/certificates/{reference}', [VerifyCertificateController::class, 'show'])
             ->name('verify.certificates.show');
     });
