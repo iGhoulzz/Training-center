@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Domain\Publications\Data\PublicArticle;
 use App\Domain\Publications\Models\Article;
 use App\Domain\Publications\Queries\PublicArticleCatalogue;
+use Dom\HTMLDocument;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -716,6 +717,63 @@ it('shows a published article: topic, issue date, title, authors, downloads, the
         ->and($html)->toContain('whitespace-pre-line')
         ->and(libraryAnchor($html, 'PDFSENT')['href'])->toBe(url('/publications/'.$article->slug.'/download'))
         ->and(str_contains($html, 'MORESENT'))->toBeFalse();
+});
+
+it('prints the article page as the design draws it: a dark header, the filing record, the lead and then the full-text note', function () {
+    app('translator')->addLines([
+        'publications.public.uploaded_by' => 'UPLOADSENT',
+        'publications.public.full_text_note' => 'FULLTEXTSENT',
+        'publications.public.back' => 'BACKSENT',
+    ], 'en');
+
+    $article = libraryArticle(['title_en' => 'Dark Header Paper', 'topic' => 'Arbitration', 'description_en' => 'The lead paragraph.', 'download_count' => 318]);
+    libraryArticle(['topic' => 'Arbitration', 'issued_on' => '2020-01-01']);
+
+    $html = libraryBody($this->get('/publications/'.$article->slug)->assertOk());
+    $document = HTMLDocument::createFromString($html, LIBXML_NOERROR);
+
+    // The topic, the date and the title are in the navy header; the back link leads to the library.
+    $band = $document->querySelector('h1')->closest('section');
+
+    expect(explode(' ', $band->getAttribute('class')))->toContain('bg-navy')
+        ->and($band->querySelector('[data-article-meta] span')->textContent)->toBe('Arbitration')
+        ->and(explode(' ', $band->querySelector('[data-article-meta] span')->getAttribute('class')))->toContain('rounded-pill')
+        ->and(libraryAnchor($html, 'BACKSENT')['href'])->toBe(url('/publications'));
+
+    // Under it, in order: the filing record, the description as the lead, the full-text
+    // note, and the related entries. The record says the count, the approximate note and who
+    // uploaded it, and no size.
+    $positions = array_map(fn (string $needle): int|false => strpos($html, $needle), ['FILINGSENT', '318 DLSENT', 'APPROXSENT', 'UPLOADSENT', 'The lead paragraph.', 'FULLTEXTSENT', 'MORESENT']);
+
+    expect($positions)->each->not->toBeFalse()
+        ->and($positions)->toBe(collect($positions)->sort()->values()->all())
+        ->and(preg_match('/\b[KMG]B\b|bytes/', $html))->toBe(0);
+});
+
+it('opens the library with the back link, the eyebrow and a search box that needs no visible button', function () {
+    app('translator')->addLines([
+        'publications.public.back_home' => 'HOMEBACKSENT',
+        'publications.public.library_eyebrow' => 'EYEBROWSENT',
+    ], 'en');
+
+    libraryArticle();
+
+    $html = libraryBody($this->get('/publications')->assertOk());
+    $document = HTMLDocument::createFromString($html, LIBXML_NOERROR);
+
+    $band = $document->querySelector('h1')->closest('section');
+
+    expect(libraryAnchor($html, 'HOMEBACKSENT')['href'])->toBe(url('/'))
+        ->and($band->textContent)->toContain('EYEBROWSENT')
+        ->and(count($document->querySelectorAll('h1')))->toBe(1);
+
+    // The design draws no search button: Enter submits. The button is for the keyboard, so
+    // it is hidden until it has focus; and the input is 16px at every width.
+    $button = $document->querySelector('form button[type="submit"]');
+    $input = $document->querySelector('#publications-search');
+
+    expect(explode(' ', $button->getAttribute('class')))->toContain('sr-only')->toContain('focus:not-sr-only')
+        ->and(explode(' ', $input->getAttribute('class')))->toContain('text-base');
 });
 
 it('escapes everything an editor typed, on the cards and on the page', function () {
