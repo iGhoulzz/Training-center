@@ -14,6 +14,7 @@ use App\Domain\Enrollment\Exceptions\StudentNotEnrollableException;
 use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Enrollment;
 use App\Domain\Enrollment\Models\Student;
+use App\Domain\Enrollment\Services\EnrollmentQueryService;
 use App\Domain\Finance\Actions\EnrollAndBillAction;
 use App\Domain\Finance\Actions\RecordPaymentAction;
 use App\Domain\Finance\Data\EnrollAndBillData;
@@ -24,6 +25,7 @@ use App\Domain\Finance\Exceptions\IdempotencyConflictException;
 use App\Domain\Finance\Exceptions\PaymentExceedsOutstandingException;
 use App\Domain\Finance\Models\Charge;
 use App\Domain\Finance\Models\Discount;
+use App\Domain\Finance\Models\Payment;
 use App\Domain\Finance\Rules\NotACardNumber;
 use App\Domain\Finance\Services\PricingService;
 use App\Domain\Finance\Support\ChargeBalance;
@@ -50,6 +52,7 @@ use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
+use Livewire\Attributes\Computed;
 
 /**
  * The phase 2 primary surface (design section 2): one guided flow, not a set
@@ -195,6 +198,8 @@ use InvalidArgumentException;
  *
  * @property-read Schema $form
  * @property-read Schema $collectForm
+ * @property-read array{student: string, batch: string, list: ?Money, discount: string, amount: ?Money, reference: ?string, receipt: ?string} $bill
+ * @property-read bool $tendersBalanced
  */
 class EnrollAndCollect extends Page
 {
@@ -263,6 +268,58 @@ class EnrollAndCollect extends Page
         return __('collect.title');
     }
 
+    public function getSubheading(): string
+    {
+        return __('collect.front_desk');
+    }
+
+    /** @return array{student: string, batch: string, list: ?Money, discount: string, amount: ?Money, reference: ?string, receipt: ?string} */
+    #[Computed]
+    public function bill(): array
+    {
+        if ($this->collectionChargeId !== null && auth()->user()?->can('create_payment')) {
+            $charge = Charge::query()->find($this->collectionChargeId);
+            if ($charge !== null) {
+                $context = app(EnrollmentQueryService::class)->receiptContextFor($charge->enrollment_id);
+
+                return [
+                    'student' => $context['student_name'], 'batch' => $context['batch_code'],
+                    'list' => Money::fromDecimal($charge->list_price),
+                    'discount' => $charge->discount_percentage === null ? __('collect.no_discount')
+                        : __('collect.discount_percentage_value', ['percentage' => $charge->discount_percentage]),
+                    'amount' => Money::fromDecimal($charge->amount), 'reference' => $charge->reference,
+                    'receipt' => Payment::query()->where('idempotency_key', $this->collectionIdempotencyKey)->value('reference'),
+                ];
+            }
+        }
+        $list = self::previewListPrice($this->data['batch_id'] ?? null);
+        $discount = auth()->user()?->can('apply_discount') ? self::previewDiscount($this->data['discount_id'] ?? null) : null;
+
+        return [
+            'student' => filled($this->data['student_id'] ?? null) ? (self::studentOptionLabel($this->data['student_id']) ?? __('collect.not_chosen')) : __('collect.not_chosen'),
+            'batch' => filled($this->data['batch_id'] ?? null) ? (self::batchOptionLabel($this->data['batch_id']) ?? __('collect.not_chosen')) : __('collect.not_chosen'),
+            'list' => $list, 'discount' => $discount === null ? __('collect.no_discount') : self::discountLabel($discount),
+            'amount' => $discount === null ? $list : $list?->afterDiscount($discount->percentage), 'reference' => null, 'receipt' => null,
+        ];
+    }
+
+    #[Computed]
+    public function tendersBalanced(): bool
+    {
+        if (! self::isExactMoneyDecimal($this->collect['amount'] ?? null)) {
+            return false;
+        }
+        $total = Money::zero();
+        foreach ($this->collect['tenders'] ?? [] as $tender) {
+            if (! self::isExactMoneyDecimal($tender['amount'] ?? null)) {
+                return false;
+            }
+            $total = $total->add(Money::fromDecimal($tender['amount']));
+        }
+
+        return $total->equals(Money::fromDecimal($this->collect['amount']));
+    }
+
     public static function getNavigationLabel(): string
     {
         return __('collect.navigation_label');
@@ -308,7 +365,9 @@ class EnrollAndCollect extends Page
                     $this->batchStep(),
                     $this->discountStep(),
                     $this->previewStep(),
-                ])->submitAction($this->confirmAction()),
+                ])->contained(false)
+                    ->extraAttributes(['class' => '[&_.fi-sc-wizard-header]:gap-2 [&_.fi-sc-wizard-header]:flex-wrap [&_.fi-sc-wizard-header]:border-0 [&_.fi-sc-wizard-header-step]:min-w-32.5 [&_.fi-sc-wizard-header-step]:flex-1 [&_.fi-sc-wizard-header-step]:rounded-[11px] [&_.fi-sc-wizard-header-step]:border [&_.fi-sc-wizard-header-step]:border-hairline-faint [&_.fi-sc-wizard-header-step]:bg-white/3 [&_.fi-sc-wizard-header-step.fi-active]:border-primary-500/45 [&_.fi-sc-wizard-header-step.fi-active]:bg-primary-500/12 [&_.fi-sc-wizard-header-step-btn]:px-3.25 [&_.fi-sc-wizard-header-step-btn]:py-2.75 [&_.fi-sc-wizard-header-step-separator]:hidden [&_.fi-sc-wizard-header-step-icon-ctn]:size-6 [&_.fi-sc-wizard-header-step-label]:text-[12.5px] [&_.fi-sc-wizard-header-step-description]:text-[11px] [&_.fi-sc-wizard-step]:mt-4 [&_.fi-sc-wizard-step]:min-h-82.5 [&_.fi-sc-wizard-step]:rounded-[14px] [&_.fi-sc-wizard-step]:bg-gray-900 [&_.fi-sc-wizard-step]:p-5 [&_.fi-sc-wizard-step]:ring-1 [&_.fi-sc-wizard-step]:ring-hairline'])
+                    ->submitAction($this->confirmAction()),
             ])
             ->statePath('data');
     }
@@ -336,10 +395,12 @@ class EnrollAndCollect extends Page
     private function studentStep(): Step
     {
         return Step::make(__('collect.step_student'))
+            ->description(fn (): string => $this->bill['student'])
             ->schema([
                 Select::make('student_id')
                     ->label(__('collect.student'))
                     ->required()
+                    ->live()
                     ->searchable()
                     ->getSearchResultsUsing(fn (string $search): array => self::searchStudents($search))
                     // Redisplaying an already-chosen value must not re-run
@@ -401,10 +462,12 @@ class EnrollAndCollect extends Page
     private function batchStep(): Step
     {
         return Step::make(__('collect.step_batch'))
+            ->description(fn (): string => $this->bill['batch'])
             ->schema([
                 Select::make('batch_id')
                     ->label(__('collect.batch'))
                     ->required()
+                    ->live()
                     ->options(fn (): array => self::searchBatches(''))
                     ->searchable()
                     ->getSearchResultsUsing(fn (string $search): array => self::searchBatches($search))
@@ -457,6 +520,7 @@ class EnrollAndCollect extends Page
     private function discountStep(): Step
     {
         return Step::make(__('collect.step_discount'))
+            ->description(fn (): string => $this->bill['discount'])
             ->visible(fn (): bool => auth()->user()?->can('apply_discount') ?? false)
             ->schema([
                 Select::make('discount_id')
@@ -483,6 +547,7 @@ class EnrollAndCollect extends Page
     private function previewStep(): Step
     {
         return Step::make(__('collect.step_preview'))
+            ->description(fn (): string => $this->bill['amount'] === null ? __('collect.not_chosen') : self::formatMoney($this->bill['amount']->toDecimal()))
             ->schema([
                 TextEntry::make('preview_list_price')
                     ->label(__('collect.preview_list_price'))
@@ -742,9 +807,13 @@ class EnrollAndCollect extends Page
             ->components([
                 TextInput::make('amount')
                     ->label(__('collect.collect_amount'))
+                    ->extraFieldWrapperAttributes(['class' => 'rounded-xl border border-primary-500/30 bg-primary-500/8 px-4 py-3.5 [&_.fi-input.fi-input]:text-[28px]!'])
+                    ->extraInputAttributes(['class' => 'text-[28px]! font-semibold tracking-[-0.02em] tabular-nums'])
                     ->helperText(__('collect.collect_amount_hint'))
                     ->required()
                     ->inputMode('decimal')
+                    ->suffix(__('payroll.currency'))
+                    ->live(onBlur: true)
                     ->rule('regex:/^\d{1,9}(\.\d{1,3})?$/')
                     ->rule(static fn (): Closure => self::positiveMoney())
                     ->rule(fn (Get $get): Closure => self::tenderTotalMatchesAmountRule($get))
@@ -765,6 +834,7 @@ class EnrollAndCollect extends Page
                             ->label(__('collect.tender_amount'))
                             ->required()
                             ->inputMode('decimal')
+                            ->live(onBlur: true)
                             ->rule('regex:/^\d{1,9}(\.\d{1,3})?$/')
                             ->rule(static fn (): Closure => self::positiveMoney())
                             ->validationMessages([
@@ -779,6 +849,7 @@ class EnrollAndCollect extends Page
                             ->rule(new NotACardNumber),
                     ])
                     ->columns(3)
+                    ->extraAttributes(['class' => '[&_.fi-fo-repeater-item]:rounded-[11px] [&_.fi-fo-repeater-item]:bg-fill-subtle [&_.fi-fo-repeater-item]:ring-hairline-faint'])
                     ->minItems(1)
                     ->addActionLabel(__('collect.add_tender'))
                     ->live(),

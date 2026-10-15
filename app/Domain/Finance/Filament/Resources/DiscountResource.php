@@ -18,9 +18,12 @@ use Filament\Actions\DeleteAction;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
+use Filament\Schemas\Components\Text;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\IconColumn;
+use Filament\Tables\Columns\Layout\Split;
+use Filament\Tables\Columns\Layout\Stack;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 
@@ -50,7 +53,9 @@ final class DiscountResource extends Resource
 
     public static function form(Schema $schema): Schema
     {
-        return $schema->components([
+        return $schema->columns(2)->extraAttributes(['class' => 'rounded-[14px] bg-gray-900 p-5 ring-1 ring-hairline [&_.fi-input]:text-base! [&_.fi-select-input]:text-base!'])->components([
+            Text::make(__('pricing.discount_definition'))->columnSpanFull(),
+            Text::make(__('pricing.immutable_hint'))->columnSpanFull(),
             TextInput::make('name')
                 ->label(__('pricing.discount_name'))
                 ->required()
@@ -69,22 +74,27 @@ final class DiscountResource extends Resource
     public static function table(Table $table): Table
     {
         return $table
+            ->extraAttributes(['class' => '[&_.fi-ta-record-content-ctn]:py-0! [&_.fi-ta-record-content]:px-0!'])
             ->columns([
-                TextColumn::make('name')
-                    ->label(__('pricing.discount_name'))
-                    ->searchable()
-                    ->sortable(),
+                Split::make([
+                    Stack::make([
+                        TextColumn::make('name')
+                            ->label(__('pricing.discount_name'))
+                            ->searchable()
+                            ->sortable()->weight('semibold'),
 
-                TextColumn::make('percentage')
-                    ->label(__('pricing.discount_percentage'))
-                    ->formatStateUsing(fn (string $state): string => __('pricing.percentage_value', [
-                        'percentage' => $state,
-                    ])),
+                        TextColumn::make('percentage')
+                            ->label(__('pricing.discount_percentage'))
+                            ->formatStateUsing(fn (string $state): string => __('pricing.percentage_value', [
+                                'percentage' => $state,
+                            ]))->color('warning'),
+                    ])->space(1),
 
-                IconColumn::make('is_active')
-                    ->label(__('pricing.active'))
-                    ->boolean()
-                    ->sortable(),
+                    IconColumn::make('is_active')
+                        ->label(__('pricing.active'))
+                        ->boolean()
+                        ->sortable(),
+                ])->from('sm')->extraAttributes(['class' => 'px-4.5 py-3.5']),
             ])
             ->defaultSort('name')
             ->recordActions([

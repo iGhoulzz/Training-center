@@ -117,4 +117,11 @@ return [
     // The shape rule accepts 0.000; this is what refuses it, before
     // TenderData's developer-facing guard can reach a user in English.
     'amount_must_be_positive' => 'Enter an amount greater than zero.',
+    'front_desk' => 'Front desk',
+    'bill' => 'Bill',
+    'not_chosen' => 'Not chosen',
+    'take_payment' => 'Take payment',
+    'balanced' => 'Balanced ✓',
+    'unbalanced' => 'Check tender total',
+    'first_collection_hint' => 'The first collection may be partial. Collecting a later installment against this bill is not available.',
 ];

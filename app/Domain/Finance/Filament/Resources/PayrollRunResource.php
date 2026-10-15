@@ -12,7 +12,9 @@ use App\Domain\Finance\Filament\Resources\PayrollRunResource\Pages\ReviewPayroll
 use App\Domain\Finance\Models\PayrollLine;
 use App\Domain\Finance\Models\PayrollRun;
 use App\Domain\Finance\Services\PayrollCalculator;
+use App\Domain\Finance\Support\Money;
 use BackedEnum;
+use Filament\Actions\Action;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
@@ -20,9 +22,12 @@ use Filament\Forms\Components\TextInput;
 use Filament\Infolists\Components\RepeatableEntry;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Resources\Resource;
+use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
+use Filament\Tables\Columns\Layout\Split;
+use Filament\Tables\Columns\Layout\Stack;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
@@ -57,120 +62,151 @@ final class PayrollRunResource extends Resource
 
     public static function form(Schema $schema): Schema
     {
-        return $schema->components([
-            Select::make('type')
-                ->label(__('payroll.run_type'))
-                ->options(collect(PayrollRunType::cases())
-                    ->mapWithKeys(fn (PayrollRunType $type): array => [$type->value => $type->label()])
-                    ->all())
-                ->live()
-                ->required(),
+        return $schema->extraAttributes(['class' => '[&_.fi-input]:text-base! [&_.fi-select-input]:text-base! [&_.fi-select-input-btn]:text-base! [&_textarea]:text-base!'])->components([
+            Section::make(__('payroll.run_details'))->description(__('payroll.run_hint'))->columns(2)->schema([
+                Select::make('type')
+                    ->label(__('payroll.run_type'))
+                    ->options(collect(PayrollRunType::cases())
+                        ->mapWithKeys(fn (PayrollRunType $type): array => [$type->value => $type->label()])
+                        ->all())
+                    ->live()
+                    ->required(),
 
-            DatePicker::make('period_start')
-                ->label(__('payroll.period_start'))
-                ->visible(fn (Get $get): bool => $get('type') === PayrollRunType::MonthlySalary->value)
-                ->required(fn (Get $get): bool => $get('type') === PayrollRunType::MonthlySalary->value),
+                DatePicker::make('period_start')
+                    ->label(__('payroll.period_start'))
+                    ->visible(fn (Get $get): bool => $get('type') === PayrollRunType::MonthlySalary->value)
+                    ->required(fn (Get $get): bool => $get('type') === PayrollRunType::MonthlySalary->value),
 
-            DatePicker::make('period_end')
-                ->label(__('payroll.period_end'))
-                ->visible(fn (Get $get): bool => $get('type') === PayrollRunType::MonthlySalary->value)
-                ->required(fn (Get $get): bool => $get('type') === PayrollRunType::MonthlySalary->value)
-                ->afterOrEqual('period_start'),
+                DatePicker::make('period_end')
+                    ->label(__('payroll.period_end'))
+                    ->visible(fn (Get $get): bool => $get('type') === PayrollRunType::MonthlySalary->value)
+                    ->required(fn (Get $get): bool => $get('type') === PayrollRunType::MonthlySalary->value)
+                    ->afterOrEqual('period_start'),
 
-            Select::make('assignment_ids')
-                ->label(__('payroll.instructor_assignments'))
-                ->multiple()
-                ->searchable()
-                ->getSearchResultsUsing(fn (string $search): array => self::searchInstructorAssignments($search))
-                ->getOptionLabelsUsing(fn (array $values): array => self::instructorAssignmentLabels($values))
-                ->visible(fn (Get $get): bool => $get('type') === PayrollRunType::InstructorBatch->value)
-                ->required(fn (Get $get): bool => $get('type') === PayrollRunType::InstructorBatch->value),
+                Select::make('assignment_ids')
+                    ->label(__('payroll.instructor_assignments'))
+                    ->multiple()
+                    ->searchable()
+                    ->getSearchResultsUsing(fn (string $search): array => self::searchInstructorAssignments($search))
+                    ->getOptionLabelsUsing(fn (array $values): array => self::instructorAssignmentLabels($values))
+                    ->visible(fn (Get $get): bool => $get('type') === PayrollRunType::InstructorBatch->value)
+                    ->required(fn (Get $get): bool => $get('type') === PayrollRunType::InstructorBatch->value),
 
-            Select::make('target_line_id')
-                ->label(__('payroll.corrected_line'))
-                ->searchable()
-                ->getSearchResultsUsing(fn (string $search): array => self::searchCorrectionTargets($search))
-                ->getOptionLabelUsing(fn (mixed $value): ?string => self::correctionTargetOptionLabel($value))
-                ->visible(fn (Get $get): bool => $get('type') === PayrollRunType::Adjustment->value)
-                ->required(fn (Get $get): bool => $get('type') === PayrollRunType::Adjustment->value),
+                Select::make('target_line_id')
+                    ->label(__('payroll.corrected_line'))
+                    ->searchable()
+                    ->getSearchResultsUsing(fn (string $search): array => self::searchCorrectionTargets($search))
+                    ->getOptionLabelUsing(fn (mixed $value): ?string => self::correctionTargetOptionLabel($value))
+                    ->visible(fn (Get $get): bool => $get('type') === PayrollRunType::Adjustment->value)
+                    ->required(fn (Get $get): bool => $get('type') === PayrollRunType::Adjustment->value),
 
-            TextInput::make('correction_amount')
-                ->label(__('payroll.correction_amount'))
-                ->inputMode('decimal')
-                ->rules([
-                    'numeric',
-                    'decimal:0,3',
-                    'regex:/^[+-]?\d{1,9}(?:\.\d{1,3})?$/D',
-                    'gte:-999999999.999',
-                    'lte:999999999.999',
-                ])
-                ->visible(fn (Get $get): bool => $get('type') === PayrollRunType::Adjustment->value)
-                ->required(fn (Get $get): bool => $get('type') === PayrollRunType::Adjustment->value)
-                ->suffix(__('payroll.currency')),
+                TextInput::make('correction_amount')
+                    ->label(__('payroll.correction_amount'))
+                    ->inputMode('decimal')
+                    ->rules([
+                        'numeric',
+                        'decimal:0,3',
+                        'regex:/^[+-]?\d{1,9}(?:\.\d{1,3})?$/D',
+                        'gte:-999999999.999',
+                        'lte:999999999.999',
+                    ])
+                    ->visible(fn (Get $get): bool => $get('type') === PayrollRunType::Adjustment->value)
+                    ->required(fn (Get $get): bool => $get('type') === PayrollRunType::Adjustment->value)
+                    ->suffix(__('payroll.currency')),
 
-            Textarea::make('correction_reason')
-                ->label(__('payroll.reason'))
-                ->visible(fn (Get $get): bool => $get('type') === PayrollRunType::Adjustment->value)
-                ->required(fn (Get $get): bool => $get('type') === PayrollRunType::Adjustment->value),
+                Textarea::make('correction_reason')
+                    ->label(__('payroll.reason'))
+                    ->visible(fn (Get $get): bool => $get('type') === PayrollRunType::Adjustment->value)
+                    ->required(fn (Get $get): bool => $get('type') === PayrollRunType::Adjustment->value),
 
-            Textarea::make('notes')->label(__('payroll.notes')),
+                Textarea::make('notes')->label(__('payroll.notes')),
+            ]),
         ]);
     }
 
     public static function infolist(Schema $schema): Schema
     {
         return $schema->components([
-            TextEntry::make('type')
-                ->label(__('payroll.run_type'))
-                ->formatStateUsing(fn (PayrollRunType|string $state): string => $state instanceof PayrollRunType
-                    ? $state->label()
-                    : $state),
-            TextEntry::make('period_start')->label(__('payroll.period_start'))->date(),
-            TextEntry::make('period_end')->label(__('payroll.period_end'))->date(),
-            TextEntry::make('createdBy.name')->label(__('payroll.created_by')),
-            TextEntry::make('finalized_at')
-                ->label(__('payroll.finalized_at'))
-                ->dateTime()
-                ->placeholder(__('payroll.draft')),
-            TextEntry::make('finalizedBy.name')->label(__('payroll.finalized_by')),
-            TextEntry::make('notes')->label(__('payroll.notes')),
-            RepeatableEntry::make('lines')
-                ->label(__('payroll.lines'))
-                ->schema([
-                    TextEntry::make('user.name')->label(__('payroll.employee')),
-                    TextEntry::make('segment_start')->label(__('payroll.segment_start'))->date(),
-                    TextEntry::make('segment_end')->label(__('payroll.segment_end'))->date(),
-                    TextEntry::make('frozen_rate')
-                        ->label(__('payroll.rate'))
-                        ->formatStateUsing(fn (?string $state): string => $state === null
-                            ? __('payroll.not_applicable')
-                            : __('payroll.amount_lyd', ['amount' => $state])),
-                    TextEntry::make('frozen_hours')->label(__('payroll.hours')),
-                    TextEntry::make('computed_amount')
-                        ->label(__('payroll.computed_amount'))
-                        ->formatStateUsing(fn (string $state): string => __('payroll.amount_lyd', ['amount' => $state])),
-                    TextEntry::make('reason')->label(__('payroll.reason')),
-                ])
-                ->columns(3),
+            Section::make(__('payroll.run_details'))->columns(2)->schema([
+                TextEntry::make('type')
+                    ->label(__('payroll.run_type'))
+                    ->formatStateUsing(fn (PayrollRunType|string $state): string => $state instanceof PayrollRunType
+                        ? $state->label()
+                        : $state),
+                TextEntry::make('period_start')->label(__('payroll.period_start'))->date(),
+                TextEntry::make('period_end')->label(__('payroll.period_end'))->date(),
+                TextEntry::make('createdBy.name')->label(__('payroll.created_by')),
+                TextEntry::make('finalized_at')
+                    ->label(__('payroll.finalized_at'))
+                    ->dateTime()
+                    ->placeholder(__('payroll.draft')),
+                TextEntry::make('finalizedBy.name')->label(__('payroll.finalized_by')),
+                TextEntry::make('notes')->label(__('payroll.notes')),
+            ]),
+            Section::make(__('payroll.lines'))->schema([
+                RepeatableEntry::make('lines')
+                    ->label(__('payroll.lines'))
+                    ->schema([
+                        TextEntry::make('user.name')->label(__('payroll.employee')),
+                        TextEntry::make('segment_start')->label(__('payroll.segment_start'))->date(),
+                        TextEntry::make('segment_end')->label(__('payroll.segment_end'))->date(),
+                        TextEntry::make('frozen_rate')
+                            ->label(__('payroll.rate'))
+                            ->formatStateUsing(fn (?string $state): string => $state === null
+                                ? __('payroll.not_applicable')
+                                : __('payroll.amount_lyd', ['amount' => $state])),
+                        TextEntry::make('frozen_hours')->label(__('payroll.hours')),
+                        TextEntry::make('computed_amount')
+                            ->label(__('payroll.computed_amount'))
+                            ->formatStateUsing(fn (string $state): string => __('payroll.amount_lyd', ['amount' => $state])),
+                        TextEntry::make('reason')->label(__('payroll.reason')),
+                    ])
+                    ->columns(3),
+            ]),
         ]);
     }
 
     public static function table(Table $table): Table
     {
         return $table
+            ->extraAttributes(['class' => '[&_.fi-ta-record-content-ctn]:py-0! [&_.fi-ta-record-content]:px-0! [&_.fi-ta-content-grid]:gap-3.5! [&_.fi-ta-record]:rounded-[14px]! [&_.fi-ta-record]:bg-gray-900!'])
+            ->contentGrid(['default' => 1, 'md' => 2, 'xl' => 3])
             ->columns([
-                TextColumn::make('type')
-                    ->label(__('payroll.run_type'))
-                    ->formatStateUsing(fn (PayrollRunType|string $state): string => $state instanceof PayrollRunType
-                        ? $state->label()
-                        : $state),
-                TextColumn::make('period_start')->label(__('payroll.period_start'))->date(),
-                TextColumn::make('period_end')->label(__('payroll.period_end'))->date(),
-                TextColumn::make('createdBy.name')->label(__('payroll.created_by')),
-                TextColumn::make('finalized_at')
-                    ->label(__('payroll.finalized_at'))
-                    ->dateTime()
-                    ->placeholder(__('payroll.draft')),
+                Stack::make([
+                    Split::make([
+                        TextColumn::make('type')
+                            ->label(__('payroll.run_type'))
+                            ->formatStateUsing(fn (PayrollRunType|string $state): string => $state instanceof PayrollRunType
+                                ? $state->label()
+                                : $state)->weight('semibold'),
+                        TextColumn::make('run_state')->label(__('payroll.state'))
+                            ->state(fn (PayrollRun $record): string => $record->isFinalized() ? __('payroll.finalized') : __('payroll.draft'))
+                            ->badge()->color(fn (PayrollRun $record): string => $record->isFinalized() ? 'success' : 'warning')->grow(false),
+                    ]),
+                    Split::make([
+                        TextColumn::make('period_start')->label(__('payroll.period_start'))->date(),
+                        TextColumn::make('period_end')->label(__('payroll.period_end'))->date(),
+                    ])->extraAttributes(['class' => 'text-[11.5px] text-gray-400']),
+                    TextColumn::make('run_total')->label(__('payroll.run_total'))
+                        ->description(__('payroll.frozen_total_hint'))
+                        ->state(fn (PayrollRun $record): string => $record->lines->reduce(
+                            fn (Money $total, PayrollLine $line): Money => $total->add(Money::fromDecimal($line->computed_amount)), Money::zero(),
+                        )->toDecimal())
+                        ->formatStateUsing(fn (string $state): string => __('payroll.amount_lyd', ['amount' => $state]))
+                        ->weight('semibold')->extraAttributes(['class' => '[&_.fi-ta-text-item]:text-[22px] tracking-[-0.025em] tabular-nums']),
+                    TextColumn::make('line_count')->label(__('payroll.lines'))
+                        ->state(fn (PayrollRun $record): string => __('payroll.line_count', ['count' => $record->lines->count()]))
+                        ->size('xs')->color('gray'),
+                    TextColumn::make('createdBy.name')->label(__('payroll.created_by'))->description(__('payroll.created_by'))->size('xs')->color('gray'),
+                    TextColumn::make('finalized_at')
+                        ->label(__('payroll.finalized_at'))
+                        ->dateTime()
+                        ->placeholder(__('payroll.draft'))->size('xs')->color('gray'),
+                ])->space(3)->extraAttributes(['class' => 'gap-3.25 p-4.25']),
+            ])
+            ->recordActions([
+                Action::make('review')->label(__('payroll.review_lines'))->authorize('view')
+                    ->url(fn (PayrollRun $record): string => self::getUrl('review', ['record' => $record]))->button()->color('gray'),
             ])
             ->defaultSort('id', 'desc')
             ->recordUrl(fn (PayrollRun $record): string => self::getUrl('review', ['record' => $record]));

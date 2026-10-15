@@ -161,11 +161,13 @@ first attempt.
 | `config/public_site.php`, `.env.example` | **T11 → T12 → T20a** | Owner-approved amendment (2026-10-12). T11 creates the public contact details: the centre's real public email and telephone as committed defaults, each overridable from `.env`, plus a map-link key that defaults to null. T12 sets the map link's default once the owner provides it, and touches nothing else. T20a adds `brand` (the real name, owner, 2026-10-13) and sets `APP_NAME` |
 | `resources/views/verify/*` | **T14 → T20c → T18** | T14 restyles; T20c brings them to the prototype's exact values and the real brand; T18 makes them directional and converts their three `route()` call sites to `PublicRoute`, **and the six `url('/')` links T14's headers added** (two a page), which no `route()` search finds. Both keep them standalone and scriptless |
 | `resources/views/public/**` (pages), `resources/views/components/public/*` | **T11 → T12 → T13 → T20a → T20b → T18** | T11–T13 build the pages and components; T20a defines the design system (tokens, components, no inline `style`) and brings the existing components onto it; T20b rebuilds the pages to the prototype. Every later public page uses the system, and none adds an inline `style` |
-| `resources/css/filament/admin/theme.css` | **T16a → T20c** | T16a creates the admin theme; T20c checks every token against `Filament Revamp.dc.html`. T16b–T16e read it and do not edit it |
+| `resources/css/filament/admin/theme.css` | **T16a → T20c → T16c** | T16a creates the admin theme; T20c checks every token against `Filament Revamp.dc.html`. Owner-approved T16c exception (2026-10-15): add only the missing named orange ageing-card token (`#fb923c`), without changing existing rules. Other T16b–T16e use is read-only |
 | `app/Http/Controllers/VerifyCertificateController.php` | **T20c → T18** | T20c (lead's amendment, 2026-10-13): one line, so the result's `centreName` reads `config('public_site.brand.name')` and not `app.name`, which is now the short display name. T18: one line, the `submit()` redirect goes through `PublicRoute`. In neither task do the lookup, the normalisation or the uniform miss move |
 | `app/Support/PublicRoute.php` | **T11 only** | Complete from the start, so T18 adds routes and a locale without editing it |
 | `app/Domain/Enrollment/Models/Batch.php` | **T05 only** | Scopes beside the existing predicates |
-| `app/Domain/Enrollment/Services/EnrollmentQueryService.php`, `app/Domain/Finance/Data/EnrollmentBalance.php`, `app/Domain/Finance/Filament/Portal/Pages/MyBalance.php`, `resources/views/portal/my-balance.blade.php`, `lang/en/portal.php`, `tests/Feature/Finance/StudentBalanceQueryTest.php`, `tests/Feature/Portal/MyBalancePageTest.php`, `tests/Feature/Portal/PortalQueryCountTest.php` | **T05 only** | Owner-approved scope expansion (2026-10-10): show localized course names and batch codes on balance rows now. Ownership, existing unbilled-row handling and fixed query counts are preserved regression behavior |
+| `app/Domain/Enrollment/Services/EnrollmentQueryService.php` | **T05 → T16c** | T05 supplies portal balance labels; owner-approved T16c expansion (2026-10-15) adds a batched/joined student-name projection for charge rows. Existing portal behavior and fixed query counts stay unchanged; Finance does not traverse `enrollment.student` |
+| `app/Domain/Finance/Data/EnrollmentBalance.php`, `app/Domain/Finance/Filament/Portal/Pages/MyBalance.php`, `resources/views/portal/my-balance.blade.php`, `lang/en/portal.php`, `tests/Feature/Finance/StudentBalanceQueryTest.php`, `tests/Feature/Portal/MyBalancePageTest.php`, `tests/Feature/Portal/PortalQueryCountTest.php` | **T05 only** | Owner-approved scope expansion (2026-10-10): show localized course names and batch codes on balance rows now. Ownership, existing unbilled-row handling and fixed query counts are preserved regression behavior |
+| `app/Domain/Finance/Reports/OutstandingAgedReport.php` | **T16c** | Owner-approved expansion (2026-10-15): bounded SQL totals for the Charges header, sharing the report's existing ageing definitions, write-off and reversal treatment. No full-report hydration to build four cards; existing report results remain unchanged |
 | `app/Domain/Finance/Services/StudentBalanceQuery.php` | **T05 → T06** | T05 adds portal balance labels; owner-approved T06 expansion (2026-10-11) adds the batched staff-list projection without changing portal behavior |
 | `app/Domain/Finance/Reports/ProfitReport.php` | **T04 → T10** | T04 teaches it expenses; T10 charts what it returns and must not change what the figure means |
 | `app/Domain/Finance/Filament/Pages/Reports/*` | **T04 (`ProfitReportPage` subheading only) → T10 → T16d** | T04 shows the Profit definition under the page title and touches nothing else there; T10 adds the charts; T16d restyles. T16d must not change what a chart plots |
@@ -1416,7 +1418,7 @@ an outstanding balance never blocks a certificate · a student with no email get
 no portal login.
 
 ### Task 16c — Money screens
-**Owner: Claude · `p4/t16c-admin-finance` · depends on T16a and T20c**
+**Owner: Codex · `p4/t16c-admin-finance` · depends on T16a and T20c**
 
 **File scope**
 - `app/Domain/Finance/Filament/Resources/` — Charge, Discount, Payment, PayrollRun,
@@ -1426,6 +1428,24 @@ no portal login.
 - `lang/en/` — `charges.php`, `payments.php`, `payroll.php`, `pricing.php`,
   `collect.php`, `expenses.php`, appended
 - `tests/Feature/Admin/FinanceRevampContractTest.php`
+- `app/Domain/Finance/Reports/OutstandingAgedReport.php` — bounded SQL ageing
+  totals only, sharing the existing report's definitions
+- `app/Domain/Enrollment/Services/EnrollmentQueryService.php` — batched/joined
+  student-name projection for charge rows only
+- This plan — T16c's scope and seam records only
+- `resources/css/filament/admin/theme.css` — owner-approved token-only addition
+  (2026-10-15): the missing orange ageing-card colour `#fb923c`; existing theme
+  rules remain unchanged
+
+**Owner-approved expansion (2026-10-15).** The Charges cards keep the report's
+existing buckets: **0–30** (including not-yet-due charges), **31–60**, **61–90**
+and **91+**, rather than the prototype's different labels. SQL returns at most
+the four aggregate groups; rendering the cards must not hydrate every
+outstanding charge. Student names come through the published enrollment query
+boundary, never through a per-row lookup. The already-scoped
+`FinanceRevampContractTest` proves boundary parity, write-off/reversal treatment
+and bounded hydration; existing report and query-count tests stay unchanged.
+Native Filament header schemas need no additional Blade or widget file.
 
 **Contract rules asserted:** a second installment against one bill is refused ·
 tender totals must equal the amount collected · pricing is written only through
