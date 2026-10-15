@@ -424,10 +424,13 @@ it('runs the same number of queries for two courses as for six', function () {
         }
     }
 
+    // Two: NextUpcomingBatch's one, and the active courses (or the one course) as the
+    // other. The home page adds a third, its publications teaser (P4-T20b).
+    $expected = ['/' => 3, '/programmes' => 2, "/programmes/{$id}" => 2];
+
     foreach ($counts as $path => $byTotal) {
-        // Two: NextUpcomingBatch's one, and the active courses (or the one course) as the other.
         expect($byTotal[2])->toBe($byTotal[6], "{$path} runs more queries as courses are added.")
-            ->and($byTotal[6])->toBe(2);
+            ->and($byTotal[6])->toBe($expected[$path]);
     }
 });
 
