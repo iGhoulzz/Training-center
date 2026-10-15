@@ -136,11 +136,11 @@ Route::middleware(AuthenticatePrivateFileSession::class)->group(function (): voi
 |
 | The first thing in this system that serves the open internet: no auth guard,
 | no permission check, reachable by anyone who has a reference off a printed
-| certificate. All three routes share one group for the same reason the
+| certificate. All four routes share one group for the same reason the
 | private-file group above does — the rate limiter and the three disclosure
 | headers must not be applicable to one route and forgotten on another, and a
 | group is what makes that true for a route nobody has written yet as well as
-| for the three that exist today.
+| for the four that exist today (P4-T20b added the home page's lookup).
 |
 | THE {reference} SEGMENT IS DELIBERATELY UNCONSTRAINED. A `->where()` regex
 | here would make a malformed value fail to match the route at all, and
