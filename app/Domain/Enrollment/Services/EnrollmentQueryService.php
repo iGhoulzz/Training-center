@@ -392,17 +392,23 @@ final class EnrollmentQueryService
      * Project student labels onto a charge list in its existing query. A derived
      * table keeps reference/id columns unambiguous for Filament search and sort.
      * Students may be soft-deleted; their financial history still names them.
+     *
+     * Built from Enrollment's own builder and taken `toBase()`, never
+     * `DB::table('enrollments')`, which ActionBoundaryArchTest forbids in any
+     * file: the same rule, and the same way out, as the lookup above.
      */
     public function joinEnrollmentStudentLabelsTo(Builder $query, string $enrollmentIdColumn): Builder
     {
-        $labels = DB::table('enrollments')->join('students', 'students.id', '=', 'enrollments.student_id')
+        $labels = Enrollment::query()
+            ->join('students', 'students.id', '=', 'enrollments.student_id')
             ->select([
                 'enrollments.id as label_enrollment_id',
                 'students.id as '.self::ENROLLMENT_STUDENT_ID,
                 'students.first_name as '.self::ENROLLMENT_STUDENT_FIRST_NAME,
                 'students.last_name as '.self::ENROLLMENT_STUDENT_LAST_NAME,
             ])
-            ->selectRaw('students.deleted_at IS NULL as '.self::ENROLLMENT_STUDENT_AVAILABLE);
+            ->selectRaw('students.deleted_at IS NULL as '.self::ENROLLMENT_STUDENT_AVAILABLE)
+            ->toBase();
 
         return $query->leftJoinSub($labels, 'student_labels', 'student_labels.label_enrollment_id', '=', $enrollmentIdColumn)
             ->addSelect([
