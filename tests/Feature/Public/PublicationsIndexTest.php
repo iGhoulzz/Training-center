@@ -59,7 +59,9 @@ beforeEach(function () {
         'publications.public.empty_heading' => 'EMPTYHEADSENT',
         'publications.public.empty_clear' => 'CLEARSENT',
         'publications.public.download_pdf' => 'PDFSENT',
-        'publications.public.download_heading' => 'DLHEADSENT',
+        'publications.public.pdf' => 'PDFLABELSENT',
+        'publications.public.sort_switch' => 'SWITCHSENT :current TO :next',
+        'publications.public.original_filing' => 'FILINGSENT',
         'publications.public.more_in' => 'MORESENT :topic',
         'publications.public.issued' => 'ISSUEDSENT :date',
         'publications.public.date_format' => 'Y/m/d',
@@ -221,9 +223,10 @@ it('prints each card from its article: topic, date, title link, description, aut
     preg_match('/<article\b.*?<\/article>/s', $html, $card);
     $text = trim((string) preg_replace('/\s+/', ' ', html_entity_decode(strip_tags($card[0]))));
 
-    // Computed by hand: the date format is the sentinel 'Y/m/d' and the wording the
-    // sentinel 'ISSUEDSENT :date', for 2026-02-12.
-    expect($text)->toBe('Arbitration ISSUEDSENT 2026/02/12 Enforcing Foreign Awards A practitioner reading of the grounds. Dr. Salah Ferjani PDFSENT 318 DLSENT');
+    // Computed by hand: the date format is the sentinel 'Y/m/d', for 2026-02-12. The
+    // card shows the bare date (the design's line has no room for "Issued"), and the
+    // PDF link reads the short label.
+    expect($text)->toBe('Arbitration 2026/02/12 Enforcing Foreign Awards A practitioner reading of the grounds. Dr. Salah Ferjani PDFLABELSENT 318 DLSENT');
 
     $links = libraryAnchors($card[0]);
 
@@ -233,21 +236,24 @@ it('prints each card from its article: topic, date, title link, description, aut
     ])->and(str_contains($html, '<time datetime="2026-02-12"'))->toBeTrue();
 });
 
-it('renders the topic and issue date the same on the card and on the article page, from one component', function () {
+it('renders the topic and issue date on the card and on the article page from one component', function () {
     $article = libraryArticle(['topic' => 'Arbitration', 'issued_on' => '2026-02-12']);
 
-    $fragment = '/<p class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">.*?<\/p>/s';
+    $fragment = '/<p data-article-meta\b[^>]*>.*?<\/p>/s';
 
     preg_match_all($fragment, libraryBody($this->get('/publications')->assertOk()), $onCard);
     preg_match_all($fragment, libraryBody($this->get('/publications/'.$article->slug)->assertOk()), $onPage);
 
-    // One on each page, and the same bytes. Written by hand: the sentinel date
-    // format 'Y/m/d' and the sentinel wording 'ISSUEDSENT :date' give the text.
+    // One on each page. Both hold the same badge and the same <time> element; they
+    // differ only in the design's two ways: the card says the bare date, the article
+    // says "Issued ...", and the article's header is the dark variant. Written by hand:
+    // the sentinel date format 'Y/m/d' and the sentinel wording 'ISSUEDSENT :date'.
     expect($onCard[0])->toHaveCount(1)
         ->and($onPage[0])->toHaveCount(1)
-        ->and($onPage[0][0])->toBe($onCard[0][0])
-        ->and(trim((string) preg_replace('/\s+/', ' ', strip_tags($onCard[0][0]))))->toBe('Arbitration ISSUEDSENT 2026/02/12')
-        ->and($onCard[0][0])->toContain('<time datetime="2026-02-12"');
+        ->and(trim((string) preg_replace('/\s+/', ' ', strip_tags($onCard[0][0]))))->toBe('Arbitration 2026/02/12')
+        ->and(trim((string) preg_replace('/\s+/', ' ', strip_tags($onPage[0][0]))))->toBe('Arbitration ISSUEDSENT 2026/02/12')
+        ->and($onCard[0][0])->toContain('>Arbitration</span>')->toContain('<time datetime="2026-02-12"')
+        ->and($onPage[0][0])->toContain('>Arbitration</span>')->toContain('<time datetime="2026-02-12"');
 });
 
 it('names the title in the download link for a screen reader, whatever the visible text', function () {
@@ -255,9 +261,9 @@ it('names the title in the download link for a screen reader, whatever the visib
 
     $html = libraryBody($this->get('/publications')->assertOk());
 
-    // The accessible name starts with the visible words and adds the title, so a
-    // list of twelve identical "Download PDF" links is not twelve identical names.
-    expect(libraryAnchor($html, 'PDFSENT')['attributes'])->toContain('aria-label="Download PDF: Safety Guide"');
+    // The accessible name contains the visible words and adds the title, so a list of
+    // twelve identical "PDF" links is not twelve identical names.
+    expect(libraryAnchor($html, 'PDFLABELSENT')['attributes'])->toContain('aria-label="Download PDF: Safety Guide"');
 });
 
 it('says that download counts are approximate, on the index and on an article page', function () {
@@ -444,7 +450,7 @@ it('counts the chips from published articles only, one per topic, alphabetically
         ->toBe(['ALLSENT 4', 'Electronics 1', 'Safety 1', 'Welding 2']);
 });
 
-it('keeps the search and the sort on every chip, and the search and the topic on both sort links', function () {
+it('keeps the search and the sort on every chip, and the search and the topic on the sort button', function () {
     libraryArticle(['title_en' => 'Weld Guide', 'topic' => 'Welding']);
     libraryArticle(['title_en' => 'Safe Guide', 'topic' => 'Safety']);
     libraryArticle(['title_en' => 'Other', 'topic' => 'Safety']);
@@ -455,10 +461,11 @@ it('keeps the search and the sort on every chip, and the search and the topic on
     expect(libraryQueryOf(libraryAnchor($html, 'ALLSENT 3')['href']))->toBe(['q' => 'guide', 'sort' => 'downloads'])
         ->and(libraryQueryOf(libraryAnchor($html, 'Safety 2')['href']))->toBe(['q' => 'guide', 'sort' => 'downloads', 'topic' => 'Safety'])
         ->and(libraryQueryOf(libraryAnchor($html, 'Welding 1')['href']))->toBe(['q' => 'guide', 'sort' => 'downloads', 'topic' => 'Welding'])
-        ->and(libraryQueryOf(libraryAnchor($html, 'NEWESTSENT')['href']))->toBe(['q' => 'guide', 'sort' => 'newest', 'topic' => 'Safety'])
-        ->and(libraryQueryOf(libraryAnchor($html, 'DOWNSENT')['href']))->toBe(['q' => 'guide', 'sort' => 'downloads', 'topic' => 'Safety'])
-        ->and(libraryAnchor($html, 'DOWNSENT')['attributes'])->toContain('aria-current="true"')
-        ->and(libraryAnchor($html, 'NEWESTSENT')['attributes'])->not->toContain('aria-current');
+        // The sort is ONE button: it reads the order the list is in now (downloads) and
+        // links to the other one (newest), keeping the search and the topic.
+        ->and(libraryQueryOf(libraryAnchor($html, 'DOWNSENT')['href']))->toBe(['q' => 'guide', 'sort' => 'newest', 'topic' => 'Safety'])
+        ->and(libraryAnchor($html, 'DOWNSENT')['attributes'])->toContain('aria-label="SWITCHSENT DOWNSENT TO NEWESTSENT"')
+        ->and(array_column(libraryAnchors($html), 'text'))->not->toContain('NEWESTSENT');
 });
 
 it('keeps a search for "0" on the links, which a falsy filter would drop', function () {
@@ -477,7 +484,8 @@ it('has no query at all on the clear link and the unfiltered chips, apart from t
 
     expect(libraryQueryOf(libraryAnchor($html, 'ALLSENT 1')['href']))->toBe(['sort' => 'newest'])
         ->and(libraryQueryOf(libraryAnchor($html, 'Welding 1')['href']))->toBe(['sort' => 'newest', 'topic' => 'Welding'])
-        ->and(libraryAnchor($html, 'NEWESTSENT')['attributes'])->toContain('aria-current="true"');
+        // The sort button names the current order (newest) and links to the other one.
+        ->and(libraryQueryOf(libraryAnchor($html, 'NEWESTSENT')['href']))->toBe(['sort' => 'downloads']);
 });
 
 /**
@@ -528,9 +536,11 @@ it('falls back to newest first for any other sort', function (string $sort) {
 
     $html = libraryBody($this->get('/publications?'.http_build_query(['sort' => $sort]))->assertOk());
 
+    // The sort button reads the order in force, which is newest first, and links to
+    // the other one; "most downloaded" is not offered as the current order.
     expect(libraryCardTitles($html))->toBe(['F', 'E', 'D', 'B', 'A', 'C'])
-        ->and(libraryAnchor($html, 'NEWESTSENT')['attributes'])->toContain('aria-current="true"')
-        ->and(libraryAnchor($html, 'DOWNSENT')['attributes'])->not->toContain('aria-current');
+        ->and(libraryQueryOf(libraryAnchor($html, 'NEWESTSENT')['href']))->toBe(['sort' => 'downloads'])
+        ->and(array_column(libraryAnchors($html), 'text'))->not->toContain('DOWNSENT');
 })->with(['an unknown word' => ['oldest'], 'a different case' => ['DOWNLOADS'], 'a number' => ['1'], 'empty' => ['']]);
 
 it('keeps a topic and a search when the sort changes the order', function () {
@@ -675,7 +685,7 @@ it('shows a published article: topic, issue date, title, authors, downloads, the
 
     $html = libraryBody($this->get('/publications/'.$article->slug)->assertOk());
 
-    expect(libraryHeadings($html))->toBe([[1, 'Enforcing Foreign Awards'], [2, 'DLHEADSENT']])
+    expect(libraryHeadings($html))->toBe([[1, 'Enforcing Foreign Awards'], [2, 'FILINGSENT']])
         ->and($html)->toContain('>Arbitration</span>')
         ->and($html)->toContain('<time datetime="2026-02-12"')
         ->and($html)->toContain('ISSUEDSENT 2026/02/12')
@@ -724,7 +734,7 @@ it('offers the three newest other published articles in the same topic, and neve
     // Each entry is a link whose text is the title and then its date; the date's
     // format is the sentinel 'Y/m/d'.
     expect($titles)->toBe(['P Newest 2026/02/10', 'Q Second 2026/01/05', 'R Third 2025/12/02'])
-        ->and(libraryHeadings($html))->toBe([[1, 'Current'], [2, 'DLHEADSENT'], [2, 'MORESENT Arbitration']]);
+        ->and(libraryHeadings($html))->toBe([[1, 'Current'], [2, 'FILINGSENT'], [2, 'MORESENT Arbitration']]);
 });
 
 it('links each "more in" entry to its own page', function () {
