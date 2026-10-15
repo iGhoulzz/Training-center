@@ -56,7 +56,7 @@
                 role="search"
                 class="flex min-w-0 flex-[1_1_240px] items-center gap-3"
             >
-                <div class="flex min-w-0 flex-1 items-center gap-2.5 rounded-field border border-navy/14 bg-card px-3.75 py-3 focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-navy-hover">
+                <div class="flex min-w-0 flex-1 items-center gap-2.5 rounded-field border border-navy/14 bg-card px-3.75 focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-navy-hover">
                     <x-public.icon name="search" :size="16" class="text-meta" />
                     <label for="publications-search" class="sr-only">{{ __('publications.public.search_label') }}</label>
                     <input
@@ -65,7 +65,7 @@
                         name="q"
                         value="{{ $search }}"
                         placeholder="{{ __('publications.public.search_placeholder') }}"
-                        class="min-w-0 flex-1 border-0 bg-transparent text-base text-ink outline-none placeholder:text-meta"
+                        class="min-w-0 flex-1 border-0 bg-transparent py-3 text-base text-ink outline-none placeholder:text-meta"
                     >
                 </div>
 
