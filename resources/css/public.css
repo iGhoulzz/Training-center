@@ -257,3 +257,84 @@
         inset-inline: min(0px, calc(50% - 22px));
     }
 }
+
+/*
+ * The tokens the page sections first need (P4-T20b).
+ *
+ * Appended, as T20a's header promises: a value that only a page section draws
+ * becomes a token in the task whose page first shows it. Every value is the
+ * prototype's, read from its sections, and named by ROLE. Sizes are in rem (the
+ * prototype's px at the browser's default 16px), each carrying the line-height,
+ * tracking and weight the design pairs with it.
+ *
+ * A COLOUR AND A SIZE NEVER SHARE A NAME. `text-lead` is Tailwind's one utility
+ * for both, and a theme holding `--color-lead` and `--text-lead` would leave it to
+ * guess. So the article's reading colour is `ink-soft` (a softer ink for long
+ * text) and its size is `article-lead`.
+ *
+ * RUNNING TEXT IS NOT SET HERE. These sizes are the prototype's own, the desktop
+ * end. A sentence of prose takes 16px below 1024px in the markup (`text-base
+ * leading-[...] lg:text-prose`), as the footer does, so a phone never reads the
+ * design's 13.5px.
+ */
+@theme {
+    --color-ink-soft: #2c3542; /* an article's lead paragraph: a softer ink than `ink` for reading */
+
+    --text-page: clamp(2rem, 4.4vw, 3.25rem); /* a page header's H1: 32px to 52px */
+    --text-page--line-height: 1.08;
+    --text-heading-lg: clamp(1.8125rem, 3.6vw, 2.625rem); /* the home About H2: 29px to 42px */
+    --text-heading-lg--line-height: 1.14;
+    --text-heading-lg--letter-spacing: -0.01em;
+    --text-lead: 1.03125rem; /* 16.5px: the hero's lead paragraph */
+    --text-lead--line-height: 1.75;
+    --text-prose: 0.96875rem; /* 15.5px: a section's paragraph */
+    --text-prose--line-height: 1.8;
+    --text-copy: 0.9375rem; /* 15px: a section intro, a pillar title, a contact value */
+    --text-article-lead: 1.0625rem; /* 17px: an article's lead paragraph */
+    --text-article-lead--line-height: 1.85;
+    --text-card-title: 1.09375rem; /* 17.5px: a programme card's name */
+    --text-card-title--line-height: 1.3;
+    --text-price: 1.375rem; /* 22px: a price, in the display face */
+    --text-price--line-height: 1;
+    --text-teaser-title: 1.3125rem; /* 21px: a home teaser's title */
+    --text-teaser-title--line-height: 1.28;
+    --text-library-title: 1.25rem; /* 20px: a library card's title */
+    --text-library-title--line-height: 1.3;
+    --text-related-title: 1.0625rem; /* 17px: a "more in this topic" title */
+    --text-related-title--line-height: 1.32;
+    --text-compact: 0.8125rem; /* 13px: a back link, the result line, a compact button */
+    --text-small: 0.75rem; /* 12px: a date, a card's hours, the currency */
+    --text-note: 0.71875rem; /* 11.5px: a start date */
+    --text-micro: 0.6875rem; /* 11px: a download count under a button */
+    --text-badge: 0.6875rem; /* 11px: a topic badge */
+    --text-badge--letter-spacing: 0.08em;
+    --text-badge--font-weight: 700;
+    --text-badge-pill: 0.6875rem; /* 11px: the same badge as a pill, on a dark header */
+    --text-badge-pill--letter-spacing: 0.09em;
+    --text-badge-pill--font-weight: 700;
+    --text-field-label: 0.78125rem; /* 12.5px: a form field's label; the caller adds `uppercase` */
+    --text-field-label--letter-spacing: 0.04em;
+    --text-field-label--font-weight: 600;
+    --text-row-label: 0.71875rem; /* 11.5px: a contact row's label; the caller adds `uppercase` */
+    --text-row-label--letter-spacing: 0.07em;
+    --text-row-label--font-weight: 600;
+    --text-thumb: 0.5625rem; /* 9px: the "PDF" on a document thumbnail */
+    --text-thumb--letter-spacing: 0.1em;
+    --text-thumb--font-weight: 700;
+    --text-thumb-sm: 0.5rem; /* 8px: the same, on the article page's smaller thumbnail */
+    --text-thumb-sm--letter-spacing: 0.1em;
+    --text-thumb-sm--font-weight: 700;
+
+    --radius-badge: 5px; /* a topic badge */
+    --radius-thumb: 9px; /* a document thumbnail */
+    --radius-thumb-sm: 8px; /* the article page's smaller thumbnail */
+    --radius-control-sm: 9px; /* the library card's PDF button */
+    --radius-tile: 12px; /* an icon tile */
+    --radius-tile-sm: 11px; /* a contact row's icon tile */
+    --radius-item: 13px; /* a "more in this topic" entry */
+
+    --shadow-card-sm: 0 2px 10px rgb(13 39 69 / 0.04);
+    --shadow-panel: 0 8px 30px rgb(13 39 69 / 0.09);
+    --shadow-thumb: 0 4px 14px rgb(13 39 69 / 0.24);
+    --shadow-seal: 0 22px 60px rgb(0 0 0 / 0.42);
+}
