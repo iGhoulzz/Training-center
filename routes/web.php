@@ -136,11 +136,11 @@ Route::middleware(AuthenticatePrivateFileSession::class)->group(function (): voi
 |
 | The first thing in this system that serves the open internet: no auth guard,
 | no permission check, reachable by anyone who has a reference off a printed
-| certificate. All three routes share one group for the same reason the
+| certificate. All four routes share one group for the same reason the
 | private-file group above does — the rate limiter and the three disclosure
 | headers must not be applicable to one route and forgotten on another, and a
 | group is what makes that true for a route nobody has written yet as well as
-| for the three that exist today.
+| for the four that exist today (P4-T20b added the home page's lookup).
 |
 | THE {reference} SEGMENT IS DELIBERATELY UNCONSTRAINED. A `->where()` regex
 | here would make a malformed value fail to match the route at all, and
@@ -160,6 +160,16 @@ Route::middleware([VerificationResponseHeaders::class, 'throttle:certificate-ver
 
         Route::post('verify/certificates', [VerifyCertificateController::class, 'submit'])
             ->name('verify.certificates.submit');
+
+        // The home page's verifier box, a read-only `method="get"` form (owner,
+        // 2026-10-13). It runs the POST's own submit(), which reads `reference` from
+        // the request, normalises it, redirects a well-formed value to the result
+        // page and returns the uniform miss for anything else, so the reference
+        // rule has no second copy. THE PATH STAYS OUTSIDE
+        // `verify/certificates/{reference}`: that segment is deliberately
+        // unconstrained and would read `lookup` as a reference.
+        Route::get('verify/lookup', [VerifyCertificateController::class, 'submit'])
+            ->name('verify.certificates.lookup');
 
         Route::get('verify/certificates/{reference}', [VerifyCertificateController::class, 'show'])
             ->name('verify.certificates.show');

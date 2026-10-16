@@ -78,6 +78,8 @@ return [
     'public' => [
         'heading' => 'Publications',
         'intro' => 'Papers and guides the centre has published, newest first. Each one downloads as the original PDF.',
+        'library_eyebrow' => 'Library',
+        'back_home' => 'Back to the centre',
 
         'search_label' => 'Search the publications',
         'search_placeholder' => 'Search titles, topics, authors and descriptions',
@@ -86,9 +88,11 @@ return [
         'topics_label' => 'Topics',
         'topic_all' => 'All',
 
-        'sort_label' => 'Sort publications',
         'sort_newest' => 'Newest first',
         'sort_downloads' => 'Most downloaded',
+        // The sort is one button that names the current order; this is what a screen
+        // reader says it does.
+        'sort_switch' => 'Sorted by :current. Sort by :next instead.',
         'downloads_note' => 'Download counts are approximate.',
 
         'count' => ':count publication|:count publications',
@@ -104,6 +108,11 @@ return [
         'downloads' => ':count download|:count downloads',
         'download_pdf' => 'Download PDF',
         'download_pdf_named' => 'Download PDF: :title',
+        // The short label on a library card's PDF link and on a document thumbnail.
+        'pdf' => 'PDF',
+        // There is no online reader, so the second button opens the article's page.
+        'read_more' => 'Read more',
+        'read_more_named' => 'Read more about :title',
 
         'pagination_label' => 'Pages of publications',
         'previous' => 'Previous page',
@@ -115,7 +124,10 @@ return [
         'issued' => 'Issued :date',
 
         'back' => 'All publications',
-        'download_heading' => 'Original PDF',
+        'original_filing' => 'Original filing',
+        'uploaded_by' => 'uploaded by the administration',
+        // No article body is stored, only the PDF, so this is always the page's second paragraph.
+        'full_text_note' => 'The full text of this paper is distributed as the original PDF exactly as it was filed with the centre. Download it above to read the complete argument, tables and authorities.',
         'more_in' => 'More in :topic',
     ],
 ];

@@ -70,28 +70,41 @@ return [
     /*
     | Draft copy pending the owner's text (2026-10-12): replace freely; keep the keys.
     |
-    | Home. The page summarises About, Programmes, the verifier and Contact, and
-    | links on to each. It states only what the system makes true: certificates are
-    | recorded in a public register that anyone can check, and how to get in touch.
+    | Home. The page is the design's: the hero, About, Programmes, the verifier's box,
+    | the publications teaser and Contact. It states only what the system makes true:
+    | certificates are recorded in a public register that anyone can check. The About
+    | title and the verifier's and teaser's wording are the design's own, and still
+    | draft copy for the owner to confirm.
     */
     'home' => [
-        'heading' => 'Welcome to :name',
+        // The heading is the centre's name; the phrase in `heading_emphasis` is set in
+        // italic gold inside it, as the design draws it, wherever it appears in the
+        // translated name. A name that does not contain it is printed plainly.
+        'heading' => ':name',
+        'heading_emphasis' => 'Legal Studies',
         'lead' => 'Professional and legal training, with certificates that anyone can check in a public register.',
         'programmes_link' => 'Browse programmes',
 
         'about_heading' => 'About the centre',
+        'about_title' => 'Legal education that answers to practice, not to theory',
         'about_body' => 'The centre runs professional and legal training programmes. Every certificate it issues is entered in a public register, so anyone can confirm it without asking the centre.',
-        'about_link' => 'More about the centre',
+        'about_register' => 'Certificates issued by the centre are recorded in a public register. Any employer, court or bar association can confirm one in seconds using the verifier on this page.',
 
-        'programmes_heading' => 'Our programmes',
-        'programmes_all' => 'All programmes',
+        'programmes_title' => 'Open for enrolment',
+        'request_seat' => 'Request a seat',
 
+        'verify_eyebrow' => 'Public register',
         'verify_heading' => 'Verify a certificate',
-        'verify_body' => 'Anyone holding the reference printed on a certificate issued by the centre can check it online.',
+        'verify_lead' => 'Enter the reference printed on the certificate. The register returns the holder, the programme and the issue date — and tells you plainly if a certificate has been replaced or revoked.',
+        'verify_label' => 'Certificate reference',
+        // The real reference format: TC, the year, and eight characters.
+        'verify_placeholder' => 'TC-2026-XXXXXXXX',
+        'verify_submit' => 'Verify',
+        'verify_note' => 'Nothing is stored from a lookup. The register only ever returns what is printed on the certificate itself.',
 
-        'contact_heading' => 'Get in touch',
-        'contact_body' => 'Questions about a programme or its next intake? Write to the centre or call it.',
-        'contact_link' => 'Contact details',
+        'publications_title' => 'Research & legal commentary',
+        'publications_intro' => 'Published by the centre and downloadable as the original PDF. Every entry carries its issue date.',
+        'publications_all' => 'All publications',
     ],
 
     /*
@@ -130,8 +143,10 @@ return [
 
         // Whole phrases with named placeholders, so a translator can reorder them.
         // The date format is a PHP date() pattern, rendered in the reader's locale.
+        // The currency is its own word because the design sets it in a smaller span
+        // beside the amount.
         'hours' => ':count hour|:count hours',
-        'price' => ':amount LYD',
+        'currency' => 'LYD',
         'starts' => 'Starts :date',
         'date_format' => 'd M Y',
 
@@ -154,8 +169,12 @@ return [
     'contact' => [
         'heading' => 'Contact',
         'intro' => 'To ask about a programme or an intake, write to the centre or call it.',
+        'eyebrow' => 'Visit us',
+        'title' => 'Come to the centre',
         'email_label' => 'Email',
         'phone_label' => 'Telephone',
+        'directions_title' => 'Directions to the centre',
+        'directions_note' => 'Opens the centre\'s location in your own map app.',
         'directions' => 'Get directions',
         'directions_new_tab' => '(opens in a new tab)',
     ],

@@ -18,11 +18,12 @@ use Illuminate\View\View;
  * The first thing in this system that serves the open internet (design section
  * 7, P3-T08).
  *
- * THREE ROUTES, ONE CONTROLLER, ONE NOT-FOUND PATH.
+ * FOUR ROUTES, ONE CONTROLLER, ONE NOT-FOUND PATH.
  * ---------------------------------------------------
- * `form()` renders the empty form. `submit()` takes what a person typed,
- * normalizes it, and — if and only if it is shaped like a real reference —
- * redirects to `show()`, which does the actual lookup. Every way this can fail
+ * `form()` renders the empty form. `submit()` takes what a person typed, from
+ * the form's POST or from the home page's GET box (`verify.certificates.lookup`,
+ * P4-T20b), normalizes it, and — if and only if it is shaped like a real
+ * reference — redirects to `show()`, which does the actual lookup. Every way this can fail
  * (blank, malformed, or simply unknown) ends at the SAME private method,
  * `notFound()`, so the four cases the plan requires to be byte-identical
  * really do run the same code.
@@ -53,7 +54,12 @@ final class VerifyCertificateController extends Controller
 
     public function submit(Request $request): RedirectResponse|Response
     {
-        $reference = $this->normalize((string) $request->input('reference', ''));
+        // Only a string is a reference. `reference[]=…` arrives as an array, and
+        // a (string) cast of it is a warning Laravel turns into a 500 — a signal
+        // about the input's shape that the uniform miss exists to deny (P4-T20b,
+        // owner, 2026-10-16). Anything else is treated as empty.
+        $input = $request->input('reference');
+        $reference = $this->normalize(is_string($input) ? $input : '');
 
         if (! $this->isWellFormed($reference)) {
             return $this->notFound();

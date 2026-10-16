@@ -1,9 +1,9 @@
 @extends('layouts.public')
 
 {{--
-    One article: its topic, issue date, title and authors, a box with the download
-    count and the download link, the description, and up to three other published
-    articles in the same topic.
+    One article: the navy header with its topic, issue date, title and authors, the
+    filing record with the download count and the download link, the description as the
+    lead paragraph, and up to three other published articles in the same topic.
 
     NOTHING HERE IS A MODEL. $article and every entry of $related are PublicArticle
     projections. The page shows no file size, no file name and no storage detail:
@@ -12,8 +12,14 @@
     The count is called approximate, because it is rate-limited and not
     deduplicated per reader.
 
-    Every link goes through PublicRoute. No PHP block in this template, for the
-    reason the index gives.
+    THE SECOND PARAGRAPH IS ALWAYS THE FALLBACK. The design shows an article's further
+    paragraphs when it has them; this system stores a description and the PDF, never the
+    paper's text, so the only thing to say after the description is where the full text
+    is: in the PDF above.
+
+    Every link goes through PublicRoute. Nothing here needs a `@php` block: the related
+    entries' dates are formatted inline in their echoes. (The index does use one, for its
+    sort labels; LocalizationTest reads a block as setup, not as prose.)
 --}}
 @use('App\Support\PublicRoute')
 @use('Carbon\CarbonImmutable')
@@ -23,49 +29,59 @@
 @endsection
 
 @section('content')
-    <div class="mx-auto max-w-3xl px-4 py-12">
-        <p><a href="{{ PublicRoute::url('public.publications.index') }}" class="text-sm font-medium text-navy hover:underline">{{ __('publications.public.back') }}</a></p>
+    <x-public.page-header
+        size="narrow"
+        title-size="article"
+        :back-href="PublicRoute::url('public.publications.index')"
+        :back-label="__('publications.public.back')"
+        :title="$article->title"
+    >
+        <x-slot:kicker>
+            <x-public.article-meta :topic="$article->topic" :issued-on="$article->issuedOn" tone="dark" class="mt-5.5 gap-x-2.75 gap-y-1" />
+        </x-slot:kicker>
 
-        <div class="mt-6">
-            <x-public.article-meta :topic="$article->topic" :issued-on="$article->issuedOn" />
-        </div>
+        <p class="mt-4 text-sm wrap-anywhere text-cream/66">{{ $article->authors }}</p>
+    </x-public.page-header>
 
-        <h1 class="mt-4 font-display text-4xl text-navy">{{ $article->title }}</h1>
-        <p class="mt-3 text-meta">{{ $article->authors }}</p>
+    <x-public.container size="narrow" class="pt-11 pb-20">
+        <x-public.card as="section" variant="box" aria-labelledby="article-download-heading" class="flex flex-wrap items-center gap-4 p-5">
+            <x-public.pdf-thumb size="sm" />
 
-        <section aria-labelledby="article-download-heading" class="mt-8 flex flex-wrap items-center justify-between gap-4 rounded-card border border-navy/9 bg-card p-6">
-            <div>
-                <h2 id="article-download-heading" class="font-semibold text-navy">{{ __('publications.public.download_heading') }}</h2>
-                <p class="mt-1 text-sm text-meta">{{ trans_choice('publications.public.downloads', $article->downloadCount) }}</p>
-                <p class="text-sm text-meta">{{ __('publications.public.downloads_note') }}</p>
+            <div class="min-w-45 flex-1">
+                <h2 id="article-download-heading" class="text-ui-lg font-semibold text-navy">{{ __('publications.public.original_filing') }}</h2>
+                <p class="mt-0.5 text-caption text-meta">{{ trans_choice('publications.public.downloads', $article->downloadCount) }} · {{ __('publications.public.downloads_note') }} · {{ __('publications.public.uploaded_by') }}</p>
             </div>
 
-            <a
-                href="{{ PublicRoute::url('public.publications.download', ['slug' => $article->slug]) }}"
-                class="inline-flex items-center rounded-pill bg-navy px-6 py-3 font-medium text-cream hover:bg-navy-hover"
-            >{{ __('publications.public.download_pdf') }}</a>
-        </section>
+            <x-public.button :href="PublicRoute::url('public.publications.download', ['slug' => $article->slug])" variant="control" size="control-lg" class="flex-none">
+                <x-public.icon name="download" :size="14" :stroke-width="2.2" linejoin="miter" class="text-gold" />
+                {{ __('publications.public.download_pdf') }}
+            </x-public.button>
+        </x-public.card>
 
-        <p class="mt-8 whitespace-pre-line text-lg text-body">{{ $article->description }}</p>
+        <p class="mt-8.5 text-article-lead whitespace-pre-line text-pretty wrap-anywhere text-ink-soft">{{ $article->description }}</p>
+        <p class="mt-5 text-base leading-[1.85] text-pretty text-body">{{ __('publications.public.full_text_note') }}</p>
 
         @if ($related !== [])
-            <section aria-labelledby="article-more-heading" class="mt-12 border-t border-navy/9 pt-8">
-                <h2 id="article-more-heading" class="text-sm font-semibold uppercase tracking-wider text-gold-dark">{{ __('publications.public.more_in', ['topic' => $article->topic]) }}</h2>
+            <section aria-labelledby="article-more-heading" class="mt-10 border-t border-navy/10 pt-7">
+                <h2 id="article-more-heading" class="mb-4 text-eyebrow tracking-[0.12em] wrap-anywhere text-gold-dark uppercase">{{ __('publications.public.more_in', ['topic' => $article->topic]) }}</h2>
 
-                <ul class="mt-4 flex flex-col gap-3">
+                <ul class="flex flex-col gap-2.5">
                     @foreach ($related as $other)
                         <li>
                             <a
                                 href="{{ PublicRoute::url('public.publications.show', ['slug' => $other->slug]) }}"
-                                class="block rounded-card border border-navy/9 bg-card p-4 hover:bg-cream"
+                                class="flex items-center gap-3.5 rounded-item border border-navy/10 bg-card px-4.5 py-4 hover:border-gold/55"
                             >
-                                <span class="block font-display text-lg text-navy">{{ $other->title }}</span>
-                                <span class="block text-sm text-meta">{{ CarbonImmutable::parse($other->issuedOn)->translatedFormat(__('publications.public.date_format')) }}</span>
+                                <span class="min-w-0 flex-1">
+                                    <span class="block font-display text-related-title wrap-anywhere text-navy">{{ $other->title }}</span>
+                                    <span class="mt-1 block text-small text-meta">{{ CarbonImmutable::parse($other->issuedOn)->translatedFormat(__('publications.public.date_format')) }}</span>
+                                </span>
+                                <x-public.icon name="arrow-right" :size="16" class="text-gold-dark rtl:-scale-x-100" />
                             </a>
                         </li>
                     @endforeach
                 </ul>
             </section>
         @endif
-    </div>
+    </x-public.container>
 @endsection
