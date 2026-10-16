@@ -245,10 +245,14 @@ it('renders each custom permission under its translated label, not a headline of
 
     expect($options)->not->toBeEmpty();
 
+    // Read from the English file itself rather than through __(): a key missing
+    // from the file makes __() return the key, and a label compared with that
+    // would agree with the same mistake.
+    $strings = (require lang_path('en/staff.php'))['permissions'];
     $wrong = [];
 
     foreach ($options as $name => $label) {
-        if ($label !== __("staff.permissions.{$name}") || $label === Str::headline((string) $name)) {
+        if ($label !== ($strings[$name] ?? null) || $label === Str::headline((string) $name)) {
             $wrong[] = "{$name} rendered as '{$label}'";
         }
     }
