@@ -17,8 +17,9 @@
     paper's text, so the only thing to say after the description is where the full text
     is: in the PDF above.
 
-    Every link goes through PublicRoute. No PHP block in this template, for the
-    reason the index gives.
+    Every link goes through PublicRoute. Nothing here needs a `@php` block: the related
+    entries' dates are formatted inline in their echoes. (The index does use one, for its
+    sort labels; LocalizationTest reads a block as setup, not as prose.)
 --}}
 @use('App\Support\PublicRoute')
 @use('Carbon\CarbonImmutable')
