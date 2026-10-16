@@ -726,8 +726,13 @@ it('lays the home page out as the design does, and points the hero at its own se
         ->and(count($hero->querySelectorAll('div[aria-hidden="true"]')))->toBeGreaterThanOrEqual(5);
 });
 
-it('sets the emphasis phrase of the home heading in italic gold wherever it appears, and escapes every part', function (string $heading, string $expectedInnerHtml) {
+it('sets the emphasis phrase of the home heading in italic gold wherever it appears, and escapes every part', function (string $heading, string $expectedInnerHtml, ?string $phrase = null) {
     replacePublicLine('public.home.heading', $heading);
+
+    // Most cases use the key's own phrase, "Legal Studies"; one gives the phrase itself markup.
+    if ($phrase !== null) {
+        replacePublicLine('public.home.heading_emphasis', $phrase);
+    }
 
     preg_match('/<h1\b[^>]*>(.*?)<\/h1>/s', (string) test()->get('/')->assertOk()->getContent(), $match);
 
@@ -739,6 +744,8 @@ it('sets the emphasis phrase of the home heading in italic gold wherever it appe
     'at the end' => ['Last Legal Studies', 'Last <span class="text-gold-light italic">Legal Studies</span>'],
     'with markup around it' => ['A <i>& B</i> Legal Studies <u>C</u>', 'A &lt;i&gt;&amp; B&lt;/i&gt; <span class="text-gold-light italic">Legal Studies</span> &lt;u&gt;C&lt;/u&gt;'],
     'not in the name' => ['Plain Heading Only', 'Plain Heading Only'],
+    // The phrase is escaped inside its span as well, not only the text around it.
+    'with markup in the phrase itself' => ['Before <b>& After', 'Before <span class="text-gold-light italic">&lt;b&gt;&amp;</span> After', '<b>&'],
 ]);
 
 it('takes the home heading from the centres name, with the phrase in it set apart', function () {
