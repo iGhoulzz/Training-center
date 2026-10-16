@@ -16,8 +16,11 @@ use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Resources\Resource;
+use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
+use Filament\Tables\Columns\Layout\Split;
+use Filament\Tables\Columns\Layout\Stack;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
@@ -52,32 +55,34 @@ final class StaffCompensationResource extends Resource
 
     public static function form(Schema $schema): Schema
     {
-        return $schema->components([
-            Select::make('user_id')
-                ->label(__('payroll.employee'))
-                ->options(fn (): array => self::searchEmployees(''))
-                ->searchable()
-                ->getSearchResultsUsing(fn (string $search): array => self::searchEmployees($search))
-                ->getOptionLabelUsing(fn (mixed $value): ?string => self::employeeOptionLabel($value))
-                ->required(),
+        return $schema->extraAttributes(['class' => '[&_.fi-input]:text-base! [&_.fi-select-input]:text-base! [&_.fi-select-input-btn]:text-base! [&_textarea]:text-base!'])->components([
+            Section::make(__('payroll.rate_details'))->description(__('payroll.effective_rate_hint'))->columns(2)->schema([
+                Select::make('user_id')
+                    ->label(__('payroll.employee'))
+                    ->options(fn (): array => self::searchEmployees(''))
+                    ->searchable()
+                    ->getSearchResultsUsing(fn (string $search): array => self::searchEmployees($search))
+                    ->getOptionLabelUsing(fn (mixed $value): ?string => self::employeeOptionLabel($value))
+                    ->required(),
 
-            Select::make('type')
-                ->label(__('payroll.compensation_type'))
-                ->options(collect(CompensationType::cases())
-                    ->mapWithKeys(fn (CompensationType $type): array => [$type->value => $type->label()])
-                    ->all())
-                ->required(),
+                Select::make('type')
+                    ->label(__('payroll.compensation_type'))
+                    ->options(collect(CompensationType::cases())
+                        ->mapWithKeys(fn (CompensationType $type): array => [$type->value => $type->label()])
+                        ->all())
+                    ->required(),
 
-            TextInput::make('amount')
-                ->label(__('payroll.amount'))
-                ->required()
-                ->inputMode('decimal')
-                ->rules(['numeric', 'decimal:0,3', 'gt:0', 'lte:999999999.999'])
-                ->suffix(__('payroll.currency')),
+                TextInput::make('amount')
+                    ->label(__('payroll.amount'))
+                    ->required()
+                    ->inputMode('decimal')
+                    ->rules(['numeric', 'decimal:0,3', 'gt:0', 'lte:999999999.999'])
+                    ->suffix(__('payroll.currency')),
 
-            DatePicker::make('effective_from')
-                ->label(__('payroll.effective_from'))
-                ->required(),
+                DatePicker::make('effective_from')
+                    ->label(__('payroll.effective_from'))
+                    ->required(),
+            ]),
         ]);
     }
 
@@ -107,47 +112,56 @@ final class StaffCompensationResource extends Resource
     public static function infolist(Schema $schema): Schema
     {
         return $schema->components([
-            TextEntry::make('user.name')->label(__('payroll.employee')),
-            TextEntry::make('type')
-                ->label(__('payroll.compensation_type'))
-                ->formatStateUsing(fn (CompensationType|string $state): string => $state instanceof CompensationType
-                    ? $state->label()
-                    : $state),
-            TextEntry::make('amount')
-                ->label(__('payroll.amount'))
-                ->formatStateUsing(fn (string $state): string => __('payroll.amount_lyd', ['amount' => $state])),
-            TextEntry::make('effective_from')->label(__('payroll.effective_from'))->date(),
-            TextEntry::make('effective_to')
-                ->label(__('payroll.effective_to'))
-                ->date()
-                ->placeholder(__('payroll.current_rate')),
+            Section::make(__('payroll.rate_details'))->description(__('payroll.effective_rate_hint'))->columns(2)->schema([
+                TextEntry::make('user.name')->label(__('payroll.employee')),
+                TextEntry::make('type')
+                    ->label(__('payroll.compensation_type'))
+                    ->formatStateUsing(fn (CompensationType|string $state): string => $state instanceof CompensationType
+                        ? $state->label()
+                        : $state),
+                TextEntry::make('amount')
+                    ->label(__('payroll.amount'))
+                    ->formatStateUsing(fn (string $state): string => __('payroll.amount_lyd', ['amount' => $state])),
+                TextEntry::make('effective_from')->label(__('payroll.effective_from'))->date(),
+                TextEntry::make('effective_to')
+                    ->label(__('payroll.effective_to'))
+                    ->date()
+                    ->placeholder(__('payroll.current_rate')),
+            ]),
         ]);
     }
 
     public static function table(Table $table): Table
     {
         return $table
+            ->extraAttributes(['class' => '[&_.fi-ta-record-content-ctn]:py-0! [&_.fi-ta-record-content]:px-0!'])
             ->columns([
-                TextColumn::make('user.name')
-                    ->label(__('payroll.employee'))
-                    ->searchable()
-                    ->sortable(),
-                TextColumn::make('type')
-                    ->label(__('payroll.compensation_type'))
-                    ->formatStateUsing(fn (CompensationType|string $state): string => $state instanceof CompensationType
-                        ? $state->label()
-                        : $state),
-                TextColumn::make('amount')
-                    ->label(__('payroll.amount'))
-                    ->formatStateUsing(fn (string $state): string => __('payroll.amount_lyd', ['amount' => $state])),
-                TextColumn::make('effective_from')
-                    ->label(__('payroll.effective_from'))
-                    ->date()
-                    ->sortable(),
-                TextColumn::make('effective_to')
-                    ->label(__('payroll.effective_to'))
-                    ->date()
-                    ->placeholder(__('payroll.current_rate')),
+                Split::make([
+                    Stack::make([
+                        TextColumn::make('user.name')
+                            ->label(__('payroll.employee'))
+                            ->searchable()
+                            ->sortable()->weight('semibold'),
+                        TextColumn::make('type')
+                            ->label(__('payroll.compensation_type'))
+                            ->formatStateUsing(fn (CompensationType|string $state): string => $state instanceof CompensationType
+                                ? $state->label()
+                                : $state)->size('xs')->color('gray'),
+                    ])->space(1),
+                    TextColumn::make('amount')
+                        ->label(__('payroll.amount'))
+                        ->formatStateUsing(fn (string $state): string => __('payroll.amount_lyd', ['amount' => $state]))->weight('semibold')->color('warning'),
+                    Stack::make([
+                        TextColumn::make('effective_from')
+                            ->label(__('payroll.effective_from'))
+                            ->date()
+                            ->sortable(),
+                        TextColumn::make('effective_to')
+                            ->label(__('payroll.effective_to'))
+                            ->date()
+                            ->placeholder(__('payroll.current_rate')),
+                    ])->space(1),
+                ])->from('md')->extraAttributes(['class' => 'px-4.5 py-3.5']),
             ])
             ->defaultSort('effective_from', 'desc');
     }

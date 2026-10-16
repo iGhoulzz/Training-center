@@ -21,4 +21,6 @@ return [
     'deactivate_discount' => 'Deactivate',
     'discount_in_use' => 'This discount has already been used and cannot be deleted.',
     'discount_in_use_hint' => 'Deactivate it and create a replacement instead.',
+    'discount_definition' => 'Discount definition',
+    'immutable_hint' => 'Name and percentage are set once. Deactivate a used definition and create its replacement.',
 ];

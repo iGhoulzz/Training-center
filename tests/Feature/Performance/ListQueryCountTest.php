@@ -267,6 +267,7 @@ it('bounds balance reads to selected students despite unrelated charges', functi
     Charge::factory()->count(300)->create();
     $ids = [$first->getKey(), $second->getKey()];
     $query = app(StudentBalanceQuery::class)->withOutstanding(Student::query()->whereKey($ids));
+    expect(strtolower($query->toSql()))->toContain('force index (charges_enrollment_id_unique)');
     $explain = DB::select('EXPLAIN FORMAT=JSON '.$query->toSql(), $query->getBindings());
     $plan = json_decode($explain[0]->EXPLAIN, true, flags: JSON_THROW_ON_ERROR);
     $chargeTables = [];
@@ -287,6 +288,10 @@ it('bounds balance reads to selected students despite unrelated charges', functi
         expect(in_array($table['access_type'], ['ALL', 'index'], true))->toBeFalse(
             'The selected-student balance projection must not scan every charge: '.json_encode($table),
         );
+        expect($table['access_type'])->toBeIn(['ref', 'eq_ref'])
+            ->and($table['key'])->toBe('charges_enrollment_id_unique')
+            ->and($table['used_key_parts'])->toBe(['enrollment_id'])
+            ->and($table['rows_examined_per_scan'])->toBe(1);
     }
     expect($query->orderBy('students.id')->get()->pluck(StudentBalanceQuery::OUTSTANDING_ALIAS)->all())
         ->toBe(['250.000', '256.007']);

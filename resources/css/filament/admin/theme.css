@@ -44,6 +44,9 @@
     --color-fill-subtle: rgb(255 255 255 / 0.04);
     --color-scrollbar: rgb(255 255 255 / 0.12);
 
+    /* Charges' third ageing bucket, from the prototype (P4-T16c). */
+    --color-ageing-orange: #fb923c;
+
     /* The content column: 1440px, the prototype's main. `max-w-admin`. */
     --container-admin: 90rem;
 }
