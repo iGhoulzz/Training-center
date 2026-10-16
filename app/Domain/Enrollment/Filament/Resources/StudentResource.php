@@ -22,6 +22,7 @@ use App\Domain\Staff\Exceptions\StudentHasPortalAccountException;
 use App\Models\User;
 use BackedEnum;
 use Filament\Actions\Action;
+use Filament\Actions\ActionGroup;
 use Filament\Actions\DeleteAction;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Select;
@@ -36,7 +37,7 @@ use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\View;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
-use Filament\Tables\Columns\Layout\Split;
+use Filament\Tables\Columns\Layout\Grid;
 use Filament\Tables\Columns\Layout\Stack;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Columns\ViewColumn;
@@ -230,7 +231,9 @@ class StudentResource extends Resource
                     }),
             ])
             ->columns([
-                Split::make([
+                Grid::make(['default' => 1, 'md' => 3])->extraAttributes([
+                    'class' => 'gap-2 md:gap-3 md:grid-cols-[minmax(118px,1.6fr)_minmax(84px,.9fr)_minmax(66px,.8fr)] [&>*]:min-w-0',
+                ])->schema([
                     Stack::make([
                         ViewColumn::make('identity')->view('filament.enrollment.columns.person')
                             ->searchable(['first_name', 'last_name', 'student_code', 'phone'])
@@ -276,8 +279,9 @@ class StudentResource extends Resource
                         ->label(__('enrollment.outstanding'))
                         ->visible(fn (): bool => auth()->user()?->can('view_any_charge') ?? false)
                         ->formatStateUsing(fn (string $state): string => __('enrollment.money_lyd', ['amount' => $state]))
+                        ->extraAttributes(['class' => 'whitespace-nowrap tabular-nums text-[12.5px]'])
                         ->color('warning'),
-                ])->from('md'),
+                ]),
             ])
             // Surname order: the register is a list of people, and the desk
             // looks someone up by name far more often than by when they were
@@ -296,8 +300,10 @@ class StudentResource extends Resource
             // that a crafted Livewire mount ignores, whereas authorize() runs
             // StudentPolicy::delete() against this record on the server.
             ->recordActions([
-                ...self::portalActions(),
-                DeleteAction::make()->authorize('delete'),
+                ActionGroup::make([
+                    ...self::portalActions(),
+                    DeleteAction::make()->authorize('delete'),
+                ])->iconButton()->dropdownTeleport(),
             ]);
     }
 

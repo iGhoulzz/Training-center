@@ -51,6 +51,67 @@ beforeEach(function () {
     };
 });
 
+it('keeps student row operations compact while preserving delete without edit access', function () {
+    $student = Student::factory()->create();
+    $actor = ($this->actor)(['view_any_student', 'view_student', 'view_any_charge', 'delete_student', 'issue_portal_credential']);
+    $page = Livewire::actingAs($actor)->test(ListStudents::class);
+    $document = new DOMDocument;
+    @$document->loadHTML($page->html());
+    $xpath = new DOMXPath($document);
+    $actions = $xpath->query('//*[contains(concat(" ", normalize-space(@class), " "), " fi-ta-record ")]//*[contains(concat(" ", normalize-space(@class), " "), " fi-ta-actions ")]')->item(0);
+    expect($actions)->not->toBeNull();
+    expect($xpath->query('.//*[contains(concat(" ", normalize-space(@class), " "), " fi-dropdown-trigger ")]', $actions)->length)->toBe(1);
+    expect($xpath->query('.//button[@aria-label="'.__('enrollment.select_student').'"]', $actions)->length)->toBe(1);
+    $grid = $xpath->query('//*[contains(concat(" ", normalize-space(@class), " "), " fi-ta-grid ")]')->item(0);
+    expect($grid)->not->toBeNull();
+    expect($xpath->query('./*', $grid)->length)->toBe(3);
+    expect($xpath->query('.//*[contains(concat(" ", normalize-space(@class), " "), " whitespace-nowrap ")]', $grid)->length)->toBe(1);
+    $page->assertTableActionVisible('delete', $student)->callTableAction('delete', $student);
+    expect($student->fresh()->trashed())->toBeTrue();
+});
+
+it('renders certificate snapshots in explicit responsive columns with an unbroken issue date', function () {
+    $certificate = StudentCertificate::factory()->create(['completed_on' => '2025-01-12', 'issued_at' => '2025-03-05 12:00:00']);
+    $actor = ($this->actor)(['view_any_student_certificate']);
+    $page = Livewire::actingAs($actor)->test(ListStudentCertificates::class);
+    $document = new DOMDocument;
+    @$document->loadHTML($page->html());
+    $xpath = new DOMXPath($document);
+    $grid = $xpath->query('//*[contains(concat(" ", normalize-space(@class), " "), " fi-ta-grid ")]')->item(0);
+    expect($grid)->not->toBeNull();
+    expect($xpath->query('//*[contains(concat(" ", normalize-space(@class), " "), " fi-ta-record-content ")]/*')->length)->toBe(1);
+    expect($xpath->query('./*', $grid)->length)->toBe(4);
+    expect($xpath->query('.//*[contains(concat(" ", normalize-space(@class), " "), " whitespace-nowrap ")]', $grid)->length)->toBeGreaterThanOrEqual(2);
+    $page->assertSee($certificate->reference_number)->assertSee('Mar 5, 2025')->assertDontSee('Jan 12, 2025');
+});
+
+it('keeps certificate operations in a compact authorized row menu', function () {
+    $certificate = StudentCertificate::factory()->create();
+    $actor = ($this->actor)(['view_any_student_certificate', 'replace_student_certificate', 'revoke_student_certificate']);
+    $page = Livewire::actingAs($actor)->test(ListStudentCertificates::class);
+    $document = new DOMDocument;
+    @$document->loadHTML($page->html());
+    $xpath = new DOMXPath($document);
+    expect($xpath->query('//*[contains(concat(" ", normalize-space(@class), " "), " fi-ta-record ")]//*[contains(concat(" ", normalize-space(@class), " "), " fi-dropdown-trigger ")]')->length)->toBe(1);
+    $page->assertTableActionVisible('replace', $certificate)->assertTableActionVisible('revoke', $certificate);
+    $reader = ($this->actor)(['view_any_student_certificate']);
+    Livewire::actingAs($reader)->test(ListStudentCertificates::class)
+        ->assertTableActionHidden('replace', $certificate)->assertTableActionHidden('revoke', $certificate)
+        ->mountTableAction('revoke', $certificate)->assertTableActionNotMounted('revoke');
+});
+
+it('stacks every new student operation inside the preview footer', function () {
+    $actor = ($this->actor)(['view_any_student', 'create_student', 'view_student', 'create_enrollment']);
+    $page = Livewire::actingAs($actor)->test(CreateStudent::class);
+    $document = new DOMDocument;
+    @$document->loadHTML($page->html());
+    $xpath = new DOMXPath($document);
+    $footer = $xpath->query('//aside/*[last()]')->item(0);
+    expect($footer)->not->toBeNull();
+    expect($xpath->query('.//*[contains(concat(" ", normalize-space(@class), " "), " fi-ac ")]/button', $footer)->length)->toBe(4);
+    expect($footer->getAttribute('class'))->toContain('[&_.fi-ac]:grid-cols-1', '[&_.fi-ac]:w-full');
+});
+
 it('keeps over-capacity enrollment available and flagged with the exact grant', function () {
     $batch = Batch::factory()->active()->create(['capacity' => 1]);
     Enrollment::factory()->for($batch)->create();

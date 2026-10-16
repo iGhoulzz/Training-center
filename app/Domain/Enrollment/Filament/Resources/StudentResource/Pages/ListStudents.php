@@ -139,7 +139,7 @@ class ListStudents extends ListRecords
         return $table->recordUrl(null)->recordAction('selectStudent')
             ->pushRecordActions([
                 Action::make('selectStudent')->label(__('enrollment.select_student'))
-                    ->icon('heroicon-o-chevron-right')->authorize('view')
+                    ->icon('heroicon-o-chevron-right')->iconButton()->authorize('view')
                     ->action(function (Student $record): void {
                         $this->selectedStudentId = (int) $record->getKey();
                         unset($this->selectedStudent);
