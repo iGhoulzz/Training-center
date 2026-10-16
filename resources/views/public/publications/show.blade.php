@@ -40,7 +40,7 @@
             <x-public.article-meta :topic="$article->topic" :issued-on="$article->issuedOn" tone="dark" class="mt-5.5 gap-x-2.75 gap-y-1" />
         </x-slot:kicker>
 
-        <p class="mt-4 text-sm text-cream/66">{{ $article->authors }}</p>
+        <p class="mt-4 text-sm wrap-anywhere text-cream/66">{{ $article->authors }}</p>
     </x-public.page-header>
 
     <x-public.container size="narrow" class="pt-11 pb-20">
@@ -58,12 +58,12 @@
             </x-public.button>
         </x-public.card>
 
-        <p class="mt-8.5 text-article-lead whitespace-pre-line text-pretty text-ink-soft">{{ $article->description }}</p>
+        <p class="mt-8.5 text-article-lead whitespace-pre-line text-pretty wrap-anywhere text-ink-soft">{{ $article->description }}</p>
         <p class="mt-5 text-base leading-[1.85] text-pretty text-body">{{ __('publications.public.full_text_note') }}</p>
 
         @if ($related !== [])
             <section aria-labelledby="article-more-heading" class="mt-10 border-t border-navy/10 pt-7">
-                <h2 id="article-more-heading" class="mb-4 text-eyebrow tracking-[0.12em] text-gold-dark uppercase">{{ __('publications.public.more_in', ['topic' => $article->topic]) }}</h2>
+                <h2 id="article-more-heading" class="mb-4 text-eyebrow tracking-[0.12em] wrap-anywhere text-gold-dark uppercase">{{ __('publications.public.more_in', ['topic' => $article->topic]) }}</h2>
 
                 <ul class="flex flex-col gap-2.5">
                     @foreach ($related as $other)
@@ -73,7 +73,7 @@
                                 class="flex items-center gap-3.5 rounded-item border border-navy/10 bg-card px-4.5 py-4 hover:border-gold/55"
                             >
                                 <span class="min-w-0 flex-1">
-                                    <span class="block font-display text-related-title text-navy">{{ $other->title }}</span>
+                                    <span class="block font-display text-related-title wrap-anywhere text-navy">{{ $other->title }}</span>
                                     <span class="mt-1 block text-small text-meta">{{ CarbonImmutable::parse($other->issuedOn)->translatedFormat(__('publications.public.date_format')) }}</span>
                                 </span>
                                 <x-public.icon name="arrow-right" :size="16" class="text-gold-dark rtl:-scale-x-100" />

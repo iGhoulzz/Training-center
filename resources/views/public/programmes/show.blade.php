@@ -23,7 +23,7 @@
 
     <x-public.container size="narrow" class="pt-11 pb-20">
         @if ($programme->description !== '')
-            <p class="text-article-lead text-pretty text-ink-soft">{{ $programme->description }}</p>
+            <p class="text-article-lead text-pretty wrap-anywhere text-ink-soft">{{ $programme->description }}</p>
         @endif
 
         <x-public.card variant="box" class="mt-8 p-5">

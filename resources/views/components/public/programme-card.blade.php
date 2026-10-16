@@ -29,11 +29,11 @@
     <x-public.programme-facts :programme="$programme" part="hours" />
 
     <h{{ $level }} class="text-card-title font-semibold text-navy">
-        <a href="{{ PublicRoute::url('public.programmes.show', ['course' => $programme->id]) }}" class="tap-target block hover:underline">{{ $programme->name }}</a>
+        <a href="{{ PublicRoute::url('public.programmes.show', ['course' => $programme->id]) }}" class="tap-target block wrap-anywhere hover:underline">{{ $programme->name }}</a>
     </h{{ $level }}>
 
     @if ($programme->description !== '')
-        <p class="flex-1 text-base leading-[1.65] text-body-secondary lg:text-ui">{{ $programme->description }}</p>
+        <p class="flex-1 text-base leading-[1.65] wrap-anywhere text-body-secondary lg:text-ui">{{ $programme->description }}</p>
     @endif
 
     <div class="mt-auto border-t border-navy/9 pt-3.5">

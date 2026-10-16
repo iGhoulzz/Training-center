@@ -112,7 +112,7 @@
             </ul>
         </nav>
 
-        <p class="text-compact text-meta">
+        <p class="text-compact wrap-anywhere text-meta">
             @if ($topic !== '' && $search !== '')
                 {{ trans_choice('publications.public.count_in_topic_matching', $total, ['topic' => $topic, 'search' => $search]) }}
             @elseif ($topic !== '')
@@ -143,11 +143,11 @@
                             <x-public.article-meta :topic="$article->topic" :issued-on="$article->issuedOn" :issued-label="false" class="gap-x-2.25 gap-y-1" />
 
                             <h2 class="font-display text-library-title text-balance text-navy">
-                                <a href="{{ PublicRoute::url('public.publications.show', ['slug' => $article->slug]) }}" class="tap-target block hover:text-gold-dark">{{ $article->title }}</a>
+                                <a href="{{ PublicRoute::url('public.publications.show', ['slug' => $article->slug]) }}" class="tap-target block wrap-anywhere hover:text-gold-dark">{{ $article->title }}</a>
                             </h2>
 
-                            <p class="line-clamp-4 flex-1 text-base leading-[1.65] text-pretty text-body-secondary lg:text-ui">{{ $article->description }}</p>
-                            <p class="text-small text-meta">{{ $article->authors }}</p>
+                            <p class="line-clamp-4 flex-1 text-base leading-[1.65] text-pretty wrap-anywhere text-body-secondary lg:text-ui">{{ $article->description }}</p>
+                            <p class="text-small wrap-anywhere text-meta">{{ $article->authors }}</p>
 
                             <div class="flex flex-wrap items-center gap-2 border-t border-navy/8 pt-3.25">
                                 <x-public.button

@@ -52,7 +52,7 @@
         @endisset
 
         <h1 @class([
-            'font-display font-normal text-balance',
+            'font-display font-normal text-balance wrap-anywhere',
             'mt-3 text-page' => $titleSize === 'page' && $size === 'default',
             'mt-4 text-page' => $titleSize === 'page' && $size === 'narrow',
             'mt-4 text-article' => $titleSize === 'article',

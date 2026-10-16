@@ -167,11 +167,11 @@
                                 <x-public.article-meta :topic="$article->topic" :issued-on="$article->issuedOn" class="mb-2 gap-x-2.5 gap-y-1" />
 
                                 <h3 class="font-display text-teaser-title text-balance text-navy">
-                                    <a href="{{ PublicRoute::url('public.publications.show', ['slug' => $article->slug]) }}" class="tap-target block hover:text-gold-dark">{{ $article->title }}</a>
+                                    <a href="{{ PublicRoute::url('public.publications.show', ['slug' => $article->slug]) }}" class="tap-target block wrap-anywhere hover:text-gold-dark">{{ $article->title }}</a>
                                 </h3>
 
-                                <p class="mt-2.75 max-w-160 text-base leading-[1.7] text-pretty text-body-secondary lg:text-sm">{{ $article->description }}</p>
-                                <p class="mt-2.75 text-caption text-meta">{{ $article->authors }}</p>
+                                <p class="mt-2.75 max-w-160 text-base leading-[1.7] text-pretty wrap-anywhere text-body-secondary lg:text-sm">{{ $article->description }}</p>
+                                <p class="mt-2.75 text-caption wrap-anywhere text-meta">{{ $article->authors }}</p>
                             </div>
 
                             <div class="flex min-w-37.5 flex-none flex-col gap-2">

@@ -2,9 +2,11 @@
 
 declare(strict_types=1);
 
+use App\Domain\Enrollment\Models\Course;
 use App\Domain\Publications\Data\PublicArticle;
 use App\Domain\Publications\Models\Article;
 use App\Domain\Publications\Queries\PublicArticleCatalogue;
+use Dom\Element;
 use Dom\HTMLDocument;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Events\QueryExecuted;
@@ -1195,65 +1197,107 @@ it('runs no script on any publications page', function () {
 
 /*
 |--------------------------------------------------------------------------
-| A topic as long as its column wraps (Codex's review of #106)
+| A long user-supplied string wraps instead of widening the page (Codex's review of #106)
 |--------------------------------------------------------------------------
 |
-| `articles.topic` is a string(100), so a valid topic can be one unbroken
-| 100-character word. The library's chip refused to wrap and the topic badge
-| could not break a word, so such a topic widened a 375px page, and the article
-| header's clipping cut it off. This suite runs no browser and cannot measure a
-| layout, so the test pins what makes the wrap possible on every element that
-| prints the topic: no no-wrap of its own or above it, `wrap-anywhere`, and at
-| most the row's width. The lead measured the result in a headless browser
-| (no horizontal scroll at 375, 768 and 1440px), which is in the PR.
+| Every string an administrator types can be one unbroken word as long as its
+| column: a topic (100), a title or a programme name (200), the authors (255), a
+| description, and a visitor's own search (cut to 100). The library's chip refused
+| to wrap and nothing else could break such a word, so it widened a 375px page, and
+| the navy page header's clipping cut it off. This suite runs no browser and cannot
+| measure a layout, so the test pins the property that makes the wrap possible,
+| on every element of every page that prints one of those strings: `wrap-anywhere`
+| in effect (on the element or an ancestor; overflow-wrap inherits), and nothing on
+| the way up that refuses to wrap. The lead measured the result in a headless
+| browser (no horizontal scroll at 375, 768 and 1440px), which is in the PR.
 */
 
-it('lets a topic as long as its column wrap instead of widening the page, wherever it is printed', function () {
-    // One unbroken word of exactly the column's width: the hardest case to wrap.
-    $topic = str_repeat('Arbitrationlawandpractice', 4);
-    expect(mb_strlen($topic))->toBe(100);
+/**
+ * Every element in a page's body whose own text holds one of the sentinels, keyed by
+ * the sentinel it holds.
+ *
+ * @param  array<int, string>  $sentinels
+ * @return array<string, list<Element>>
+ */
+function elementsPrintingSentinels(string $html, array $sentinels): array
+{
+    $document = HTMLDocument::createFromString($html, LIBXML_NOERROR);
+    $found = [];
 
-    $article = Article::factory()->published()->create(['topic' => $topic, 'issued_on' => '2026-10-09']);
+    foreach ($document->body->querySelectorAll('*') as $element) {
+        $own = '';
 
-    // The library holds the chip and the card's badge, the home page the teaser's
-    // badge, the article page the header's badge: four places, counted, so a
-    // search that found nothing cannot pass.
-    $expected = ['/' => 1, '/publications' => 2, '/publications/'.$article->slug => 1];
-
-    foreach ($expected as $path => $count) {
-        $document = HTMLDocument::createFromString((string) $this->get($path)->assertOk()->getContent(), LIBXML_NOERROR);
-        $holders = [];
-
-        foreach ($document->querySelectorAll('a, span') as $element) {
-            $own = '';
-            foreach ($element->childNodes as $child) {
-                if ($child->nodeType === XML_TEXT_NODE) {
-                    $own .= $child->textContent;
-                }
-            }
-
-            if (str_contains($own, $topic)) {
-                $holders[] = $element;
+        foreach ($element->childNodes as $child) {
+            if ($child->nodeType === XML_TEXT_NODE) {
+                $own .= $child->textContent;
             }
         }
 
-        expect($holders)->toHaveCount($count, "{$path} prints the topic in an unexpected number of places.");
-
-        foreach ($holders as $element) {
-            $classes = preg_split('/\s+/', (string) $element->getAttribute('class')) ?: [];
-
-            foreach (['wrap-anywhere', 'max-w-full'] as $needed) {
-                expect(in_array($needed, $classes, true))->toBeTrue("{$path}: a {$element->localName} holding the topic lacks {$needed}.");
+        foreach ($sentinels as $sentinel) {
+            if (str_contains($own, $sentinel)) {
+                $found[$sentinel][] = $element;
             }
+        }
+    }
 
-            foreach (['whitespace-nowrap', 'truncate'] as $refused) {
-                expect(in_array($refused, $classes, true))->toBeFalse("{$path}: a {$element->localName} holding the topic has {$refused}.");
-            }
+    return $found;
+}
 
-            for ($above = $element->parentElement; $above !== null; $above = $above->parentElement) {
-                $aboveClasses = preg_split('/\s+/', (string) $above->getAttribute('class')) ?: [];
+it('lets every long user-supplied string wrap instead of widening the page, wherever it is printed', function () {
+    // Unbroken words, each as long as its column allows (the search is cut to 100).
+    $topic = str_repeat('Arbitrationlawandpractice', 4);
+    $title = str_repeat('Enforcementofforeignawards', 7);
+    $related = str_repeat('Draftingthearbitrationclause', 7);
+    $authors = str_repeat('Dr.Sampleauthorandcoauthor', 9);
+    $description = str_repeat('Thepractitionersreadingofthegrounds', 10);
+    $search = substr(str_repeat('Searchfornothinghere', 5), 0, 100);
+    $course = str_repeat('Commercialarbitrationadvanced', 6);
+    $courseText = str_repeat('Awarddraftingchallengeandenforcement', 10);
 
-                expect(in_array('whitespace-nowrap', $aboveClasses, true))->toBeFalse("{$path}: a {$above->localName} above the topic refuses to wrap.");
+    expect([mb_strlen($topic), mb_strlen($search) <= PublicArticleCatalogue::SEARCH_MAX_LENGTH])->toBe([100, true])
+        ->and(max(mb_strlen($title), mb_strlen($related), mb_strlen($course)))->toBeLessThanOrEqual(200)
+        ->and(mb_strlen($authors))->toBeLessThanOrEqual(255);
+
+    $article = Article::factory()->published()->create([
+        'topic' => $topic, 'title_en' => $title, 'authors' => $authors, 'description_en' => $description, 'issued_on' => '2026-10-09',
+    ]);
+    Article::factory()->published()->create(['topic' => $topic, 'title_en' => $related, 'issued_on' => '2026-10-08']);
+    $programme = Course::factory()->create(['name_en' => $course, 'description_en' => $courseText]);
+
+    // What each page must print, so a page that printed nothing cannot pass.
+    $expected = [
+        '/' => [$topic, $title, $related, $authors, $description, $course, $courseText],
+        '/publications' => [$topic, $title, $related, $authors, $description],
+        '/publications?topic='.rawurlencode($topic) => [$topic, $title, $related, $authors, $description],
+        '/publications?q='.rawurlencode($search) => [$search],
+        '/publications/'.$article->slug => [$topic, $title, $related, $authors, $description],
+        '/programmes' => [$course, $courseText],
+        '/programmes/'.$programme->id => [$course, $courseText],
+    ];
+
+    $sentinels = [$topic, $title, $related, $authors, $description, $search, $course, $courseText];
+
+    foreach ($expected as $path => $mustPrint) {
+        $found = elementsPrintingSentinels((string) $this->get($path)->assertOk()->getContent(), $sentinels);
+
+        foreach ($mustPrint as $sentinel) {
+            expect(array_key_exists($sentinel, $found))->toBeTrue("{$path} does not print one of the long strings, so it was not checked.");
+        }
+
+        foreach ($found as $elements) {
+            foreach ($elements as $element) {
+                $wraps = false;
+
+                for ($node = $element; $node !== null; $node = $node->parentElement) {
+                    $classes = preg_split('/\s+/', (string) $node->getAttribute('class')) ?: [];
+                    $wraps = $wraps || in_array('wrap-anywhere', $classes, true);
+
+                    foreach (['whitespace-nowrap', 'truncate'] as $refused) {
+                        expect(in_array($refused, $classes, true))->toBeFalse("{$path}: a {$node->localName} at or above a long string has {$refused}.");
+                    }
+                }
+
+                expect($wraps)->toBeTrue("{$path}: a {$element->localName} prints a long string with no wrap-anywhere on it or above it.");
             }
         }
     }
