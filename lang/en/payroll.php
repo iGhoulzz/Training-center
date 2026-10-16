@@ -69,7 +69,7 @@ return [
     'state' => 'State',
     'finalized' => 'Finalized',
     'run_total' => 'Frozen line total',
-    'line_count' => ':count lines',
+    'line_count' => '{1} :count line|[0,*] :count lines',
     'review_lines' => 'Review lines',
     'rate_details' => 'Compensation rate',
     'run_details' => 'Run details',

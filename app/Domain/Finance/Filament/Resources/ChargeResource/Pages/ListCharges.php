@@ -44,7 +44,7 @@ class ListCharges extends ListRecords
 
     public function getSubheading(): string
     {
-        return __('charges.outstanding_bills', ['count' => array_sum(array_column($this->ageingTotals, 'count'))]);
+        return trans_choice('charges.outstanding_bills', array_sum(array_column($this->ageingTotals, 'count')));
     }
 
     public function content(Schema $schema): Schema
@@ -80,7 +80,7 @@ class ListCharges extends ListRecords
                 TextEntry::make('age_bar_'.$bucket)->hiddenLabel()->state(new HtmlString(Blade::render(
                     '<x-admin.meter :value="$value" :maximum="$maximum" :label="$label" :tone="$tone" />',
                     ['value' => $total['amount']->dirham, 'maximum' => $maximum,
-                        'label' => __('charges.bill_count', ['count' => $total['count']]), 'tone' => $tone],
+                        'label' => trans_choice('charges.bill_count', $total['count']), 'tone' => $tone],
                 )))->extraAttributes(['class' => '[&_svg]:h-1! '.$colour]),
             ])->extraAttributes(['class' => 'rounded-xl! [&_.fi-section-content]:p-3.75! [&_.fi-sc]:gap-2.25!']);
         }

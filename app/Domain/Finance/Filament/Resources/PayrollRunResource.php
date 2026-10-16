@@ -195,7 +195,7 @@ final class PayrollRunResource extends Resource
                         ->formatStateUsing(fn (string $state): string => __('payroll.amount_lyd', ['amount' => $state]))
                         ->weight('semibold')->extraAttributes(['class' => '[&_.fi-ta-text-item]:text-[22px] tracking-[-0.025em] tabular-nums']),
                     TextColumn::make('line_count')->label(__('payroll.lines'))
-                        ->state(fn (PayrollRun $record): string => __('payroll.line_count', ['count' => $record->lines->count()]))
+                        ->state(fn (PayrollRun $record): string => trans_choice('payroll.line_count', $record->lines->count()))
                         ->size('xs')->color('gray'),
                     TextColumn::make('createdBy.name')->label(__('payroll.created_by'))->description(__('payroll.created_by'))->size('xs')->color('gray'),
                     TextColumn::make('finalized_at')
