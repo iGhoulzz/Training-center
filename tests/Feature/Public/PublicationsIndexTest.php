@@ -232,6 +232,9 @@ it('prints each card from its article: topic, date, title link, description, aut
 
     $links = libraryAnchors($card[0]);
 
+    // The title turns gold-dark on hover, as the design draws it.
+    expect($links[0]['attributes'])->toContain('hover:text-gold-dark');
+
     expect(array_column($links, 'href'))->toBe([
         url('/publications/'.$article->slug),
         url('/publications/'.$article->slug.'/download'),

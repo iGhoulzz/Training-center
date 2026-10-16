@@ -143,7 +143,7 @@
                             <x-public.article-meta :topic="$article->topic" :issued-on="$article->issuedOn" :issued-label="false" class="gap-x-2.25 gap-y-1" />
 
                             <h2 class="font-display text-library-title text-balance text-navy">
-                                <a href="{{ PublicRoute::url('public.publications.show', ['slug' => $article->slug]) }}" class="tap-target block">{{ $article->title }}</a>
+                                <a href="{{ PublicRoute::url('public.publications.show', ['slug' => $article->slug]) }}" class="tap-target block hover:text-gold-dark">{{ $article->title }}</a>
                             </h2>
 
                             <p class="line-clamp-4 flex-1 text-base leading-[1.65] text-pretty text-body-secondary lg:text-ui">{{ $article->description }}</p>

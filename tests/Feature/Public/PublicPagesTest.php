@@ -654,10 +654,13 @@ it('prints the three newest published articles in the home teaser, in order, eac
     $html = (string) test()->get('/')->assertOk()->getContent();
     $section = homeTeaserSection($html);
 
-    preg_match_all('/<h3\b[^>]*>\s*<a\b[^>]*>(.*?)<\/a>/s', $section, $titles);
+    preg_match_all('/<h3\b[^>]*>\s*<a\b[^>]*class="([^"]*)"[^>]*>(.*?)<\/a>/s', $section, $titles);
 
     expect($section)->not->toBe('')
-        ->and($titles[1])->toBe(['Teaser First', 'Teaser Second', 'Teaser Third'])
+        ->and($titles[2])->toBe(['Teaser First', 'Teaser Second', 'Teaser Third'])
+        // The design turns a title gold-dark on hover (it is a 44px target too).
+        ->and(array_map(fn (string $classes): array => array_intersect(['tap-target', 'hover:text-gold-dark'], explode(' ', $classes)), $titles[1]))
+        ->each->toBe(['tap-target', 'hover:text-gold-dark'])
         ->and(substr_count($section, '<article'))->toBe(3)
         ->and(str_contains($html, 'Teaser Fourth Oldest'))->toBeFalse('The fourth article is on the home page.')
         ->and(str_contains($html, 'SENTINEL-UNPUBLISHED-TEASER'))->toBeFalse('An unpublished article is on the home page.');
