@@ -350,6 +350,8 @@ it('matches %, _ and a backslash in a search as themselves, never as patterns', 
 ]);
 
 it('finds nothing for a search that matches nothing, and says so with a way out', function () {
+    app('translator')->addLines(['publications.public.empty_body' => 'EMPTYBODYSENT'], 'en');
+
     libraryArticle(['title_en' => 'Safety Guide']);
 
     $html = libraryBody($this->get('/publications?q=zzzz')->assertOk());
@@ -357,6 +359,8 @@ it('finds nothing for a search that matches nothing, and says so with a way out'
     expect(libraryCardTitles($html))->toBe([])
         ->and(libraryCountLine($html))->toBe('0 MATCHSENT zzzz')
         ->and(str_contains($html, 'EMPTYHEADSENT'))->toBeTrue()
+        // The line under the heading is the design's metadata grey (5.01:1 on white).
+        ->and(preg_match('/<p class="[^"]*\btext-meta\b[^"]*">EMPTYBODYSENT<\/p>/', $html))->toBe(1)
         // The way out is the unfiltered library, with no query at all.
         ->and(libraryAnchor($html, 'CLEARSENT')['href'])->toBe(url('/publications'));
 });

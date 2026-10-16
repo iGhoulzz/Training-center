@@ -131,7 +131,7 @@
                     <p class="text-base text-body">{{ __('publications.public.empty_library') }}</p>
                 @else
                     <h2 class="font-display text-2xl leading-[1.6] text-navy">{{ __('publications.public.empty_heading') }}</h2>
-                    <p class="mt-2 text-base text-body lg:text-sm">{{ __('publications.public.empty_body') }}</p>
+                    <p class="mt-2 text-base text-meta lg:text-sm">{{ __('publications.public.empty_body') }}</p>
                     <x-public.button :href="PublicRoute::url('public.publications.index')" variant="outline" class="mt-6">{{ __('publications.public.empty_clear') }}</x-public.button>
                 @endif
             </div>
