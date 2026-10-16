@@ -11,8 +11,10 @@ use App\Domain\Enrollment\Filament\Resources\BatchResource\Pages\ListBatches;
 use App\Domain\Enrollment\Filament\Resources\BatchResource\Pages\ViewBatch;
 use App\Domain\Enrollment\Filament\Resources\BatchResource\RelationManagers\EnrollmentsRelationManager;
 use App\Domain\Enrollment\Filament\Resources\BatchResource\RelationManagers\InstructorsRelationManager;
+use App\Domain\Enrollment\Filament\Resources\CourseResource;
 use App\Domain\Enrollment\Filament\Resources\CourseResource\Pages\CreateCourse;
 use App\Domain\Enrollment\Filament\Resources\CourseResource\Pages\ListCourses;
+use App\Domain\Enrollment\Filament\Resources\StudentCertificateResource;
 use App\Domain\Enrollment\Filament\Resources\StudentCertificateResource\Pages\ListStudentCertificates;
 use App\Domain\Enrollment\Filament\Resources\StudentResource;
 use App\Domain\Enrollment\Filament\Resources\StudentResource\Pages\CreateStudent;
@@ -32,6 +34,8 @@ use App\Domain\Staff\Filament\Resources\UserResource;
 use App\Domain\Staff\Models\StaffProfile;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
+use Dom\HTMLDocument;
+use Dom\XPath;
 use Filament\Actions\Testing\TestAction;
 use Filament\Facades\Filament;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -99,6 +103,66 @@ it('keeps certificate operations in a compact authorized row menu', function () 
         ->assertTableActionHidden('replace', $certificate)->assertTableActionHidden('revoke', $certificate)
         ->mountTableAction('revoke', $certificate)->assertTableActionNotMounted('revoke');
 });
+
+it('keeps certificate destination links valid after HTML5 parsing for each read grant', function (?string $missingPermission) {
+    $certificate = StudentCertificate::factory()->create();
+    $permissions = ['view_any_student_certificate', 'view_student_certificate', 'view_any_student', 'view_student', 'view_any_course', 'view_course'];
+    $actor = ($this->actor)(array_values(array_diff($permissions, [$missingPermission])));
+    $page = Livewire::actingAs($actor)->test(ListStudentCertificates::class);
+    $html = $page->html();
+    $document = HTMLDocument::createFromString($html, LIBXML_NOERROR | \Dom\HTML_NO_DEFAULT_NS);
+    $xpath = new XPath($document);
+    $grid = $xpath->query('//*[contains(concat(" ", normalize-space(@class), " "), " fi-ta-grid ")]')->item(0);
+    expect($grid)->not->toBeNull();
+    expect($grid->firstElementChild->textContent)->toContain($certificate->student_name);
+    expect($grid->lastElementChild->textContent)->toContain($certificate->status->label());
+    expect($xpath->query('.//a[contains(@class, "fi-ta-record-content")]', $grid)->length)->toBe(0);
+    expect($html)->not->toMatch('/<a\b[^>]*class="fi-ta-record-content"[^>]*>.*?<a\b/s');
+    $destinations = [
+        'view_student_certificate' => [StudentCertificateResource::getUrl('view', ['record' => $certificate]), $certificate->reference_number],
+        'view_student' => [StudentResource::getUrl('view', ['record' => $certificate->enrollment->student]), $certificate->student_name],
+        'view_course' => [CourseResource::getUrl('view', ['record' => $certificate->enrollment->batch->course]), $certificate->course_name],
+    ];
+    foreach ($destinations as $permission => [$url, $label]) {
+        $links = $xpath->query('//a[@href="'.$url.'"]');
+        if ($missingPermission === $permission) {
+            expect($links->length)->toBe(0);
+        } else {
+            expect($links->length)->toBe(1);
+            expect($links->item(0)->textContent)->toContain($label);
+        }
+    }
+})->with([null, 'view_student_certificate', 'view_student', 'view_course']);
+
+it('renders student filters as wrapping pills while retaining scoped counts and filtering', function (bool $canReadCharges) {
+    $active = Student::factory()->create(['status' => StudentStatus::Active]);
+    $prospective = Student::factory()->create(['status' => StudentStatus::Prospective]);
+    $actor = ($this->actor)(['view_any_student', ...($canReadCharges ? ['view_any_charge'] : [])]);
+    $page = Livewire::actingAs($actor)->test(ListStudents::class);
+    $document = HTMLDocument::createFromString($page->html(), LIBXML_NOERROR | \Dom\HTML_NO_DEFAULT_NS);
+    $xpath = new XPath($document);
+    $nav = $xpath->query('//nav[@role="tablist"]')->item(0);
+    expect($nav)->not->toBeNull();
+    expect($nav->parentElement->getAttribute('class'))->toContain('[&_.fi-tabs]:flex-wrap', '[&_.fi-tabs]:gap-2');
+    $all = $xpath->query('./button[@aria-selected="true"]', $nav)->item(0);
+    expect($all->getAttribute('class'))->toContain(
+        'rounded-full',
+        'before:size-[6px]',
+        'border-primary-500/40',
+        'bg-primary-500/14',
+        'focus-visible:ring-2',
+        'focus-visible:ring-primary-400',
+    );
+    expect($xpath->query('.//*[contains(concat(" ", normalize-space(@class), " "), " fi-badge-label ")]', $all)->item(0)->textContent)->toContain('2');
+    expect($xpath->query('./button[contains(@*[name()="wire:click"], "owes_money")]', $nav)->length)->toBe($canReadCharges ? 1 : 0);
+    $page->set('activeTab', 'active')->assertCanSeeTableRecords([$active])->assertCanNotSeeTableRecords([$prospective]);
+    $document = HTMLDocument::createFromString($page->html(), LIBXML_NOERROR | \Dom\HTML_NO_DEFAULT_NS);
+    $xpath = new XPath($document);
+    $selected = $xpath->query('//button[@role="tab" and @aria-selected="true"]')->item(0);
+    expect($selected->textContent)->toContain(StudentStatus::Active->label());
+    expect($selected->getAttribute('class'))->toContain('bg-primary-500/14', 'before:bg-success-400');
+    $page->set('activeTab', 'prospective')->assertCanSeeTableRecords([$prospective])->assertCanNotSeeTableRecords([$active]);
+})->with([true, false]);
 
 it('stacks every new student operation inside the preview footer', function () {
     $actor = ($this->actor)(['view_any_student', 'create_student', 'view_student', 'create_enrollment']);

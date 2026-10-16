@@ -145,6 +145,8 @@ class StudentCertificateResource extends Resource
     {
         return $table
             ->defaultSort('issued_at', 'desc')
+            // Column links must not be nested inside a row-wide anchor.
+            ->recordUrl(null)
             ->columns([
                 Grid::make(['default' => 1, 'md' => 4])->extraAttributes([
                     'class' => 'gap-2 md:gap-[14px] md:grid-cols-[minmax(130px,1.6fr)_minmax(120px,1.4fr)_minmax(90px,1fr)_minmax(80px,.9fr)] [&>*]:min-w-0',
@@ -167,7 +169,9 @@ class StudentCertificateResource extends Resource
                     ])->space(1),
                     TextColumn::make('reference_number')
                         ->label(__('certificates.reference_number'))->searchable()->sortable()
-                        ->color('gray')->extraAttributes(['class' => 'truncate font-mono text-[12.5px]']),
+                        ->color('gray')->extraAttributes(['class' => 'truncate font-mono text-[12.5px]'])
+                        ->url(fn (StudentCertificate $record): ?string => self::canView($record)
+                            ? self::getUrl('view', ['record' => $record]) : null),
                     Stack::make([
                         TextColumn::make('issued_at')
                             ->label(__('certificates.issued_at'))
