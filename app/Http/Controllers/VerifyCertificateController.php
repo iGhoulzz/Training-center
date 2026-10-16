@@ -18,11 +18,12 @@ use Illuminate\View\View;
  * The first thing in this system that serves the open internet (design section
  * 7, P3-T08).
  *
- * THREE ROUTES, ONE CONTROLLER, ONE NOT-FOUND PATH.
+ * FOUR ROUTES, ONE CONTROLLER, ONE NOT-FOUND PATH.
  * ---------------------------------------------------
- * `form()` renders the empty form. `submit()` takes what a person typed,
- * normalizes it, and — if and only if it is shaped like a real reference —
- * redirects to `show()`, which does the actual lookup. Every way this can fail
+ * `form()` renders the empty form. `submit()` takes what a person typed, from
+ * the form's POST or from the home page's GET box (`verify.certificates.lookup`,
+ * P4-T20b), normalizes it, and — if and only if it is shaped like a real
+ * reference — redirects to `show()`, which does the actual lookup. Every way this can fail
  * (blank, malformed, or simply unknown) ends at the SAME private method,
  * `notFound()`, so the four cases the plan requires to be byte-identical
  * really do run the same code.
