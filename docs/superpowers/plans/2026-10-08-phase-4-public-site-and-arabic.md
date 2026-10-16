@@ -1627,6 +1627,43 @@ green.
 
 ---
 
+## Hotfixes
+
+### Task 21 — The role editor keeps every permission
+**Owner: Claude · `p4/t21-role-editor-permissions` · from main · approved by the owner on 2026-10-16**
+
+**Why.** End-to-end QA of `main` (de5f93f) found that saving a role in the roles
+editor, even with nothing changed, removed every permission the form has no
+checkbox for:
+- staff went from 17 permissions to 9, admin from 76 to 51, student from 5 to 0;
+- every staff member, admin and portal student lost panel access.
+
+The editor shows only resource and page permissions (`config/filament-shield.php`
+turns the custom tab off), and the save syncs the role to what the form shows. The
+same gap means a role created in the editor can never be granted
+`access_admin_panel`, which breaks §5: "adding a fifth role must not require a code
+change". The QA report and the lead's reproduction are in the PR.
+
+**File scope**
+- `config/filament-shield.php` — the custom-permissions tab and its list
+- `app/Domain/Staff/Filament/Resources/RoleResource.php`, and its `Pages/` if the
+  fix needs them (seam: before T16e, which restyles them)
+- `lang/en/staff.php` — appended
+- `tests/Feature/Staff/RoleEditorPermissionsTest.php` (new)
+- this plan — this entry
+
+**Contract rules asserted:**
+- saving any seeded role other than `super_admin` with nothing changed leaves its
+  permissions exactly as they were;
+- every permission `RolePermissionSeeder` creates can be ticked on the role form;
+- a role created in the editor can be granted `access_admin_panel`, and its user
+  then reaches the panel;
+- every custom permission's label comes from a translation key.
+
+Who may edit roles is unchanged: super admins only (`RolePolicy`).
+
+---
+
 ## Deferred
 
 | Item | Why not now |
