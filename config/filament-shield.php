@@ -28,7 +28,9 @@ return [
             'pages' => true,
             'widgets' => true,
             'resources' => true,
-            'custom_permissions' => false,
+            // On, or the role editor drops every permission it has no checkbox
+            // for each time a role is saved (P4-T21). See `custom_permissions`.
+            'custom_permissions' => true,
         ],
     ],
 
@@ -271,9 +273,73 @@ return [
     | widgets. Define any custom permissions here and they'll be available
     | when editing roles in your application.
     |
+    | THE ROLE EDITOR SAVES EXACTLY WHAT ITS FORM SHOWS (P4-T21).
+    |
+    | EditRole and CreateRole hand the ticked boxes to UpdateRolePermissionsAction,
+    | which syncs the role to that list and nothing else. A permission with no
+    | checkbox is therefore removed from the role by the next save, however
+    | little else changed — which stripped access_admin_panel from every role the
+    | first time anyone clicked Save, and meant a role created in the editor could
+    | never be given panel access at all.
+    |
+    | So this list is every permission RolePermissionSeeder creates that no
+    | resource, page or widget tab already offers: the abilities that name an act
+    | (access, assign, issue, publish, reverse...) rather than a row, plus the
+    | enrolment and staff-certificate sets, which have no admin resource of their
+    | own. It was worked out by computing the seeded names minus the names the
+    | rendered form offers, not by hand, and it is a plain list of names. The
+    | labels are not here: RoleResource::getTabFormComponentForCustomPermissions()
+    | reads each from `staff.permissions.<name>`.
+    |
+    | A new permission in the seeder that no tab offers belongs in this list, or
+    | it will be dropped from every role the next time one is saved.
+    | RoleEditorPermissionsTest fails until it is, and also fails if a name here
+    | ever starts appearing on a second tab.
+    |
     */
 
-    'custom_permissions' => [],
+    'custom_permissions' => [
+        'access_admin_panel',
+        'access_student_portal',
+        'adjust_charge',
+        'apply_discount',
+        'assign_instructor',
+        'assign_role',
+        'complete_assigned_batch_enrollment',
+        'complete_enrollment',
+        'create_enrollment',
+        'create_staff_certificate',
+        'delete_enrollment',
+        'delete_staff_certificate',
+        'export_financial_report',
+        'finalize_payroll',
+        'issue_portal_credential',
+        'issue_student_certificate',
+        'manage_pricing',
+        'manage_settings',
+        'publish_article',
+        'replace_student_certificate',
+        'reset_portal_credential',
+        'reset_user_password',
+        'reverse_expense',
+        'reverse_payment',
+        'revoke_student_certificate',
+        'run_payroll',
+        'unpublish_article',
+        'update_assigned_batch_enrollment',
+        'update_enrollment',
+        'update_staff_certificate',
+        'view_any_enrollment',
+        'view_any_staff_certificate',
+        'view_enrollment',
+        'view_financial_report',
+        'view_own_balance',
+        'view_own_certificate',
+        'view_own_enrollment',
+        'view_own_student_record',
+        'view_staff_certificate',
+        'write_off_charge',
+    ],
 
     /*
     |--------------------------------------------------------------------------

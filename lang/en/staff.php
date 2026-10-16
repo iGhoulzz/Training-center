@@ -133,4 +133,61 @@ return [
         'administrative' => 'Administrative',
         'support' => 'Support',
     ],
+
+    /*
+     * Labels for the permissions on the role editor's custom tab (P4-T21).
+     *
+     * One key per name in config/filament-shield.php's `custom_permissions`,
+     * read by RoleResource::getTabFormComponentForCustomPermissions(). Each says
+     * what holding the permission lets someone do, because the checkbox is the
+     * only place an administrator sees it. A name added to that list without a
+     * key here would render as the key itself; RoleEditorPermissionsTest fails
+     * first.
+     *
+     * Where a label says "their own" or "they teach", the permission is scoped:
+     * the portal reads for a student's own rows, and the assigned-batch pair for
+     * batches the actor is assigned to teach (see EnrollmentPolicy).
+     */
+    'permissions' => [
+        'access_admin_panel' => 'Sign in to the admin panel',
+        'access_student_portal' => 'Sign in to the student portal',
+        'adjust_charge' => 'Adjust the amount of a charge',
+        'apply_discount' => 'Apply a discount when enrolling a student',
+        'assign_instructor' => 'Assign instructors to batches',
+        'assign_role' => 'Assign roles to users',
+        'complete_assigned_batch_enrollment' => 'Mark enrolments complete on batches they teach',
+        'complete_enrollment' => 'Mark any enrolment complete',
+        'create_enrollment' => 'Enrol students in batches',
+        'create_staff_certificate' => 'Upload staff certificates',
+        'delete_enrollment' => 'Delete enrolments',
+        'delete_staff_certificate' => 'Delete staff certificates',
+        'export_financial_report' => 'Export financial reports',
+        'finalize_payroll' => 'Finalize a payroll run',
+        'issue_portal_credential' => 'Issue a student a portal login',
+        'issue_student_certificate' => 'Issue student certificates',
+        'manage_pricing' => 'Set course prices, batch prices and discounts',
+        'manage_settings' => 'Change system settings',
+        'publish_article' => 'Publish articles',
+        'replace_student_certificate' => 'Replace student certificates',
+        'reset_portal_credential' => 'Reset a student\'s portal password',
+        'reset_user_password' => 'Reset a staff member\'s password',
+        'reverse_expense' => 'Reverse a recorded expense',
+        'reverse_payment' => 'Reverse a recorded payment',
+        'revoke_student_certificate' => 'Revoke student certificates',
+        'run_payroll' => 'Run payroll',
+        'unpublish_article' => 'Unpublish articles',
+        'update_assigned_batch_enrollment' => 'Edit enrolments on batches they teach',
+        'update_enrollment' => 'Edit any enrolment',
+        'update_staff_certificate' => 'Edit staff certificates',
+        'view_any_enrollment' => 'See the list of enrolments',
+        'view_any_staff_certificate' => 'See the list of staff certificates',
+        'view_enrollment' => 'Open an enrolment',
+        'view_financial_report' => 'View financial reports',
+        'view_own_balance' => 'See their own balance in the portal',
+        'view_own_certificate' => 'See their own certificates in the portal',
+        'view_own_enrollment' => 'See their own enrolments in the portal',
+        'view_own_student_record' => 'See their own student record in the portal',
+        'view_staff_certificate' => 'Open a staff certificate',
+        'write_off_charge' => 'Write off a charge',
+    ],
 ];
