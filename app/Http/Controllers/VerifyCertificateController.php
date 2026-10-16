@@ -53,7 +53,12 @@ final class VerifyCertificateController extends Controller
 
     public function submit(Request $request): RedirectResponse|Response
     {
-        $reference = $this->normalize((string) $request->input('reference', ''));
+        // Only a string is a reference. `reference[]=…` arrives as an array, and
+        // a (string) cast of it is a warning Laravel turns into a 500 — a signal
+        // about the input's shape that the uniform miss exists to deny (P4-T20b,
+        // owner, 2026-10-16). Anything else is treated as empty.
+        $input = $request->input('reference');
+        $reference = $this->normalize(is_string($input) ? $input : '');
 
         if (! $this->isWellFormed($reference)) {
             return $this->notFound();

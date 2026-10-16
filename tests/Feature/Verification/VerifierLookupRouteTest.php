@@ -19,9 +19,10 @@ uses(RefreshDatabase::class);
 |
 | The home page's box is a `method="get"` form (owner, 2026-10-13), so it needs a
 | GET route that takes `reference` from the query string. That route is the
-| verifier's own, inside its group, and runs the UNCHANGED submit(): there is no
+| verifier's own, inside its group, and runs the POST's own submit(): there is no
 | second copy of the reference rule, no second kind of miss, and nothing outside
-| the group's headers and `certificate-verification` budget.
+| the group's headers and `certificate-verification` budget. A reference sent as
+| an array gets that same miss on both routes (owner, 2026-10-16).
 |
 | Every expected value below is written out here: the reference is a literal drawn
 | from CertificateReference::ALPHABET, the redirect target is built by hand from
@@ -119,6 +120,32 @@ it('answers an empty, an absent and a malformed reference with the miss show() g
     'empty' => [''],
     'absent' => [null],
     'malformed' => ['NOT-A-REFERENCE'],
+]);
+
+it('answers a reference sent as an array with the same miss, on the lookup and on the POST', function (string $method, string $uri, array $body) {
+    // submit() once cast the input with (string), so an array was a warning and a
+    // 500: a different answer for a different SHAPE of input, which the uniform
+    // miss exists to deny. The lookup made it a link anyone can follow, so both
+    // routes are held to the miss here (owner, 2026-10-16). The paths are written
+    // by hand, so the array encoding is exactly the one a crafted URL would use.
+    $unknown = $this->get(route('verify.certificates.show', ['reference' => LOOKUP_SENTINEL_REFERENCE]));
+    $array = $method === 'GET' ? $this->get($uri) : $this->post($uri, $body);
+
+    $unknown->assertNotFound();
+    $array->assertNotFound();
+
+    expect($array->getContent())->toBe($unknown->getContent());
+
+    [$unknownHeaders, $unknownCookies] = lookupComparableHeaders($unknown);
+    [$arrayHeaders, $arrayCookies] = lookupComparableHeaders($array);
+
+    expect(array_keys($arrayHeaders))->toContain('cache-control', 'referrer-policy', 'x-robots-tag', 'content-type')
+        ->and($arrayHeaders)->toBe($unknownHeaders)
+        ->and($arrayCookies)->toBe($unknownCookies);
+})->with([
+    'lookup, a list' => ['GET', '/verify/lookup?reference[]=TC-2026-ABCDEFGH', []],
+    'lookup, nested keys' => ['GET', '/verify/lookup?reference[a][b]=TC-2026-ABCDEFGH', []],
+    'POST, a list' => ['POST', '/verify/certificates', ['reference' => ['TC-2026-ABCDEFGH']]],
 ]);
 
 it('carries the verifier group\'s middleware, is a GET, stays off the reference path and runs submit()', function () {

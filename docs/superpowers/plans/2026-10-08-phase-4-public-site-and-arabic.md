@@ -162,7 +162,7 @@ first attempt.
 | `resources/views/verify/*` | **T14 → T20c → T18** | T14 restyles; T20c brings them to the prototype's exact values and the real brand; T18 makes them directional and converts their three `route()` call sites to `PublicRoute`, **and the six `url('/')` links T14's headers added** (two a page), which no `route()` search finds. Both keep them standalone and scriptless |
 | `resources/views/public/**` (pages), `resources/views/components/public/*` | **T11 → T12 → T13 → T20a → T20b → T18** | T11–T13 build the pages and components; T20a defines the design system (tokens, components, no inline `style`) and brings the existing components onto it; T20b rebuilds the pages to the prototype. Every later public page uses the system, and none adds an inline `style` |
 | `resources/css/filament/admin/theme.css` | **T16a → T20c** | T16a creates the admin theme; T20c checks every token against `Filament Revamp.dc.html`. T16b–T16e read it and do not edit it |
-| `app/Http/Controllers/VerifyCertificateController.php` | **T20c → T18** | T20c (lead's amendment, 2026-10-13): one line, so the result's `centreName` reads `config('public_site.brand.name')` and not `app.name`, which is now the short display name. T18: one line, the `submit()` redirect goes through `PublicRoute`. In neither task do the lookup, the normalisation or the uniform miss move |
+| `app/Http/Controllers/VerifyCertificateController.php` | **T20c → T20b → T18** | T20c (lead's amendment, 2026-10-13): one line, so the result's `centreName` reads `config('public_site.brand.name')` and not `app.name`, which is now the short display name. T20b (owner, 2026-10-16): `submit()` reads `reference` only as a string, so an array is the uniform miss rather than a 500. T18: one line, the `submit()` redirect goes through `PublicRoute`. In neither task do the lookup, the normalisation or the uniform miss move |
 | `app/Support/PublicRoute.php` | **T11 only** | Complete from the start, so T18 adds routes and a locale without editing it |
 | `app/Domain/Enrollment/Models/Batch.php` | **T05 only** | Scopes beside the existing predicates |
 | `app/Domain/Enrollment/Services/EnrollmentQueryService.php`, `app/Domain/Finance/Data/EnrollmentBalance.php`, `app/Domain/Finance/Filament/Portal/Pages/MyBalance.php`, `resources/views/portal/my-balance.blade.php`, `lang/en/portal.php`, `tests/Feature/Finance/StudentBalanceQueryTest.php`, `tests/Feature/Portal/MyBalancePageTest.php`, `tests/Feature/Portal/PortalQueryCountTest.php` | **T05 only** | Owner-approved scope expansion (2026-10-10): show localized course names and batch codes on balance rows now. Ownership, existing unbilled-row handling and fixed query counts are preserved regression behavior |
@@ -1141,7 +1141,10 @@ and the centre's name.
     reads `reference` from the request, normalises it, redirects a well-formed
     value to `verify.certificates.show`, and returns the uniform miss for
     anything else. The new route therefore adds no second copy of the
-    reference rule, and no controller is edited.
+    reference rule, and no controller is edited for it. (T20b later changes one
+    thing in `submit()`, with the owner's approval of 2026-10-16: an array
+    `reference` is treated as empty, so it gets the uniform miss and not a 500.
+    See T20b's file scope.)
   - **The path must not fall under `verify/certificates/{reference}`.** That
     segment is deliberately unconstrained, so an overlapping path would be read
     as a reference.
@@ -1273,6 +1276,13 @@ and the centre's name.
     - the route carries the group's response headers and shares the
       `certificate-verification` limiter's budget;
     - the home form's `action` resolves to the route by name.
+  - `app/Http/Controllers/VerifyCertificateController.php` — **`submit()` reads
+    `reference` only as a string** (owner, 2026-10-16). Its `(string)` cast turned
+    `reference[]=…` into a warning and a 500 rather than the uniform miss, on the
+    existing POST and, through the lookup, as a plain link. Anything but a string
+    is treated as empty. `VerifierLookupRouteTest` holds both routes to the miss.
+    The lookup, the normalisation and the uniform miss do not move (seam, after
+    T20c).
 
 **Does.** Each page section by section against the prototype's HERO, ABOUT,
 PROGRAMMES, CERTIFICATE VERIFIER, PUBLICATIONS TEASER, CONTACT, PUBLICATIONS
