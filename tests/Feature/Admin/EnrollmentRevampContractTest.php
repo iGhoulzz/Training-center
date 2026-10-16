@@ -89,6 +89,80 @@ it('renders certificate snapshots in explicit responsive columns with an unbroke
     $page->assertSee($certificate->reference_number)->assertSee('Mar 5, 2025')->assertDontSee('Jan 12, 2025');
 });
 
+it('keeps the optional completion date available and sorts it when enabled', function () {
+    $early = StudentCertificate::factory()->create(['completed_on' => '2025-01-12']);
+    $late = StudentCertificate::factory()->create(['completed_on' => '2025-02-15']);
+    $actor = ($this->actor)(['view_any_student_certificate']);
+    $page = Livewire::actingAs($actor)->test(ListStudentCertificates::class);
+    expect(strip_tags($page->html()))->not->toContain('Jan 12, 2025', 'Feb 15, 2025');
+    $page->assertTableColumnExists('completed_on')
+        ->toggleAllTableColumns()
+        ->sortTable('completed_on', 'asc')->assertCanSeeTableRecords([$early, $late], inOrder: true)
+        ->sortTable('completed_on', 'desc')->assertCanSeeTableRecords([$late, $early], inOrder: true);
+    expect(strip_tags($page->html()))->toContain('Jan 12, 2025', 'Feb 15, 2025');
+    $page = Livewire::actingAs($actor)->test(ListStudentCertificates::class);
+    expect(strip_tags($page->html()))->toContain('Jan 12, 2025', 'Feb 15, 2025');
+    $page->toggleAllTableColumns(false);
+    expect(strip_tags($page->html()))->not->toContain('Jan 12, 2025', 'Feb 15, 2025');
+    $page = Livewire::actingAs($actor)->test(ListStudentCertificates::class);
+    expect(strip_tags($page->html()))->not->toContain('Jan 12, 2025', 'Feb 15, 2025');
+});
+
+it('contains long certificate text on the rendered text items with and without links', function (bool $canFollowLinks) {
+    $certificate = StudentCertificate::factory()->create([
+        'student_name' => str_repeat('LongStudentName', 12),
+        'course_name' => str_repeat('LongCourseName', 12),
+    ]);
+    $actor = ($this->actor)(['view_any_student_certificate', ...($canFollowLinks
+        ? ['view_student_certificate', 'view_any_student', 'view_student', 'view_any_course', 'view_course'] : [])]);
+    $page = Livewire::actingAs($actor)->test(ListStudentCertificates::class);
+    $document = HTMLDocument::createFromString($page->html(), LIBXML_NOERROR | \Dom\HTML_NO_DEFAULT_NS);
+    $xpath = new XPath($document);
+    $items = $xpath->query('//*[contains(concat(" ", normalize-space(@class), " "), " fi-ta-grid ")]//*[contains(concat(" ", normalize-space(@class), " "), " fi-ta-text-item ") and contains(concat(" ", normalize-space(@class), " "), " truncate ")]');
+    expect($items->length)->toBe(4);
+    foreach ($items as $item) {
+        expect(explode(' ', $item->getAttribute('class')))->toContain('block');
+    }
+    $page->assertSee($certificate->student_name)->assertSee($certificate->course_name);
+})->with([true, false]);
+
+it('reserves the same certificate action track for rows with and without lifecycle actions', function (string $grant) {
+    $valid = StudentCertificate::factory()->create();
+    $revoked = StudentCertificate::factory()->revoked()->create();
+    $permissions = match ($grant) {
+        'reader' => ['view_student_certificate'],
+        'operator' => ['replace_student_certificate', 'revoke_student_certificate'],
+        'all' => ['view_student_certificate', 'replace_student_certificate', 'revoke_student_certificate'],
+        default => [],
+    };
+    $actor = ($this->actor)(['view_any_student_certificate', ...$permissions]);
+    $page = Livewire::actingAs($actor)->test(ListStudentCertificates::class);
+    $document = HTMLDocument::createFromString($page->html(), LIBXML_NOERROR | \Dom\HTML_NO_DEFAULT_NS);
+    $xpath = new XPath($document);
+    $rows = $xpath->query('//*[contains(concat(" ", normalize-space(@class), " "), " fi-ta-record ")]');
+    expect($rows->length)->toBe(2);
+    foreach ($rows as $row) {
+        expect($row->getAttribute('class'))->toContain('md:[&_.fi-ta-record-content-ctn]:grid', 'md:[&_.fi-ta-record-content-ctn]:grid-cols-[minmax(0,1fr)_4.5rem]');
+        $track = $xpath->query('./div[contains(concat(" ", normalize-space(@class), " "), " fi-ta-record-content-ctn ")]', $row)->item(0);
+        expect($track)->not->toBeNull();
+        expect($xpath->query('./div[1]//*[contains(concat(" ", normalize-space(@class), " "), " fi-ta-grid ")]', $track)->length)->toBe(1);
+    }
+    if (in_array($grant, ['reader', 'all'], true)) {
+        foreach ([$valid, $revoked] as $certificate) {
+            $page->assertTableActionVisible('view', $certificate);
+            expect($xpath->query('//a[@href="'.StudentCertificateResource::getUrl('view', ['record' => $certificate]).'" and contains(@class, "fi-dropdown-list-item") ]')->length)->toBe(1);
+        }
+        expect($xpath->query('//*[contains(concat(" ", normalize-space(@class), " "), " fi-ta-record ")]//*[contains(concat(" ", normalize-space(@class), " "), " fi-dropdown-trigger ")]')->length)->toBe(2);
+        $this->actingAs($actor)->get(StudentCertificateResource::getUrl('view', ['record' => $valid]))->assertSuccessful();
+    } else {
+        $page->assertTableActionHidden('view', $valid)->assertTableActionHidden('view', $revoked)
+            ->mountTableAction('view', $valid)->assertSet('mountedActions', []);
+        $this->actingAs($actor)->get(StudentCertificateResource::getUrl('view', ['record' => $valid]))->assertForbidden();
+        expect($xpath->query('//*[contains(concat(" ", normalize-space(@class), " "), " fi-ta-record ")]//*[contains(concat(" ", normalize-space(@class), " "), " fi-dropdown-trigger ")]')->length)->toBe($grant === 'operator' ? 1 : 0);
+    }
+    $page->assertTableActionHidden('replace', $revoked)->assertTableActionHidden('revoke', $revoked);
+})->with(['reader', 'operator', 'all', 'register only']);
+
 it('keeps certificate operations in a compact authorized row menu', function () {
     $certificate = StudentCertificate::factory()->create();
     $actor = ($this->actor)(['view_any_student_certificate', 'replace_student_certificate', 'revoke_student_certificate']);
@@ -100,9 +174,19 @@ it('keeps certificate operations in a compact authorized row menu', function () 
     $page->assertTableActionVisible('replace', $certificate)->assertTableActionVisible('revoke', $certificate);
     $reader = ($this->actor)(['view_any_student_certificate']);
     Livewire::actingAs($reader)->test(ListStudentCertificates::class)
-        ->assertTableActionHidden('replace', $certificate)->assertTableActionHidden('revoke', $certificate)
-        ->mountTableAction('revoke', $certificate)->assertTableActionNotMounted('revoke');
+        ->assertTableActionHidden('replace', $certificate)->assertTableActionHidden('revoke', $certificate);
 });
+
+it('refuses crafted certificate lifecycle action mounts without its grant', function (string $action) {
+    $certificate = StudentCertificate::factory()->create();
+    $actor = ($this->actor)(['view_any_student_certificate', $action.'_student_certificate']);
+    Livewire::actingAs($actor)->test(ListStudentCertificates::class)->mountTableAction($action, $certificate)
+        ->assertSet('mountedActions.0.name', $action)
+        ->assertSet('mountedActions.0.context.recordKey', (string) $certificate->getKey());
+    $reader = ($this->actor)(['view_any_student_certificate']);
+    Livewire::actingAs($reader)->test(ListStudentCertificates::class)
+        ->mountTableAction($action, $certificate)->assertSet('mountedActions', []);
+})->with(['replace', 'revoke']);
 
 it('keeps certificate destination links valid after HTML5 parsing for each read grant', function (?string $missingPermission) {
     $certificate = StudentCertificate::factory()->create();
@@ -128,7 +212,7 @@ it('keeps certificate destination links valid after HTML5 parsing for each read 
         if ($missingPermission === $permission) {
             expect($links->length)->toBe(0);
         } else {
-            expect($links->length)->toBe(1);
+            expect($links->length)->toBe($permission === 'view_student_certificate' ? 2 : 1);
             expect($links->item(0)->textContent)->toContain($label);
         }
     }
@@ -144,6 +228,21 @@ it('renders student filters as wrapping pills while retaining scoped counts and 
     $nav = $xpath->query('//nav[@role="tablist"]')->item(0);
     expect($nav)->not->toBeNull();
     expect($nav->parentElement->getAttribute('class'))->toContain('[&_.fi-tabs]:flex-wrap', '[&_.fi-tabs]:gap-2');
+    expect(preg_match('/\[&_\.fi-badge\]:opacity-(\d+)/', $nav->parentElement->getAttribute('class'), $opacityMatch))->toBe(1);
+    $opacity = (int) $opacityMatch[1] / 100;
+    $luminance = function (array $color): float {
+        $linear = array_map(fn (float $channel): float => $channel / 255 <= 0.04045
+            ? $channel / 255 / 12.92 : (($channel / 255 + 0.055) / 1.055) ** 2.4, $color);
+
+        return 0.2126 * $linear[0] + 0.7152 * $linear[1] + 0.0722 * $linear[2];
+    };
+    foreach ([[[255, 255, 255], 0.04, [156, 163, 175]], [[245, 158, 11], 0.14, [251, 191, 36]]] as [$fill, $fillOpacity, $text]) {
+        $surface = array_map(fn (int $channel, int $base): float => $channel * $fillOpacity + $base * (1 - $fillOpacity), $fill, [3, 7, 18]);
+        $badge = array_map(fn (int $channel, float $base): float => $channel * $opacity + $base * (1 - $opacity), $text, $surface);
+        expect(($luminance($badge) + 0.05) / ($luminance($surface) + 0.05))->toBeGreaterThanOrEqual(4.5);
+    }
+    $noPortal = $xpath->query('./button[contains(@*[name()="wire:click"], "no_portal")]', $nav)->item(0);
+    expect($noPortal->getAttribute('class'))->toContain('before:bg-no-portal');
     $all = $xpath->query('./button[@aria-selected="true"]', $nav)->item(0);
     expect($all->getAttribute('class'))->toContain(
         'rounded-full',
@@ -184,6 +283,9 @@ it('keeps over-capacity enrollment available and flagged with the exact grant', 
     $actor = ($this->actor)([...$permissions, 'create_enrollment']);
     Livewire::actingAs($actor)->test(EnrollmentsRelationManager::class, [
         'ownerRecord' => $batch, 'pageClass' => ViewBatch::class,
+    ])->mountTableAction('enroll')->assertSet('mountedActions.0.name', 'enroll');
+    Livewire::actingAs($actor)->test(EnrollmentsRelationManager::class, [
+        'ownerRecord' => $batch, 'pageClass' => ViewBatch::class,
     ])->callTableAction('enroll', null, ['student_id' => $student->getKey()])
         ->assertNotified(__('enrollment.over_capacity_warning'));
     expect($batch->enrollments()->count())->toBe(2)->and(Charge::query()->count())->toBe(1);
@@ -193,7 +295,7 @@ it('keeps over-capacity enrollment available and flagged with the exact grant', 
     Livewire::actingAs($denied)->test(EnrollmentsRelationManager::class, [
         'ownerRecord' => $batch, 'pageClass' => ViewBatch::class,
     ])->assertTableActionHidden('enroll')
-        ->mountTableAction('enroll')->assertTableActionNotMounted('enroll');
+        ->mountTableAction('enroll')->assertSet('mountedActions', []);
     expect($batch->enrollments()->count())->toBe(2);
 });
 
@@ -202,7 +304,7 @@ it('shows debt on the restyled issue form without blocking the exact issuer', fu
     Charge::factory()->for($enrollment)->create(['list_price' => '750.125', 'amount' => '750.125']);
     $actor = ($this->actor)(['view_any_student_certificate', 'issue_student_certificate']);
     $component = Livewire::actingAs($actor)->test(ListStudentCertificates::class)
-        ->mountAction('issue')->setActionData(['enrollment_id' => $enrollment->getKey()]);
+        ->mountAction('issue')->assertSet('mountedActions.0.name', 'issue')->setActionData(['enrollment_id' => $enrollment->getKey()]);
     $page = $component->instance();
     $entry = $page->getSchema($page->getMountedActionSchemaName())->getComponent('outstanding_balance');
     expect($entry)->not->toBeNull()->and((string) $entry->getState())->toContain('750.125');
@@ -210,7 +312,7 @@ it('shows debt on the restyled issue form without blocking the exact issuer', fu
     expect(StudentCertificate::query()->where('enrollment_id', $enrollment->getKey())->count())->toBe(1);
     $denied = ($this->actor)(['view_any_student_certificate']);
     Livewire::actingAs($denied)->test(ListStudentCertificates::class)
-        ->assertActionHidden('issue')->mountAction('issue')->assertActionNotMounted('issue');
+        ->assertActionHidden('issue')->mountAction('issue')->assertSet('mountedActions', []);
     expect(StudentCertificate::query()->count())->toBe(1);
 });
 
@@ -221,16 +323,18 @@ it('cannot issue a portal login without email on the restyled student register',
     $usersBefore = User::query()->count();
     Livewire::actingAs($actor)->test(ListStudents::class)
         ->assertTableActionDisabled('issuePortalCredential', $student)
-        ->mountTableAction('issuePortalCredential', $student)->assertTableActionNotMounted('issuePortalCredential');
+        ->mountTableAction('issuePortalCredential', $student)->assertSet('mountedActions', []);
     expect($student->fresh()->user_id)->toBeNull()->and(User::query()->count())->toBe($usersBefore);
     $withEmail = Student::factory()->create();
-    Livewire::actingAs($actor)->test(ListStudents::class)->callTableAction('issuePortalCredential', $withEmail);
+    Livewire::actingAs($actor)->test(ListStudents::class)->mountTableAction('issuePortalCredential', $withEmail)
+        ->assertSet('mountedActions.0.name', 'issuePortalCredential')
+        ->assertSet('mountedActions.0.context.recordKey', (string) $withEmail->getKey())->callMountedAction();
     expect($withEmail->fresh()->user_id)->not->toBeNull();
     $denied = ($this->actor)($permissions);
     $another = Student::factory()->create();
     Livewire::actingAs($denied)->test(ListStudents::class)
         ->assertTableActionHidden('issuePortalCredential', $another)
-        ->mountTableAction('issuePortalCredential', $another)->assertTableActionNotMounted('issuePortalCredential');
+        ->mountTableAction('issuePortalCredential', $another)->assertSet('mountedActions', []);
     expect($another->fresh()->user_id)->toBeNull();
 });
 
@@ -308,7 +412,7 @@ it('issues portal credentials from the selected student footer with the same ema
     Livewire::actingAs($actor)->test(ListStudents::class)
         ->set('selectedStudentId', $noEmail->getKey())->assertActionDisabled(TestAction::make('issuePortalCredential')->schemaComponent('studentDetail.actions', 'content'))
         ->mountAction(TestAction::make('issuePortalCredential')->schemaComponent('studentDetail.actions', 'content'))
-        ->assertActionNotMounted(TestAction::make('issuePortalCredential')->schemaComponent('studentDetail.actions', 'content'));
+        ->assertSet('mountedActions', []);
     expect($noEmail->fresh()->user_id)->toBeNull();
 });
 

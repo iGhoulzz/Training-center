@@ -161,7 +161,8 @@ first attempt.
 | `config/public_site.php`, `.env.example` | **T11 → T12 → T20a** | Owner-approved amendment (2026-10-12). T11 creates the public contact details: the centre's real public email and telephone as committed defaults, each overridable from `.env`, plus a map-link key that defaults to null. T12 sets the map link's default once the owner provides it, and touches nothing else. T20a adds `brand` (the real name, owner, 2026-10-13) and sets `APP_NAME` |
 | `resources/views/verify/*` | **T14 → T20c → T18** | T14 restyles; T20c brings them to the prototype's exact values and the real brand; T18 makes them directional and converts their three `route()` call sites to `PublicRoute`, **and the six `url('/')` links T14's headers added** (two a page), which no `route()` search finds. Both keep them standalone and scriptless |
 | `resources/views/public/**` (pages), `resources/views/components/public/*` | **T11 → T12 → T13 → T20a → T20b → T18** | T11–T13 build the pages and components; T20a defines the design system (tokens, components, no inline `style`) and brings the existing components onto it; T20b rebuilds the pages to the prototype. Every later public page uses the system, and none adds an inline `style` |
-| `resources/css/filament/admin/theme.css` | **T16a → T20c** | T16a creates the admin theme; T20c checks every token against `Filament Revamp.dc.html`. T16b–T16e read it and do not edit it |
+| `resources/css/filament/admin/theme.css` | **T16a → T20c → T16b (token only)** | T16a creates the admin theme; T20c checks every token against `Filament Revamp.dc.html`. T16b adds only the no-portal dot token (review-approved scope amendment, 2026-10-16); T16c–T16e read it and do not edit it |
+| `resources/views/components/admin/side-panel.blade.php` | **T16b** | Review-approved scope amendment, 2026-10-16: the student preview footer's stacked actions |
 | `app/Http/Controllers/VerifyCertificateController.php` | **T20c → T18** | T20c (lead's amendment, 2026-10-13): one line, so the result's `centreName` reads `config('public_site.brand.name')` and not `app.name`, which is now the short display name. T18: one line, the `submit()` redirect goes through `PublicRoute`. In neither task do the lookup, the normalisation or the uniform miss move |
 | `app/Support/PublicRoute.php` | **T11 only** | Complete from the start, so T18 adds routes and a locale without editing it |
 | `app/Domain/Enrollment/Models/Batch.php` | **T05 only** | Scopes beside the existing predicates |
@@ -1377,7 +1378,7 @@ Round 1 had this as one task over roughly twenty screens. It is five, split by
 domain so each PR is reviewable and each carries the contract rules that belong
 to its screens. **T16a lands first, then T20c corrects its tokens against the
 prototype; T16b–T16e then run one at a time**, because each restyles against
-that theme and none may edit it.
+that theme. T16b's sole theme edit is the approved no-portal dot token below.
 
 The contract's rules are the acceptance criteria. **A revamp that makes any of
 them read differently has broken the system while passing its own tests**, so
@@ -1410,6 +1411,15 @@ properties only · `composer verify` green.
 - `app/Domain/Enrollment/Filament/Pages/CertificateIssuanceQueue.php` and its view
 - `lang/en/enrollment.php`, `lang/en/certificates.php` — appended
 - `tests/Feature/Admin/EnrollmentRevampContractTest.php`
+- `resources/css/filament/admin/theme.css` — the no-portal dot token only
+  (review-approved scope amendment, 2026-10-16)
+- `resources/views/components/admin/side-panel.blade.php` — the student preview
+  footer's stacked actions (review-approved scope amendment, 2026-10-16)
+
+**Review decisions (owner, 2026-10-16).** Keep `completed_on` sortable and
+toggleable, hidden by default. Add an explicitly authorized View item to the
+certificate row menu while keeping column links and no row-wide URL. Reserve
+the same desktop action track for every row, including rows without an action.
 
 **Contract rules asserted:** over-capacity enrolment is flagged, never blocked ·
 an outstanding balance never blocks a certificate · a student with no email gets

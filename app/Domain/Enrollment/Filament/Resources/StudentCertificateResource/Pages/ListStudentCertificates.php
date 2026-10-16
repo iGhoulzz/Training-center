@@ -34,6 +34,28 @@ class ListStudentCertificates extends ListRecords
 {
     protected static string $resource = StudentCertificateResource::class;
 
+    /** Initialize the optional column manager, which Filament skips for layout tables. */
+    public function initTableColumnManager(): void
+    {
+        if (blank($this->tableColumns)) {
+            $this->setTableColumns($this->loadTableColumnsFromSession());
+        }
+
+        $this->applyTableColumnManager();
+    }
+
+    /**
+     * Snapshot columns stay fixed; only the completion date enters the manager.
+     *
+     * @return array<int, array{type: string, name: string, label: string, isHidden: bool, isToggled: bool, isToggleable: bool, isToggledHiddenByDefault: ?bool}>
+     */
+    public function getDefaultTableColumnState(): array
+    {
+        $column = $this->getTable()->getColumn('completed_on');
+
+        return $column === null ? [] : [$this->mapTableColumnToArray($column)];
+    }
+
     public function content(Schema $schema): Schema
     {
         $components = [];

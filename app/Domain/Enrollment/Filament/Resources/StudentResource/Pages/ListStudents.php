@@ -116,7 +116,7 @@ class ListStudents extends ListRecords
                 'active' => 'before:bg-success-400',
                 'prospective' => 'before:bg-info-400',
                 'owes_money' => 'before:bg-primary-400',
-                'no_portal' => 'before:bg-[#a78bfa]',
+                'no_portal' => 'before:bg-no-portal',
                 default => 'before:bg-gray-400',
             };
             $tab->extraAttributes(fn (): array => ['class' => implode(' ', [
@@ -134,7 +134,7 @@ class ListStudents extends ListRecords
     public function getTabsContentComponent(): Component
     {
         return parent::getTabsContentComponent()->extraAttributes([
-            'class' => '[&_.fi-tabs]:mx-0 [&_.fi-tabs]:flex-wrap [&_.fi-tabs]:gap-2 [&_.fi-tabs]:overflow-visible [&_.fi-tabs]:rounded-none [&_.fi-tabs]:bg-transparent [&_.fi-tabs]:p-0 [&_.fi-tabs]:shadow-none [&_.fi-tabs]:ring-0 [&_.fi-tabs-item-label]:text-inherit [&_.fi-badge]:min-w-0 [&_.fi-badge]:bg-transparent [&_.fi-badge]:p-0 [&_.fi-badge]:text-[12.5px] [&_.fi-badge]:tracking-normal [&_.fi-badge]:text-inherit [&_.fi-badge]:opacity-60 [&_.fi-badge]:ring-0',
+            'class' => '[&_.fi-tabs]:mx-0 [&_.fi-tabs]:flex-wrap [&_.fi-tabs]:gap-2 [&_.fi-tabs]:overflow-visible [&_.fi-tabs]:rounded-none [&_.fi-tabs]:bg-transparent [&_.fi-tabs]:p-0 [&_.fi-tabs]:shadow-none [&_.fi-tabs]:ring-0 [&_.fi-tabs-item-label]:text-inherit [&_.fi-badge]:min-w-0 [&_.fi-badge]:bg-transparent [&_.fi-badge]:p-0 [&_.fi-badge]:text-[12.5px] [&_.fi-badge]:tracking-normal [&_.fi-badge]:text-inherit [&_.fi-badge]:opacity-74 [&_.fi-badge]:ring-0',
         ]);
     }
 
