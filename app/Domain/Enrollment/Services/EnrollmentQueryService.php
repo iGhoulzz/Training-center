@@ -382,6 +382,43 @@ final class EnrollmentQueryService
     /** The student identity alias contributed to a report query. */
     public const ENROLLMENT_STUDENT_ID = 'enrollment_student_id';
 
+    public const ENROLLMENT_STUDENT_FIRST_NAME = 'enrollment_student_first_name';
+
+    public const ENROLLMENT_STUDENT_LAST_NAME = 'enrollment_student_last_name';
+
+    public const ENROLLMENT_STUDENT_AVAILABLE = 'enrollment_student_available';
+
+    /**
+     * Project student labels onto a charge list in its existing query. A derived
+     * table keeps reference/id columns unambiguous for Filament search and sort.
+     * Students may be soft-deleted; their financial history still names them.
+     *
+     * Built from Enrollment's own builder and taken `toBase()`, never
+     * `DB::table('enrollments')`, which ActionBoundaryArchTest forbids in any
+     * file: the same rule, and the same way out, as the lookup above.
+     */
+    public function joinEnrollmentStudentLabelsTo(Builder $query, string $enrollmentIdColumn): Builder
+    {
+        $labels = Enrollment::query()
+            ->join('students', 'students.id', '=', 'enrollments.student_id')
+            ->select([
+                'enrollments.id as label_enrollment_id',
+                'students.id as '.self::ENROLLMENT_STUDENT_ID,
+                'students.first_name as '.self::ENROLLMENT_STUDENT_FIRST_NAME,
+                'students.last_name as '.self::ENROLLMENT_STUDENT_LAST_NAME,
+            ])
+            ->selectRaw('students.deleted_at IS NULL as '.self::ENROLLMENT_STUDENT_AVAILABLE)
+            ->toBase();
+
+        return $query->leftJoinSub($labels, 'student_labels', 'student_labels.label_enrollment_id', '=', $enrollmentIdColumn)
+            ->addSelect([
+                'student_labels.'.self::ENROLLMENT_STUDENT_ID,
+                'student_labels.'.self::ENROLLMENT_STUDENT_FIRST_NAME,
+                'student_labels.'.self::ENROLLMENT_STUDENT_LAST_NAME,
+                'student_labels.'.self::ENROLLMENT_STUDENT_AVAILABLE,
+            ]);
+    }
+
     /**
      * Add only the enrolment identity a report needs to somebody else's query.
      *

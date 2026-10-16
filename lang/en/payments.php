@@ -113,4 +113,13 @@ return [
 
     // PaymentResource::downloadReceiptAction() (P35-T06).
     'download_receipt' => 'Download receipt',
+    'tenders' => 'Tenders',
+    'tender_chip' => ':method :amount',
+    'payment_state' => 'State',
+    'state_recorded' => 'Recorded',
+    'state_reversed' => 'Reversed',
+    'receipt_generating' => 'Generating…',
+    'tender_report' => 'Daily tender report',
+    'register_hint' => 'Finance · Tender methods appear on each receipt row. Report exports are queued from the report page.',
+    'receipt_details' => 'Receipt details',
 ];

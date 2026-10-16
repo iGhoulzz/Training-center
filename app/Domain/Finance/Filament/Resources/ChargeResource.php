@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Domain\Finance\Filament\Resources;
 
+use App\Domain\Enrollment\Filament\Resources\BatchResource;
+use App\Domain\Enrollment\Filament\Resources\StudentResource;
 use App\Domain\Enrollment\Models\Student;
 use App\Domain\Enrollment\Services\EnrollmentQueryService;
 use App\Domain\Finance\Actions\AdjustChargeAction;
@@ -16,6 +18,7 @@ use App\Domain\Finance\Filament\Resources\ChargeResource\Pages\ListCharges;
 use App\Domain\Finance\Filament\Resources\ChargeResource\Pages\ViewCharge;
 use App\Domain\Finance\Models\Charge;
 use App\Domain\Finance\Support\ChargeBalance;
+use App\Domain\Finance\Support\Money;
 use App\Models\User;
 use BackedEnum;
 use Filament\Actions\Action;
@@ -25,13 +28,17 @@ use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\IconColumn;
+use Filament\Tables\Columns\Layout\Split;
+use Filament\Tables\Columns\Layout\Stack;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\TernaryFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\HtmlString;
 
 /**
  * Bills — read-plus-two-actions, never created or edited through the panel
@@ -189,62 +196,111 @@ class ChargeResource extends Resource
      */
     public static function getEloquentQuery(): Builder
     {
-        return parent::getEloquentQuery()
+        $query = parent::getEloquentQuery()
             ->select('charges.*')
             ->selectRaw(ChargeBalance::outstandingSql().' as '.ChargeBalance::OUTSTANDING_ALIAS)
+            ->selectRaw(ChargeBalance::allocatedSql().' as '.ChargeBalance::ALLOCATED_ALIAS)
             ->with(['enrollment.batch.course']);
+
+        app(EnrollmentQueryService::class)->joinEnrollmentStudentLabelsTo($query->getQuery(), 'charges.enrollment_id');
+
+        return $query;
     }
 
     public static function table(Table $table): Table
     {
         return $table
+            ->extraAttributes(['class' => '[&_.fi-ta-record-content-ctn]:py-0! [&_.fi-ta-record-content]:px-0!'])
+            // Native layout rows wrap their content in a link when recordUrl is
+            // set; child student/batch links need a non-interactive container.
+            ->recordUrl(null)
             ->columns([
-                TextColumn::make('reference')
-                    ->label(__('charges.reference'))
-                    ->searchable()
-                    ->sortable(),
+                Split::make([
+                    Stack::make([
+                        TextColumn::make('student_identity')
+                            ->label(__('charges.student'))
+                            ->state(fn (Charge $record): string => trim($record->getAttribute(EnrollmentQueryService::ENROLLMENT_STUDENT_FIRST_NAME).' '.$record->getAttribute(EnrollmentQueryService::ENROLLMENT_STUDENT_LAST_NAME)))
+                            ->weight('semibold')->size('sm')
+                            ->url(fn (Charge $record): ?string => auth()->user()?->can('view_student') && auth()->user()->can('view_any_student')
+                                && (bool) $record->getAttribute(EnrollmentQueryService::ENROLLMENT_STUDENT_AVAILABLE)
+                                ? StudentResource::getUrl('index', ['student' => $record->getAttribute(EnrollmentQueryService::ENROLLMENT_STUDENT_ID)]) : null),
+                        TextColumn::make('reference')
+                            ->label(__('charges.reference'))
+                            ->searchable()
+                            ->sortable()->color('gray')->size('xs')
+                            ->url(fn (Charge $record): ?string => auth()->user()?->can('view_charge')
+                                ? self::getUrl('view', ['record' => $record]) : null),
 
-                TextColumn::make('enrollment.reference')
-                    ->label(__('charges.enrollment_reference'))
-                    ->searchable()
-                    ->sortable(),
+                        TextColumn::make('enrollment.reference')
+                            ->label(__('charges.enrollment_reference'))
+                            ->searchable()
+                            ->sortable()->size('xs')->color('gray'),
 
-                TextColumn::make('enrollment.batch.course.code')
-                    ->label(__('charges.course'))
-                    ->searchable(),
+                        TextColumn::make('enrollment.batch.course.code')
+                            ->label(__('charges.course'))
+                            ->searchable()->size('xs')->color('gray'),
 
-                TextColumn::make('enrollment.batch.code')
-                    ->label(__('charges.batch'))
-                    ->searchable(),
+                        TextColumn::make('enrollment.batch.code')
+                            ->label(__('charges.batch'))
+                            ->searchable()->size('xs')->color('gray')
+                            ->url(fn (Charge $record): ?string => auth()->user()?->can('view_batch')
+                                ? BatchResource::getUrl('view', ['record' => $record->enrollment->batch]) : null),
+                    ])->space(1),
+                    Stack::make([
 
-                TextColumn::make('amount')
-                    ->label(__('charges.amount'))
-                    ->formatStateUsing(fn (string $state): string => self::formatMoney($state))
-                    ->sortable(),
+                        TextColumn::make('amount')
+                            ->label(__('charges.amount'))
+                            ->formatStateUsing(fn (string $state): string => self::formatMoney($state))
+                            ->sortable()->description(__('charges.billed_lyd')),
 
-                TextColumn::make('discount_percentage')
-                    ->label(__('charges.discount'))
-                    ->formatStateUsing(fn (?string $state): string => $state === null
-                        ? __('charges.no_discount')
-                        : __('charges.discount_percentage_value', ['percentage' => $state]))
-                    ->sortable(),
+                        TextColumn::make('discount_percentage')
+                            ->label(__('charges.discount'))
+                            ->formatStateUsing(fn (?string $state): string => $state === null
+                                ? __('charges.no_discount')
+                                : __('charges.discount_percentage_value', ['percentage' => $state]))
+                            ->sortable()->size('xs')->color('gray'),
+                    ])->space(1),
+                    Stack::make([
+                        TextColumn::make('paid_progress')->label(__('charges.allocated'))
+                            ->extraAttributes(['class' => '[&_svg]:text-success-400! [&_.font-semibold]:text-success-400!'])
+                            ->state(fn (Charge $record): string => (string) $record->getAttribute(ChargeBalance::ALLOCATED_ALIAS))
+                            ->formatStateUsing(fn (string $state, Charge $record): HtmlString => new HtmlString(Blade::render(
+                                '<x-admin.meter :value="$paid" :maximum="$billed" :label="$label" tone="success" :percentage="true" />',
+                                ['paid' => Money::fromDecimal($state)->dirham, 'billed' => Money::fromDecimal($record->amount)->dirham,
+                                    'label' => __('charges.paid_amount', ['amount' => self::formatMoney($state)])],
+                            ))),
 
-                // The SQL shape, not the PHP one — see the class docblock. The
-                // alias is exactly what getEloquentQuery() selected it as, so a
-                // typo here would silently render an empty column rather than
-                // fail, the same reasoning ChargeBalance::OUTSTANDING_ALIAS
-                // documents.
-                TextColumn::make(ChargeBalance::OUTSTANDING_ALIAS)
-                    ->label(__('charges.outstanding'))
-                    ->formatStateUsing(fn (string $state): string => self::formatMoney($state))
-                    ->sortable(),
+                        // The SQL shape, not the PHP one — see the class docblock. The
+                        // alias is exactly what getEloquentQuery() selected it as, so a
+                        // typo here would silently render an empty column rather than
+                        // fail, the same reasoning ChargeBalance::OUTSTANDING_ALIAS
+                        // documents.
+                        TextColumn::make(ChargeBalance::OUTSTANDING_ALIAS)
+                            ->label(__('charges.outstanding'))
+                            ->formatStateUsing(fn (string $state): string => self::formatMoney($state))
+                            ->sortable()->color('warning')
+                            ->description(fn (Charge $record): ?string => auth()->user()?->can('view_any_payment') && auth()->user()->can('view_student')
+                                && (bool) $record->getAttribute(EnrollmentQueryService::ENROLLMENT_STUDENT_AVAILABLE)
+                                ? __('charges.view_payments') : null)
+                            ->url(fn (Charge $record): ?string => auth()->user()?->can('view_any_payment') && auth()->user()->can('view_student')
+                                && (bool) $record->getAttribute(EnrollmentQueryService::ENROLLMENT_STUDENT_AVAILABLE)
+                                ? PaymentResource::getUrl('index', ['filters' => ['student' => ['id' => $record->getAttribute(EnrollmentQueryService::ENROLLMENT_STUDENT_ID)]]]) : null),
+                    ])->space(1),
+                    Stack::make([
+                        TextColumn::make('payment_state')->label(__('charges.payment_state'))
+                            ->state(fn (Charge $record): string => $record->isWrittenOff() ? __('charges.written_off')
+                                : (Money::fromDecimal((string) $record->getAttribute(ChargeBalance::OUTSTANDING_ALIAS))->isZero()
+                                    ? __('charges.settled') : (Money::fromDecimal((string) $record->getAttribute(ChargeBalance::ALLOCATED_ALIAS))->isPositive()
+                                        ? __('charges.part_paid') : __('charges.unpaid'))))
+                            ->badge()->color(fn (Charge $record): string => $record->isWrittenOff() ? 'gray'
+                                : (Money::fromDecimal((string) $record->getAttribute(ChargeBalance::OUTSTANDING_ALIAS))->isZero() ? 'success' : 'warning')),
 
-                TextColumn::make('due_date')
-                    ->label(__('charges.due_date'))
-                    ->date()
-                    ->sortable(),
+                        TextColumn::make('due_date')
+                            ->label(__('charges.due_date'))
+                            ->date()
+                            ->sortable()->size('xs')->color('gray'),
 
-                /*
+                        /*
                  * Derived from the fact column, never stored — Charge::isWrittenOff()
                  * is the same predicate the model exposes, read here rather than
                  * redefined. NOT a status column and not meant to read as one:
@@ -253,13 +309,16 @@ class ChargeResource extends Resource
                  * reason so the debt's history stays visible from the list, not just
                  * the detail page, matching design section 4's "nothing is erased".
                  */
-                IconColumn::make('written_off')
-                    ->label(__('charges.written_off'))
-                    ->state(fn (Charge $record): bool => $record->isWrittenOff())
-                    ->boolean()
-                    ->tooltip(fn (Charge $record): ?string => $record->isWrittenOff()
-                        ? $record->written_off_reason
-                        : null),
+                        IconColumn::make('written_off')
+                            ->label(__('charges.written_off'))
+                            ->state(fn (Charge $record): bool => $record->isWrittenOff())
+                            ->boolean()
+                            ->falseIcon(false)
+                            ->tooltip(fn (Charge $record): ?string => $record->isWrittenOff()
+                                ? $record->written_off_reason
+                                : null),
+                    ])->space(1),
+                ])->from('lg')->extraAttributes(['class' => 'gap-3.5 py-3.5 px-4.5']),
             ])
             ->filters([
                 Filter::make('student')->label(__('enrollment.student'))

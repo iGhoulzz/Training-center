@@ -4,12 +4,14 @@ declare(strict_types=1);
 
 namespace App\Domain\Finance\Filament\Resources;
 
+use App\Domain\Enrollment\Filament\Resources\StudentResource;
 use App\Domain\Enrollment\Models\Student;
 use App\Domain\Finance\Actions\ReversePaymentAction;
 use App\Domain\Finance\Exceptions\PaymentAlreadyReversedException;
 use App\Domain\Finance\Filament\Resources\PaymentResource\Pages\ListPayments;
 use App\Domain\Finance\Filament\Resources\PaymentResource\Pages\ViewPayment;
 use App\Domain\Finance\Models\Payment;
+use App\Domain\Finance\Models\PaymentTender;
 use App\Models\User;
 use BackedEnum;
 use Filament\Actions\Action;
@@ -19,6 +21,8 @@ use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\IconColumn;
+use Filament\Tables\Columns\Layout\Split;
+use Filament\Tables\Columns\Layout\Stack;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\TernaryFilter;
@@ -187,45 +191,67 @@ class PaymentResource extends Resource
     public static function table(Table $table): Table
     {
         return $table
+            ->extraAttributes(['class' => '[&_.fi-ta-record-content-ctn]:py-0! [&_.fi-ta-record-content]:px-0!'])
+            // Keep the student and bill links out of a nested row anchor. The
+            // authorized reference link retains access to the full receipt.
+            ->recordUrl(null)
             ->columns([
-                TextColumn::make('reference')
-                    ->label(__('payments.reference'))
-                    ->searchable()
-                    ->sortable(),
+                Split::make([
+                    Stack::make([
+                        TextColumn::make('reference')
+                            ->label(__('payments.reference'))
+                            ->searchable()
+                            ->sortable()->size('xs')->color('gray')
+                            ->url(fn (Payment $record): ?string => auth()->user()?->can('view_payment')
+                                ? self::getUrl('view', ['record' => $record]) : null),
 
-                TextColumn::make('student.full_name')
-                    ->label(__('payments.student')),
+                        TextColumn::make('student.full_name')
+                            ->label(__('payments.student'))->weight('semibold')
+                            ->url(fn (Payment $record): ?string => auth()->user()?->can('view_student') && auth()->user()->can('view_any_student') && ! $record->student->trashed()
+                                ? StudentResource::getUrl('index', ['student' => $record->student_id]) : null),
 
-                TextColumn::make('received_at')
-                    ->label(__('payments.received_at'))
-                    ->dateTime()
-                    ->sortable(),
+                        TextColumn::make('received_at')
+                            ->label(__('payments.received_at'))
+                            ->dateTime()
+                            ->sortable()->size('xs')->color('gray'),
+                        TextColumn::make('bill')
+                            ->label(__('payments.bill'))
+                            ->state(fn (Payment $record): ?string => $record->allocations->first()?->charge?->reference)
+                            ->size('xs')->color('gray')
+                            ->url(fn (Payment $record): ?string => auth()->user()?->can('view_charge') && $record->allocations->first()?->charge !== null
+                                ? ChargeResource::getUrl('view', ['record' => $record->allocations->first()->charge]) : null),
+                    ])->space(1),
+                    TextColumn::make('tender_chips')->label(__('payments.tenders'))
+                        ->state(fn (Payment $record): array => $record->tenders->map(fn (PaymentTender $tender): string => __('payments.tender_chip', [
+                            'method' => $tender->method->label(), 'amount' => $tender->amount,
+                        ]))->all())->badge()->color('gray')->wrap()
+                        ->extraAttributes(['class' => '[&_.fi-badge]:rounded-full! [&_.fi-badge]:px-2.25! [&_.fi-badge]:py-1! [&_.fi-badge]:text-[11.5px]!']),
 
-                // The SQL shape, not the PHP one — see the class docblock.
-                // `tenders_sum_amount` is Laravel's own generated alias for
-                // `withSum('tenders', 'amount')`; a typo here would
-                // silently render an empty column rather than fail, the
-                // same reasoning `ChargeBalance::OUTSTANDING_ALIAS`
-                // documents. It is a real selected column, not a raw
-                // expression composed into a filter's HAVING, so ORDER BY
-                // resolves it with none of the caveats
-                // `ChargeResource::table()`'s own comment records for its
-                // outstanding filter.
-                TextColumn::make('tenders_sum_amount')
-                    ->label(__('payments.total'))
-                    ->formatStateUsing(fn (string $state): string => self::formatMoney($state))
-                    ->sortable(),
+                    // The SQL shape, not the PHP one — see the class docblock.
+                    // `tenders_sum_amount` is Laravel's own generated alias for
+                    // `withSum('tenders', 'amount')`; a typo here would
+                    // silently render an empty column rather than fail, the
+                    // same reasoning `ChargeBalance::OUTSTANDING_ALIAS`
+                    // documents. It is a real selected column, not a raw
+                    // expression composed into a filter's HAVING, so ORDER BY
+                    // resolves it with none of the caveats
+                    // `ChargeResource::table()`'s own comment records for its
+                    // outstanding filter.
+                    TextColumn::make('tenders_sum_amount')
+                        ->label(__('payments.total'))
+                        ->formatStateUsing(fn (string $state): string => self::formatMoney($state))
+                        ->sortable()->weight('semibold')->extraAttributes(['class' => 'text-[15px]! [&_.fi-ta-text-item]:text-[15px]! tabular-nums']),
 
-                // See the class docblock: exactly one allocation in
-                // practice, so the first is the whole answer.
-                TextColumn::make('bill')
-                    ->label(__('payments.bill'))
-                    ->state(fn (Payment $record): ?string => $record->allocations->first()?->charge?->reference),
+                    // See the class docblock: exactly one allocation in
+                    // practice, so the first is the whole answer.
+                    Stack::make([
+                        TextColumn::make('payment_state')->label(__('payments.payment_state'))
+                            ->state(fn (Payment $record): string => $record->isReversed() ? __('payments.state_reversed') : __('payments.state_recorded'))
+                            ->badge()->color(fn (Payment $record): string => $record->isReversed() ? 'danger' : 'success'),
+                        TextColumn::make('recordedBy.name')
+                            ->label(__('payments.recorded_by'))->size('xs')->color('gray'),
 
-                TextColumn::make('recordedBy.name')
-                    ->label(__('payments.recorded_by')),
-
-                /*
+                        /*
                  * Derived from the fact column, never stored —
                  * Payment::isReversed() is the same predicate the model
                  * exposes, read here rather than redefined. NOT a status
@@ -237,13 +263,21 @@ class PaymentResource extends Resource
                  * stays visible from the list, matching
                  * ChargeResource::table()'s written_off column.
                  */
-                IconColumn::make('reversed')
-                    ->label(__('payments.reversed'))
-                    ->state(fn (Payment $record): bool => $record->isReversed())
-                    ->boolean()
-                    ->tooltip(fn (Payment $record): ?string => $record->isReversed()
-                        ? $record->reversal_reason
-                        : null),
+                        IconColumn::make('reversed')
+                            ->label(__('payments.reversed'))
+                            ->state(fn (Payment $record): bool => $record->isReversed())
+                            ->boolean()
+                            ->falseIcon(false)
+                            ->trueColor('danger')
+                            ->tooltip(fn (Payment $record): ?string => $record->isReversed()
+                                ? $record->reversal_reason
+                                : null),
+                        TextColumn::make('receipt_pending')->label(__('payments.download_receipt'))
+                            ->state(__('payments.receipt_generating'))->size('xs')->color('gray')
+                            ->visible(fn (): bool => auth()->user()?->can('view_payment') ?? false)
+                            ->formatStateUsing(fn (string $state, Payment $record): ?string => $record->receipt_path === null ? $state : null),
+                    ])->space(1),
+                ])->from('lg')->extraAttributes(['class' => 'gap-2.75 px-4.5 py-3.5']),
             ])
             ->filters([
                 Filter::make('student')->label(__('enrollment.student'))

@@ -72,4 +72,8 @@ return [
     'amount_must_be_positive' => 'The amount must be more than zero.',
     'refused_unauthorized' => 'You are not allowed to do that.',
     'refused_invalid' => 'That could not be saved. Check the details and try again.',
+    'category_details' => 'Category details',
+    'category_lifecycle_hint' => 'Categories are deactivated when no longer needed. Their expense history stays available.',
+    'payment_details' => 'Expense details',
+    'immutable_hint' => 'Record money already paid. A correction reverses this expense and records a new one.',
 ];

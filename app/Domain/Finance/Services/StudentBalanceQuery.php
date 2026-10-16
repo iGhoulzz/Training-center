@@ -128,7 +128,9 @@ final class StudentBalanceQuery
         // Keep the inner query unaggregated so MySQL can merge it and use the
         // enrolment's student index; the alias keeps ChargeBalance's one SQL
         // expression correlated to the selected charge row.
-        $balances = DB::table('charges')->select('charges.id', 'charges.amount');
+        // Keep the selected-student path on the unique enrolment lookup even
+        // when optimizer estimates favour a full charge scan.
+        $balances = DB::table('charges')->forceIndex('charges_enrollment_id_unique')->select('charges.id', 'charges.amount');
         $this->enrollments->joinEnrollmentStudentIdentityTo($balances, 'charges.enrollment_id');
 
         $total = DB::query()->fromSub($balances, 'charges')

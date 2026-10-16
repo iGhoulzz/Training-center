@@ -120,6 +120,58 @@ final class OutstandingAgedReport
 
     private const MIN_DAYS_91_PLUS = 91;
 
+    /** @return array<string, array{?int, ?int}> */
+    private function bucketRanges(): array
+    {
+        return [
+            self::BUCKET_0_30 => [null, self::MAX_DAYS_0_30],
+            self::BUCKET_31_60 => [self::MIN_DAYS_31_60, self::MAX_DAYS_31_60],
+            self::BUCKET_61_90 => [self::MIN_DAYS_61_90, self::MAX_DAYS_61_90],
+            self::BUCKET_91_PLUS => [self::MIN_DAYS_91_PLUS, null],
+        ];
+    }
+
+    /**
+     * Four header totals, one aggregate row: never hydrate the full report.
+     * The independent range predicates are shared with the detailed report,
+     * including future dates in the first bucket and excluding written-off debt.
+     *
+     * @return array<string, array{amount: Money, count: int}>
+     */
+    public function totalsAsOf(string $localDate): array
+    {
+        $date = $this->parseLocalDate($localDate)->toDateString();
+        $source = DB::table('charges')->whereNull('charges.written_off_at')
+            ->selectRaw(ChargeBalance::outstandingSql().' as outstanding')
+            ->selectRaw('DATEDIFF(?, charges.due_date) as days_past_due', [$date]);
+        $query = DB::query()->fromSub($source, 'aged')->where('outstanding', '>', 0);
+        foreach (array_values($this->bucketRanges()) as $index => [$minimum, $maximum]) {
+            $conditions = [];
+            $bindings = [];
+            if ($minimum !== null) {
+                $conditions[] = 'days_past_due >= ?';
+                $bindings[] = $minimum;
+            }
+            if ($maximum !== null) {
+                $conditions[] = 'days_past_due <= ?';
+                $bindings[] = $maximum;
+            }
+            $predicate = implode(' AND ', $conditions);
+            $query->selectRaw("COALESCE(SUM(CASE WHEN {$predicate} THEN outstanding ELSE 0 END), 0) as amount_{$index}", $bindings)
+                ->selectRaw("COUNT(CASE WHEN {$predicate} THEN 1 END) as count_{$index}", $bindings);
+        }
+        $row = $query->first();
+        $totals = [];
+        foreach (array_keys($this->bucketRanges()) as $index => $bucket) {
+            $totals[$bucket] = [
+                'amount' => Money::fromDecimal((string) $row->{"amount_{$index}"}),
+                'count' => (int) $row->{"count_{$index}"},
+            ];
+        }
+
+        return $totals;
+    }
+
     public function __construct(private readonly EnrollmentQueryService $enrollments) {}
 
     /**
@@ -189,26 +241,10 @@ final class OutstandingAgedReport
      */
     private function bucketed(Collection $rows): Collection
     {
-        $byBucket = [
-            self::BUCKET_0_30 => $rows->filter(
-                fn (array $row): bool => $row['days_past_due'] <= self::MAX_DAYS_0_30
-            ),
-            self::BUCKET_31_60 => $rows->filter(
-                fn (array $row): bool => $row['days_past_due'] >= self::MIN_DAYS_31_60
-                    && $row['days_past_due'] <= self::MAX_DAYS_31_60
-            ),
-            self::BUCKET_61_90 => $rows->filter(
-                fn (array $row): bool => $row['days_past_due'] >= self::MIN_DAYS_61_90
-                    && $row['days_past_due'] <= self::MAX_DAYS_61_90
-            ),
-            self::BUCKET_91_PLUS => $rows->filter(
-                fn (array $row): bool => $row['days_past_due'] >= self::MIN_DAYS_91_PLUS
-            ),
-        ];
-
         $result = collect();
-
-        foreach ($byBucket as $bucket => $bucketRows) {
+        foreach ($this->bucketRanges() as $bucket => [$minimum, $maximum]) {
+            $bucketRows = $rows->filter(fn (array $row): bool => ($minimum === null || $row['days_past_due'] >= $minimum)
+                && ($maximum === null || $row['days_past_due'] <= $maximum));
             foreach ($bucketRows as $row) {
                 $row['bucket'] = $bucket;
                 $result->push($row);

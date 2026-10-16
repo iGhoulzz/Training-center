@@ -22,10 +22,13 @@ use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
+use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 use Filament\Support\Exceptions\Halt;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\IconColumn;
+use Filament\Tables\Columns\Layout\Split;
+use Filament\Tables\Columns\Layout\Stack;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Filters\TernaryFilter;
@@ -131,78 +134,88 @@ final class ExpenseResource extends Resource
     {
         $rules = RecordExpenseAction::rules();
 
-        return $schema->components([
-            // Only active categories are offered. RecordExpenseAction re-checks on
-            // a locking read, so a stale picker cannot record against one that has
-            // since been switched off.
-            Select::make('expense_category_id')
-                ->label(__('expenses.category'))
-                ->options(fn (): array => self::activeCategoryOptions())
-                ->required()
-                ->searchable(),
+        return $schema->extraAttributes(['class' => '[&_.fi-input]:text-base! [&_.fi-select-input]:text-base! [&_.fi-select-input-btn]:text-base! [&_textarea]:text-base!'])->components([
+            Section::make(__('expenses.payment_details'))->description(__('expenses.immutable_hint'))->columns(2)->schema([
+                // Only active categories are offered. RecordExpenseAction re-checks on
+                // a locking read, so a stale picker cannot record against one that has
+                // since been switched off.
+                Select::make('expense_category_id')
+                    ->label(__('expenses.category'))
+                    ->options(fn (): array => self::activeCategoryOptions())
+                    ->required()
+                    ->searchable(),
 
-            TextInput::make('amount')
-                ->label(__('expenses.amount'))
-                ->helperText(__('expenses.amount_hint'))
-                ->required()
-                ->inputMode('decimal')
-                ->rules($rules['amount'])
-                ->validationMessages(RecordExpenseAction::amountMessages()),
+                TextInput::make('amount')
+                    ->label(__('expenses.amount'))
+                    ->helperText(__('expenses.amount_hint'))
+                    ->required()
+                    ->inputMode('decimal')
+                    ->rules($rules['amount'])
+                    ->validationMessages(RecordExpenseAction::amountMessages()),
 
-            DatePicker::make('paid_on')
-                ->label(__('expenses.paid_on'))
-                ->helperText(__('expenses.paid_on_hint'))
-                ->default(CentreCalendar::localise(now())->toDateString())
-                ->required()
-                ->rules($rules['paid_on']),
+                DatePicker::make('paid_on')
+                    ->label(__('expenses.paid_on'))
+                    ->helperText(__('expenses.paid_on_hint'))
+                    ->default(CentreCalendar::localise(now())->toDateString())
+                    ->required()
+                    ->rules($rules['paid_on']),
 
-            Textarea::make('description')
-                ->label(__('expenses.description'))
-                ->required()
-                ->rows(3)
-                ->maxLength(RecordExpenseAction::DESCRIPTION_MAX_LENGTH),
+                Textarea::make('description')
+                    ->label(__('expenses.description'))
+                    ->required()
+                    ->rows(3)
+                    ->columnSpanFull()
+                    ->maxLength(RecordExpenseAction::DESCRIPTION_MAX_LENGTH),
+            ]),
         ])->columns(1);
     }
 
     public static function table(Table $table): Table
     {
         return $table
+            ->extraAttributes(['class' => '[&_.fi-ta-record-content-ctn]:py-0! [&_.fi-ta-record-content]:px-0!'])
             ->columns([
-                TextColumn::make('paid_on')
-                    ->label(__('expenses.paid_on'))
-                    ->date()
-                    ->sortable(),
+                Split::make([
+                    Stack::make([
+                        TextColumn::make('paid_on')
+                            ->label(__('expenses.paid_on'))
+                            ->date()
+                            ->sortable()->size('xs')->color('gray'),
 
-                TextColumn::make('category.name_en')
-                    ->label(__('expenses.category'))
-                    ->state(fn (Expense $record): string => $record->category->name()),
+                        TextColumn::make('category.name_en')
+                            ->label(__('expenses.category'))
+                            ->state(fn (Expense $record): string => $record->category->name())->weight('semibold'),
 
-                TextColumn::make('description')
-                    ->label(__('expenses.description'))
-                    ->limit(60)
-                    ->searchable(),
+                        TextColumn::make('description')
+                            ->label(__('expenses.description'))
+                            ->limit(60)
+                            ->searchable()->size('xs')->color('gray'),
+                    ])->space(1),
 
-                TextColumn::make('amount')
-                    ->label(__('expenses.amount'))
-                    ->formatStateUsing(fn (string $state): string => self::formatMoney($state))
-                    ->sortable(),
+                    TextColumn::make('amount')
+                        ->label(__('expenses.amount'))
+                        ->formatStateUsing(fn (string $state): string => self::formatMoney($state))
+                        ->sortable()->weight('semibold'),
+                    Stack::make([
 
-                TextColumn::make('recordedBy.name')
-                    ->label(__('expenses.recorded_by')),
+                        TextColumn::make('recordedBy.name')
+                            ->label(__('expenses.recorded_by')),
 
-                /*
+                        /*
                  * Derived from the fact column, never stored. Reversing an expense
                  * does not change what it says happened; it only takes it out of
                  * every profit figure. The tooltip carries the reason so the
                  * history stays visible from the list.
                  */
-                IconColumn::make('reversed')
-                    ->label(__('expenses.reversed'))
-                    ->state(fn (Expense $record): bool => $record->isReversed())
-                    ->boolean()
-                    ->tooltip(fn (Expense $record): ?string => $record->isReversed()
-                        ? $record->reversal_reason
-                        : null),
+                        IconColumn::make('reversed')
+                            ->label(__('expenses.reversed'))
+                            ->state(fn (Expense $record): bool => $record->isReversed())
+                            ->boolean()
+                            ->tooltip(fn (Expense $record): ?string => $record->isReversed()
+                                ? $record->reversal_reason
+                                : null),
+                    ])->space(1),
+                ])->from('md')->extraAttributes(['class' => 'px-4.5 py-3.5']),
             ])
             ->filters([
                 SelectFilter::make('expense_category_id')
