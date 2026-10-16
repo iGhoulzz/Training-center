@@ -1192,3 +1192,69 @@ it('runs no script on any publications page', function () {
         expect(str_contains(strtolower(libraryBody($this->get($path)->assertOk())), '<script'))->toBeFalse($path);
     }
 });
+
+/*
+|--------------------------------------------------------------------------
+| A topic as long as its column wraps (Codex's review of #106)
+|--------------------------------------------------------------------------
+|
+| `articles.topic` is a string(100), so a valid topic can be one unbroken
+| 100-character word. The library's chip refused to wrap and the topic badge
+| could not break a word, so such a topic widened a 375px page, and the article
+| header's clipping cut it off. This suite runs no browser and cannot measure a
+| layout, so the test pins what makes the wrap possible on every element that
+| prints the topic: no no-wrap of its own or above it, `wrap-anywhere`, and at
+| most the row's width. The lead measured the result in a headless browser
+| (no horizontal scroll at 375, 768 and 1440px), which is in the PR.
+*/
+
+it('lets a topic as long as its column wrap instead of widening the page, wherever it is printed', function () {
+    // One unbroken word of exactly the column's width: the hardest case to wrap.
+    $topic = str_repeat('Arbitrationlawandpractice', 4);
+    expect(mb_strlen($topic))->toBe(100);
+
+    $article = Article::factory()->published()->create(['topic' => $topic, 'issued_on' => '2026-10-09']);
+
+    // The library holds the chip and the card's badge, the home page the teaser's
+    // badge, the article page the header's badge: four places, counted, so a
+    // search that found nothing cannot pass.
+    $expected = ['/' => 1, '/publications' => 2, '/publications/'.$article->slug => 1];
+
+    foreach ($expected as $path => $count) {
+        $document = HTMLDocument::createFromString((string) $this->get($path)->assertOk()->getContent(), LIBXML_NOERROR);
+        $holders = [];
+
+        foreach ($document->querySelectorAll('a, span') as $element) {
+            $own = '';
+            foreach ($element->childNodes as $child) {
+                if ($child->nodeType === XML_TEXT_NODE) {
+                    $own .= $child->textContent;
+                }
+            }
+
+            if (str_contains($own, $topic)) {
+                $holders[] = $element;
+            }
+        }
+
+        expect($holders)->toHaveCount($count, "{$path} prints the topic in an unexpected number of places.");
+
+        foreach ($holders as $element) {
+            $classes = preg_split('/\s+/', (string) $element->getAttribute('class')) ?: [];
+
+            foreach (['wrap-anywhere', 'max-w-full'] as $needed) {
+                expect(in_array($needed, $classes, true))->toBeTrue("{$path}: a {$element->localName} holding the topic lacks {$needed}.");
+            }
+
+            foreach (['whitespace-nowrap', 'truncate'] as $refused) {
+                expect(in_array($refused, $classes, true))->toBeFalse("{$path}: a {$element->localName} holding the topic has {$refused}.");
+            }
+
+            for ($above = $element->parentElement; $above !== null; $above = $above->parentElement) {
+                $aboveClasses = preg_split('/\s+/', (string) $above->getAttribute('class')) ?: [];
+
+                expect(in_array('whitespace-nowrap', $aboveClasses, true))->toBeFalse("{$path}: a {$above->localName} above the topic refuses to wrap.");
+            }
+        }
+    }
+});

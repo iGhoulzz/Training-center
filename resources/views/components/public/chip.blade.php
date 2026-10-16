@@ -15,6 +15,11 @@
     The label and the count are separated by a real space in the markup, so the link
     reads "Welding 2" to anything that reads text. Below 1024px the chip is a 44px
     box.
+
+    A TOPIC MAY BE AS LONG AS ITS COLUMN, 100 characters, so the chip never refuses
+    to wrap: it is at most as wide as its row, and `wrap-anywhere` breaks even an
+    unbroken word, which would otherwise widen a phone's page (Codex's review of
+    #106).
 --}}
 @props(['href', 'name', 'count', 'selected' => false])
 
@@ -22,7 +27,7 @@
     href="{{ $href }}"
     @if ($selected) aria-current="true" @endif
     {{ $attributes->class([
-        'inline-flex items-center gap-1.75 rounded-pill border px-3.75 py-2 text-caption leading-[normal] font-semibold whitespace-nowrap max-lg:min-h-11',
+        'inline-flex max-w-full items-center gap-1.75 rounded-pill border px-3.75 py-2 text-caption leading-[normal] font-semibold wrap-anywhere max-lg:min-h-11',
         'border-navy bg-navy text-cream' => $selected,
         'border-navy/14 bg-card text-body' => ! $selected,
     ]) }}
