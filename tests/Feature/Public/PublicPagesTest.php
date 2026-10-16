@@ -726,6 +726,19 @@ it('lays the home page out as the design does, and points the hero at its own se
         ->and(count($hero->querySelectorAll('div[aria-hidden="true"]')))->toBeGreaterThanOrEqual(5);
 });
 
+it('sets the verifier box placeholder back only as far as it can still be read', function () {
+    $document = HTMLDocument::createFromString((string) test()->get('/')->assertOk()->getContent(), LIBXML_NOERROR);
+    $classes = explode(' ', (string) $document->querySelector('#home-verify-reference')->getAttribute('class'));
+
+    // The design draws the placeholder in cream at 55%. Over the lightest pixel behind the
+    // box, swept from 320 to 2560px with the colour composited over the rendered page,
+    // that is 3.36:1. 72% is the lowest whole step that reaches 4.5:1 everywhere (4.53:1
+    // at worst; 71% is 4.46:1). A breakpoint variant would bring 55% back, so any class
+    // naming the placeholder counts.
+    expect(array_values(array_filter($classes, fn (string $class): bool => str_contains($class, 'placeholder:'))))
+        ->toBe(['placeholder:text-cream/72']);
+});
+
 it('sets the emphasis phrase of the home heading in italic gold wherever it appears, and escapes every part', function (string $heading, string $expectedInnerHtml, ?string $phrase = null) {
     replacePublicLine('public.home.heading', $heading);
 

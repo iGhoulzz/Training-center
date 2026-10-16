@@ -133,7 +133,7 @@
                             autocomplete="off"
                             spellcheck="false"
                             placeholder="{{ __('public.home.verify_placeholder') }}"
-                            class="min-w-0 flex-[1_1_190px] rounded-field border border-cream/22 bg-navy/50 px-4 py-3.5 text-base tracking-[0.03em] text-cream placeholder:text-cream/55 focus:border-gold focus-visible:outline-gold-light"
+                            class="min-w-0 flex-[1_1_190px] rounded-field border border-cream/22 bg-navy/50 px-4 py-3.5 text-base tracking-[0.03em] text-cream placeholder:text-cream/72 focus:border-gold focus-visible:outline-gold-light"
                         >
                         <button
                             type="submit"
