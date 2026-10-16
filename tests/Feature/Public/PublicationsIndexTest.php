@@ -1302,3 +1302,37 @@ it('lets every long user-supplied string wrap instead of widening the page, wher
         }
     }
 });
+
+it('keeps a library card\'s clamped description from growing past its four lines', function () {
+    // The card is a flex column in a grid row, so a taller neighbour makes it taller.
+    // A clamped paragraph that may grow (flex-1 and its kin) is then stretched, and
+    // the lines past the clamp paint below the ellipsis (pre-push review of #106).
+    // The free space belongs above the authors line instead, which keeps the footer
+    // at the bottom as the design draws it. The suite runs no browser, so this pins
+    // the rule; the lead measured the layout.
+    $description = 'SENTINEL-CLAMPED '.str_repeat('The court weighs the award against public order. ', 12);
+    Article::factory()->published()->create(['description_en' => $description, 'authors' => 'SENTINEL-AUTHORS']);
+
+    $document = HTMLDocument::createFromString((string) $this->get('/publications')->assertOk()->getContent(), LIBXML_NOERROR);
+
+    $classesOf = function (string $text) use ($document): array {
+        foreach ($document->body->querySelectorAll('p') as $paragraph) {
+            if (str_starts_with(trim($paragraph->textContent), $text)) {
+                return preg_split('/\s+/', (string) $paragraph->getAttribute('class')) ?: [];
+            }
+        }
+
+        throw new RuntimeException("No paragraph starting with [{$text}] on the library page.");
+    };
+
+    $clamped = $classesOf('SENTINEL-CLAMPED');
+    $authors = $classesOf('SENTINEL-AUTHORS');
+
+    expect(in_array('line-clamp-4', $clamped, true))->toBeTrue('The library card no longer clamps its description.');
+
+    foreach (['flex-1', 'grow', 'flex-auto', 'h-full', 'self-stretch'] as $grows) {
+        expect(in_array($grows, $clamped, true))->toBeFalse("The clamped description carries {$grows}, so a taller row stretches it past the clamp.");
+    }
+
+    expect(in_array('mt-auto', $authors, true))->toBeTrue('The authors line no longer takes the free space, so the footer leaves the bottom of the card.');
+});

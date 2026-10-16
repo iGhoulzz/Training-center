@@ -146,8 +146,8 @@
                                 <a href="{{ PublicRoute::url('public.publications.show', ['slug' => $article->slug]) }}" class="tap-target block wrap-anywhere hover:text-gold-dark">{{ $article->title }}</a>
                             </h2>
 
-                            <p class="line-clamp-4 flex-1 text-base leading-[1.65] text-pretty wrap-anywhere text-body-secondary lg:text-ui">{{ $article->description }}</p>
-                            <p class="text-small wrap-anywhere text-meta">{{ $article->authors }}</p>
+                            <p class="line-clamp-4 text-base leading-[1.65] text-pretty wrap-anywhere text-body-secondary lg:text-ui">{{ $article->description }}</p>
+                            <p class="mt-auto text-small wrap-anywhere text-meta">{{ $article->authors }}</p>
 
                             <div class="flex flex-wrap items-center gap-2 border-t border-navy/8 pt-3.25">
                                 <x-public.button
