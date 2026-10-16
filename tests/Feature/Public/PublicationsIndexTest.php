@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\View;
 use Illuminate\Testing\TestResponse;
@@ -241,18 +242,28 @@ it('renders the topic and issue date on the card and on the article page from on
     $article = libraryArticle(['topic' => 'Arbitration', 'issued_on' => '2026-02-12']);
 
     $fragment = '/<p data-article-meta\b[^>]*>.*?<\/p>/s';
+    $collapse = fn (string $html): string => trim((string) preg_replace('/\s+/', ' ', $html));
 
     preg_match_all($fragment, libraryBody($this->get('/publications')->assertOk()), $onCard);
     preg_match_all($fragment, libraryBody($this->get('/publications/'.$article->slug)->assertOk()), $onPage);
 
-    // One on each page. Both hold the same badge and the same <time> element; they
-    // differ only in the design's two ways: the card says the bare date, the article
-    // says "Issued ...", and the article's header is the dark variant. Written by hand:
-    // the sentinel date format 'Y/m/d' and the sentinel wording 'ISSUEDSENT :date'.
+    // The component rendered on its own, with exactly the props and classes each page
+    // passes: the card's bare date in the light tone, the article header's "Issued" in
+    // the dark one. A page that wrote the line out by hand, or styled the badge itself,
+    // would not equal its rendering.
+    $cardRendering = Blade::render('<x-public.article-meta topic="Arbitration" issued-on="2026-02-12" :issued-label="false" class="gap-x-2.25 gap-y-1" />');
+    $pageRendering = Blade::render('<x-public.article-meta topic="Arbitration" issued-on="2026-02-12" tone="dark" class="mt-5.5 gap-x-2.75 gap-y-1" />');
+
     expect($onCard[0])->toHaveCount(1)
         ->and($onPage[0])->toHaveCount(1)
-        ->and(trim((string) preg_replace('/\s+/', ' ', strip_tags($onCard[0][0]))))->toBe('Arbitration 2026/02/12')
-        ->and(trim((string) preg_replace('/\s+/', ' ', strip_tags($onPage[0][0]))))->toBe('Arbitration ISSUEDSENT 2026/02/12')
+        ->and($collapse($onCard[0][0]))->toBe($collapse($cardRendering))
+        ->and($collapse($onPage[0][0]))->toBe($collapse($pageRendering));
+
+    // And what the two say, written by hand: the sentinel date format 'Y/m/d' and the
+    // sentinel wording 'ISSUEDSENT :date'. The card says the bare date and the article
+    // says "Issued ...", over the same badge and the same <time> element.
+    expect($collapse(strip_tags($onCard[0][0])))->toBe('Arbitration 2026/02/12')
+        ->and($collapse(strip_tags($onPage[0][0])))->toBe('Arbitration ISSUEDSENT 2026/02/12')
         ->and($onCard[0][0])->toContain('>Arbitration</span>')->toContain('<time datetime="2026-02-12"')
         ->and($onPage[0][0])->toContain('>Arbitration</span>')->toContain('<time datetime="2026-02-12"');
 });
