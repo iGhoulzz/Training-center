@@ -2,13 +2,17 @@
 
 declare(strict_types=1);
 
+use App\Domain\Enrollment\Models\Course;
 use App\Domain\Publications\Data\PublicArticle;
 use App\Domain\Publications\Models\Article;
 use App\Domain\Publications\Queries\PublicArticleCatalogue;
+use Dom\Element;
+use Dom\HTMLDocument;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\View;
 use Illuminate\Testing\TestResponse;
@@ -59,7 +63,9 @@ beforeEach(function () {
         'publications.public.empty_heading' => 'EMPTYHEADSENT',
         'publications.public.empty_clear' => 'CLEARSENT',
         'publications.public.download_pdf' => 'PDFSENT',
-        'publications.public.download_heading' => 'DLHEADSENT',
+        'publications.public.pdf' => 'PDFLABELSENT',
+        'publications.public.sort_switch' => 'SWITCHSENT :current TO :next',
+        'publications.public.original_filing' => 'FILINGSENT',
         'publications.public.more_in' => 'MORESENT :topic',
         'publications.public.issued' => 'ISSUEDSENT :date',
         'publications.public.date_format' => 'Y/m/d',
@@ -221,11 +227,15 @@ it('prints each card from its article: topic, date, title link, description, aut
     preg_match('/<article\b.*?<\/article>/s', $html, $card);
     $text = trim((string) preg_replace('/\s+/', ' ', html_entity_decode(strip_tags($card[0]))));
 
-    // Computed by hand: the date format is the sentinel 'Y/m/d' and the wording the
-    // sentinel 'ISSUEDSENT :date', for 2026-02-12.
-    expect($text)->toBe('Arbitration ISSUEDSENT 2026/02/12 Enforcing Foreign Awards A practitioner reading of the grounds. Dr. Salah Ferjani PDFSENT 318 DLSENT');
+    // Computed by hand: the date format is the sentinel 'Y/m/d', for 2026-02-12. The
+    // card shows the bare date (the design's line has no room for "Issued"), and the
+    // PDF link reads the short label.
+    expect($text)->toBe('Arbitration 2026/02/12 Enforcing Foreign Awards A practitioner reading of the grounds. Dr. Salah Ferjani PDFLABELSENT 318 DLSENT');
 
     $links = libraryAnchors($card[0]);
+
+    // The title turns gold-dark on hover, as the design draws it.
+    expect($links[0]['attributes'])->toContain('hover:text-gold-dark');
 
     expect(array_column($links, 'href'))->toBe([
         url('/publications/'.$article->slug),
@@ -233,21 +243,34 @@ it('prints each card from its article: topic, date, title link, description, aut
     ])->and(str_contains($html, '<time datetime="2026-02-12"'))->toBeTrue();
 });
 
-it('renders the topic and issue date the same on the card and on the article page, from one component', function () {
+it('renders the topic and issue date on the card and on the article page from one component', function () {
     $article = libraryArticle(['topic' => 'Arbitration', 'issued_on' => '2026-02-12']);
 
-    $fragment = '/<p class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">.*?<\/p>/s';
+    $fragment = '/<p data-article-meta\b[^>]*>.*?<\/p>/s';
+    $collapse = fn (string $html): string => trim((string) preg_replace('/\s+/', ' ', $html));
 
     preg_match_all($fragment, libraryBody($this->get('/publications')->assertOk()), $onCard);
     preg_match_all($fragment, libraryBody($this->get('/publications/'.$article->slug)->assertOk()), $onPage);
 
-    // One on each page, and the same bytes. Written by hand: the sentinel date
-    // format 'Y/m/d' and the sentinel wording 'ISSUEDSENT :date' give the text.
+    // The component rendered on its own, with exactly the props and classes each page
+    // passes: the card's bare date in the light tone, the article header's "Issued" in
+    // the dark one. A page that wrote the line out by hand, or styled the badge itself,
+    // would not equal its rendering.
+    $cardRendering = Blade::render('<x-public.article-meta topic="Arbitration" issued-on="2026-02-12" :issued-label="false" class="gap-x-2.25 gap-y-1" />');
+    $pageRendering = Blade::render('<x-public.article-meta topic="Arbitration" issued-on="2026-02-12" tone="dark" class="mt-5.5 gap-x-2.75 gap-y-1" />');
+
     expect($onCard[0])->toHaveCount(1)
         ->and($onPage[0])->toHaveCount(1)
-        ->and($onPage[0][0])->toBe($onCard[0][0])
-        ->and(trim((string) preg_replace('/\s+/', ' ', strip_tags($onCard[0][0]))))->toBe('Arbitration ISSUEDSENT 2026/02/12')
-        ->and($onCard[0][0])->toContain('<time datetime="2026-02-12"');
+        ->and($collapse($onCard[0][0]))->toBe($collapse($cardRendering))
+        ->and($collapse($onPage[0][0]))->toBe($collapse($pageRendering));
+
+    // And what the two say, written by hand: the sentinel date format 'Y/m/d' and the
+    // sentinel wording 'ISSUEDSENT :date'. The card says the bare date and the article
+    // says "Issued ...", over the same badge and the same <time> element.
+    expect($collapse(strip_tags($onCard[0][0])))->toBe('Arbitration 2026/02/12')
+        ->and($collapse(strip_tags($onPage[0][0])))->toBe('Arbitration ISSUEDSENT 2026/02/12')
+        ->and($onCard[0][0])->toContain('>Arbitration</span>')->toContain('<time datetime="2026-02-12"')
+        ->and($onPage[0][0])->toContain('>Arbitration</span>')->toContain('<time datetime="2026-02-12"');
 });
 
 it('names the title in the download link for a screen reader, whatever the visible text', function () {
@@ -255,9 +278,9 @@ it('names the title in the download link for a screen reader, whatever the visib
 
     $html = libraryBody($this->get('/publications')->assertOk());
 
-    // The accessible name starts with the visible words and adds the title, so a
-    // list of twelve identical "Download PDF" links is not twelve identical names.
-    expect(libraryAnchor($html, 'PDFSENT')['attributes'])->toContain('aria-label="Download PDF: Safety Guide"');
+    // The accessible name contains the visible words and adds the title, so a list of
+    // twelve identical "PDF" links is not twelve identical names.
+    expect(libraryAnchor($html, 'PDFLABELSENT')['attributes'])->toContain('aria-label="Download PDF: Safety Guide"');
 });
 
 it('says that download counts are approximate, on the index and on an article page', function () {
@@ -329,6 +352,8 @@ it('matches %, _ and a backslash in a search as themselves, never as patterns', 
 ]);
 
 it('finds nothing for a search that matches nothing, and says so with a way out', function () {
+    app('translator')->addLines(['publications.public.empty_body' => 'EMPTYBODYSENT'], 'en');
+
     libraryArticle(['title_en' => 'Safety Guide']);
 
     $html = libraryBody($this->get('/publications?q=zzzz')->assertOk());
@@ -336,6 +361,8 @@ it('finds nothing for a search that matches nothing, and says so with a way out'
     expect(libraryCardTitles($html))->toBe([])
         ->and(libraryCountLine($html))->toBe('0 MATCHSENT zzzz')
         ->and(str_contains($html, 'EMPTYHEADSENT'))->toBeTrue()
+        // The line under the heading is the design's metadata grey (5.01:1 on white).
+        ->and(preg_match('/<p class="[^"]*\btext-meta\b[^"]*">EMPTYBODYSENT<\/p>/', $html))->toBe(1)
         // The way out is the unfiltered library, with no query at all.
         ->and(libraryAnchor($html, 'CLEARSENT')['href'])->toBe(url('/publications'));
 });
@@ -444,7 +471,26 @@ it('counts the chips from published articles only, one per topic, alphabetically
         ->toBe(['ALLSENT 4', 'Electronics 1', 'Safety 1', 'Welding 2']);
 });
 
-it('keeps the search and the sort on every chip, and the search and the topic on both sort links', function () {
+it('sets the chip count back far enough to be read: 74% on a white chip, the design\'s 55% on the selected one', function () {
+    libraryArticle(['topic' => 'Welding']);
+    libraryArticle(['topic' => 'Safety']);
+
+    $html = libraryBody($this->get('/publications?topic=Welding')->assertOk());
+
+    // The design draws 55% on every chip. On the white chip that is 2.86:1 against the
+    // 4.5:1 a small number needs (the body colour at 55% over white), and 74% is the
+    // lowest whole step that reaches it (4.57:1); the selected navy chip keeps 55%,
+    // which is 5.19:1 (the contrast table in the task report).
+    expect(libraryAnchor($html, 'Welding 1')['attributes'])->toContain('aria-current="true"');
+
+    preg_match_all('/<a\b[^>]*>([^<]*) <span class="(opacity-\d+)">(\d+)<\/span><\/a>/', $html, $chips, PREG_SET_ORDER);
+
+    $byLabel = array_column(array_map(fn (array $chip): array => [trim($chip[1]), $chip[2]], $chips), 1, 0);
+
+    expect($byLabel)->toBe(['ALLSENT' => 'opacity-74', 'Safety' => 'opacity-74', 'Welding' => 'opacity-55']);
+});
+
+it('keeps the search and the sort on every chip, and the search and the topic on the sort button', function () {
     libraryArticle(['title_en' => 'Weld Guide', 'topic' => 'Welding']);
     libraryArticle(['title_en' => 'Safe Guide', 'topic' => 'Safety']);
     libraryArticle(['title_en' => 'Other', 'topic' => 'Safety']);
@@ -455,10 +501,11 @@ it('keeps the search and the sort on every chip, and the search and the topic on
     expect(libraryQueryOf(libraryAnchor($html, 'ALLSENT 3')['href']))->toBe(['q' => 'guide', 'sort' => 'downloads'])
         ->and(libraryQueryOf(libraryAnchor($html, 'Safety 2')['href']))->toBe(['q' => 'guide', 'sort' => 'downloads', 'topic' => 'Safety'])
         ->and(libraryQueryOf(libraryAnchor($html, 'Welding 1')['href']))->toBe(['q' => 'guide', 'sort' => 'downloads', 'topic' => 'Welding'])
-        ->and(libraryQueryOf(libraryAnchor($html, 'NEWESTSENT')['href']))->toBe(['q' => 'guide', 'sort' => 'newest', 'topic' => 'Safety'])
-        ->and(libraryQueryOf(libraryAnchor($html, 'DOWNSENT')['href']))->toBe(['q' => 'guide', 'sort' => 'downloads', 'topic' => 'Safety'])
-        ->and(libraryAnchor($html, 'DOWNSENT')['attributes'])->toContain('aria-current="true"')
-        ->and(libraryAnchor($html, 'NEWESTSENT')['attributes'])->not->toContain('aria-current');
+        // The sort is ONE button: it reads the order the list is in now (downloads) and
+        // links to the other one (newest), keeping the search and the topic.
+        ->and(libraryQueryOf(libraryAnchor($html, 'DOWNSENT')['href']))->toBe(['q' => 'guide', 'sort' => 'newest', 'topic' => 'Safety'])
+        ->and(libraryAnchor($html, 'DOWNSENT')['attributes'])->toContain('aria-label="SWITCHSENT DOWNSENT TO NEWESTSENT"')
+        ->and(array_column(libraryAnchors($html), 'text'))->not->toContain('NEWESTSENT');
 });
 
 it('keeps a search for "0" on the links, which a falsy filter would drop', function () {
@@ -477,7 +524,8 @@ it('has no query at all on the clear link and the unfiltered chips, apart from t
 
     expect(libraryQueryOf(libraryAnchor($html, 'ALLSENT 1')['href']))->toBe(['sort' => 'newest'])
         ->and(libraryQueryOf(libraryAnchor($html, 'Welding 1')['href']))->toBe(['sort' => 'newest', 'topic' => 'Welding'])
-        ->and(libraryAnchor($html, 'NEWESTSENT')['attributes'])->toContain('aria-current="true"');
+        // The sort button names the current order (newest) and links to the other one.
+        ->and(libraryQueryOf(libraryAnchor($html, 'NEWESTSENT')['href']))->toBe(['sort' => 'downloads']);
 });
 
 /**
@@ -528,9 +576,11 @@ it('falls back to newest first for any other sort', function (string $sort) {
 
     $html = libraryBody($this->get('/publications?'.http_build_query(['sort' => $sort]))->assertOk());
 
+    // The sort button reads the order in force, which is newest first, and links to
+    // the other one; "most downloaded" is not offered as the current order.
     expect(libraryCardTitles($html))->toBe(['F', 'E', 'D', 'B', 'A', 'C'])
-        ->and(libraryAnchor($html, 'NEWESTSENT')['attributes'])->toContain('aria-current="true"')
-        ->and(libraryAnchor($html, 'DOWNSENT')['attributes'])->not->toContain('aria-current');
+        ->and(libraryQueryOf(libraryAnchor($html, 'NEWESTSENT')['href']))->toBe(['sort' => 'downloads'])
+        ->and(array_column(libraryAnchors($html), 'text'))->not->toContain('DOWNSENT');
 })->with(['an unknown word' => ['oldest'], 'a different case' => ['DOWNLOADS'], 'a number' => ['1'], 'empty' => ['']]);
 
 it('keeps a topic and a search when the sort changes the order', function () {
@@ -675,7 +725,7 @@ it('shows a published article: topic, issue date, title, authors, downloads, the
 
     $html = libraryBody($this->get('/publications/'.$article->slug)->assertOk());
 
-    expect(libraryHeadings($html))->toBe([[1, 'Enforcing Foreign Awards'], [2, 'DLHEADSENT']])
+    expect(libraryHeadings($html))->toBe([[1, 'Enforcing Foreign Awards'], [2, 'FILINGSENT']])
         ->and($html)->toContain('>Arbitration</span>')
         ->and($html)->toContain('<time datetime="2026-02-12"')
         ->and($html)->toContain('ISSUEDSENT 2026/02/12')
@@ -687,6 +737,63 @@ it('shows a published article: topic, issue date, title, authors, downloads, the
         ->and($html)->toContain('whitespace-pre-line')
         ->and(libraryAnchor($html, 'PDFSENT')['href'])->toBe(url('/publications/'.$article->slug.'/download'))
         ->and(str_contains($html, 'MORESENT'))->toBeFalse();
+});
+
+it('prints the article page as the design draws it: a dark header, the filing record, the lead and then the full-text note', function () {
+    app('translator')->addLines([
+        'publications.public.uploaded_by' => 'UPLOADSENT',
+        'publications.public.full_text_note' => 'FULLTEXTSENT',
+        'publications.public.back' => 'BACKSENT',
+    ], 'en');
+
+    $article = libraryArticle(['title_en' => 'Dark Header Paper', 'topic' => 'Arbitration', 'description_en' => 'The lead paragraph.', 'download_count' => 318]);
+    libraryArticle(['topic' => 'Arbitration', 'issued_on' => '2020-01-01']);
+
+    $html = libraryBody($this->get('/publications/'.$article->slug)->assertOk());
+    $document = HTMLDocument::createFromString($html, LIBXML_NOERROR);
+
+    // The topic, the date and the title are in the navy header; the back link leads to the library.
+    $band = $document->querySelector('h1')->closest('section');
+
+    expect(explode(' ', $band->getAttribute('class')))->toContain('bg-navy')
+        ->and($band->querySelector('[data-article-meta] span')->textContent)->toBe('Arbitration')
+        ->and(explode(' ', $band->querySelector('[data-article-meta] span')->getAttribute('class')))->toContain('rounded-pill')
+        ->and(libraryAnchor($html, 'BACKSENT')['href'])->toBe(url('/publications'));
+
+    // Under it, in order: the filing record, the description as the lead, the full-text
+    // note, and the related entries. The record says the count, the approximate note and who
+    // uploaded it, and no size.
+    $positions = array_map(fn (string $needle): int|false => strpos($html, $needle), ['FILINGSENT', '318 DLSENT', 'APPROXSENT', 'UPLOADSENT', 'The lead paragraph.', 'FULLTEXTSENT', 'MORESENT']);
+
+    expect($positions)->each->not->toBeFalse()
+        ->and($positions)->toBe(collect($positions)->sort()->values()->all())
+        ->and(preg_match('/\b[KMG]B\b|bytes/', $html))->toBe(0);
+});
+
+it('opens the library with the back link, the eyebrow and a search box that needs no visible button', function () {
+    app('translator')->addLines([
+        'publications.public.back_home' => 'HOMEBACKSENT',
+        'publications.public.library_eyebrow' => 'EYEBROWSENT',
+    ], 'en');
+
+    libraryArticle();
+
+    $html = libraryBody($this->get('/publications')->assertOk());
+    $document = HTMLDocument::createFromString($html, LIBXML_NOERROR);
+
+    $band = $document->querySelector('h1')->closest('section');
+
+    expect(libraryAnchor($html, 'HOMEBACKSENT')['href'])->toBe(url('/'))
+        ->and($band->textContent)->toContain('EYEBROWSENT')
+        ->and(count($document->querySelectorAll('h1')))->toBe(1);
+
+    // The design draws no search button: Enter submits. The button is for the keyboard, so
+    // it is hidden until it has focus; and the input is 16px at every width.
+    $button = $document->querySelector('form button[type="submit"]');
+    $input = $document->querySelector('#publications-search');
+
+    expect(explode(' ', $button->getAttribute('class')))->toContain('sr-only')->toContain('focus:not-sr-only')
+        ->and(explode(' ', $input->getAttribute('class')))->toContain('text-base');
 });
 
 it('escapes everything an editor typed, on the cards and on the page', function () {
@@ -724,7 +831,7 @@ it('offers the three newest other published articles in the same topic, and neve
     // Each entry is a link whose text is the title and then its date; the date's
     // format is the sentinel 'Y/m/d'.
     expect($titles)->toBe(['P Newest 2026/02/10', 'Q Second 2026/01/05', 'R Third 2025/12/02'])
-        ->and(libraryHeadings($html))->toBe([[1, 'Current'], [2, 'DLHEADSENT'], [2, 'MORESENT Arbitration']]);
+        ->and(libraryHeadings($html))->toBe([[1, 'Current'], [2, 'FILINGSENT'], [2, 'MORESENT Arbitration']]);
 });
 
 it('links each "more in" entry to its own page', function () {
@@ -1086,4 +1193,146 @@ it('runs no script on any publications page', function () {
     foreach (['/publications', '/publications/'.$article->slug] as $path) {
         expect(str_contains(strtolower(libraryBody($this->get($path)->assertOk())), '<script'))->toBeFalse($path);
     }
+});
+
+/*
+|--------------------------------------------------------------------------
+| A long user-supplied string wraps instead of widening the page (Codex's review of #106)
+|--------------------------------------------------------------------------
+|
+| Every string an administrator types can be one unbroken word as long as its
+| column: a topic (100), a title or a programme name (200), the authors (255), a
+| description, and a visitor's own search (cut to 100). The library's chip refused
+| to wrap and nothing else could break such a word, so it widened a 375px page, and
+| the navy page header's clipping cut it off. This suite runs no browser and cannot
+| measure a layout, so the test pins the property that makes the wrap possible,
+| on every element of every page that prints one of those strings: `wrap-anywhere`
+| in effect (on the element or an ancestor; overflow-wrap inherits), and nothing on
+| the way up that refuses to wrap. The lead measured the result in a headless
+| browser (no horizontal scroll at 375, 768 and 1440px), which is in the PR.
+*/
+
+/**
+ * Every element in a page's body whose own text holds one of the sentinels, keyed by
+ * the sentinel it holds.
+ *
+ * @param  array<int, string>  $sentinels
+ * @return array<string, list<Element>>
+ */
+function elementsPrintingSentinels(string $html, array $sentinels): array
+{
+    $document = HTMLDocument::createFromString($html, LIBXML_NOERROR);
+    $found = [];
+
+    foreach ($document->body->querySelectorAll('*') as $element) {
+        $own = '';
+
+        foreach ($element->childNodes as $child) {
+            if ($child->nodeType === XML_TEXT_NODE) {
+                $own .= $child->textContent;
+            }
+        }
+
+        foreach ($sentinels as $sentinel) {
+            if (str_contains($own, $sentinel)) {
+                $found[$sentinel][] = $element;
+            }
+        }
+    }
+
+    return $found;
+}
+
+it('lets every long user-supplied string wrap instead of widening the page, wherever it is printed', function () {
+    // Unbroken words, each as long as its column allows (the search is cut to 100).
+    $topic = str_repeat('Arbitrationlawandpractice', 4);
+    $title = str_repeat('Enforcementofforeignawards', 7);
+    $related = str_repeat('Draftingthearbitrationclause', 7);
+    $authors = str_repeat('Dr.Sampleauthorandcoauthor', 9);
+    $description = str_repeat('Thepractitionersreadingofthegrounds', 10);
+    $search = substr(str_repeat('Searchfornothinghere', 5), 0, 100);
+    $course = str_repeat('Commercialarbitrationadvanced', 6);
+    $courseText = str_repeat('Awarddraftingchallengeandenforcement', 10);
+
+    expect([mb_strlen($topic), mb_strlen($search) <= PublicArticleCatalogue::SEARCH_MAX_LENGTH])->toBe([100, true])
+        ->and(max(mb_strlen($title), mb_strlen($related), mb_strlen($course)))->toBeLessThanOrEqual(200)
+        ->and(mb_strlen($authors))->toBeLessThanOrEqual(255);
+
+    $article = Article::factory()->published()->create([
+        'topic' => $topic, 'title_en' => $title, 'authors' => $authors, 'description_en' => $description, 'issued_on' => '2026-10-09',
+    ]);
+    Article::factory()->published()->create(['topic' => $topic, 'title_en' => $related, 'issued_on' => '2026-10-08']);
+    $programme = Course::factory()->create(['name_en' => $course, 'description_en' => $courseText]);
+
+    // What each page must print, so a page that printed nothing cannot pass.
+    $expected = [
+        '/' => [$topic, $title, $related, $authors, $description, $course, $courseText],
+        '/publications' => [$topic, $title, $related, $authors, $description],
+        '/publications?topic='.rawurlencode($topic) => [$topic, $title, $related, $authors, $description],
+        '/publications?q='.rawurlencode($search) => [$search],
+        '/publications/'.$article->slug => [$topic, $title, $related, $authors, $description],
+        '/programmes' => [$course, $courseText],
+        '/programmes/'.$programme->id => [$course, $courseText],
+    ];
+
+    $sentinels = [$topic, $title, $related, $authors, $description, $search, $course, $courseText];
+
+    foreach ($expected as $path => $mustPrint) {
+        $found = elementsPrintingSentinels((string) $this->get($path)->assertOk()->getContent(), $sentinels);
+
+        foreach ($mustPrint as $sentinel) {
+            expect(array_key_exists($sentinel, $found))->toBeTrue("{$path} does not print one of the long strings, so it was not checked.");
+        }
+
+        foreach ($found as $elements) {
+            foreach ($elements as $element) {
+                $wraps = false;
+
+                for ($node = $element; $node !== null; $node = $node->parentElement) {
+                    $classes = preg_split('/\s+/', (string) $node->getAttribute('class')) ?: [];
+                    $wraps = $wraps || in_array('wrap-anywhere', $classes, true);
+
+                    foreach (['whitespace-nowrap', 'truncate'] as $refused) {
+                        expect(in_array($refused, $classes, true))->toBeFalse("{$path}: a {$node->localName} at or above a long string has {$refused}.");
+                    }
+                }
+
+                expect($wraps)->toBeTrue("{$path}: a {$element->localName} prints a long string with no wrap-anywhere on it or above it.");
+            }
+        }
+    }
+});
+
+it('keeps a library card\'s clamped description from growing past its four lines', function () {
+    // The card is a flex column in a grid row, so a taller neighbour makes it taller.
+    // A clamped paragraph that may grow (flex-1 and its kin) is then stretched, and
+    // the lines past the clamp paint below the ellipsis (pre-push review of #106).
+    // The free space belongs above the authors line instead, which keeps the footer
+    // at the bottom as the design draws it. The suite runs no browser, so this pins
+    // the rule; the lead measured the layout.
+    $description = 'SENTINEL-CLAMPED '.str_repeat('The court weighs the award against public order. ', 12);
+    Article::factory()->published()->create(['description_en' => $description, 'authors' => 'SENTINEL-AUTHORS']);
+
+    $document = HTMLDocument::createFromString((string) $this->get('/publications')->assertOk()->getContent(), LIBXML_NOERROR);
+
+    $classesOf = function (string $text) use ($document): array {
+        foreach ($document->body->querySelectorAll('p') as $paragraph) {
+            if (str_starts_with(trim($paragraph->textContent), $text)) {
+                return preg_split('/\s+/', (string) $paragraph->getAttribute('class')) ?: [];
+            }
+        }
+
+        throw new RuntimeException("No paragraph starting with [{$text}] on the library page.");
+    };
+
+    $clamped = $classesOf('SENTINEL-CLAMPED');
+    $authors = $classesOf('SENTINEL-AUTHORS');
+
+    expect(in_array('line-clamp-4', $clamped, true))->toBeTrue('The library card no longer clamps its description.');
+
+    foreach (['flex-1', 'grow', 'flex-auto', 'h-full', 'self-stretch'] as $grows) {
+        expect(in_array($grows, $clamped, true))->toBeFalse("The clamped description carries {$grows}, so a taller row stretches it past the clamp.");
+    }
+
+    expect(in_array('mt-auto', $authors, true))->toBeTrue('The authors line no longer takes the free space, so the footer leaves the bottom of the card.');
 });

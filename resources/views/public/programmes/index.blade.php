@@ -1,10 +1,11 @@
 @extends('layouts.public')
 
 {{--
-    Every active course as a card, in the controller's order. The h1 is the page
-    and each card's name is an h2, so the headings stay in order. Which courses
-    show, and what each card says, is ProgrammeController's and the card's
-    business; this page only lays them out.
+    Every active course as a card, in the controller's order, under the library's navy
+    header (the prototype shows the programmes only as a section of the home page). The
+    h1 is the page's header and each card's name is an h2, so the headings stay in
+    order. Which courses show, and what each card says, is ProgrammeController's and the
+    card's business; this page only lays them out, on white as the design's section is.
 --}}
 @use('App\Support\PublicRoute')
 
@@ -13,22 +14,20 @@
 @endsection
 
 @section('content')
-    <div class="mx-auto max-w-6xl px-4 py-12">
-        <h1 class="font-display text-4xl text-navy">{{ __('public.programmes.heading') }}</h1>
-        <p class="mt-4 max-w-2xl text-lg text-body">{{ __('public.programmes.intro') }}</p>
+    <x-public.page-header :title="__('public.programmes.heading')" :intro="__('public.programmes.intro')" />
 
-        @if ($programmes === [])
-            <p class="mt-10 text-body">{{ __('public.programmes.empty') }}</p>
-            <a
-                href="{{ PublicRoute::url('public.contact') }}"
-                class="mt-4 inline-flex items-center rounded-pill border border-navy/20 px-4 py-2 text-sm font-medium text-navy hover:bg-navy hover:text-cream"
-            >{{ __('public.links.contact') }}</a>
-        @else
-            <div class="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-                @foreach ($programmes as $programme)
-                    <x-public.programme-card :programme="$programme" :level="2" />
-                @endforeach
-            </div>
-        @endif
-    </div>
+    <section class="border-b border-navy/8 bg-card">
+        <x-public.container class="py-20">
+            @if ($programmes === [])
+                <p class="text-base text-body">{{ __('public.programmes.empty') }}</p>
+                <x-public.button :href="PublicRoute::url('public.contact')" variant="outline" size="sm" class="mt-4">{{ __('public.links.contact') }}</x-public.button>
+            @else
+                <div class="grid grid-cols-[repeat(auto-fit,minmax(min(272px,100%),1fr))] gap-4">
+                    @foreach ($programmes as $programme)
+                        <x-public.programme-card :programme="$programme" :level="2" />
+                    @endforeach
+                </div>
+            @endif
+        </x-public.container>
+    </section>
 @endsection

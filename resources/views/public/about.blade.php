@@ -1,10 +1,13 @@
 @extends('layouts.public')
 
 {{--
-    About. The copy is draft (lang/en/public.php, `about.*`). Of the design's
-    three feature cards only "Verifiable certification" is kept, because it is the
-    one the system makes true; the other two claimed things about the faculty and
-    the teaching format that the centre has not confirmed.
+    About. The copy is draft (lang/en/public.php, `about.*`). The prototype shows
+    About only as a section of the home page, so this page takes the library's navy
+    header and then that section's two columns: the paragraphs on the left and, on the
+    right, the pillar. Of the design's three feature cards only "Verifiable
+    certification" is kept, because it is the one the system makes true; the other two
+    claimed things about the faculty and the teaching format that the centre has not
+    confirmed. The two buttons are the page's onward links.
 --}}
 @use('App\Support\PublicRoute')
 
@@ -13,28 +16,24 @@
 @endsection
 
 @section('content')
-    <div class="mx-auto max-w-3xl px-4 py-12">
-        <h1 class="font-display text-4xl text-navy">{{ __('public.about.heading') }}</h1>
+    <x-public.page-header :title="__('public.about.heading')" />
 
-        <p class="mt-6 text-lg text-body">{{ __('public.about.intro') }}</p>
-        <p class="mt-4 text-lg text-body">{{ __('public.about.register') }}</p>
-        <p class="mt-4 text-lg text-body">{{ __('public.about.questions') }}</p>
+    <x-public.container class="py-22">
+        <div class="flex flex-wrap items-start gap-14">
+            <div class="min-w-0 flex-[1_1_380px]">
+                <p class="max-w-140 text-base leading-[1.8] text-pretty text-body lg:text-prose">{{ __('public.about.intro') }}</p>
+                <p class="mt-4 max-w-140 text-base leading-[1.8] text-pretty text-body lg:text-prose">{{ __('public.about.register') }}</p>
+                <p class="mt-4 max-w-140 text-base leading-[1.8] text-pretty text-body lg:text-prose">{{ __('public.about.questions') }}</p>
 
-        <section aria-labelledby="about-certification-heading" class="mt-10 rounded-card border border-navy/9 bg-card p-6">
-            <h2 id="about-certification-heading" class="font-display text-2xl text-navy">{{ __('public.about.certification_heading') }}</h2>
-            <p class="mt-3 text-body">{{ __('public.about.certification_body') }}</p>
-            <a href="{{ PublicRoute::url('verify.certificates.form') }}" class="mt-4 inline-block font-medium text-navy underline hover:text-gold-dark">{{ __('public.links.verify_certificate') }}</a>
-        </section>
+                <div class="mt-8 flex flex-wrap gap-3">
+                    <x-public.button :href="PublicRoute::url('public.programmes.index')" variant="navy">{{ __('public.about.programmes_link') }}</x-public.button>
+                    <x-public.button :href="PublicRoute::url('public.contact')" variant="outline">{{ __('public.about.contact_link') }}</x-public.button>
+                </div>
+            </div>
 
-        <div class="mt-10 flex flex-wrap gap-3">
-            <a
-                href="{{ PublicRoute::url('public.programmes.index') }}"
-                class="inline-flex items-center rounded-pill bg-navy px-6 py-3 font-medium text-cream hover:bg-navy-hover"
-            >{{ __('public.about.programmes_link') }}</a>
-            <a
-                href="{{ PublicRoute::url('public.contact') }}"
-                class="inline-flex items-center rounded-pill border border-navy/20 px-6 py-3 font-medium text-navy hover:bg-navy hover:text-cream"
-            >{{ __('public.about.contact_link') }}</a>
+            <div class="grid min-w-0 flex-[1_1_320px] gap-3.25">
+                <x-public.pillar icon="award" :level="2" :title="__('public.about.certification_heading')">{{ __('public.about.certification_body') }}</x-public.pillar>
+            </div>
         </div>
-    </div>
+    </x-public.container>
 @endsection

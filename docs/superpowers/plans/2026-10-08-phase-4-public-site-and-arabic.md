@@ -148,7 +148,7 @@ first attempt.
 | `database/seeders/RolePermissionSeeder.php` | **T03 → T04** | T03 adds the article permissions, T04 the expense and category permissions. T04 rebases on T03 and must not reorder T03's rows |
 | `app/Providers/Filament/AdminPanelProvider.php` | **T03 → T09 → T16a → T20c → T18** | T03 adds `discoverResources` for `Domain/Publications`; T09 adds `discoverPages` for `Domain/Enrollment/Filament/Pages`; T16a owns the theme, colours and navigation; T20c sets the real brand logo and name and checks the shell's tokens against the prototype; T18 adds the guest-locale middleware. Each adds its own lines and edits no other task's |
 | `app/Providers/AppServiceProvider.php` | **T11 → T13** | T11 registers the `public-site` rate limiter, T13 the `publication-download` limiter. Nothing else in the file is touched |
-| `routes/web.php` | **T11 → T12 → T13 → T20b → T18** | T11 creates the sessionless public group; T12 and T13 add routes inside it and may not alter the group or its middleware. T15, folded into T20a, adds no route: its portal entry is a link. T20b adds one GET route, `verify.certificates.lookup`, inside the existing verifier group, under its middleware and limiter, routed to the unchanged `VerifyCertificateController::submit()`, for the home page's verifier box (owner, 2026-10-13). Its path stays outside `verify/certificates/{reference}`. T18 adds the `/ar` copies of the public group and the `/ar/` verifier routes **inside the existing verifier group**, under the same middleware and the same named limiter, **named `ar.` plus the English name** so the English names never move. **No task touches the private-file group** |
+| `routes/web.php` | **T11 → T12 → T13 → T20b → T18** | T11 creates the sessionless public group; T12 and T13 add routes inside it and may not alter the group or its middleware. T15, folded into T20a, adds no route: its portal entry is a link. T20b adds one GET route, `verify.certificates.lookup`, inside the existing verifier group, under its middleware and limiter, routed to the POST's own `VerifyCertificateController::submit()`, for the home page's verifier box (owner, 2026-10-13). Its path stays outside `verify/certificates/{reference}`. T18 adds the `/ar` copies of the public group and the `/ar/` verifier routes **inside the existing verifier group**, under the same middleware and the same named limiter, **named `ar.` plus the English name** so the English names never move. **No task touches the private-file group** |
 | `resources/css/app.css`, `vite.config.js` | **T11 → T16a → T20a → T18** | T11 adds the public site's stylesheet entry; T16a the Filament theme entry; T20a the public site's self-hosted fonts; T18 the direction work over both |
 | `resources/css/public.css` | **T11 → T20a → T20b → T18** | T11 creates it; T20a replaces its palette with the design system's tokens; T20b appends the tokens a page first needs and edits none of T20a's; T18 the direction work |
 | `app/Http/Controllers/Public/PageController.php` | **T12 → T20b** | T12 creates it; T20b adds the home teaser's articles to `home()` |
@@ -164,6 +164,7 @@ first attempt.
 | `resources/css/filament/admin/theme.css` | **T16a → T20c → T16c → T16b (token only)** | T16a creates the admin theme; T20c checks every token against `Filament Revamp.dc.html`. Owner-approved T16c exception (2026-10-15): only the named orange ageing-card token (`#fb923c`). Review-approved T16b exception (2026-10-16): only the no-portal dot token (`#a78bfa`). Neither changes existing theme rules; T16d–T16e read it without editing |
 | `resources/views/components/admin/side-panel.blade.php` | **T16b** | Review-approved scope amendment, 2026-10-16: the student preview footer's stacked actions |
 | `app/Http/Controllers/VerifyCertificateController.php` | **T20c → T18** | T20c (lead's amendment, 2026-10-13): one line, so the result's `centreName` reads `config('public_site.brand.name')` and not `app.name`, which is now the short display name. T18: one line, the `submit()` redirect goes through `PublicRoute`. In neither task do the lookup, the normalisation or the uniform miss move |
+| `app/Http/Controllers/VerifyCertificateController.php` | **T20c → T20b → T18** | T20c (lead's amendment, 2026-10-13): one line, so the result's `centreName` reads `config('public_site.brand.name')` and not `app.name`, which is now the short display name. T20b (owner, 2026-10-16): `submit()` reads `reference` only as a string, so an array is the uniform miss rather than a 500. T18: one line, the `submit()` redirect goes through `PublicRoute`. In none of them do the lookup, the normalisation or the uniform miss move |
 | `app/Support/PublicRoute.php` | **T11 only** | Complete from the start, so T18 adds routes and a locale without editing it |
 | `app/Domain/Enrollment/Models/Batch.php` | **T05 only** | Scopes beside the existing predicates |
 | `app/Domain/Enrollment/Services/EnrollmentQueryService.php` | **T05 → T16c** | T05 supplies portal balance labels; owner-approved T16c expansion (2026-10-15) adds a batched/joined student-name projection for charge rows. Existing portal behavior and fixed query counts stay unchanged; Finance does not traverse `enrollment.student` |
@@ -1145,7 +1146,10 @@ and the centre's name.
     reads `reference` from the request, normalises it, redirects a well-formed
     value to `verify.certificates.show`, and returns the uniform miss for
     anything else. The new route therefore adds no second copy of the
-    reference rule, and no controller is edited.
+    reference rule, and no controller is edited for it. (T20b later changes one
+    thing in `submit()`, with the owner's approval of 2026-10-16: an array
+    `reference` is treated as empty, so it gets the uniform miss and not a 500.
+    See T20b's file scope.)
   - **The path must not fall under `verify/certificates/{reference}`.** That
     segment is deliberately unconstrained, so an overlapping path would be read
     as a reference.
@@ -1277,6 +1281,13 @@ and the centre's name.
     - the route carries the group's response headers and shares the
       `certificate-verification` limiter's budget;
     - the home form's `action` resolves to the route by name.
+  - `app/Http/Controllers/VerifyCertificateController.php` — **`submit()` reads
+    `reference` only as a string** (owner, 2026-10-16). Its `(string)` cast turned
+    `reference[]=…` into a warning and a 500 rather than the uniform miss, on the
+    existing POST and, through the lookup, as a plain link. Anything but a string
+    is treated as empty. `VerifierLookupRouteTest` holds both routes to the miss.
+    The lookup, the normalisation and the uniform miss do not move (seam, after
+    T20c).
 
 **Does.** Each page section by section against the prototype's HERO, ABOUT,
 PROGRAMMES, CERTIFICATE VERIFIER, PUBLICATIONS TEASER, CONTACT, PUBLICATIONS

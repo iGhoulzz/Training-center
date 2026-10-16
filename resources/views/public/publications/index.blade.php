@@ -1,9 +1,9 @@
 @extends('layouts.public')
 
 {{--
-    The publications library: a search box, the topic chips, the sort links, the
-    count line, one card per article and the page links. Which articles show, in
-    what order and how many to a page is PublicationController's and
+    The publications library: the navy header, a search box and the sort button, the
+    topic chips, the count line, one card per article and the page links. Which articles
+    show, in what order and how many to a page is PublicationController's and
     PublicArticleCatalogue's business; this page only lays them out.
 
     NOTHING HERE IS A MODEL. $articles is a list of PublicArticle projections,
@@ -13,148 +13,154 @@
     THE SEARCH BOX IS THE ONE FORM A PUBLIC PAGE MAY HOLD, and it is a read-only
     GET form: it writes q, topic and sort into the URL and nothing else, so it
     needs no session and no CSRF token (docs/ENGINEERING.md, "Frontend (phase 4)").
-    The hidden inputs keep the topic and the sort across a new search.
+    The hidden inputs keep the topic and the sort across a new search. The design draws
+    no submit button, so the search has none to see: Enter submits it, and the button is
+    there for the keyboard and for assistive technology, visible only while it has focus.
+
+    THE SORT IS ONE BUTTON, as the design draws it. Its text is the order the list is
+    in now, and it is a link to the other order with the search and topic kept. Its
+    accessible name says both, so a screen reader hears what it does.
 
     Every link, the form's action included, goes through PublicRoute. The links
     that keep the filters drop the empty ones (array_filter with strlen keeps a
     search for "0"), so an unfiltered library has a clean URL.
-
-    NO PHP BLOCK IN THIS TEMPLATE: LocalizationTest reads the body of one as
-    untranslated prose, so every value is computed inline.
 --}}
 @use('App\Domain\Publications\Queries\PublicArticleCatalogue')
 @use('App\Support\PublicRoute')
+
+@php
+    $newestFirst = $sort === PublicArticleCatalogue::SORT_NEWEST;
+    $otherSort = $newestFirst ? PublicArticleCatalogue::SORT_DOWNLOADS : PublicArticleCatalogue::SORT_NEWEST;
+    $currentLabel = $newestFirst ? __('publications.public.sort_newest') : __('publications.public.sort_downloads');
+    $otherLabel = $newestFirst ? __('publications.public.sort_downloads') : __('publications.public.sort_newest');
+@endphp
 
 @section('title')
     {{ __('public.page_title', ['page' => __('publications.public.heading'), 'name' => config('public_site.brand.name')]) }}
 @endsection
 
 @section('content')
-    <div class="mx-auto max-w-6xl px-4 py-12">
-        <h1 class="font-display text-4xl text-navy">{{ __('publications.public.heading') }}</h1>
-        <p class="mt-4 max-w-2xl text-lg text-body">{{ __('publications.public.intro') }}</p>
+    <x-public.page-header
+        :back-href="PublicRoute::url('public.home')"
+        :back-label="__('publications.public.back_home')"
+        :eyebrow="__('publications.public.library_eyebrow')"
+        :title="__('publications.public.heading')"
+        :intro="__('publications.public.intro')"
+    />
 
-        <form
-            method="get"
-            action="{{ PublicRoute::url('public.publications.index') }}"
-            role="search"
-            class="mt-8 flex flex-wrap items-end gap-3"
-        >
-            <div class="min-w-64 grow">
-                <label for="publications-search" class="block text-sm font-medium text-body">{{ __('publications.public.search_label') }}</label>
-                <input
-                    id="publications-search"
-                    type="search"
-                    name="q"
-                    value="{{ $search }}"
-                    placeholder="{{ __('publications.public.search_placeholder') }}"
-                    class="mt-1 block w-full rounded-field border border-navy/14 bg-card px-4 py-2 text-ink"
-                >
-            </div>
+    <x-public.container class="pt-8 pb-21">
+        <div class="mb-5.5 flex flex-wrap items-center gap-3">
+            <form
+                method="get"
+                action="{{ PublicRoute::url('public.publications.index') }}"
+                role="search"
+                class="flex min-w-0 flex-[1_1_240px] items-center gap-3"
+            >
+                <div class="flex min-w-0 flex-1 items-center gap-2.5 rounded-field border border-navy/14 bg-card px-3.75 focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-navy-hover">
+                    <x-public.icon name="search" :size="16" class="text-meta" />
+                    <label for="publications-search" class="sr-only">{{ __('publications.public.search_label') }}</label>
+                    <input
+                        id="publications-search"
+                        type="search"
+                        name="q"
+                        value="{{ $search }}"
+                        placeholder="{{ __('publications.public.search_placeholder') }}"
+                        class="min-w-0 flex-1 border-0 bg-transparent py-3 text-base text-ink outline-none placeholder:text-meta"
+                    >
+                </div>
 
-            @if ($topic !== '')
-                <input type="hidden" name="topic" value="{{ $topic }}">
-            @endif
-            <input type="hidden" name="sort" value="{{ $sort }}">
+                @if ($topic !== '')
+                    <input type="hidden" name="topic" value="{{ $topic }}">
+                @endif
+                <input type="hidden" name="sort" value="{{ $sort }}">
 
-            <button
-                type="submit"
-                class="rounded-pill bg-navy px-6 py-2 font-medium text-cream hover:bg-navy-hover"
-            >{{ __('publications.public.search_submit') }}</button>
-        </form>
+                <button
+                    type="submit"
+                    class="sr-only focus:not-sr-only focus:rounded-field focus:bg-navy focus:px-4.25 focus:py-3 focus:text-compact focus:font-semibold focus:text-cream"
+                >{{ __('publications.public.search_submit') }}</button>
+            </form>
 
-        <nav aria-label="{{ __('publications.public.topics_label') }}" class="mt-6">
+            <x-public.button
+                :href="PublicRoute::url('public.publications.index', array_filter(['q' => $search, 'topic' => $topic, 'sort' => $otherSort], 'strlen'))"
+                variant="toggle"
+                size="field"
+                :aria-label="__('publications.public.sort_switch', ['current' => $currentLabel, 'next' => $otherLabel])"
+            >{{ $currentLabel }}</x-public.button>
+        </div>
+
+        <nav aria-label="{{ __('publications.public.topics_label') }}" class="mb-6">
             <ul class="flex flex-wrap gap-2">
                 <li>
-                    <a
-                        href="{{ PublicRoute::url('public.publications.index', array_filter(['q' => $search, 'sort' => $sort], 'strlen')) }}"
-                        @if ($topic === '') aria-current="true" @endif
-                        class="inline-flex items-center gap-2 rounded-pill border border-navy/14 px-4 py-1 text-sm font-medium {{ $topic === '' ? 'bg-navy text-cream hover:bg-navy' : 'bg-card text-body hover:bg-cream' }}"
-                    >{{ __('publications.public.topic_all') }} <span>{{ array_sum(array_column($topics, 'count')) }}</span></a>
+                    <x-public.chip
+                        :href="PublicRoute::url('public.publications.index', array_filter(['q' => $search, 'sort' => $sort], 'strlen'))"
+                        :selected="$topic === ''"
+                        :name="__('publications.public.topic_all')"
+                        :count="array_sum(array_column($topics, 'count'))"
+                    />
                 </li>
 
                 @foreach ($topics as $entry)
                     <li>
-                        <a
-                            href="{{ PublicRoute::url('public.publications.index', array_filter(['q' => $search, 'topic' => $entry['topic'], 'sort' => $sort], 'strlen')) }}"
-                            @if (mb_strtolower($topic) === mb_strtolower($entry['topic'])) aria-current="true" @endif
-                            class="inline-flex items-center gap-2 rounded-pill border border-navy/14 px-4 py-1 text-sm font-medium {{ mb_strtolower($topic) === mb_strtolower($entry['topic']) ? 'bg-navy text-cream hover:bg-navy' : 'bg-card text-body hover:bg-cream' }}"
-                        >{{ $entry['topic'] }} <span>{{ $entry['count'] }}</span></a>
+                        <x-public.chip
+                            :href="PublicRoute::url('public.publications.index', array_filter(['q' => $search, 'topic' => $entry['topic'], 'sort' => $sort], 'strlen'))"
+                            :selected="mb_strtolower($topic) === mb_strtolower($entry['topic'])"
+                            :name="$entry['topic']"
+                            :count="$entry['count']"
+                        />
                     </li>
                 @endforeach
             </ul>
         </nav>
 
-        <div class="mt-6 flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
-            <p class="text-sm text-body">
-                @if ($topic !== '' && $search !== '')
-                    {{ trans_choice('publications.public.count_in_topic_matching', $total, ['topic' => $topic, 'search' => $search]) }}
-                @elseif ($topic !== '')
-                    {{ trans_choice('publications.public.count_in_topic', $total, ['topic' => $topic]) }}
-                @elseif ($search !== '')
-                    {{ trans_choice('publications.public.count_matching', $total, ['search' => $search]) }}
-                @else
-                    {{ trans_choice('publications.public.count', $total) }}
-                @endif
-            </p>
-
-            <nav aria-label="{{ __('publications.public.sort_label') }}">
-                <ul class="flex items-center gap-4 text-sm">
-                    <li>
-                        <a
-                            href="{{ PublicRoute::url('public.publications.index', array_filter(['q' => $search, 'topic' => $topic, 'sort' => PublicArticleCatalogue::SORT_NEWEST], 'strlen')) }}"
-                            @if ($sort === PublicArticleCatalogue::SORT_NEWEST) aria-current="true" @endif
-                            class="rounded-control py-1 hover:underline {{ $sort === PublicArticleCatalogue::SORT_NEWEST ? 'font-semibold text-navy underline' : 'text-body' }}"
-                        >{{ __('publications.public.sort_newest') }}</a>
-                    </li>
-                    <li>
-                        <a
-                            href="{{ PublicRoute::url('public.publications.index', array_filter(['q' => $search, 'topic' => $topic, 'sort' => PublicArticleCatalogue::SORT_DOWNLOADS], 'strlen')) }}"
-                            @if ($sort === PublicArticleCatalogue::SORT_DOWNLOADS) aria-current="true" @endif
-                            class="rounded-control py-1 hover:underline {{ $sort === PublicArticleCatalogue::SORT_DOWNLOADS ? 'font-semibold text-navy underline' : 'text-body' }}"
-                        >{{ __('publications.public.sort_downloads') }}</a>
-                    </li>
-                </ul>
-            </nav>
-        </div>
-        <p class="mt-1 text-sm text-meta">{{ __('publications.public.downloads_note') }}</p>
+        <p class="text-compact wrap-anywhere text-meta">
+            @if ($topic !== '' && $search !== '')
+                {{ trans_choice('publications.public.count_in_topic_matching', $total, ['topic' => $topic, 'search' => $search]) }}
+            @elseif ($topic !== '')
+                {{ trans_choice('publications.public.count_in_topic', $total, ['topic' => $topic]) }}
+            @elseif ($search !== '')
+                {{ trans_choice('publications.public.count_matching', $total, ['search' => $search]) }}
+            @else
+                {{ trans_choice('publications.public.count', $total) }}
+            @endif
+        </p>
+        <p class="mt-1 mb-4 text-caption text-meta">{{ __('publications.public.downloads_note') }}</p>
 
         @if ($total === 0)
-            @if ($topic === '' && $search === '')
-                <p class="mt-10 text-body">{{ __('publications.public.empty_library') }}</p>
-            @else
-                <div class="mt-8 rounded-card border border-dashed border-navy/20 px-6 py-12 text-center">
-                    <h2 class="font-display text-2xl text-navy">{{ __('publications.public.empty_heading') }}</h2>
-                    <p class="mt-3 text-body">{{ __('publications.public.empty_body') }}</p>
-                    <a
-                        href="{{ PublicRoute::url('public.publications.index') }}"
-                        class="mt-6 inline-flex items-center rounded-pill border border-navy/20 px-4 py-2 text-sm font-medium text-navy hover:bg-navy hover:text-cream"
-                    >{{ __('publications.public.empty_clear') }}</a>
-                </div>
-            @endif
+            <div class="rounded-card border border-dashed border-navy/18 bg-card px-6 py-15 text-center">
+                @if ($topic === '' && $search === '')
+                    <p class="text-base text-body">{{ __('publications.public.empty_library') }}</p>
+                @else
+                    <h2 class="font-display text-2xl leading-[1.6] text-navy">{{ __('publications.public.empty_heading') }}</h2>
+                    <p class="mt-2 text-base text-meta lg:text-sm">{{ __('publications.public.empty_body') }}</p>
+                    <x-public.button :href="PublicRoute::url('public.publications.index')" variant="outline" class="mt-6">{{ __('publications.public.empty_clear') }}</x-public.button>
+                @endif
+            </div>
         @else
-            <ul class="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+            <ul class="grid grid-cols-[repeat(auto-fit,minmax(min(296px,100%),1fr))] gap-4">
                 @foreach ($articles as $article)
                     <li>
-                        <article class="flex h-full flex-col rounded-card border border-navy/9 bg-card p-6 shadow-card">
-                            <x-public.article-meta :topic="$article->topic" :issued-on="$article->issuedOn" />
+                        <x-public.card as="article" hover="lift" class="flex h-full flex-col gap-3.25 p-5.5">
+                            <x-public.article-meta :topic="$article->topic" :issued-on="$article->issuedOn" :issued-label="false" class="gap-x-2.25 gap-y-1" />
 
-                            <h2 class="mt-3 font-display text-xl text-navy">
-                                <a href="{{ PublicRoute::url('public.publications.show', ['slug' => $article->slug]) }}" class="hover:underline">{{ $article->title }}</a>
+                            <h2 class="font-display text-library-title text-balance text-navy">
+                                <a href="{{ PublicRoute::url('public.publications.show', ['slug' => $article->slug]) }}" class="tap-target block wrap-anywhere hover:text-gold-dark">{{ $article->title }}</a>
                             </h2>
 
-                            <p class="mt-3 line-clamp-4 text-sm text-body">{{ $article->description }}</p>
-                            <p class="mt-3 text-sm text-meta">{{ $article->authors }}</p>
+                            <p class="line-clamp-4 text-base leading-[1.65] text-pretty wrap-anywhere text-body-secondary lg:text-ui">{{ $article->description }}</p>
+                            <p class="mt-auto text-small wrap-anywhere text-meta">{{ $article->authors }}</p>
 
-                            <div class="mt-auto flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-navy/9 pt-4">
-                                <a
-                                    href="{{ PublicRoute::url('public.publications.download', ['slug' => $article->slug]) }}"
-                                    aria-label="{{ __('publications.public.download_pdf_named', ['title' => $article->title]) }}"
-                                    class="inline-flex items-center rounded-pill bg-navy px-4 py-2 text-sm font-medium text-cream hover:bg-navy-hover"
-                                >{{ __('publications.public.download_pdf') }}</a>
-                                <span class="text-sm text-meta">{{ trans_choice('publications.public.downloads', $article->downloadCount) }}</span>
+                            <div class="flex flex-wrap items-center gap-2 border-t border-navy/8 pt-3.25">
+                                <x-public.button
+                                    :href="PublicRoute::url('public.publications.download', ['slug' => $article->slug])"
+                                    variant="control"
+                                    size="library"
+                                    :aria-label="__('publications.public.download_pdf_named', ['title' => $article->title])"
+                                >
+                                    <x-public.icon name="download" :size="13" :stroke-width="2.2" linejoin="miter" class="text-gold" />{{ __('publications.public.pdf') }}
+                                </x-public.button>
+                                <span class="text-note text-meta">{{ trans_choice('publications.public.downloads', $article->downloadCount) }}</span>
                             </div>
-                        </article>
+                        </x-public.card>
                     </li>
                 @endforeach
             </ul>
@@ -162,16 +168,16 @@
             @if ($lastPage > 1)
                 <nav aria-label="{{ __('publications.public.pagination_label') }}" class="mt-10 flex flex-wrap items-center justify-center gap-6 text-sm">
                     @if ($previousUrl !== null)
-                        <a href="{{ $previousUrl }}" rel="prev" class="inline-flex items-center rounded-pill border border-navy/20 px-4 py-2 font-medium text-navy hover:bg-navy hover:text-cream">{{ __('publications.public.previous') }}</a>
+                        <x-public.button :href="$previousUrl" variant="outline" rel="prev" class="leading-[normal] max-lg:min-h-11">{{ __('publications.public.previous') }}</x-public.button>
                     @endif
 
-                    <p class="text-body">{{ __('publications.public.page_of', ['current' => $currentPage, 'last' => $lastPage]) }}</p>
+                    <p class="text-base text-body lg:text-sm">{{ __('publications.public.page_of', ['current' => $currentPage, 'last' => $lastPage]) }}</p>
 
                     @if ($nextUrl !== null)
-                        <a href="{{ $nextUrl }}" rel="next" class="inline-flex items-center rounded-pill border border-navy/20 px-4 py-2 font-medium text-navy hover:bg-navy hover:text-cream">{{ __('publications.public.next') }}</a>
+                        <x-public.button :href="$nextUrl" variant="outline" rel="next" class="leading-[normal] max-lg:min-h-11">{{ __('publications.public.next') }}</x-public.button>
                     @endif
                 </nav>
             @endif
         @endif
-    </div>
+    </x-public.container>
 @endsection

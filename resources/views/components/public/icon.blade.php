@@ -6,7 +6,10 @@
     PROPS. `name` is one of the cases below, and a name that is not here throws,
     so a typo fails the first test that renders the page and not silently as an
     empty box. `size` is the width and height in pixels (the design uses 13 to 21).
-    `stroke` is the line weight (the design draws 1.6 to 2.2).
+    `stroke` is the line weight (the design draws 1.6 to 2.2). `strokeWidth` is the same
+    thing under the SVG attribute's own name, and wins when both are given: a view passes
+    it as `:stroke-width`, because DesignSystemTest reads a `stroke=` in a view as a
+    stroke COLOUR and refuses it.
 
     `linecap` and `linejoin` are the shape of the stroke's ends and corners. The
     design sets them USE BY USE, not icon by icon (the graduation cap is round and
@@ -19,11 +22,16 @@
       - plain ends and mitred joins (`linecap="butt" linejoin="miter"`): the top
         bar's phone and mail, and the search.
 
+    The two arrows point along the reading direction as drawn, left to right in
+    English, so a caller whose arrow means "onward" or "back" flips it for right-to-left
+    text with `rtl:-scale-x-100`. `arrow-left` is the mirror of `arrow-right`, for a back
+    link (T20b).
+
     The colour is currentColor, so a caller colours the icon with a token class
     (`text-gold`), which also lets a hover on the parent recolour it. Callers add
     their own classes through $attributes.
 --}}
-@props(['name', 'size' => 16, 'stroke' => 2, 'linecap' => 'round', 'linejoin' => 'round'])
+@props(['name', 'size' => 16, 'stroke' => 2, 'strokeWidth' => null, 'linecap' => 'round', 'linejoin' => 'round'])
 
 <svg
     xmlns="http://www.w3.org/2000/svg"
@@ -32,7 +40,7 @@
     viewBox="0 0 24 24"
     fill="none"
     stroke="currentColor"
-    stroke-width="{{ $stroke }}"
+    stroke-width="{{ $strokeWidth ?? $stroke }}"
     stroke-linecap="{{ $linecap }}"
     stroke-linejoin="{{ $linejoin }}"
     aria-hidden="true"
@@ -53,6 +61,9 @@
             @break
         @case('arrow-right')
             <path d="M5 12h14m-6-6 6 6-6 6" />
+            @break
+        @case('arrow-left')
+            <path d="M19 12H5m6-6-6 6 6 6" />
             @break
         @case('download')
             <path d="M12 3v12m0 0-4.5-4.5M12 15l4.5-4.5M4 20h16" />

@@ -4,15 +4,16 @@
     Contact: links, not a form. A public page holds no session, so a form posted
     from it would carry no CSRF token, and the system has nowhere to send messages.
 
-    The email and telephone are the email-link and phone-link components, which
-    read PublicContact like the header does. The directions link opens the owner's
-    map in the visitor's own map app: a plain link, with NO iframe and NO embed, so
-    no third-party origin loads on this page. It shows only while PublicContact
-    holds a map URL, and that is always an http(s) one. There is no street address
-    and no opening hours until the owner sends them.
+    The prototype shows Contact only as a section of the home page, so this page takes
+    the library's navy header (with the page's introduction) and then that section's
+    body: the same contact-details block the home page renders. It reads PublicContact
+    like the header does, shows a row only for a value that is set, and shows the
+    directions card only while a map link is set. The directions link opens the owner's
+    map in the visitor's own map app: a plain link, with NO iframe and NO embed, so no
+    third-party origin loads on this page. There is no street address and no opening
+    hours until the owner sends them.
 --}}
 @use('App\Support\PublicContact')
-@use('App\Support\PublicRoute')
 
 @php($contact = PublicContact::fromConfig())
 
@@ -21,35 +22,13 @@
 @endsection
 
 @section('content')
-    <div class="mx-auto max-w-3xl px-4 py-12">
-        <h1 class="font-display text-4xl text-navy">{{ __('public.contact.heading') }}</h1>
-        <p class="mt-4 text-lg text-body">{{ __('public.contact.intro') }}</p>
+    <x-public.page-header :title="__('public.contact.heading')" :intro="__('public.contact.intro')" />
 
-        @if ($contact->email !== '' || $contact->phone !== '')
-            <dl class="mt-8 grid gap-6 rounded-card border border-navy/9 bg-card p-6 sm:grid-cols-2">
-                @if ($contact->email !== '')
-                    <div>
-                        <dt class="text-sm font-semibold uppercase tracking-wider text-meta">{{ __('public.contact.email_label') }}</dt>
-                        <dd class="mt-1 text-lg"><x-public.email-link class="underline hover:text-gold-dark" /></dd>
-                    </div>
-                @endif
-
-                @if ($contact->phone !== '')
-                    <div>
-                        <dt class="text-sm font-semibold uppercase tracking-wider text-meta">{{ __('public.contact.phone_label') }}</dt>
-                        <dd class="mt-1 text-lg"><x-public.phone-link class="underline hover:text-gold-dark" /></dd>
-                    </div>
-                @endif
-            </dl>
-        @endif
-
-        @if ($contact->mapUrl !== '')
-            <a
-                href="{{ $contact->mapUrl }}"
-                target="_blank"
-                rel="noopener noreferrer"
-                class="mt-8 inline-flex items-center rounded-pill bg-navy px-6 py-3 font-medium text-cream hover:bg-navy-hover"
-            >{{ __('public.contact.directions') }}<span class="sr-only"> {{ __('public.contact.directions_new_tab') }}</span></a>
-        @endif
-    </div>
+    @if ($contact->email !== '' || $contact->phone !== '' || $contact->mapUrl !== '')
+        <section aria-labelledby="contact-heading" class="bg-card">
+            <x-public.container class="py-20">
+                <x-public.contact-details heading-id="contact-heading" />
+            </x-public.container>
+        </section>
+    @endif
 @endsection

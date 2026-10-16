@@ -5,11 +5,17 @@ declare(strict_types=1);
 use App\Domain\Enrollment\Data\PublicProgramme;
 use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Course;
+use App\Domain\Publications\Data\PublicArticle;
+use App\Domain\Publications\Models\Article;
+use App\Domain\Publications\Queries\PublicArticleCatalogue;
 use App\Support\PublicContact;
+use Dom\HTMLDocument;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Blade;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\View;
 use Illuminate\View\ComponentAttributeBag;
@@ -158,13 +164,15 @@ it('prints the same email and telephone links in the header and in the page body
 it('hands the callers classes to the contact links and keeps them left to right', function () {
     $html = (string) $this->get('/contact')->assertOk()->getContent();
 
-    // The header's link carries the top bar's classes, the page's its own.
+    // The header's link carries the top bar's classes, the page's its own: the design's
+    // contact value (15px ink, gold-dark on hover) with a 44px target.
     $barClasses = 'flex min-h-11 items-center whitespace-nowrap text-on-navy hover:text-gold-light focus-visible:outline-gold-light lg:min-h-0';
+    $pageClasses = 'tap-target inline-flex items-center text-copy font-medium text-ink hover:text-gold-dark';
 
     expect($html)->toContain('<a href="mailto:desk@example.test" dir="ltr" class="'.$barClasses.'">')
-        ->toContain('<a href="mailto:desk@example.test" dir="ltr" class="underline hover:text-gold-dark">')
+        ->toContain('<a href="mailto:desk@example.test" dir="ltr" class="'.$pageClasses.'">')
         ->toContain('<a href="tel:+218912345678" dir="ltr" class="'.$barClasses.'">')
-        ->toContain('<a href="tel:+218912345678" dir="ltr" class="underline hover:text-gold-dark">');
+        ->toContain('<a href="tel:+218912345678" dir="ltr" class="'.$pageClasses.'">');
 });
 
 it('renders no contact link, and no bar for them, when none is configured', function () {
@@ -420,6 +428,466 @@ it('hands no Eloquent model to any view on any public route', function () {
 
         foreach ($views as [$viewName, $data]) {
             expect(eloquentModelsWithin($data, $viewName))->toBe([], "{$name}: a view is handed an Eloquent model.");
+        }
+    }
+});
+
+/*
+|--------------------------------------------------------------------------
+| The home page's publications teaser (P4-T20b)
+|--------------------------------------------------------------------------
+|
+| The home page is handed the latest published articles as `articles` view data,
+| through PublicArticleCatalogue::latest(). What is asserted is the data the
+| controller hands over, not the markup, so the teaser's design can change without
+| these tests moving: published ones only, at most the limit, newest first (a tie
+| on the issue date broken by the publication time), each a PublicArticle, and a
+| query count that does not grow with the number of articles.
+|
+| Every expected slug list is written out by hand from dates chosen here, never
+| sorted by code from the same rows, and the "unpublished" row carries a sentinel
+| title and the newest issue date of all, so it would lead the list if the filter
+| went missing.
+*/
+
+/**
+ * Every SQL statement the application ran while $work ran.
+ *
+ * `DB::listen` cannot be unregistered, so the listener checks a flag and goes
+ * quiet once the work is over.
+ *
+ * @return array<int, string>
+ */
+function homeTeaserSqlStatementsDuring(Closure $work): array
+{
+    $statements = [];
+    $recording = true;
+
+    DB::listen(function (QueryExecuted $query) use (&$statements, &$recording): void {
+        if ($recording) {
+            $statements[] = $query->sql;
+        }
+    });
+
+    $work();
+    $recording = false;
+
+    return $statements;
+}
+
+/**
+ * The home page's `articles` view data, as the controller handed it over.
+ *
+ * @return array<int, PublicArticle>
+ */
+function homeTeaserArticles(): array
+{
+    $articles = test()->get('/')->assertOk()->viewData('articles');
+
+    expect($articles)->toBeArray();
+
+    return $articles;
+}
+
+/**
+ * The slugs of the home page's articles, in the order the page holds them.
+ *
+ * @return array<int, string>
+ */
+function homeTeaserSlugs(): array
+{
+    return array_map(fn (PublicArticle $article): string => $article->slug, homeTeaserArticles());
+}
+
+/**
+ * Create a published article with a hand-chosen slug and issue date.
+ *
+ * @param  array<string, mixed>  $attributes
+ */
+function teaserArticle(string $slug, string $issuedOn, array $attributes = []): Article
+{
+    return Article::factory()->published()->create(['slug' => $slug, 'issued_on' => $issuedOn] + $attributes);
+}
+
+it('hands the home page published articles only', function () {
+    teaserArticle('teaser-published-march', '2026-03-01');
+    teaserArticle('teaser-published-january', '2026-01-01');
+
+    // Newer than every published article, so a missing filter puts it first.
+    Article::factory()->create([
+        'slug' => 'teaser-sentinel-unpublished',
+        'title_en' => 'SENTINEL-UNPUBLISHED-TITLE',
+        'issued_on' => '2026-09-30',
+    ]);
+
+    $articles = homeTeaserArticles();
+
+    expect(array_column($articles, 'slug'))->toBe(['teaser-published-march', 'teaser-published-january'])
+        ->and(implode(' ', array_column($articles, 'title')))->not->toContain('SENTINEL-UNPUBLISHED-TITLE');
+});
+
+it('hands the home page at most three articles, the newest three', function () {
+    teaserArticle('teaser-limit-2026-01', '2026-01-10');
+    teaserArticle('teaser-limit-2026-05', '2026-05-10');
+    teaserArticle('teaser-limit-2026-03', '2026-03-10');
+    teaserArticle('teaser-limit-2026-04', '2026-04-10');
+    teaserArticle('teaser-limit-2026-02', '2026-02-10');
+
+    expect(homeTeaserSlugs())->toBe(['teaser-limit-2026-05', 'teaser-limit-2026-04', 'teaser-limit-2026-03']);
+});
+
+it('hands the home page its articles newest issue date first', function () {
+    // Inserted out of order, so neither the id nor the insertion order is the answer.
+    teaserArticle('teaser-order-middle', '2025-06-15');
+    teaserArticle('teaser-order-oldest', '2024-02-01');
+    teaserArticle('teaser-order-newest', '2026-08-20');
+
+    expect(homeTeaserSlugs())->toBe(['teaser-order-newest', 'teaser-order-middle', 'teaser-order-oldest']);
+});
+
+it('breaks a tie on the issue date by the later publication time', function () {
+    // The earlier-published row is inserted SECOND, so it has the higher id: a
+    // tie-break that fell through to the id would put it first.
+    teaserArticle('teaser-tie-published-later', '2026-04-10', ['published_at' => '2026-04-12 09:00:00']);
+    teaserArticle('teaser-tie-published-earlier', '2026-04-10', ['published_at' => '2026-04-11 09:00:00']);
+    teaserArticle('teaser-tie-issued-before', '2026-04-09', ['published_at' => '2026-04-20 09:00:00']);
+
+    expect(homeTeaserSlugs())->toBe(['teaser-tie-published-later', 'teaser-tie-published-earlier', 'teaser-tie-issued-before']);
+});
+
+it('hands the home page each article as a PublicArticle projection', function () {
+    teaserArticle('teaser-projection-one', '2026-02-02', ['title_en' => 'Teaser Projection One']);
+
+    $articles = homeTeaserArticles();
+
+    expect($articles)->toHaveCount(1)
+        ->and($articles[0])->toBeInstanceOf(PublicArticle::class)
+        ->and($articles[0]->slug)->toBe('teaser-projection-one')
+        ->and($articles[0]->title)->toBe('Teaser Projection One')
+        ->and($articles[0]->issuedOn)->toBe('2026-02-02');
+});
+
+it('runs the same number of queries for the home page with no articles, one or five', function () {
+    $statements = [];
+
+    $statements[0] = homeTeaserSqlStatementsDuring(fn () => test()->get('/')->assertOk());
+
+    teaserArticle('teaser-count-1', '2026-01-01');
+    $statements[1] = homeTeaserSqlStatementsDuring(fn () => test()->get('/')->assertOk());
+
+    foreach (range(2, 5) as $number) {
+        teaserArticle("teaser-count-{$number}", "2026-01-0{$number}");
+    }
+
+    $statements[5] = homeTeaserSqlStatementsDuring(fn () => test()->get('/')->assertOk());
+
+    expect(count($statements[0]))->toBeGreaterThan(0)
+        ->and(count($statements[1]))->toBe(count($statements[0]))
+        ->and(count($statements[5]))->toBe(count($statements[0]));
+
+    // And the articles are read in one statement, whatever there are.
+    $articleReads = array_filter($statements[5], fn (string $sql): bool => str_contains($sql, '`articles`'));
+
+    expect($articleReads)->toHaveCount(1);
+});
+
+it('returns nothing, and runs no query, for a limit below one', function (int $limit) {
+    teaserArticle('teaser-bound-a', '2026-01-01');
+    teaserArticle('teaser-bound-b', '2026-02-01');
+    teaserArticle('teaser-bound-c', '2026-03-01');
+
+    $catalogue = app(PublicArticleCatalogue::class);
+    $result = null;
+
+    $statements = homeTeaserSqlStatementsDuring(function () use ($catalogue, $limit, &$result): void {
+        $result = $catalogue->latest($limit);
+    });
+
+    // Laravel's limit() ignores a negative value, so without the guard a
+    // negative limit would read all three published rows.
+    expect($result)->toBe([])
+        ->and($statements)->toBe([]);
+})->with([
+    'zero' => [0],
+    'minus one' => [-1],
+]);
+
+it('returns exactly the limit when there are more published articles than that', function () {
+    teaserArticle('teaser-direct-oldest', '2026-01-01');
+    teaserArticle('teaser-direct-newest', '2026-03-01');
+    teaserArticle('teaser-direct-middle', '2026-02-01');
+
+    $result = app(PublicArticleCatalogue::class)->latest(2);
+
+    expect(array_map(fn (PublicArticle $article): string => $article->slug, $result))
+        ->toBe(['teaser-direct-newest', 'teaser-direct-middle']);
+});
+
+/*
+|--------------------------------------------------------------------------
+| The home page, section by section (P4-T20b)
+|--------------------------------------------------------------------------
+|
+| The teaser in the MARKUP: the data tests above prove what the controller hands the
+| view, these prove what the page prints from it. Every title, slug and date below is
+| written out by hand, and the unpublished article carries the newest date of all and a
+| sentinel title, so a teaser that listed it would put it first.
+*/
+
+/**
+ * The HTML of the home page's publications teaser section, or '' when there is none.
+ */
+function homeTeaserSection(string $html): string
+{
+    preg_match('/<section id="publications".*?<\/section>/s', $html, $match);
+
+    return $match[0] ?? '';
+}
+
+it('prints the three newest published articles in the home teaser, in order, each linked to its page and its download', function () {
+    teaserArticle('markup-fourth-oldest', '2025-03-01', ['title_en' => 'Teaser Fourth Oldest']);
+    teaserArticle('markup-third', '2025-09-01', ['title_en' => 'Teaser Third']);
+    teaserArticle('markup-second', '2026-01-15', ['title_en' => 'Teaser Second']);
+    teaserArticle('markup-first', '2026-06-20', ['title_en' => 'Teaser First']);
+    Article::factory()->create(['slug' => 'markup-unpublished', 'title_en' => 'SENTINEL-UNPUBLISHED-TEASER', 'issued_on' => '2026-09-30']);
+
+    $html = (string) test()->get('/')->assertOk()->getContent();
+    $section = homeTeaserSection($html);
+
+    preg_match_all('/<h3\b[^>]*>\s*<a\b[^>]*class="([^"]*)"[^>]*>(.*?)<\/a>/s', $section, $titles);
+
+    expect($section)->not->toBe('')
+        ->and($titles[2])->toBe(['Teaser First', 'Teaser Second', 'Teaser Third'])
+        // The design turns a title gold-dark on hover (it is a 44px target too).
+        ->and(array_map(fn (string $classes): array => array_intersect(['tap-target', 'hover:text-gold-dark'], explode(' ', $classes)), $titles[1]))
+        ->each->toBe(['tap-target', 'hover:text-gold-dark'])
+        ->and(substr_count($section, '<article'))->toBe(3)
+        ->and(str_contains($html, 'Teaser Fourth Oldest'))->toBeFalse('The fourth article is on the home page.')
+        ->and(str_contains($html, 'SENTINEL-UNPUBLISHED-TEASER'))->toBeFalse('An unpublished article is on the home page.');
+
+    // Hand-built URLs: the page and the download of each of the three.
+    foreach (['markup-first', 'markup-second', 'markup-third'] as $slug) {
+        expect($section)->toContain('href="'.url('/publications/'.$slug).'"')
+            ->toContain('href="'.url('/publications/'.$slug.'/download').'"');
+    }
+
+    foreach (['markup-fourth-oldest', 'markup-unpublished'] as $slug) {
+        expect(str_contains($html, '/publications/'.$slug))->toBeFalse("{$slug} is linked from the home page.");
+    }
+});
+
+it('shows no teaser section at all while nothing is published', function () {
+    Article::factory()->create(['title_en' => 'SENTINEL-NOT-PUBLISHED-YET', 'issued_on' => '2026-09-30']);
+    replacePublicLine('public.home.publications_title', 'SENTINEL-TEASER-HEADING');
+
+    $html = (string) test()->get('/')->assertOk()->getContent();
+
+    expect(str_contains($html, 'id="publications"'))->toBeFalse()
+        ->and(str_contains($html, 'SENTINEL-TEASER-HEADING'))->toBeFalse()
+        ->and(str_contains($html, 'SENTINEL-NOT-PUBLISHED-YET'))->toBeFalse();
+
+    teaserArticle('now-published', '2026-01-01', ['title_en' => 'Now Published']);
+
+    $published = (string) test()->get('/')->assertOk()->getContent();
+
+    // The control: the section does appear the moment there is something to show.
+    expect(str_contains($published, 'id="publications"'))->toBeTrue()
+        ->and(str_contains($published, 'SENTINEL-TEASER-HEADING'))->toBeTrue();
+});
+
+it('lays the home page out as the design does, and points the hero at its own sections', function () {
+    teaserArticle('layout-article', '2026-01-01');
+
+    $html = (string) test()->get('/')->assertOk()->getContent();
+    $document = HTMLDocument::createFromString($html, LIBXML_NOERROR);
+
+    // The sections in the order the design draws them. The hero and About carry no id.
+    $positions = array_map(fn (string $id): int|false => strpos($html, 'id="'.$id.'"'), ['programmes', 'verify', 'publications', 'contact']);
+
+    expect($positions)->each->not->toBeFalse()
+        ->and($positions[0])->toBeLessThan($positions[1])
+        ->and($positions[1])->toBeLessThan($positions[2])
+        ->and($positions[2])->toBeLessThan($positions[3]);
+
+    // The hero's two buttons stay on the page: they scroll to the programmes and the verifier.
+    $hero = $document->querySelector('main > section');
+
+    expect($hero->querySelector('a[href="#programmes"]'))->not->toBeNull()
+        ->and($hero->querySelector('a[href="#verify"]'))->not->toBeNull()
+        ->and($document->querySelector('main #programmes'))->not->toBeNull()
+        ->and($document->querySelector('main #verify'))->not->toBeNull();
+
+    // The seal is decoration (the h1 already names the centre) and both glows and both
+    // circles are hidden from assistive technology.
+    $seal = $hero->querySelector('img');
+
+    expect($seal->getAttribute('alt'))->toBe('')
+        ->and($seal->getAttribute('src'))->toBe(url('/images/brand/asclst-logo.jpg'))
+        ->and(count($hero->querySelectorAll('div[aria-hidden="true"]')))->toBeGreaterThanOrEqual(5);
+});
+
+it('sets the verifier box placeholder back only as far as it can still be read', function () {
+    $document = HTMLDocument::createFromString((string) test()->get('/')->assertOk()->getContent(), LIBXML_NOERROR);
+    $classes = explode(' ', (string) $document->querySelector('#home-verify-reference')->getAttribute('class'));
+
+    // The design draws the placeholder in cream at 55%. Over the lightest pixel behind the
+    // box, swept from 320 to 2560px with the colour composited over the rendered page,
+    // that is 3.36:1. 72% is the lowest whole step that reaches 4.5:1 everywhere (4.53:1
+    // at worst; 71% is 4.46:1). A breakpoint variant would bring 55% back, so any class
+    // naming the placeholder counts.
+    expect(array_values(array_filter($classes, fn (string $class): bool => str_contains($class, 'placeholder:'))))
+        ->toBe(['placeholder:text-cream/72']);
+});
+
+it('sets the emphasis phrase of the home heading in italic gold wherever it appears, and escapes every part', function (string $heading, string $expectedInnerHtml, ?string $phrase = null) {
+    replacePublicLine('public.home.heading', $heading);
+
+    // Most cases use the key's own phrase, "Legal Studies"; one gives the phrase itself markup.
+    if ($phrase !== null) {
+        replacePublicLine('public.home.heading_emphasis', $phrase);
+    }
+
+    preg_match('/<h1\b[^>]*>(.*?)<\/h1>/s', (string) test()->get('/')->assertOk()->getContent(), $match);
+
+    // Written by hand from the phrase "Legal Studies", which is the key's default.
+    expect(trim($match[1]))->toBe($expectedInnerHtml);
+})->with([
+    'in the middle' => ['Before Legal Studies After', 'Before <span class="text-gold-light italic">Legal Studies</span> After'],
+    'at the start' => ['Legal Studies First', '<span class="text-gold-light italic">Legal Studies</span> First'],
+    'at the end' => ['Last Legal Studies', 'Last <span class="text-gold-light italic">Legal Studies</span>'],
+    'with markup around it' => ['A <i>& B</i> Legal Studies <u>C</u>', 'A &lt;i&gt;&amp; B&lt;/i&gt; <span class="text-gold-light italic">Legal Studies</span> &lt;u&gt;C&lt;/u&gt;'],
+    'not in the name' => ['Plain Heading Only', 'Plain Heading Only'],
+    // The phrase is escaped inside its span as well, not only the text around it.
+    'with markup in the phrase itself' => ['Before <b>& After', 'Before <span class="text-gold-light italic">&lt;b&gt;&amp;</span> After', '<b>&'],
+]);
+
+it('takes the home heading from the centres name, with the phrase in it set apart', function () {
+    config(['public_site.brand.name' => 'The Legal Studies Centre']);
+
+    preg_match('/<h1\b[^>]*>(.*?)<\/h1>/s', (string) test()->get('/')->assertOk()->getContent(), $match);
+
+    expect(trim($match[1]))->toBe('The <span class="text-gold-light italic">Legal Studies</span> Centre');
+});
+
+it('shows a contact row only for a detail that is set, and the directions card only while a map link is set', function () {
+    replacePublicLine('public.contact.directions_title', 'SENTINEL-DIRECTIONS-TITLE');
+    replacePublicLine('public.contact.phone_label', 'SENTINEL-PHONE-LABEL');
+    replacePublicLine('public.contact.email_label', 'SENTINEL-EMAIL-LABEL');
+
+    foreach (['/', '/contact'] as $path) {
+        // Email and map only.
+        config(['public_site.contact.phone' => '', 'public_site.contact.email' => 'desk@example.test', 'public_site.contact.map_url' => 'https://maps.example.test/place/abc']);
+
+        $html = (string) test()->get($path)->assertOk()->getContent();
+
+        expect(substr_count($html, 'mailto:desk@example.test'))->toBe(2, "{$path}: the header and the block each link the email")
+            ->and(str_contains($html, 'tel:'))->toBeFalse("{$path}: a telephone row with no telephone")
+            ->and(str_contains($html, 'SENTINEL-PHONE-LABEL'))->toBeFalse("{$path}: a telephone row with no telephone")
+            ->and(substr_count($html, 'SENTINEL-EMAIL-LABEL'))->toBe(1, "{$path}: the email row")
+            ->and(str_contains($html, 'SENTINEL-DIRECTIONS-TITLE'))->toBeTrue("{$path}: no directions card with a map link");
+
+        // Telephone only, no map: no email row and no card.
+        config(['public_site.contact.phone' => '+218 91 234 5678', 'public_site.contact.email' => '', 'public_site.contact.map_url' => '']);
+
+        $html = (string) test()->get($path)->assertOk()->getContent();
+
+        expect(substr_count($html, 'tel:+218912345678'))->toBe(2, "{$path}: the header and the block each link the telephone")
+            ->and(str_contains($html, 'mailto:'))->toBeFalse("{$path}: an email row with no email")
+            ->and(str_contains($html, 'SENTINEL-EMAIL-LABEL'))->toBeFalse("{$path}: an email row with no email")
+            ->and(substr_count($html, 'SENTINEL-PHONE-LABEL'))->toBe(1, "{$path}: the telephone row")
+            ->and(str_contains($html, 'SENTINEL-DIRECTIONS-TITLE'))->toBeFalse("{$path}: a directions card with no map link")
+            ->and(str_contains($html, 'target="_blank"'))->toBeFalse();
+    }
+});
+
+it('draws no contact section on the home page and no body on the contact page when nothing is configured', function () {
+    config(['public_site.contact.phone' => '', 'public_site.contact.email' => '', 'public_site.contact.map_url' => '']);
+
+    $home = (string) test()->get('/')->assertOk()->getContent();
+    $contact = (string) test()->get('/contact')->assertOk()->getContent();
+
+    expect(str_contains($home, 'id="contact"'))->toBeFalse()
+        ->and(str_contains($home, 'home-contact-heading'))->toBeFalse()
+        ->and(str_contains($contact, 'contact-heading'))->toBeFalse();
+});
+
+/*
+|--------------------------------------------------------------------------
+| The pages that borrow the library's header, and the components they share
+|--------------------------------------------------------------------------
+*/
+
+it('opens About, Programmes, Contact and a programme with the navy header band, as a section and not a second banner', function () {
+    $course = Course::factory()->create(['name_en' => 'Banner Course']);
+
+    foreach (['/about', '/programmes', '/contact', '/programmes/'.$course->id] as $path) {
+        $document = HTMLDocument::createFromString((string) test()->get($path)->assertOk()->getContent(), LIBXML_NOERROR);
+
+        $h1s = $document->querySelectorAll('h1');
+        $band = $h1s[0]->closest('section');
+
+        // One h1, inside a navy section of <main>; the layout's <header> stays the only one.
+        expect(count($h1s))->toBe(1, $path)
+            ->and($band)->not->toBeNull("{$path}: the h1 is not in a section")
+            ->and(explode(' ', $band->getAttribute('class')))->toContain('bg-navy')
+            ->and($band->closest('main'))->not->toBeNull()
+            ->and(count($document->querySelectorAll('header')))->toBe(1, $path);
+    }
+});
+
+it('draws the left arrow the back link needs', function () {
+    $svg = HTMLDocument::createFromString(Blade::render('<x-public.icon name="arrow-left" class="rtl:-scale-x-100" />'), LIBXML_NOERROR)->querySelector('svg');
+
+    // The mirror of the right arrow's path, by hand.
+    expect($svg->querySelector('path')->getAttribute('d'))->toBe('M19 12H5m6-6-6 6 6 6')
+        ->and($svg->getAttribute('aria-hidden'))->toBe('true')
+        ->and($svg->getAttribute('class'))->toContain('rtl:-scale-x-100');
+});
+
+it('draws the price in the display face with its currency as a smaller span after a real space', function () {
+    $course = Course::factory()->create(['name_en' => 'Priced Course', 'total_hours' => 30]);
+    Batch::factory()->for($course)->create(['start_date' => now()->addDays(10), 'price' => '1450.000']);
+
+    $html = (string) test()->get('/')->assertOk()->getContent();
+
+    // The amount exactly as held, one space, then the currency in its own span with no
+    // margin of its own (a real space separates them).
+    preg_match('/<li class="([^"]*)">1450\.000 <span class="([^"]*)">LYD<\/span><\/li>/', $html, $match);
+
+    expect($match)->not->toBe([], 'The price is not printed as the amount, a space and the currency span.')
+        ->and(explode(' ', $match[1]))->toContain('font-display')->toContain('text-price')
+        ->and(explode(' ', $match[2]))->toContain('font-sans')->toContain('text-small')
+        ->and(preg_match('/(^| )-?[mp][se]?-/', $match[2]))->toBe(0, 'The currency span carries its own margin.');
+});
+
+it('keeps every button variant the shell uses exactly as it was', function (string $variant, string $size, string $variantClasses, string $sizeClasses) {
+    $link = HTMLDocument::createFromString(Blade::render('<x-public.button href="/x" variant="'.$variant.'" size="'.$size.'">Go</x-public.button>'), LIBXML_NOERROR)->querySelector('a');
+
+    // The classes the component rendered before the squarer variants were added, written
+    // out by hand: the base, the colour scheme, and the size.
+    $expected = explode(' ', 'inline-flex items-center justify-center gap-2 rounded-pill font-semibold whitespace-nowrap '.$variantClasses.' '.$sizeClasses);
+    $actual = explode(' ', $link->getAttribute('class'));
+
+    sort($expected);
+    sort($actual);
+
+    expect($actual)->toBe($expected);
+})->with(function () {
+    $variants = [
+        'primary' => 'bg-gold text-ink shadow-gold hover:bg-gold-light focus-visible:outline-gold-light',
+        'ghost' => 'border border-cream/30 text-cream hover:bg-cream/10 focus-visible:outline-gold-light',
+        'outline' => 'border border-navy/20 text-navy hover:bg-navy hover:text-cream',
+        'navy' => 'bg-navy text-cream hover:bg-navy-hover',
+    ];
+    $sizes = [
+        'md' => 'px-5 py-3 text-ui',
+        'sm' => 'tap-target px-4 py-2.5 text-caption',
+        'nav' => 'px-4.75 py-2.75 text-ui leading-[normal] max-lg:min-h-11',
+    ];
+
+    foreach ($variants as $variant => $variantClasses) {
+        foreach ($sizes as $size => $sizeClasses) {
+            yield "{$variant} {$size}" => [$variant, $size, $variantClasses, $sizeClasses];
         }
     }
 });

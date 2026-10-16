@@ -1,12 +1,16 @@
 @extends('layouts.public')
 
 {{--
-    One programme. The facts are programme-facts, the same component the card
-    uses: hours always, and price and start date only when NextUpcomingBatch found
-    a planned batch. Without one there is no price and no date, only the contact
-    call to action. No seats, capacity or enrolment count, and nothing on the
-    course's own default price: a price with no batch behind it is a promise the
-    centre has not made.
+    One programme, under the article header's 860px column (the prototype has no
+    programme page, so it borrows the article's layout): a back link to the programmes,
+    the name as the h1, then the description at the article's reading size, the facts in
+    a white card, and the ask section.
+
+    The facts are programme-facts, the same component the card uses: hours always, and
+    price and start date only when NextUpcomingBatch found a planned batch. Without one
+    there is no price and no date, only the contact call to action. No seats, capacity or
+    enrolment count, and nothing on the course's own default price: a price with no batch
+    behind it is a promise the centre has not made.
 --}}
 @use('App\Support\PublicRoute')
 
@@ -15,24 +19,21 @@
 @endsection
 
 @section('content')
-    <div class="mx-auto max-w-3xl px-4 py-12">
-        <p><a href="{{ PublicRoute::url('public.programmes.index') }}" class="text-sm font-medium text-navy hover:underline">{{ __('public.programmes.back') }}</a></p>
+    <x-public.page-header size="narrow" :back-href="PublicRoute::url('public.programmes.index')" :back-label="__('public.programmes.back')" :title="$programme->name" />
 
-        <h1 class="mt-4 font-display text-4xl text-navy">{{ $programme->name }}</h1>
-
+    <x-public.container size="narrow" class="pt-11 pb-20">
         @if ($programme->description !== '')
-            <p class="mt-4 text-lg text-body">{{ $programme->description }}</p>
+            <p class="text-article-lead text-pretty wrap-anywhere text-ink-soft">{{ $programme->description }}</p>
         @endif
 
-        <x-public.programme-facts :programme="$programme" class="mt-8 rounded-card border border-navy/9 bg-card p-6" />
+        <x-public.card variant="box" class="mt-8 p-5">
+            <x-public.programme-facts :programme="$programme" class="gap-3" />
+        </x-public.card>
 
         <section aria-labelledby="programme-ask-heading" class="mt-12">
-            <h2 id="programme-ask-heading" class="font-display text-2xl text-navy">{{ __('public.programmes.ask_heading') }}</h2>
-            <p class="mt-3 text-body">{{ __('public.programmes.ask_body') }}</p>
-            <a
-                href="{{ PublicRoute::url('public.contact') }}"
-                class="mt-4 inline-flex items-center rounded-pill bg-navy px-6 py-3 font-medium text-cream hover:bg-navy-hover"
-            >{{ __('public.programmes.ask_link') }}</a>
+            <h2 id="programme-ask-heading" class="font-display text-2xl leading-[1.3] text-navy">{{ __('public.programmes.ask_heading') }}</h2>
+            <p class="mt-3 text-base text-body">{{ __('public.programmes.ask_body') }}</p>
+            <x-public.button :href="PublicRoute::url('public.contact')" variant="navy" class="mt-4">{{ __('public.programmes.ask_link') }}</x-public.button>
         </section>
-    </div>
+    </x-public.container>
 @endsection

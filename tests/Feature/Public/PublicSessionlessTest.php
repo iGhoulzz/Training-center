@@ -241,14 +241,23 @@ it('serves the home page with no Set-Cookie header at all', function () {
     $response->assertHeaderMissing('Set-Cookie');
 });
 
-it('renders the home page with no form and no CSRF token', function () {
+it('renders the home page with only the read-only verifier form and no CSRF token', function () {
     $body = strtolower((string) $this->get('/')->assertOk()->getContent());
 
     // str_contains rather than expect()->not->toContain(), whose failure message
     // would print the whole page.
-    foreach (['<form', '_token', 'csrf'] as $needle) {
+    foreach (['_token', 'csrf'] as $needle) {
         expect(str_contains($body, $needle))->toBeFalse("The home page contains [{$needle}], which a sessionless page has no use for.");
     }
+
+    // The one form is the verifier box (owner, 2026-10-13, P4-T20b): a GET form
+    // that hands the reference to the verifier's own lookup route, where the
+    // lookup runs on the verifier's full web stack. Nothing else may submit.
+    preg_match_all('/<form\b[^>]*>/', $body, $forms);
+
+    expect($forms[0])->toHaveCount(1, 'The home page must hold exactly one form, the verifier box.')
+        ->and($forms[0][0])->toContain('method="get"')
+        ->and($forms[0][0])->toContain('action="'.strtolower(url('/verify/lookup')).'"');
 });
 
 it('finds the files the source scan reads', function () {
