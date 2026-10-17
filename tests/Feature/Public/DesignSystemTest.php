@@ -530,12 +530,15 @@ it('loads the self-hosted fonts only inside the built-stylesheet guard', functio
     $layout = (string) file_get_contents(resource_path('views/layouts/public.blade.php'));
     $code = (string) preg_replace('/\{\{--.*?--\}\}/s', ' ', $layout);
 
-    // CI runs the suite before it builds assets, so a font call outside the guard
-    // would ask for a manifest that does not exist and fail every public page.
-    expect(preg_match('/@if\s*\(\s*\$stylesheetBuilt\s*\)(.*?)@endif/s', $code, $guarded))->toBe(1)
-        ->and($guarded[1])->toContain('Vite::fonts(')->toContain("'instrument-serif'")->toContain("'ibm-plex-sans-arabic'")->toContain('@vite(')
+    // CI runs the suite before it builds assets, so a font or asset call outside the
+    // guard would ask for a manifest that does not exist and fail every public page.
+    // There are two @vite calls: the stylesheet, and the home page's seal script
+    // (HeroSealTest). Both must sit inside the guard, which ends the head.
+    expect(preg_match('/@if\s*\(\s*\$stylesheetBuilt\s*\)(.*?)@endif\s*<\/head>/s', $code, $guarded))->toBe(1)
+        ->and($guarded[1])->toContain('Vite::fonts(')->toContain("'instrument-serif'")->toContain("'ibm-plex-sans-arabic'")
         ->and(substr_count($code, 'Vite::fonts('))->toBe(1)
-        ->and(substr_count($code, '@vite('))->toBe(1);
+        ->and(substr_count($code, '@vite('))->toBe(2)
+        ->and(substr_count($guarded[1], '@vite('))->toBe(2);
 });
 
 it('commits the logo and serves it as a JPEG', function () {

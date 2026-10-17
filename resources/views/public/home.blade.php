@@ -28,6 +28,19 @@
     gold wherever the translated heading contains it, as the design draws "Legal
     Studies". The three parts are each escaped; nothing is printed raw. A heading that
     does not contain the phrase is printed plainly.
+
+    THE SEAL TURNS LIKE A COIN (owner, 2026-10-17).
+    - Across the seal, the pointer turns it a full 360 degrees: -180 at the left
+      edge, face-on at the centre, +180 at the right edge. Up and down tilts it
+      slightly. When the pointer leaves, it eases back to face-on, and it keeps its
+      gentle float throughout.
+    - resources/js/public-seal.js drives it. It is the only script on the public
+      site, so this page asks the layout for it through the `seal_coin` section.
+    - The seal has two faces of the same image, so it reads correctly from behind.
+    - The image is the cut-out PNG (`brand.seal`) once that file exists. Until then
+      it is the logo in its circle, as before.
+    - Without the script, on touch or with reduced motion, the seal simply faces
+      forward.
 --}}
 @use('App\Support\PublicContact')
 @use('App\Support\PublicRoute')
@@ -37,7 +50,15 @@
     $heading = __('public.home.heading', ['name' => config('public_site.brand.name')]);
     $emphasis = __('public.home.heading_emphasis');
     $emphasisAt = $emphasis === '' ? false : mb_strpos($heading, $emphasis);
+    $sealPath = config('public_site.brand.seal');
+    $sealIsCutout = is_string($sealPath) && $sealPath !== '' && file_exists(public_path($sealPath));
+    $sealSource = asset($sealIsCutout ? $sealPath : config('public_site.brand.logo'));
+    $sealFaceClass = $sealIsCutout
+        ? 'size-75 object-contain drop-shadow-seal'
+        : 'size-64.5 rounded-pill border-2 border-gold/50 object-cover object-center shadow-seal';
 @endphp
+
+@section('seal_coin', 'on')
 
 @section('content')
     <section aria-labelledby="home-heading" class="relative overflow-hidden bg-navy text-cream">
@@ -61,16 +82,14 @@
             </div>
 
             <div class="flex min-w-0 flex-[0_1_340px] justify-center motion-safe:animate-rise-slow">
-                <div class="relative flex size-75 items-center justify-center">
+                <div data-seal-coin class="relative flex size-75 items-center justify-center">
                     <div aria-hidden="true" class="absolute inset-0 rounded-pill bg-radial from-gold/22 to-transparent to-68%"></div>
-                    <img
-                        src="{{ asset(config('public_site.brand.logo')) }}"
-                        alt=""
-                        width="258"
-                        height="258"
-                        decoding="async"
-                        class="relative size-64.5 rounded-pill border-2 border-gold/50 object-cover object-center shadow-seal motion-safe:animate-float"
-                    >
+                    <div class="seal-coin-frame relative motion-safe:animate-float">
+                        <div data-seal-coin-body class="seal-coin">
+                            <img src="{{ $sealSource }}" alt="" width="258" height="258" decoding="async" class="seal-coin-face {{ $sealFaceClass }}">
+                            <img src="{{ $sealSource }}" alt="" width="258" height="258" decoding="async" class="seal-coin-face seal-coin-back {{ $sealFaceClass }}">
+                        </div>
+                    </div>
                 </div>
             </div>
         </x-public.container>
