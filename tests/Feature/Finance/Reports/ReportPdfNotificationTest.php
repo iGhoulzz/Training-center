@@ -45,7 +45,8 @@ beforeEach(function () {
     $this->seed(RolePermissionSeeder::class);
     $this->system = app(SystemRoleWriter::class);
 
-    // A stray notification row from another test file cannot leak in: the schema is rebuilt per test.
+    // Each test runs inside RefreshDatabase's transaction, which rolls back at the end, so no
+    // notification row survives from one test to the next.
     Storage::fake('private');
 
     $this->adminAccount = function (bool $mustChangePassword = false): User {
@@ -154,10 +155,33 @@ beforeEach(function () {
 |--------------------------------------------------------------------------
 */
 
-it('enables database notifications on the admin panel at Filament\'s default polling interval', function () {
-    expect(Filament::getPanel('admin')->hasDatabaseNotifications())->toBeTrue()
-        // No project reason to differ: a ready PDF is never urgent, and 30s is the framework's.
-        ->and(Filament::getPanel('admin')->getDatabaseNotificationsPollingInterval())->toBe('30s');
+it('enables database notifications on the admin panel', function () {
+    expect(Filament::getPanel('admin')->hasDatabaseNotifications())->toBeTrue();
+});
+
+/*
+ * NO POLLING, BECAUSE OF THE IDLE TIMEOUT (spec §4: "8-hour idle timeout").
+ *
+ * The timeout is SESSION_LIFETIME on the database driver, and each Livewire poll is a request
+ * that refreshes the session's last_activity. Filament's default 30s poll would keep a tab left
+ * open on a front-desk PC signed in for ever, so the panel switches it off. The bell then
+ * refreshes on each page load. The interval is asserted on the panel AND on what the loaded
+ * component renders, because the attribute is what the browser obeys.
+ */
+it('has no polling interval on the admin panel, so an open tab cannot keep a session alive past the idle timeout', function () {
+    expect(Filament::getPanel('admin')->getDatabaseNotificationsPollingInterval())->toBeNull();
+});
+
+it('renders the loaded bell without a wire:poll attribute', function () {
+    $admin = ($this->adminAccount)();
+    Notification::make()->title('SENTINEL-T22-NO-POLL')->sendToDatabase($admin);
+
+    $bell = Livewire::actingAs($admin)->test(DatabaseNotifications::class);
+
+    // Loaded and holding a notification, so the modal that carries the poll attribute is rendered:
+    // the sentinel proves it is there, and the attribute is what the browser obeys.
+    $bell->assertSee('SENTINEL-T22-NO-POLL');
+    expect($bell->html())->not->toContain('wire:poll');
 });
 
 it('leaves the student portal without database notifications', function () {
