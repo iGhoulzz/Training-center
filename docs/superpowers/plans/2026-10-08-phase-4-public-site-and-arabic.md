@@ -1733,6 +1733,105 @@ file is ready.
 No Action, service or model changes: the refusals were already correct, only their
 display was missing.
 
+### QA follow-ups: the P3 findings and the owner's answers (2026-10-17)
+
+The owner answered the QA report's questions on 2026-10-17:
+- **Q1:** a bill with no payment can be collected later.
+- **Q2:** a student who owes money, or has an active enrolment, cannot be deleted.
+- **Q3:** no one deactivates their own account.
+- **Q7:** a correct password without panel access gets a clear message.
+- **Q4 and Q8 stay as they are:** portal accounts stay in Users, and a written-off bill still shows as owed.
+- **Q5 (email) and Q6 (the dashboard)** are open.
+
+The fixes are split into four tasks with no shared files. **T25–T27 were taken on
+`main` by other work on 2026-10-17, so these are numbered T31–T34.** On the owner's
+instruction, T31 and T32 run now. T33 (account rules: Q2, Q3, Q7, P3-14, and the
+role and staff-profile pickers) and T34 (admin times in the centre's time zone,
+P3-2) are briefed and paused.
+
+### Task 31 — Enrolment and pricing screens say what happened
+**Owner: Claude · `p4/t31-enrolment-screens-feedback` · from main · QA P3-4, P3-5, P3-6, P3-7**
+
+**Why.**
+- Instructor assignment, discount deactivation and the enrolment actions
+  succeeded without a word (P3-4).
+- "Enrol student" on a closed batch, and "Withdraw" on a completed enrolment,
+  were offered and then always refused (P3-5).
+- A non-PDF article upload said "The pDF file field…" (P3-6).
+- The batch Enrolments tab's "Outstanding" showed the student's whole balance,
+  not that enrolment's (P3-7).
+
+**File scope**
+- `app/Domain/Enrollment/Filament/Resources/BatchResource/RelationManagers/EnrollmentsRelationManager.php`,
+  `InstructorsRelationManager.php`
+- `app/Domain/Finance/Filament/Resources/DiscountResource.php`: the deactivate action only
+- `app/Domain/Publications/Filament/Resources/ArticleResource.php`: the PDF upload's wording only
+- `app/Domain/Finance/Services/ChargeQueryService.php`: one method, the per-enrolment outstanding subselect
+- `lang/en/enrollment.php`, `pricing.php`, `publications.php`: appended
+- `tests/Feature/Enrollment/BatchScreensFeedbackTest.php`,
+  `tests/Feature/Publications/ArticleUploadMessageTest.php` (new)
+- Changed expectations, listed in the PR:
+  - `tests/Feature/Enrollment/EnrollmentsRelationManagerTest.php`: the closed-batch
+    case, because the button is now hidden;
+  - `tests/Feature/Performance/ListQueryCountTest.php`: the roster cases now read the
+    enrolment's own figure.
+- This plan: these entries
+
+**Contract rules asserted:**
+- every success says so, and a refusal keeps its own message with no success beside it;
+- an action every rule would refuse is not offered, while the Action still refuses
+  server-side;
+- each enrolment row shows its own outstanding, computed in SQL decimal
+  arithmetic (`ChargeBalance::outstandingSql()`) and never stored, at a fixed query
+  count.
+
+**A recorded choice reversed:** "Withdraw" used to stay on a completed row and
+answer with the refusal. It now shows only on an active enrolment, because
+`WithdrawEnrollmentAction` refuses every other status.
+
+### Task 32 — Enrol & Collect and charges
+**Owner: Claude · `p4/t32-collect-and-charges` · from main · QA Q1, P3-1, P3-3, P3-6, P3-8, P3-11, P3-16**
+
+**Why.**
+- A bill whose page was closed after Confirm could never be collected from the
+  app (Q1).
+- Enrol & Collect gave no over-capacity warning (P3-1).
+- Enrol & Collect left Confirm live on an emptied preview (P3-3).
+- Its wizard header overlapped (P3-11).
+- A negative amount got the decimals message (P3-6).
+- The charges list read "LYD billed LYD" (P3-8).
+- The charge view showed no student (P3-16).
+
+**File scope**
+- `app/Domain/Finance/Filament/Pages/EnrollAndCollect.php` and its view
+- `app/Domain/Finance/Filament/Resources/ChargeResource.php`,
+  `ChargeResource/Pages/ViewCharge.php`
+- `app/Domain/Finance/Actions/RecordExpenseAction.php`: message wording only
+- `app/Domain/Finance/Services/ChargeQueryService.php`: one method, the
+  "awaiting its first payment" predicate
+- `lang/en/collect.php`, `charges.php`, `expenses.php`: appended, plus the three
+  "three decimal places" messages reworded alike
+- `tests/Feature/Finance/CollectUnpaidChargeTest.php`,
+  `EnrollAndCollectFeedbackTest.php`, `ChargeScreensTest.php` (new)
+
+**Decisions**
+- **"Collect payment" is offered only on a bill awaiting its first payment:**
+  - no allocation from a payment that is not reversed;
+  - not written off;
+  - something outstanding.
+
+  The rule is one predicate, used by the button and re-checked by the page
+  server-side. `RecordPaymentAction` and `PaymentInvariantService` are unchanged,
+  and later installments stay out (§12).
+- **For the owner to confirm:** a bill whose only payment was reversed counts as
+  awaiting its first payment again.
+
+**Contract rules asserted:**
+- the button, the page and an unauthorized or ineligible request all agree;
+- collecting through it records exactly one payment with the exact amounts;
+- the Charges table's query count is fixed;
+- a second Confirm creates nothing.
+
 ---
 
 ## Deferred
