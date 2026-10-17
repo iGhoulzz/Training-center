@@ -255,16 +255,19 @@ it('shows no directions link when the map url is not set or is not a web link', 
     'not a web url' => ['javascript:alert(1)'],
 ]);
 
-it('links to about, programmes, publications and contact from the navigation and the footer', function () {
+it('links to home sections from the navigation and full pages from the footer', function () {
     $html = (string) $this->get('/')->assertOk()->getContent();
 
-    $nav = publicLinksWithin($html, '<nav aria-label=', '</nav>');
+    $nav = array_values(array_filter(
+        publicLinksWithin($html, '<nav id="public-navigation"', '</nav>'),
+        fn (string $href): bool => ! in_array($href, ['#public-navigation', '#public-navigation-closed'], true),
+    ));
     $footer = publicLinksWithin($html, '<footer', '</footer>');
 
     // The navigation is rendered twice from one list, narrow then wide, so each
     // link appears twice and the order is the list's order. The narrow menu's last
     // item is the student portal's sign-in (P4-T15), which the wide row does not repeat.
-    $expected = [url('/about'), url('/programmes'), url('/publications'), url('/verify/certificates'), url('/contact')];
+    $expected = ['#about', '#programmes', '#publications', '#verify', '#contact'];
     $portal = route('filament.student.auth.login');
 
     expect(array_values(array_unique($nav)))->toBe([...$expected, $portal])
@@ -676,23 +679,25 @@ it('prints the three newest published articles in the home teaser, in order, eac
     }
 });
 
-it('shows no teaser section at all while nothing is published', function () {
+it('keeps the publications target and a localized empty state while nothing is published', function () {
     Article::factory()->create(['title_en' => 'SENTINEL-NOT-PUBLISHED-YET', 'issued_on' => '2026-09-30']);
     replacePublicLine('public.home.publications_title', 'SENTINEL-TEASER-HEADING');
 
     $html = (string) test()->get('/')->assertOk()->getContent();
+    $section = homeTeaserSection($html);
 
-    expect(str_contains($html, 'id="publications"'))->toBeFalse()
-        ->and(str_contains($html, 'SENTINEL-TEASER-HEADING'))->toBeFalse()
+    expect($section)->not->toBe('')
+        ->and($section)->toContain(__('publications.public.empty_library'))
         ->and(str_contains($html, 'SENTINEL-NOT-PUBLISHED-YET'))->toBeFalse();
 
     teaserArticle('now-published', '2026-01-01', ['title_en' => 'Now Published']);
 
     $published = (string) test()->get('/')->assertOk()->getContent();
 
-    // The control: the section does appear the moment there is something to show.
+    // Published articles replace the empty state.
     expect(str_contains($published, 'id="publications"'))->toBeTrue()
-        ->and(str_contains($published, 'SENTINEL-TEASER-HEADING'))->toBeTrue();
+        ->and(str_contains($published, 'SENTINEL-TEASER-HEADING'))->toBeTrue()
+        ->and(homeTeaserSection($published))->not->toContain(__('publications.public.empty_library', [], 'en'));
 });
 
 it('lays the home page out as the design does, and points the hero at its own sections', function () {
@@ -701,13 +706,14 @@ it('lays the home page out as the design does, and points the hero at its own se
     $html = (string) test()->get('/')->assertOk()->getContent();
     $document = HTMLDocument::createFromString($html, LIBXML_NOERROR);
 
-    // The sections in the order the design draws them. The hero and About carry no id.
-    $positions = array_map(fn (string $id): int|false => strpos($html, 'id="'.$id.'"'), ['programmes', 'verify', 'publications', 'contact']);
+    // The sections in the order the design draws them. Only the hero carries no id.
+    $positions = array_map(fn (string $id): int|false => strpos($html, 'id="'.$id.'"'), ['about', 'programmes', 'verify', 'publications', 'contact']);
 
     expect($positions)->each->not->toBeFalse()
         ->and($positions[0])->toBeLessThan($positions[1])
         ->and($positions[1])->toBeLessThan($positions[2])
-        ->and($positions[2])->toBeLessThan($positions[3]);
+        ->and($positions[2])->toBeLessThan($positions[3])
+        ->and($positions[3])->toBeLessThan($positions[4]);
 
     // The hero's two buttons stay on the page: they scroll to the programmes and the verifier.
     $hero = $document->querySelector('main > section');
@@ -716,6 +722,9 @@ it('lays the home page out as the design does, and points the hero at its own se
         ->and($hero->querySelector('a[href="#verify"]'))->not->toBeNull()
         ->and($document->querySelector('main #programmes'))->not->toBeNull()
         ->and($document->querySelector('main #verify'))->not->toBeNull();
+
+    expect($document->querySelector('main #about a[href="'.url('/about').'"]'))->not->toBeNull()
+        ->and($document->querySelector('main #contact a[href="'.url('/contact').'"]'))->not->toBeNull();
 
     // The seal is decoration (the h1 already names the centre) and both glows and both
     // circles are hidden from assistive technology.
@@ -800,14 +809,18 @@ it('shows a contact row only for a detail that is set, and the directions card o
     }
 });
 
-it('draws no contact section on the home page and no body on the contact page when nothing is configured', function () {
+it('keeps the home contact target with a localized empty state when nothing is configured', function () {
     config(['public_site.contact.phone' => '', 'public_site.contact.email' => '', 'public_site.contact.map_url' => '']);
 
     $home = (string) test()->get('/')->assertOk()->getContent();
     $contact = (string) test()->get('/contact')->assertOk()->getContent();
 
-    expect(str_contains($home, 'id="contact"'))->toBeFalse()
-        ->and(str_contains($home, 'home-contact-heading'))->toBeFalse()
+    $section = HTMLDocument::createFromString($home, LIBXML_NOERROR)->querySelector('main #contact');
+
+    expect($section)->not->toBeNull()
+        ->and($section->textContent)->toContain(__('public.contact.empty'))
+        ->and($section->querySelector('#home-contact-heading'))->not->toBeNull()
+        ->and($section->querySelector('a[href^="mailto:"], a[href^="tel:"]'))->toBeNull()
         ->and(str_contains($contact, 'contact-heading'))->toBeFalse();
 });
 

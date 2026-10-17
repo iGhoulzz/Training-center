@@ -4,9 +4,13 @@ declare(strict_types=1);
 
 use App\Domain\Enrollment\Filament\Pages\CertificateIssuanceQueue;
 use App\Domain\Enrollment\Filament\Resources\BatchResource;
+use App\Domain\Enrollment\Filament\Resources\BatchResource\Pages\ViewBatch;
+use App\Domain\Enrollment\Filament\Resources\BatchResource\RelationManagers\EnrollmentsRelationManager;
+use App\Domain\Enrollment\Filament\Resources\BatchResource\RelationManagers\InstructorsRelationManager;
 use App\Domain\Enrollment\Filament\Resources\CourseResource;
 use App\Domain\Enrollment\Filament\Resources\StudentCertificateResource;
 use App\Domain\Enrollment\Filament\Resources\StudentResource;
+use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Finance\Filament\Pages\EnrollAndCollect;
 use App\Domain\Finance\Filament\Pages\ExportHistory;
 use App\Domain\Finance\Filament\Pages\FinanceHub;
@@ -28,7 +32,10 @@ use App\Domain\Publications\Filament\Resources\ArticleResource;
 use App\Domain\Staff\Filament\Resources\ActivityResource;
 use App\Domain\Staff\Filament\Resources\RoleResource;
 use App\Domain\Staff\Filament\Resources\StaffProfileResource;
+use App\Domain\Staff\Filament\Resources\StaffProfileResource\Pages\ViewStaffProfile;
+use App\Domain\Staff\Filament\Resources\StaffProfileResource\RelationManagers\CertificatesRelationManager;
 use App\Domain\Staff\Filament\Resources\UserResource;
+use App\Domain\Staff\Models\StaffProfile;
 use App\Filament\Pages\Dashboard;
 use App\Filament\Pages\PasswordChange;
 use App\Models\User;
@@ -41,6 +48,7 @@ use Filament\Panel;
 use Filament\PanelRegistry;
 use Filament\Support\Colors\Color;
 use Filament\Support\Colors\ColorManager;
+use Filament\Support\Icons\Heroicon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Hash;
@@ -224,9 +232,87 @@ it('keeps every registered resource and navigable page in the shell', function (
     }
 
     expect(array_map(fn ($group): ?string => $group->getLabel(), $panel->getNavigation()))
-        ->toBe(['Front desk', 'Enrolment', 'Finance', 'Reports', 'Administration', 'Publications']);
+        ->toBe(['Front desk', 'Enrolment', 'Finance', 'Administration', 'More']);
     expect($html)->not->toContain('href="'.PasswordChange::getNavigationUrl().'"');
 });
+
+it('curates the primary sidebar in design order and collapses the remaining destinations', function () {
+    $actor = User::factory()->create(['is_active' => true]);
+    $actor->givePermissionTo(Permission::query()->where('guard_name', 'web')->get());
+
+    $html = renderedWithoutLivewireState($this->actingAs($actor)->get('/admin')->assertSuccessful());
+    $groups = array_values(Filament::getPanel('admin')->getNavigation());
+
+    $urls = fn ($group): array => array_map(fn ($item): ?string => $item->getUrl(), $group->getItems());
+
+    expect(array_map($urls, array_slice($groups, 0, 4)))->toBe([
+        [EnrollAndCollect::getNavigationUrl(), Dashboard::getNavigationUrl()],
+        [StudentResource::getNavigationUrl(), BatchResource::getNavigationUrl(), CourseResource::getNavigationUrl(), StudentCertificateResource::getNavigationUrl()],
+        [FinanceHub::getNavigationUrl(), ChargeResource::getNavigationUrl(), PaymentResource::getNavigationUrl(), FinanceHub::getUrl().'#finance-group-reports', PayrollRunResource::getNavigationUrl()],
+        [UserResource::getNavigationUrl(), ActivityResource::getNavigationUrl()],
+    ])->and($groups[4]->isCollapsible())->toBeTrue()
+        ->and($groups[4]->isCollapsed())->toBeTrue()
+        ->and($urls($groups[4]))->toContain(RoleResource::getNavigationUrl(), ArticleResource::getNavigationUrl(), RevenueReportPage::getNavigationUrl(), ExportHistory::getNavigationUrl());
+
+    expect(array_map(fn ($item) => $item->getIcon(), $groups[0]->getItems()))
+        ->toBe([Heroicon::OutlinedPlus, Heroicon::OutlinedSquares2x2])
+        ->and($groups[1]->getItems()[3]->getIcon())->toBe(Heroicon::OutlinedTrophy)
+        ->and($groups[2]->getItems()[0]->getIcon())->toBe(Heroicon::OutlinedCurrencyDollar)
+        ->and($groups[1]->getItems()[3]->getActiveIcon())->toBe(Heroicon::OutlinedTrophy)
+        ->and($groups[2]->getItems()[0]->getActiveIcon())->toBe(Heroicon::OutlinedCurrencyDollar);
+
+    $document = HTMLDocument::createFromString($html, LIBXML_NOERROR);
+    expect(trim($document->querySelector('.fi-sidebar-group[data-group-label="Administration"] .fi-sidebar-item-label')?->textContent ?? ''))->toBe('Users & roles')
+        ->and($document->querySelector('.tc-sidebar-secondary.fi-collapsible .fi-sidebar-group-collapse-btn')?->hasAttribute('aria-controls'))->toBeTrue();
+
+    $migration = strpos($html, 'tc-sidebar-more-v1');
+    $filamentInitializer = strpos($html, 'var collapsedGroups = JSON.parse(');
+
+    expect($migration)->not->toBeFalse()
+        ->and($filamentInitializer)->not->toBeFalse()
+        ->and($migration)->toBeLessThan($filamentInitializer)
+        ->and($html)->toContain('const moreLabel = ')
+        ->toContain('groups.push(moreLabel)')
+        ->toContain("localStorage.setItem('collapsedGroups', JSON.stringify(groups))");
+});
+
+it('does not render empty sidebar groups for a desk-only actor', function () {
+    $actor = User::factory()->create(['is_active' => true]);
+    $actor->givePermissionTo('access_admin_panel');
+
+    $this->actingAs($actor)->get('/admin')->assertSuccessful();
+    $groups = array_values(Filament::getPanel('admin')->getNavigation());
+
+    expect($groups)->not->toBeEmpty();
+    foreach ($groups as $group) {
+        expect($group->getItems())->not->toBeEmpty($group->getLabel());
+    }
+});
+
+it('shows only accessible destinations in either sidebar tier', function (array $permissions, bool $reportsAllowed) {
+    $actor = User::factory()->create(['is_active' => true]);
+    $actor->givePermissionTo(['access_admin_panel', ...$permissions]);
+
+    $this->actingAs($actor)->get('/admin')->assertSuccessful();
+    $panel = Filament::getPanel('admin');
+    $urls = collect($panel->getNavigation())->flatMap(fn ($group): array => array_map(fn ($item): ?string => $item->getUrl(), $group->getItems()))->all();
+
+    foreach (array_merge($panel->getPages(), $panel->getResources()) as $destination) {
+        if (! $destination::shouldRegisterNavigation()) {
+            continue;
+        }
+
+        expect(in_array($destination::getNavigationUrl(), $urls, true))->toBe($destination::canAccess(), $destination);
+    }
+
+    expect(in_array(FinanceHub::getUrl().'#finance-group-reports', $urls, true))->toBe($reportsAllowed);
+})->with([
+    'no domain permissions' => [[], false],
+    'front desk only' => [['create_enrollment'], false],
+    'charge reader without reports' => [['view_any_charge'], false],
+    'report reader' => [['view_financial_report'], true],
+    'secondary resources only' => [['view_any_role', 'view_any_article'], false],
+]);
 
 it('shows the student destination to an actor holding its exact permission', function () {
     $actor = User::factory()->create(['is_active' => true]);
@@ -650,6 +736,82 @@ function adminThemeRuleBody(string $css, string $selector): ?string
     return null;
 }
 
+it('styles native table toolbars and report fields without changing unrelated forms or tabs', function () {
+    $css = (string) file_get_contents(resource_path('css/filament/admin/theme.css'));
+
+    foreach ([
+        '.fi-ta-ctn .fi-ta-header-toolbar' => ['flex-wrap', 'gap-2'],
+        '.fi-ta-ctn .fi-ta-header-toolbar > *' => ['min-w-0', 'flex-wrap', 'gap-2', 'shrink'],
+        '.fi-ta-ctn .fi-ta-header-toolbar > :nth-child(1)' => ['shrink'],
+        '.fi-ta-header-toolbar .fi-ta-search-field' => ['min-w-0', 'max-w-full'],
+        '.fi-ta-header-toolbar .fi-ta-search-field .fi-input-wrp' => ['rounded-[9px]', 'bg-fill-subtle', 'ring-control'],
+        '.fi-ta-header-toolbar .fi-ta-search-field input.fi-input' => ['min-h-11', 'py-2', 'pe-3', 'text-base', 'placeholder:text-gray-400'],
+        '.fi-ta-header-toolbar .fi-ta-search-field .fi-input-wrp-prefix.fi-inline' => ['ps-3', 'pe-2'],
+        '.fi-ta-header-toolbar .fi-ta-search-field .fi-icon' => ['size-[15px]', 'text-gray-400'],
+        '.fi-ta-header-toolbar :is(.fi-ta-filters-dropdown > .fi-dropdown-trigger, .fi-ta-filters-trigger-action-ctn) > button' => ['min-h-11', 'min-w-11', 'gap-[7px]', 'rounded-full', 'bg-fill-subtle', 'px-[13px]', 'py-[7px]', 'text-[12.5px]', 'font-medium', 'text-gray-400', 'ring-control'],
+        '.fi-ta-ctn .fi-ta-filter-indicators .fi-badge' => ['rounded-full', 'bg-primary-500/14', 'ring-primary-500/40', 'text-primary-400', 'px-[13px]', 'py-[7px]'],
+        ':is(.fi-ta-filters, .tc-report-filters) .fi-input-wrp:not(.fi-invalid):not(.fi-disabled)' => ['rounded-[9px]', 'bg-fill-subtle', 'ring-control'],
+        ':is(.fi-ta-filters, .tc-report-filters) :is(input.fi-input, select.fi-select-input)' => ['min-h-11', 'py-2', 'text-base', 'placeholder:text-gray-400'],
+    ] as $selector => $utilities) {
+        $body = adminThemeRuleBody($css, $selector);
+        expect($body)->not->toBeNull($selector);
+        foreach ($utilities as $utility) {
+            expect($body)->toContain($utility);
+        }
+    }
+
+    expect($css)->toContain('--color-control: rgb(255 255 255 / 0.09);')
+        ->toContain('@media (hover: hover) and (pointer: fine)')
+        ->not->toContain('.fi-tabs');
+});
+
+it('keeps native list controls attached to their existing tables', function (string $destination, bool $resource) {
+    $actor = User::factory()->create(['is_active' => true]);
+    $actor->givePermissionTo(Permission::query()->where('guard_name', 'web')->get());
+    $this->actingAs($actor);
+    $pageClass = $resource ? $destination::getPages()['index']->getPage() : $destination;
+    $page = Livewire::test($pageClass)->assertOk();
+    $html = (string) preg_replace('/\s+wire:snapshot="[^"]*"/', '', $page->html());
+    $document = HTMLDocument::createFromString($html, LIBXML_NOERROR);
+    $table = $page->instance()->getTable();
+
+    expect($document->querySelector('.fi-ta-ctn'))->not->toBeNull()
+        ->and($document->querySelector('.fi-ta-header-toolbar .fi-ta-search-field') !== null)->toBe($table->isSearchable())
+        ->and($document->querySelector('.fi-ta-filters') !== null)->toBe(count($table->getFilters()) > 0)
+        ->and($document->querySelector('.tc-report-filters'))->toBeNull();
+})->with([
+    [StudentResource::class, true], [BatchResource::class, true], [CourseResource::class, true],
+    [StudentCertificateResource::class, true], [ChargeResource::class, true], [PaymentResource::class, true],
+    [DiscountResource::class, true], [StaffCompensationResource::class, true], [ExpenseCategoryResource::class, true],
+    [ExpenseResource::class, true], [PayrollRunResource::class, true], [UserResource::class, true],
+    [StaffProfileResource::class, true], [RoleResource::class, true], [ActivityResource::class, true],
+    [ArticleResource::class, true], [CertificateIssuanceQueue::class, false], [ExportHistory::class, false],
+]);
+
+it('keeps relation-manager searches on the same native toolbar surface', function (string $manager, string $ownerClass, string $pageClass) {
+    $actor = User::factory()->create(['is_active' => true]);
+    $actor->givePermissionTo(Permission::query()->where('guard_name', 'web')->get());
+    $owner = $ownerClass::factory()->create();
+    $page = Livewire::actingAs($actor)->test($manager, ['ownerRecord' => $owner, 'pageClass' => $pageClass])->assertOk();
+    $document = HTMLDocument::createFromString($page->html(), LIBXML_NOERROR);
+
+    expect($document->querySelector('.fi-ta-ctn'))->not->toBeNull()
+        ->and($document->querySelector('.fi-ta-header-toolbar .fi-ta-search-field') !== null)->toBe($page->instance()->getTable()->isSearchable());
+})->with([
+    [EnrollmentsRelationManager::class, Batch::class, ViewBatch::class],
+    [InstructorsRelationManager::class, Batch::class, ViewBatch::class],
+    [CertificatesRelationManager::class, StaffProfile::class, ViewStaffProfile::class],
+]);
+
+it('does not invent list controls on pages without tables', function (string $pageClass) {
+    $actor = User::factory()->create(['is_active' => true]);
+    $actor->givePermissionTo(Permission::query()->where('guard_name', 'web')->get());
+    $page = Livewire::actingAs($actor)->test($pageClass)->assertOk();
+    $document = HTMLDocument::createFromString($page->html(), LIBXML_NOERROR);
+
+    expect($document->querySelector('.fi-ta-header-toolbar, .tc-report-filters'))->toBeNull();
+})->with([[Dashboard::class], [FinanceHub::class]]);
+
 it('lifts the topbar search placeholder to gray-400, because gray-500 is 3.32:1 on the pill', function () {
     $css = (string) file_get_contents(resource_path('css/filament/admin/theme.css'));
     $rule = adminThemeRuleBody($css, '.fi-topbar .fi-global-search input.fi-input');
@@ -682,13 +844,12 @@ it('gives the brand link in the sidebar header the same focus ring as the topbar
     $css = (string) file_get_contents(resource_path('css/filament/admin/theme.css'));
     $code = (string) preg_replace('~/\*.*?\*/~s', ' ', $css);
 
-    // The rule that draws the ring, with every selector it covers.
-    expect(preg_match('/((?:[^{}]+,\s*)*[^{},]+)\{[^}]*outline-primary-400[^}]*\}/s', $code, $rule))->toBe(1);
+    // Other controls also have focus rings; the brand links must share one rule.
+    preg_match_all('/((?:[^{}]+,\s*)*[^{},]+)\{[^}]*outline-primary-400[^}]*\}/s', $code, $rules, PREG_SET_ORDER);
+    $selectorLists = array_map(fn (array $rule): array => array_map('trim', explode(',', $rule[1])), $rules);
 
-    $selectors = array_map('trim', explode(',', $rule[1]));
-
-    expect($selectors)->toContain('.fi-topbar a:focus-visible')
-        ->toContain('.fi-sidebar-header a:focus-visible');
+    expect(array_any($selectorLists, fn (array $selectors): bool => in_array('.fi-topbar a:focus-visible', $selectors, true)
+        && in_array('.fi-sidebar-header a:focus-visible', $selectors, true)))->toBeTrue();
 
     // The brand link below 1024px lives in that header, so the selector reaches it.
     $actor = User::factory()->create(['is_active' => true]);

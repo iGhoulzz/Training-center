@@ -1156,17 +1156,21 @@ it('keeps the headings in order, with one h1', function () {
 it('puts Publications in the navigation between Programmes and the verifier, and in the footer', function () {
     $html = libraryBody($this->get('/publications')->assertOk());
 
-    $nav = substr($html, (int) strpos($html, '<nav aria-label='), (int) strpos($html, '</nav>') - (int) strpos($html, '<nav aria-label='));
+    $nav = substr($html, (int) strpos($html, '<nav id="public-navigation"'), (int) strpos($html, '</nav>') - (int) strpos($html, '<nav id="public-navigation"'));
     $footer = substr($html, (int) strpos($html, '<footer'), (int) strpos($html, '</footer>') - (int) strpos($html, '<footer'));
 
     // The navigation is rendered twice from one list, narrow then wide. The narrow
     // menu's last item is the student portal's sign-in (P4-T15), which the wide row
     // does not repeat.
-    $expected = [url('/about'), url('/programmes'), url('/publications'), url('/verify/certificates'), url('/contact')];
+    $expected = [url('/').'#about', url('/').'#programmes', url('/').'#publications', url('/').'#verify', url('/').'#contact'];
     $portal = route('filament.student.auth.login');
+    $links = array_values(array_filter(
+        array_column(libraryAnchors($nav), 'href'),
+        fn (string $href): bool => ! in_array($href, ['#public-navigation', '#public-navigation-closed'], true),
+    ));
 
-    expect(array_values(array_unique(array_column(libraryAnchors($nav), 'href'))))->toBe([...$expected, $portal])
-        ->and(array_column(libraryAnchors($nav), 'href'))->toHaveCount(count($expected) * 2 + 1)
+    expect(array_values(array_unique($links)))->toBe([...$expected, $portal])
+        ->and($links)->toHaveCount(count($expected) * 2 + 1)
         ->and(array_column(libraryAnchors($footer), 'href'))->toContain(url('/publications'));
 });
 

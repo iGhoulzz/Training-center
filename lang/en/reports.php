@@ -81,4 +81,17 @@ return [
         'payment_method' => 'Collected payments by method',
         'period' => ':from – :to',
     ],
+    'presentation' => [
+        'queued_hint' => 'Exports run in the background. You will be notified when your file is ready.',
+        'history_hint' => 'Only completed exports with every row successful can be downloaded. A partial file is never served. Request a new export from its report if needed.',
+        'view_exports' => 'View export history',
+        'period_total' => 'Period total',
+        'currency' => 'LYD',
+        'rows' => 'Report rows',
+        'summaries' => [
+            'revenue' => 'Collected revenue for the applied period, across the batches listed below.',
+            'payment_method' => 'Collected payments for the applied period, across the payment methods listed below.',
+            'wage_cost' => 'Finalized wage cost for the applied period, across the staff members listed below.',
+        ],
+    ],
 ];

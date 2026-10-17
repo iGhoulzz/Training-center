@@ -23,9 +23,8 @@ final class ProfitReportPage extends ReportPage
      * Profit states what it means where it is read (spec section 8).
      *
      * The definition gained a term when expenses joined it, so the figure's
-     * meaning changed between months without the number saying so. Shown under
-     * the title, from a translation key, and nowhere else on this page: the
-     * shared report shell and view are untouched.
+     * meaning changed between months without the number saying so. The title
+     * and the shared period-summary panel use the same translated definition.
      */
     public function getSubheading(): string
     {
