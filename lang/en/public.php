@@ -32,6 +32,7 @@ return [
     'nav' => [
         'label' => 'Main navigation',
         'menu' => 'Menu',
+        'close_menu' => 'Close menu',
         // The design's short label for the verifier in the navigation row. The
         // footer and the pages say "Verify a certificate" (links.verify_certificate).
         'verify' => 'Verify',
@@ -167,6 +168,7 @@ return [
     | until the owner sends them; the directions link is shown only while one is set.
     */
     'contact' => [
+        'empty' => 'Contact details will be published here when available.',
         'heading' => 'Contact',
         'intro' => 'To ask about a programme or an intake, write to the centre or call it.',
         'eyebrow' => 'Visit us',
