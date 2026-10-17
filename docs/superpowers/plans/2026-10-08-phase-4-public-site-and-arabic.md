@@ -1555,9 +1555,13 @@ PR says so, and T18a does not merge before that review.
 
 **Done when**
 - **Parity:** `CatalogueParityTest` proves the three Arabic catalogues have
-  exactly the English keys, no more and no fewer. Each placeholder and plural
-  segment matches its English counterpart. A planted missing key, an extra key
-  and a dropped placeholder each fail it.
+  exactly the English keys, no more and no fewer.
+  - Each value carries the same placeholders as its English counterpart.
+  - A pluralised English key stays pluralised in Arabic. It covers Arabic's own
+    plural forms, which Laravel's selector numbers 0–5, rather than copying the
+    English segments.
+  - A planted missing key, an extra key, a dropped placeholder and an
+    unpluralised plural each fail it.
 - **Rendering:** with the locale set to `ar`, every public page and all three
   verifier pages render with no English catalogue value left in the body.
   - The check is computed from the English catalogues themselves, not from a
