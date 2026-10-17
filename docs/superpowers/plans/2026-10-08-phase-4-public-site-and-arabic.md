@@ -1637,10 +1637,109 @@ green.
 
 ---
 
+## Hotfixes
+
+### Task 21 — The role editor keeps every permission
+**Owner: Claude · `p4/t21-role-editor-permissions` · from main · approved by the owner on 2026-10-16**
+
+**Why.** End-to-end QA of `main` (de5f93f) found that saving a role in the roles
+editor, even with nothing changed, removed every permission the form has no
+checkbox for:
+- staff went from 17 permissions to 9, admin from 76 to 51, student from 5 to 0;
+- every staff member, admin and portal student lost panel access.
+
+The editor shows only resource and page permissions (`config/filament-shield.php`
+turns the custom tab off), and the save syncs the role to what the form shows. The
+same gap means a role created in the editor can never be granted
+`access_admin_panel`, which breaks §5: "adding a fifth role must not require a code
+change". The QA report and the lead's reproduction are in the PR.
+
+**File scope**
+- `config/filament-shield.php` — the custom-permissions tab and its list
+- `app/Domain/Staff/Filament/Resources/RoleResource.php`, and its `Pages/` if the
+  fix needs them (seam: before T16e, which restyles them)
+- `lang/en/staff.php` — appended
+- `tests/Feature/Staff/RoleEditorPermissionsTest.php` (new)
+- this plan — this entry
+
+**Contract rules asserted:**
+- saving any seeded role other than `super_admin` with nothing changed leaves its
+  permissions exactly as they were;
+- every permission `RolePermissionSeeder` creates can be ticked on the role form;
+- a role created in the editor can be granted `access_admin_panel`, and its user
+  then reaches the panel;
+- every custom permission's label comes from a translation key.
+
+Who may edit roles is unchanged: super admins only (`RolePolicy`).
+
+**Decided (owner, 2026-10-17).** With every permission tickable, a super admin can
+create a role with "select all" on. That role holds every permission, which is the
+"unprotected clone" that `RolePolicy::replicate()` refuses to copy. It stays
+allowed in T21:
+- only a super admin can build it;
+- the same super admin can already tick each box by hand;
+- the review confirmed that guards 1, 2 and 4 still protect real super admins
+  from its holder.
+
+Whether role-management permissions should be grantable to other roles at all is a
+deferred decision (below).
+
+### Task 22 — Report PDFs reach the person who asked
+**Owner: Claude · `p4/t22-report-pdf-notifications` · from main · approved by the owner on 2026-10-17**
+
+**Why.** QA finding F2: `GenerateReportPdfJob` delivers a finished PDF only as a
+database notification, and the admin panel had no notifications bell, so PDF exports
+could never be downloaded from the app. Spec §8 requires an in-app notice when the
+file is ready.
+
+**File scope**
+- `app/Providers/Filament/AdminPanelProvider.php`: `databaseNotifications()`, added
+  as a seam line (T03 → T09 → T16a → T20c → **T22** → T18)
+- `tests/Feature/Finance/Reports/ReportPdfNotificationTest.php` (new)
+
+**Contract rules asserted:**
+- the requester sees the "PDF ready" notification, and its download link serves
+  the PDF;
+- no other user sees it;
+- the bell is refused to a user who must change their password, both when the page
+  renders and on every Livewire call;
+- the student portal stays without notifications.
+
+### Task 23 — Compensation and payroll say what happened
+**Owner: Claude · `p4/t23-payroll-feedback` · from main · approved by the owner on 2026-10-17**
+
+**Why.** QA findings:
+- F3: a refused compensation effective date showed no message;
+- F4: finalizing a payroll run showed nothing on refusal or on success, and the
+  page kept saying "Draft";
+- F5: payroll bonuses and deductions were saved and counted in the wage cost, but
+  no screen showed them.
+
+**File scope**
+- `app/Domain/Finance/Filament/Resources/StaffCompensationResource/Pages/CreateStaffCompensation.php`
+- `app/Domain/Finance/Filament/Resources/PayrollRunResource/Pages/ReviewPayrollRun.php`
+- `app/Domain/Finance/Filament/Resources/PayrollRunResource.php`: `infolist()` only
+- `lang/en/payroll.php`: appended
+- `tests/Feature/Finance/PayrollFeedbackTest.php`,
+  `tests/Feature/Finance/CompensationFeedbackTest.php` (new)
+
+**Contract rules asserted:**
+- every refusal shows the Action's own message and writes nothing;
+- every success says so;
+- a finalized run shows as finalized without a reload;
+- each line lists its adjustments, with a total computed through `Money` and never
+  stored.
+
+No Action, service or model changes: the refusals were already correct, only their
+display was missing.
+
+---
+
 ## Deferred
 
 | Item | Why not now |
 |---|---|
+| **Who may hold role-management permissions** | Owner decision, from T21 (2026-10-17). A super admin can grant `create_role`, `update_role` or `delete_role` to another role, or build a full clone with "select all". The spec says role management is super-admin-only, but `RolePolicy` checks permissions, not the role. Deciding whether to restrict these permissions to `super_admin` needs the owner |
 | **Certificates due this month** | Dropped by the owner, 2026-10-08. No data defines when a certificate falls due |
 | **Contact form** | Needs a session, CSRF, spam handling and a destination; the public pages are sessionless and link instead |
 | **Application response cache** | A deployment decision, waiting on the host |
