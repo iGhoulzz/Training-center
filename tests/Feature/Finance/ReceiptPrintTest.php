@@ -279,6 +279,29 @@ it('renders an Arabic snapshot right-to-left and puts the app locale back', func
         ->and(app()->getLocale())->toBe('en');
 });
 
+it('isolates each reference and amount inside its value cell, never on the cell itself', function (): void {
+    // A cell carrying dir="ltr" resolves margin-inline-start to the left margin,
+    // which in an Arabic row puts the value against its label. Only a browser
+    // shows the layout, so this pins the markup that produces the right one.
+    $arabic = ($this->paymentWithSnapshot)('ar');
+    $html = (string) $this->actingAs(($this->actorWith)('view_payment'))
+        ->get(route('finance.receipts.print', $arabic))
+        ->getContent();
+
+    $document = new DOMDocument;
+    @$document->loadHTML('<?xml encoding="utf-8"?>'.$html);
+    $xpath = new DOMXPath($document);
+    $isolated = fn (string $text): int => $xpath->query(
+        "//span[@class='value']/span[@dir='ltr'][normalize-space(.)='{$text}']",
+    )->length;
+
+    expect($xpath->query("//*[contains(concat(' ', normalize-space(@class), ' '), ' value ')][@dir or contains(concat(' ', normalize-space(@class), ' '), ' ltr ')]")->length)->toBe(0)
+        ->and($isolated($arabic->reference))->toBe(1)
+        ->and($isolated('CHG-2026-000042'))->toBe(1)
+        ->and($isolated('832.319 LYD'))->toBe(1)
+        ->and($isolated('201.123 LYD'))->toBe(1);
+});
+
 it('renders an English snapshot left-to-right', function (): void {
     $html = (string) $this->actingAs(($this->actorWith)('view_payment'))->get($this->url)->getContent();
 

@@ -45,6 +45,10 @@
         .group { border-block-start: 1px dashed #000; padding-block: 2mm; }
 
         .row { align-items: baseline; display: flex; flex-wrap: wrap; gap: 0 2mm; justify-content: space-between; padding-block: 0.6mm; }
+        /* The value cell keeps the row's direction, and a reference or amount is
+           isolated left-to-right in a span INSIDE it. Put dir="ltr" on the cell
+           itself and its margin-inline-start becomes the left margin, which in
+           an Arabic row pushes the value against its label instead of to the edge. */
         .row .value { margin-inline-start: auto; text-align: end; }
         .row.strong { font-weight: 700; }
         .row.stack { display: block; }
@@ -67,30 +71,30 @@
         <div class="title">{{ __('receipt.title') }}</div>
 
         <section class="group">
-            <div class="row"><span class="label">{{ __('receipt.reference') }}</span><span class="value ltr" dir="ltr">{{ $snapshot->payment_reference }}</span></div>
+            <div class="row"><span class="label">{{ __('receipt.reference') }}</span><span class="value"><span class="ltr" dir="ltr">{{ $snapshot->payment_reference }}</span></span></div>
             <div class="row stack"><span class="label">{{ __('receipt.student') }}</span><span class="value">{!! __('receipt.student_identity', ['code' => '<span class="ltr" dir="ltr">'.e($snapshot->student_code).'</span>', 'name' => e($snapshot->student_name)]) !!}</span></div>
-            <div class="row"><span class="label">{{ __('receipt.enrollment') }}</span><span class="value ltr" dir="ltr">{{ $snapshot->enrollment_reference }}</span></div>
-            <div class="row"><span class="label">{{ __('receipt.course') }}</span><span class="value ltr" dir="ltr">{{ $snapshot->course_code }}</span></div>
-            <div class="row"><span class="label">{{ __('receipt.batch') }}</span><span class="value ltr" dir="ltr">{{ $snapshot->batch_code }}</span></div>
-            <div class="row"><span class="label">{{ __('receipt.bill') }}</span><span class="value ltr" dir="ltr">{{ $snapshot->charge_reference }}</span></div>
+            <div class="row"><span class="label">{{ __('receipt.enrollment') }}</span><span class="value"><span class="ltr" dir="ltr">{{ $snapshot->enrollment_reference }}</span></span></div>
+            <div class="row"><span class="label">{{ __('receipt.course') }}</span><span class="value"><span class="ltr" dir="ltr">{{ $snapshot->course_code }}</span></span></div>
+            <div class="row"><span class="label">{{ __('receipt.batch') }}</span><span class="value"><span class="ltr" dir="ltr">{{ $snapshot->batch_code }}</span></span></div>
+            <div class="row"><span class="label">{{ __('receipt.bill') }}</span><span class="value"><span class="ltr" dir="ltr">{{ $snapshot->charge_reference }}</span></span></div>
         </section>
 
         <section class="group">
-            <div class="row"><span class="label">{{ __('receipt.original_price') }}</span><span class="value ltr" dir="ltr">{{ __('receipt.amount_lyd', ['amount' => $snapshot->list_price]) }}</span></div>
-            <div class="row"><span class="label">{{ __('receipt.discount') }}</span><span class="value ltr" dir="ltr">{{ __('receipt.discount_percent', ['percent' => $discountPercent]) }}</span></div>
-            <div class="row strong"><span class="label">{{ __('receipt.final_charge') }}</span><span class="value ltr" dir="ltr">{{ __('receipt.amount_lyd', ['amount' => $snapshot->final_charge]) }}</span></div>
+            <div class="row"><span class="label">{{ __('receipt.original_price') }}</span><span class="value"><span class="ltr" dir="ltr">{{ __('receipt.amount_lyd', ['amount' => $snapshot->list_price]) }}</span></span></div>
+            <div class="row"><span class="label">{{ __('receipt.discount') }}</span><span class="value"><span class="ltr" dir="ltr">{{ __('receipt.discount_percent', ['percent' => $discountPercent]) }}</span></span></div>
+            <div class="row strong"><span class="label">{{ __('receipt.final_charge') }}</span><span class="value"><span class="ltr" dir="ltr">{{ __('receipt.amount_lyd', ['amount' => $snapshot->final_charge]) }}</span></span></div>
         </section>
 
         <section class="group">
-            <div class="row strong"><span class="label">{{ __('receipt.amount_paid') }}</span><span class="value ltr" dir="ltr">{{ __('receipt.amount_lyd', ['amount' => $snapshot->amount_paid]) }}</span></div>
+            <div class="row strong"><span class="label">{{ __('receipt.amount_paid') }}</span><span class="value"><span class="ltr" dir="ltr">{{ __('receipt.amount_lyd', ['amount' => $snapshot->amount_paid]) }}</span></span></div>
             @foreach ($tenders as $tender)
-                <div class="row"><span class="label">{{ __('receipt.tender_label', ['method' => $tender['label']]) }}</span><span class="value ltr" dir="ltr">{{ __('receipt.amount_lyd', ['amount' => $tender['amount']]) }}</span></div>
+                <div class="row"><span class="label">{{ __('receipt.tender_label', ['method' => $tender['label']]) }}</span><span class="value"><span class="ltr" dir="ltr">{{ __('receipt.amount_lyd', ['amount' => $tender['amount']]) }}</span></span></div>
             @endforeach
-            <div class="row strong"><span class="label">{{ __('receipt.remaining_balance') }}</span><span class="value ltr" dir="ltr">{{ __('receipt.amount_lyd', ['amount' => $snapshot->remaining_balance]) }}</span></div>
+            <div class="row strong"><span class="label">{{ __('receipt.remaining_balance') }}</span><span class="value"><span class="ltr" dir="ltr">{{ __('receipt.amount_lyd', ['amount' => $snapshot->remaining_balance]) }}</span></span></div>
         </section>
 
         <section class="group">
-            <div class="row"><span class="label">{{ __('receipt.payment_date') }}</span><span class="value ltr" dir="ltr">{{ $paymentDate }}</span></div>
+            <div class="row"><span class="label">{{ __('receipt.payment_date') }}</span><span class="value"><span class="ltr" dir="ltr">{{ $paymentDate }}</span></span></div>
             <div class="row"><span class="label">{{ __('receipt.recorded_by') }}</span><span class="value">{{ $snapshot->recorded_by_name }}</span></div>
         </section>
     </main>
