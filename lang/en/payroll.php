@@ -76,4 +76,11 @@ return [
     'run_hint' => 'Review frozen lines before finalizing. Finalization posts the run; payment happens outside this system.',
     'effective_rate_hint' => 'A new effective date adds a rate to the history. Existing rates are never overwritten.',
     'frozen_total_hint' => 'Before bonuses and deductions',
+    'finalized_successfully' => 'Payroll run finalized.',
+    'adjustment_added' => 'Bonus or deduction added.',
+    'refused' => 'This change was refused.',
+    'adjustments' => 'Bonuses and deductions',
+    'added_by' => 'Added by',
+    'added_at' => 'Added at',
+    'line_total' => 'Total after bonuses and deductions',
 ];

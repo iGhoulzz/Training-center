@@ -10,6 +10,7 @@ use App\Domain\Finance\Filament\Resources\PayrollRunResource\Pages\CreatePayroll
 use App\Domain\Finance\Filament\Resources\PayrollRunResource\Pages\ListPayrollRuns;
 use App\Domain\Finance\Filament\Resources\PayrollRunResource\Pages\ReviewPayrollRun;
 use App\Domain\Finance\Models\PayrollLine;
+use App\Domain\Finance\Models\PayrollLineAdjustment;
 use App\Domain\Finance\Models\PayrollRun;
 use App\Domain\Finance\Services\PayrollCalculator;
 use App\Domain\Finance\Support\Money;
@@ -160,6 +161,28 @@ final class PayrollRunResource extends Resource
                             ->label(__('payroll.computed_amount'))
                             ->formatStateUsing(fn (string $state): string => __('payroll.amount_lyd', ['amount' => $state])),
                         TextEntry::make('reason')->label(__('payroll.reason')),
+                        // Bonuses and deductions added while the run is a draft. Only a line that
+                        // has any shows the block; the total beside it is derived here, never stored.
+                        RepeatableEntry::make('adjustments')
+                            ->label(__('payroll.adjustments'))
+                            ->visible(fn (PayrollLine $record): bool => $record->adjustments->isNotEmpty())
+                            ->schema([
+                                TextEntry::make('amount')
+                                    ->label(__('payroll.amount'))
+                                    ->formatStateUsing(fn (string $state): string => __('payroll.amount_lyd', ['amount' => $state])),
+                                TextEntry::make('reason')->label(__('payroll.reason')),
+                                TextEntry::make('createdBy.name')->label(__('payroll.added_by')),
+                                TextEntry::make('created_at')->label(__('payroll.added_at'))->dateTime(),
+                            ])
+                            ->columns(4)
+                            ->columnSpanFull(),
+                        TextEntry::make('line_total')
+                            ->label(__('payroll.line_total'))
+                            ->state(fn (PayrollLine $record): string => $record->adjustments->reduce(
+                                fn (Money $total, PayrollLineAdjustment $adjustment): Money => $total->add(Money::fromDecimal($adjustment->amount)),
+                                Money::fromDecimal($record->computed_amount),
+                            )->toDecimal())
+                            ->formatStateUsing(fn (string $state): string => __('payroll.amount_lyd', ['amount' => $state])),
                     ])
                     ->columns(3),
             ]),
