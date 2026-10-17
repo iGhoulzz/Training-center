@@ -29,6 +29,9 @@
     /* The text on a primary button: near-black, warm, so it reads on amber. */
     --color-on-primary: #1c1204;
 
+    /* The student register's no-portal status dot. */
+    --color-no-portal: #a78bfa;
+
     /*
      * The design's lines and fills, white at a low opacity. A hairline is a 1px border or
      * ring; the soft one is the brand row's. A hover fill is a sidebar item's, and the

@@ -8,6 +8,6 @@
         {{ $slot }}
     </div>
     @isset($footer)
-        <div @class(['flex flex-wrap gap-2 border-t border-white/8 py-[14px]', 'px-[18px]' => $preview, 'px-5' => ! $preview])>{{ $footer }}</div>
+        <div @class(['flex flex-wrap gap-2 border-t border-white/8 py-[14px]', 'px-[18px] [&>*]:w-full [&_.fi-ac]:grid [&_.fi-ac]:w-full [&_.fi-ac]:grid-cols-1 [&_.fi-ac]:gap-2' => $preview, 'px-5' => ! $preview])>{{ $footer }}</div>
     @endisset
 </aside>

@@ -23,6 +23,8 @@ use App\Domain\Finance\Services\ChargeQueryService;
 use App\Models\User;
 use BackedEnum;
 use Filament\Actions\Action;
+use Filament\Actions\ActionGroup;
+use Filament\Actions\ViewAction;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
@@ -31,9 +33,10 @@ use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Support\Icons\Heroicon;
-use Filament\Tables\Columns\Layout\Split;
+use Filament\Tables\Columns\Layout\Grid;
 use Filament\Tables\Columns\Layout\Stack;
 use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
@@ -144,13 +147,19 @@ class StudentCertificateResource extends Resource
     {
         return $table
             ->defaultSort('issued_at', 'desc')
+            // Column links must not be nested inside a row-wide anchor.
+            ->recordUrl(null)
+            // Reserve the action track even when this row offers no authorized action.
+            ->recordClasses('md:[&_.fi-ta-record-content-ctn]:grid md:[&_.fi-ta-record-content-ctn]:grid-cols-[minmax(0,1fr)_4.5rem] [&_.fi-ta-record-content-ctn>div:first-child]:min-w-0')
             ->columns([
-                Split::make([
+                Grid::make(['default' => 1, 'md' => 4])->extraAttributes([
+                    'class' => 'gap-2 md:gap-[14px] md:grid-cols-[minmax(130px,1.6fr)_minmax(120px,1.4fr)_minmax(90px,1fr)_minmax(80px,.9fr)] [&>*]:min-w-0',
+                ])->schema([
                     Stack::make([
                         TextColumn::make('student_name')
                             ->label(__('certificates.student'))
                             ->searchable()
-                            ->sortable()->weight('semibold')->extraAttributes(['class' => 'text-[13.5px]'])
+                            ->sortable()->weight('semibold')->extraAttributes(['class' => 'block truncate text-[13.5px]'])
                             ->url(fn (StudentCertificate $record): ?string => ! $record->enrollment->student->trashed()
                                 && StudentResource::canViewAny() && StudentResource::canView($record->enrollment->student)
                                 ? StudentResource::getUrl('view', ['record' => $record->enrollment->student]) : null),
@@ -158,21 +167,23 @@ class StudentCertificateResource extends Resource
                         TextColumn::make('course_name')
                             ->label(__('certificates.course'))
                             ->searchable()
-                            ->sortable()->color('gray')->extraAttributes(['class' => 'text-[11.5px]'])
+                            ->sortable()->color('gray')->extraAttributes(['class' => 'block truncate text-[11.5px]'])
                             ->url(fn (StudentCertificate $record): ?string => CourseResource::canViewAny() && CourseResource::canView($record->enrollment->batch->course)
                                 ? CourseResource::getUrl('view', ['record' => $record->enrollment->batch->course]) : null),
                     ])->space(1),
                     TextColumn::make('reference_number')
                         ->label(__('certificates.reference_number'))->searchable()->sortable()
-                        ->color('gray')->extraAttributes(['class' => 'font-mono text-[12.5px]']),
+                        ->color('gray')->extraAttributes(['class' => 'block truncate font-mono text-[12.5px]'])
+                        ->url(fn (StudentCertificate $record): ?string => self::canView($record)
+                            ? self::getUrl('view', ['record' => $record]) : null),
                     Stack::make([
                         TextColumn::make('issued_at')
                             ->label(__('certificates.issued_at'))
-                            ->date()->color('gray')->extraAttributes(['class' => 'text-[12px]'])
+                            ->date()->color('gray')->extraAttributes(['class' => 'whitespace-nowrap text-[12px]'])
                             ->sortable(),
 
                         TextColumn::make('issuedBy.name')
-                            ->label(__('certificates.issued_by'))->color('gray')->extraAttributes(['class' => 'text-[11px]']),
+                            ->label(__('certificates.issued_by'))->color('gray')->extraAttributes(['class' => 'block truncate whitespace-nowrap text-[11px]']),
                     ])->space(1),
 
                     TextColumn::make('status')
@@ -184,9 +195,13 @@ class StudentCertificateResource extends Resource
                             CertificateStatus::Replaced => 'gray',
                             CertificateStatus::Revoked => 'danger',
                         }),
-                ])->from('md'),
-                TextColumn::make('completed_on')->label(__('certificates.completed_on'))->date()->sortable()
-                    ->toggleable(isToggledHiddenByDefault: true),
+                ]),
+                // Layout rendering does not consult the column manager's toggled state.
+                Stack::make([
+                    TextColumn::make('completed_on')
+                        ->label(__('certificates.completed_on'))
+                        ->date()->sortable()->toggleable(isToggledHiddenByDefault: true),
+                ])->visible(fn (HasTable $livewire): bool => ! $livewire->isTableColumnToggledHidden('completed_on')),
             ])
             ->filters([
                 Filter::make('student')->label(__('enrollment.student'))
@@ -212,8 +227,12 @@ class StudentCertificateResource extends Resource
             // docblock. Shared builders so the table row and
             // ViewStudentCertificate's header actions cannot drift apart.
             ->recordActions([
-                self::replaceAction(),
-                self::revokeAction(),
+                ActionGroup::make([
+                    ViewAction::make()->authorize('view')
+                        ->url(fn (StudentCertificate $record): string => self::getUrl('view', ['record' => $record])),
+                    self::replaceAction(),
+                    self::revokeAction(),
+                ])->iconButton()->dropdownTeleport(),
             ])
             // No bulk actions of any kind. StudentCertificatePolicy's *Any
             // methods refuse unconditionally (T4; see
