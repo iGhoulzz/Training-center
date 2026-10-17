@@ -64,6 +64,10 @@ final class ReceiptViewData
                 'paymentDate' => CentreCalendar::localise($snapshot->received_at)->format('Y-m-d H:i'),
                 'locale' => $snapshot->locale,
                 'direction' => str_starts_with($snapshot->locale, 'ar') ? 'rtl' : 'ltr',
+                // The centre's own name in the receipt's language; never app.name.
+                'centreName' => (string) config(str_starts_with($snapshot->locale, 'ar')
+                    ? 'public_site.brand.name_ar'
+                    : 'public_site.brand.name'),
                 'discountPercent' => $snapshot->discount_percentage ?? '0',
             ])->render();
         } finally {

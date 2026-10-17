@@ -472,3 +472,44 @@ it('sits beside the download action without changing it', function (): void {
         ->assertTableActionHasUrl('downloadReceipt', route('finance.receipts.download', $withReceipt), $withReceipt)
         ->assertTableActionHidden('downloadReceipt', $this->payment);
 });
+
+it('decides the print action for every row without a query per row', function (): void {
+    // withExists('receiptSnapshot') answers the visibility in the table's own
+    // statement. Reading the relation in visible() instead would add one query
+    // per row, which the lazy-loading guard cannot see because exists() is a
+    // fresh query, not a lazy load. So the statements are counted directly.
+    $viewer = ($this->actorWith)('access_admin_panel', 'view_any_payment', 'view_payment');
+
+    $measure = function () use ($viewer): int {
+        $statements = captureStatements();
+        Livewire::actingAs($viewer)->test(ListPayments::class)->assertSuccessful();
+
+        return collect($statements)
+            ->filter(fn (array $statement): bool => str_contains($statement['sql'], 'payment_receipt_snapshots'))
+            ->count();
+    };
+
+    ($this->paymentWithSnapshot)();
+    $two = $measure();
+
+    foreach (range(1, 6) as $ignored) {
+        ($this->paymentWithSnapshot)();
+    }
+    $eight = $measure();
+
+    expect(Payment::query()->count())->toBe(8)
+        ->and($eight)->toBe($two);
+});
+
+it('prints the centre name in the receipt language', function (string $locale, string $configKey, string $otherKey): void {
+    $payment = ($this->paymentWithSnapshot)($locale);
+    $html = (string) $this->actingAs(($this->actorWith)('view_payment'))
+        ->get(route('finance.receipts.print', $payment))
+        ->getContent();
+
+    expect(str_contains($html, e((string) config($configKey))))->toBeTrue()
+        ->and(str_contains($html, e((string) config($otherKey))))->toBeFalse();
+})->with([
+    'English' => ['en', 'public_site.brand.name', 'public_site.brand.name_ar'],
+    'Arabic' => ['ar', 'public_site.brand.name_ar', 'public_site.brand.name'],
+]);

@@ -287,18 +287,30 @@ it('keeps the guard on the route group, which is what a future route inherits', 
         $source,
     );
 
-    expect($groups)->toBeGreaterThan(
-        0,
-        'The private-file route group is gone; new routes no longer inherit the guard.',
+    /*
+     * EXACTLY TWO GROUPS (P4-T24): the private files, and the receipt print page,
+     * which is a page rather than a file and so has a group of its own. Pinned,
+     * not "at least one": a group wrapping a single route is per-route
+     * application in another form, so a third group is a decision to make here,
+     * on purpose, never one that passes by itself.
+     */
+    expect($groups)->toBe(
+        2,
+        'Expected exactly two route groups declaring the guard: the private files and the receipt print page.',
+    );
+
+    // The import is asserted on its own, so a fully qualified mention cannot
+    // stand in for it and leave the count below unchanged.
+    expect(str_contains($source, 'use App\Http\Middleware\AuthenticatePrivateFileSession;'))->toBeTrue(
+        'routes/web.php no longer imports the guard.',
     );
 
     /*
-     * THE RULE, STATED GENERALLY (P4-T24). The guard is only ever declared on a
-     * route group, never on a route. Every mention in the code is therefore
-     * either the import or the middleware of one group, so the mentions are
-     * exactly one plus the number of groups. A mention that belongs to neither
-     * is a route carrying the guard on its own, which is the shape this test
-     * exists to refuse. P4-T24's receipt print page is the second group.
+     * THE RULE. The guard is only ever declared on a route group, never on a
+     * route. Every mention in the code is therefore either the import or the
+     * middleware of one group, so the mentions are exactly one plus the number
+     * of groups. A mention that belongs to neither is a route carrying the
+     * guard on its own, which is the shape this test exists to refuse.
      */
     expect(substr_count($source, 'AuthenticatePrivateFileSession'))->toBe(
         1 + $groups,

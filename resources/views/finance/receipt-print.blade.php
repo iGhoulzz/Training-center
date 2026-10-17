@@ -67,7 +67,7 @@
 </head>
 <body>
     <main class="receipt">
-        <div class="centre">{{ config('public_site.brand.name') }}</div>
+        <div class="centre">{{ $centreName }}</div>
         <div class="title">{{ __('receipt.title') }}</div>
 
         <section class="group">
