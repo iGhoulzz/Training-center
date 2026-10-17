@@ -155,6 +155,15 @@ class AdminPanelProvider extends PanelProvider
                 Dashboard::class,
             ])
             ->discoverWidgets(in: app_path('Filament/Widgets'), for: 'App\Filament\Widgets')
+            /*
+             * THE BELL (P4-T22). A queued report PDF is delivered as a database notification
+             * (GenerateReportPdfJob) and so is a finished spreadsheet export; without this there
+             * was no bell and neither signed download link could be reached. Filament's default
+             * 30-second poll is kept: a finished report is never urgent. The student portal
+             * stays without it. PasswordChange renders no topbar, and with it no bell, so the
+             * forced password change is not reopened (ReportPdfNotificationTest proves both).
+             */
+            ->databaseNotifications()
             ->middleware([
                 EncryptCookies::class,
                 AddQueuedCookiesToResponse::class,
