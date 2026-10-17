@@ -16,9 +16,9 @@
     verifier's own lookup route, under that group's headers and limiter, and the result
     shows on the verifier's own page. Nothing is stored and no token is needed.
 
-    THE TEASER shows only while there are published articles to show, and shows the
-    ones PageController hands over: a closed projection of at most three, newest first.
-    The page never queries.
+    THE TEASER shows the articles PageController hands over: a closed projection of
+    at most three, newest first. Its section remains as a navigation target when
+    empty, as does Contact. The page never queries.
 
     The copy is draft (lang/en/public.php, `home.*`) and states only what the system
     makes true. The programme cards are the first few of the same ordered list the
@@ -76,13 +76,14 @@
         </x-public.container>
     </section>
 
-    <section aria-labelledby="home-about-heading">
+    <section id="about" tabindex="-1" aria-labelledby="home-about-heading">
         <x-public.container class="pt-22 pb-18">
             <div class="flex flex-wrap items-start gap-14">
                 <div class="min-w-0 flex-[1_1_380px]">
                     <x-public.section-heading id="home-about-heading" size="lg" balance :eyebrow="__('public.home.about_heading')" :title="__('public.home.about_title')" />
                     <p class="mt-5 max-w-140 text-base leading-[1.8] text-pretty text-body lg:text-prose">{{ __('public.home.about_body') }}</p>
                     <p class="mt-4 max-w-140 text-base leading-[1.8] text-pretty text-body lg:text-prose">{{ __('public.home.about_register') }}</p>
+                    <x-public.button :href="PublicRoute::url('public.about')" variant="outline" size="sm" class="mt-6">{{ __('public.about.heading') }}</x-public.button>
                 </div>
 
                 <div class="grid min-w-0 flex-[1_1_320px] gap-3.25">
@@ -92,7 +93,7 @@
         </x-public.container>
     </section>
 
-    <section id="programmes" aria-labelledby="home-programmes-heading" class="border-y border-navy/8 bg-card">
+    <section id="programmes" tabindex="-1" aria-labelledby="home-programmes-heading" class="border-y border-navy/8 bg-card">
         <x-public.container class="py-20">
             <div class="mb-8.5 flex flex-wrap items-end gap-5">
                 <x-public.section-heading id="home-programmes-heading" class="min-w-65 flex-1" :eyebrow="__('public.links.programmes')" :title="__('public.home.programmes_title')" />
@@ -111,7 +112,7 @@
         </x-public.container>
     </section>
 
-    <section id="verify" aria-labelledby="home-verify-heading" class="relative overflow-hidden bg-navy text-cream">
+    <section id="verify" tabindex="-1" aria-labelledby="home-verify-heading" class="relative overflow-hidden bg-navy text-cream">
         <div aria-hidden="true" class="absolute inset-0 bg-radial-[circle_at_20%_30%] from-gold/18 to-transparent to-45%"></div>
 
         <x-public.container class="relative flex flex-wrap items-start gap-13 py-20">
@@ -147,17 +148,19 @@
         </x-public.container>
     </section>
 
-    @if ($articles !== [])
-        <section id="publications" aria-labelledby="home-publications-heading">
-            <x-public.container class="py-21">
-                <div class="mb-6.5 flex flex-wrap items-end gap-5">
-                    <x-public.section-heading id="home-publications-heading" class="min-w-65 flex-1" :eyebrow="__('public.links.publications')" :title="__('public.home.publications_title')" :intro="__('public.home.publications_intro')" />
-                    <x-public.button :href="PublicRoute::url('public.publications.index')" variant="outline" class="leading-[normal] max-lg:min-h-11">
-                        {{ __('public.home.publications_all') }}
-                        <x-public.icon name="arrow-right" :size="14" linejoin="miter" class="rtl:-scale-x-100" />
-                    </x-public.button>
-                </div>
+    <section id="publications" tabindex="-1" aria-labelledby="home-publications-heading">
+        <x-public.container class="py-21">
+            <div class="mb-6.5 flex flex-wrap items-end gap-5">
+                <x-public.section-heading id="home-publications-heading" class="min-w-65 flex-1" :eyebrow="__('public.links.publications')" :title="__('public.home.publications_title')" :intro="__('public.home.publications_intro')" />
+                <x-public.button :href="PublicRoute::url('public.publications.index')" variant="outline" class="leading-[normal] max-lg:min-h-11">
+                    {{ __('public.home.publications_all') }}
+                    <x-public.icon name="arrow-right" :size="14" linejoin="miter" class="rtl:-scale-x-100" />
+                </x-public.button>
+            </div>
 
+            @if ($articles === [])
+                <p class="text-base text-body">{{ __('publications.public.empty_library') }}</p>
+            @else
                 <div class="flex flex-col gap-3.5">
                     @foreach ($articles as $article)
                         <x-public.card as="article" hover="lift" class="flex flex-wrap items-start gap-5.5 p-6">
@@ -197,15 +200,17 @@
                 </div>
 
                 <p class="mt-4 text-caption text-meta">{{ __('publications.public.downloads_note') }}</p>
-            </x-public.container>
-        </section>
-    @endif
+            @endif
+        </x-public.container>
+    </section>
 
-    @if ($contact->email !== '' || $contact->phone !== '' || $contact->mapUrl !== '')
-        <section id="contact" aria-labelledby="home-contact-heading" class="border-t border-navy/8 bg-card">
-            <x-public.container class="py-20">
-                <x-public.contact-details heading-id="home-contact-heading" />
-            </x-public.container>
-        </section>
-    @endif
+    <section id="contact" tabindex="-1" aria-labelledby="home-contact-heading" class="border-t border-navy/8 bg-card">
+        <x-public.container class="py-20">
+            <x-public.contact-details heading-id="home-contact-heading" />
+            @if ($contact->email === '' && $contact->phone === '' && $contact->mapUrl === '')
+                <p class="mt-5.5 text-base text-body">{{ __('public.contact.empty') }}</p>
+            @endif
+            <x-public.button :href="PublicRoute::url('public.contact')" variant="outline" size="sm" class="mt-6">{{ __('public.contact.heading') }}</x-public.button>
+        </x-public.container>
+    </section>
 @endsection

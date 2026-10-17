@@ -4,24 +4,19 @@ declare(strict_types=1);
 
 /*
 |--------------------------------------------------------------------------
-| Arabic — deliberately empty until P4-T17, the Arabic catalogues task
+| Arabic — partially translated until P4-T17, the Arabic catalogues task
 |--------------------------------------------------------------------------
 |
-| Every key in lang/en/public.php resolves through this file to its
-| English value: Laravel's translator tries the active locale, then
-| app.fallback_locale. An empty array is therefore a working state, not a
-| broken one.
-|
-| It is empty ON PURPOSE. Seeding it with the English strings — the obvious
-| shortcut — would make an untranslated panel indistinguishable from a
-| translated one: nothing would render as missing, and no reviewer, screenshot
-| or test could tell which strings a translator had actually reached. Absent
-| means untranslated, and stays visible as such. See lang/ar/enrollment.php
-| for the fuller reasoning, which applies unchanged here.
+| Untranslated keys fall back to English. Do not seed this file with English
+| strings: absent means untranslated, so reviewers can see what remains. See
+| lang/ar/enrollment.php for the fuller reasoning.
 |
 | T17 fills this in. Add keys only with real Arabic; a partially filled
 | file is fine, because the fallback covers whatever is not here yet.
 */
 
 return [
+    'contact' => [
+        'empty' => 'ستُنشر بيانات التواصل هنا عند توفرها.',
+    ],
 ];
