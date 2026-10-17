@@ -174,6 +174,10 @@ class PaymentResource extends Resource
      * allocation's bill — without the last one, "the bill it settled" is a
      * textbook N+1, one query per row.
      *
+     * `withExists('receiptSnapshot')` selects a boolean in the same statement,
+     * which is all `printReceiptAction()` needs to know per row (P4-T24); an
+     * eager-loaded relation would cost a second query for a yes or no.
+     *
      * NOT `enrollment.student` — there is no such walk here to warn about.
      * See the class docblock for why `student` is a direct, plain relation
      * on this table rather than the domain-boundary violation
@@ -185,6 +189,7 @@ class PaymentResource extends Resource
     {
         return parent::getEloquentQuery()
             ->withSum('tenders', 'amount')
+            ->withExists('receiptSnapshot')
             ->with(['tenders', 'student', 'recordedBy', 'allocations.charge']);
     }
 
@@ -309,6 +314,7 @@ class PaymentResource extends Resource
             // drift between the two; the download link is table-only.
             ->recordActions([
                 self::downloadReceiptAction(),
+                self::printReceiptAction(),
                 self::reverseAction(),
             ])
             // No bulk actions of any kind. PaymentPolicy's *Any methods
@@ -376,6 +382,35 @@ class PaymentResource extends Resource
             ->authorize('view')
             ->visible(fn (Payment $record): bool => $record->receipt_path !== null)
             ->url(fn (Payment $record): string => route('finance.receipts.download', $record))
+            ->openUrlInNewTab();
+    }
+
+    /**
+     * Open the receipt laid out for an 80 mm thermal printer (P4-T24).
+     *
+     * A LINK, LIKE THE DOWNLOAD. `authorize('view')` decides who sees the
+     * button; what protects the page is `finance.receipts.print` — its session
+     * and throttle middleware, then the controller's active-user check and
+     * `PaymentPolicy::view()`. Do not move any of that here.
+     *
+     * HIDDEN UNTIL A SNAPSHOT EXISTS, NOT UNTIL A PDF DOES. The page is
+     * rendered on demand from the immutable receipt snapshot written when the
+     * payment is recorded, so it can print while the queued PDF is still
+     * pending. That is the opposite of `downloadReceiptAction()`, which waits
+     * for a recorded path. The flag is `getEloquentQuery()`'s `withExists`
+     * column: reading the relation here would be one query per row.
+     *
+     * NOT HIDDEN ON REVERSAL, for the reason the download is not: the receipt
+     * was issued and reversing the payment does not un-issue the paper.
+     */
+    public static function printReceiptAction(): Action
+    {
+        return Action::make('printReceipt')
+            ->label(__('payments.print_receipt'))
+            ->icon(Heroicon::OutlinedPrinter)
+            ->authorize('view')
+            ->visible(fn (Payment $record): bool => (bool) $record->getAttribute('receipt_snapshot_exists'))
+            ->url(fn (Payment $record): string => route('finance.receipts.print', $record))
             ->openUrlInNewTab();
     }
 

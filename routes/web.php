@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Http\Controllers\Finance\ReceiptDownloadController;
+use App\Http\Controllers\Finance\ReceiptPrintController;
 use App\Http\Controllers\Public\PageController;
 use App\Http\Controllers\Public\ProgrammeController;
 use App\Http\Controllers\Public\PublicationController;
@@ -127,6 +128,27 @@ Route::middleware(AuthenticatePrivateFileSession::class)->group(function (): voi
     Route::get('receipts/{payment}/download', ReceiptDownloadController::class)
         ->middleware('throttle:60,1')
         ->name('finance.receipts.download');
+});
+
+/*
+|--------------------------------------------------------------------------
+| The 80 mm receipt print page (phase 4, P4-T24)
+|--------------------------------------------------------------------------
+|
+| Not a private file: it streams nothing from the 'private' disk. It is an HTML
+| page rendered on demand from the payment's receipt snapshot, which is why it is
+| not in the group above. It carries the SAME two middleware on purpose — session
+| integrity, so a session revoked by a password reset stops printing receipts
+| too, and the same 60-a-minute limit — and its controller refuses a guest with
+| 403, an inactive user with 403 and an unauthorized user with 403 exactly as the
+| download does.
+|
+| It is a group of its own, and not a fourth route in the group above, because
+| no phase 4 task touches that group (the plan's seam table for this file).
+*/
+Route::middleware([AuthenticatePrivateFileSession::class, 'throttle:60,1'])->group(function (): void {
+    Route::get('receipts/{payment}/print', ReceiptPrintController::class)
+        ->name('finance.receipts.print');
 });
 
 /*

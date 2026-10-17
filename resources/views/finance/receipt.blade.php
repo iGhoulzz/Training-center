@@ -22,7 +22,7 @@
         <tr><th>{{ __('receipt.batch') }}</th><td class="ltr" dir="ltr">{{ $snapshot->batch_code }}</td></tr>
         <tr><th>{{ __('receipt.bill') }}</th><td class="ltr" dir="ltr">{{ $snapshot->charge_reference }}</td></tr>
         <tr><th>{{ __('receipt.original_price') }}</th><td class="amount" dir="ltr">{{ __('receipt.amount_lyd', ['amount' => $snapshot->list_price]) }}</td></tr>
-        <tr><th>{{ __('receipt.discount') }}</th><td class="amount" dir="ltr">{{ $snapshot->discount_percentage ?? '0.00' }}</td></tr>
+        <tr><th>{{ __('receipt.discount') }}</th><td class="amount" dir="ltr">{{ __('receipt.discount_percent', ['percent' => $discountPercent]) }}</td></tr>
         <tr><th>{{ __('receipt.final_charge') }}</th><td class="amount" dir="ltr">{{ __('receipt.amount_lyd', ['amount' => $snapshot->final_charge]) }}</td></tr>
         <tr><th>{{ __('receipt.amount_paid') }}</th><td class="amount" dir="ltr">{{ __('receipt.amount_lyd', ['amount' => $snapshot->amount_paid]) }}</td></tr>
         @foreach ($tenders as $tender)
