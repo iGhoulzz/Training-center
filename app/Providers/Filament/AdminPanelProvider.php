@@ -4,8 +4,17 @@ declare(strict_types=1);
 
 namespace App\Providers\Filament;
 
+use App\Domain\Enrollment\Filament\Resources\BatchResource;
+use App\Domain\Enrollment\Filament\Resources\CourseResource;
+use App\Domain\Enrollment\Filament\Resources\StudentCertificateResource;
+use App\Domain\Enrollment\Filament\Resources\StudentResource;
 use App\Domain\Finance\Filament\Pages\EnrollAndCollect;
-use App\Domain\Finance\Filament\Pages\ExportHistory;
+use App\Domain\Finance\Filament\Pages\FinanceHub;
+use App\Domain\Finance\Filament\Resources\ChargeResource;
+use App\Domain\Finance\Filament\Resources\PaymentResource;
+use App\Domain\Finance\Filament\Resources\PayrollRunResource;
+use App\Domain\Staff\Filament\Resources\ActivityResource;
+use App\Domain\Staff\Filament\Resources\UserResource;
 use App\Filament\Pages\Dashboard;
 use App\Http\Middleware\ForcePasswordChange;
 use App\Http\Middleware\SetLocale;
@@ -23,6 +32,7 @@ use Filament\Pages\Page;
 use Filament\Panel;
 use Filament\PanelProvider;
 use Filament\Resources\Resource;
+use Filament\Support\Icons\Heroicon;
 use Filament\View\PanelsRenderHook;
 use Illuminate\Contracts\Support\Htmlable;
 use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
@@ -93,8 +103,15 @@ class AdminPanelProvider extends PanelProvider
                 'danger' => self::RED,
             ])
             ->navigation(function (NavigationBuilder $builder): NavigationBuilder {
-                // The shell owns groups by destination, overriding each page/resource's getNavigationGroup().
-                $groups = [];
+                $primary = [
+                    'front_desk' => [EnrollAndCollect::class, Dashboard::class],
+                    'enrollment' => [StudentResource::class, BatchResource::class, CourseResource::class, StudentCertificateResource::class],
+                    'finance' => [FinanceHub::class, ChargeResource::class, PaymentResource::class, 'reports', PayrollRunResource::class],
+                    'administration' => [UserResource::class, ActivityResource::class],
+                ];
+                $destinations = [];
+                $secondary = [];
+                $hasReports = false;
                 $panel = Filament::getCurrentOrDefaultPanel();
 
                 foreach (array_merge($panel->getPages(), $panel->getResources()) as $destination) {
@@ -106,28 +123,66 @@ class AdminPanelProvider extends PanelProvider
                         continue;
                     }
 
-                    $group = match (true) {
-                        $destination === Dashboard::class, $destination === EnrollAndCollect::class => 'front_desk',
-                        $destination === ExportHistory::class,
-                        str_starts_with($destination, 'App\\Domain\\Finance\\Filament\\Pages\\Reports\\') => 'reports',
-                        str_starts_with($destination, 'App\\Domain\\Enrollment\\') => 'enrollment',
-                        str_starts_with($destination, 'App\\Domain\\Finance\\') => 'finance',
-                        str_starts_with($destination, 'App\\Domain\\Publications\\') => 'publications',
-                        default => 'administration',
-                    };
-
-                    $groups[$group] = [...($groups[$group] ?? []), ...$destination::getNavigationItems()];
+                    $destinations[$destination] = $destination::getNavigationItems();
+                    $hasReports = $hasReports || str_starts_with($destination, 'App\\Domain\\Finance\\Filament\\Pages\\Reports\\');
                 }
 
-                foreach (['front_desk', 'enrollment', 'finance', 'reports', 'administration', 'publications'] as $group) {
-                    $items = $groups[$group] ?? [];
-                    usort($items, fn (NavigationItem $first, NavigationItem $second): int => $first->getSort() <=> $second->getSort());
+                foreach ($primary as $group => $orderedDestinations) {
+                    $items = [];
+
+                    foreach ($orderedDestinations as $destination) {
+                        if ($destination === 'reports') {
+                            if ($hasReports && isset($destinations[FinanceHub::class])) {
+                                $items[] = NavigationItem::make(fn (): string => __('navigation.reports'))
+                                    ->icon(Heroicon::OutlinedChartBar)
+                                    ->url(FinanceHub::getUrl().'#finance-group-reports')
+                                    ->isActiveWhen(fn (): bool => request()->routeIs('filament.admin.pages.reports.*'));
+                            }
+
+                            continue;
+                        }
+
+                        foreach ($destinations[$destination] ?? [] as $item) {
+                            $icon = match ($destination) {
+                                EnrollAndCollect::class => Heroicon::OutlinedPlus,
+                                Dashboard::class => Heroicon::OutlinedSquares2x2,
+                                StudentCertificateResource::class => Heroicon::OutlinedTrophy,
+                                FinanceHub::class => Heroicon::OutlinedCurrencyDollar,
+                                ActivityResource::class => Heroicon::OutlinedPresentationChartLine,
+                                default => null,
+                            };
+
+                            if ($icon !== null) {
+                                $item->icon($icon);
+                            }
+
+                            if ($destination === UserResource::class) {
+                                $item->label(fn (): string => __('navigation.users_and_roles'));
+                            }
+
+                            $items[] = $item;
+                        }
+                    }
 
                     $builder->group(NavigationGroup::make()
                         ->label(fn (): string => __("navigation.{$group}"))
                         ->collapsible(false)
                         ->items($items));
                 }
+
+                $primaryDestinations = array_merge(...array_values($primary));
+
+                foreach ($destinations as $destination => $items) {
+                    if (! in_array($destination, $primaryDestinations, true)) {
+                        $secondary = [...$secondary, ...$items];
+                    }
+                }
+
+                $builder->group(NavigationGroup::make()
+                    ->label(fn (): string => __('navigation.more'))
+                    ->collapsed()
+                    ->extraSidebarAttributes(['class' => 'tc-sidebar-secondary'])
+                    ->items($secondary));
 
                 return $builder;
             })
