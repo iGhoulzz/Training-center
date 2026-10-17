@@ -26,6 +26,7 @@ use App\Domain\Finance\Models\PaymentTender;
 use App\Domain\Finance\Models\PayrollLine;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
+use Dom\HTMLDocument;
 use Filament\Actions\Exports\Models\Export;
 use Filament\Facades\Filament;
 use Illuminate\Bus\ChainedBatch;
@@ -66,6 +67,12 @@ it('keeps all seven report destinations and each reports own chart on the author
     $page = Livewire::actingAs(($this->actor)(['view_financial_report']))->test($pageClass)->assertOk();
     $html = preg_replace('/\s+wire:snapshot="[^"]*"/', '', $page->html());
     expect($html)->toContain('aria-label="Financial reports"', 'aria-current="page"');
+    $document = HTMLDocument::createFromString((string) $html, LIBXML_NOERROR);
+    $form = $document->querySelector('form.tc-report-filters');
+    expect($form)->not->toBeNull()
+        ->and($form?->getAttribute('wire:submit'))->toBe('applyFilters')
+        ->and($form?->querySelector('button[type="submit"]'))->not->toBeNull()
+        ->and($form?->querySelector('.fi-input-wrp'))->not->toBeNull();
     foreach ([RevenueReportPage::class, OutstandingAgedReportPage::class, PaymentMethodReportPage::class, DailyTenderReportPage::class, WageCostReportPage::class, ProfitReportPage::class, StudentPaymentHistoryPage::class] as $destination) {
         expect($html)->toContain('href="'.e($destination::getUrl()).'"');
     }
