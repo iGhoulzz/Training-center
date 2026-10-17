@@ -130,4 +130,9 @@ return [
         'full_text_note' => 'The full text of this paper is distributed as the original PDF exactly as it was filed with the centre. Download it above to read the complete argument, tables and authorities.',
         'more_in' => 'More in :topic',
     ],
+
+    // The upload field's validation wording (P4-T25). The attribute stands in
+    // for the label, which Filament would lower-case into "pDF file".
+    'pdf_file_attribute' => 'PDF file',
+    'pdf_file_not_pdf' => 'The file must be a PDF.',
 ];

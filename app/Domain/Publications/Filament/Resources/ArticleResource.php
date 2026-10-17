@@ -188,6 +188,10 @@ class ArticleResource extends Resource
                 ->visibleOn(['create', 'edit'])
                 ->storeFiles(false)
                 ->acceptedFileTypes([CreateArticleAction::MIME_TYPE])
+                // The label would become the attribute with its first letter
+                // lower-cased ("pDF file", "replace the PDF file"), so name it.
+                ->validationAttribute(__('publications.pdf_file_attribute'))
+                ->validationMessages(['mimetypes' => __('publications.pdf_file_not_pdf')])
                 ->maxSize(CreateArticleAction::MAX_KILOBYTES),
         ]);
     }

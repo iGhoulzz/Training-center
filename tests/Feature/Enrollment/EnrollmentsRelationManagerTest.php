@@ -161,12 +161,16 @@ it('refuses a crafted status on enrollment', function () {
     expect(Enrollment::query()->sole()->status)->toBe(EnrollmentStatus::Active);
 });
 
-it('refuses enrollment into a completed batch and says why', function () {
+it('offers no enrollment into a completed batch, where the button could only be refused', function () {
+    // P4-T25: the button is hidden on a batch that takes no enrolments. The
+    // refusal itself is EnrollStudentAction's, pinned by EnrollmentTest, and its
+    // toast by BatchScreensFeedbackTest.
     $closed = Batch::factory()->for($this->course)->completed()->create();
 
     ($this->mountPanel)(($this->makeUser)('admin'), $closed)
-        ->callTableAction('enroll', null, ['student_id' => Student::factory()->create()->getKey()])
-        ->assertNotified(__('enrollment.batch_closed'));
+        ->assertTableActionHidden('enroll')
+        ->mountTableAction('enroll')
+        ->assertSet('mountedActions', []);
 
     expect(Enrollment::query()->count())->toBe(0);
 });
