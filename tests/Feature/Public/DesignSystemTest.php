@@ -822,8 +822,14 @@ it('dismisses the mobile menu when one of its links is selected', function () {
         ->and($close?->getAttribute('aria-controls'))->toBe('public-mobile-menu')
         ->and(explode(' ', $open?->getAttribute('class') ?? ''))->toContain('group-target/nav:hidden')
         ->and(explode(' ', $close?->getAttribute('class') ?? ''))->toContain('group-target/nav:inline-flex')
-        ->and(explode(' ', $menu?->getAttribute('class') ?? ''))->toContain('hidden', 'group-target/nav:block')
-        ->and($html)->not->toContain('<script');
+        ->and(explode(' ', $menu?->getAttribute('class') ?? ''))->toContain('hidden', 'group-target/nav:block');
+
+    // The menu needs no script. The home page's one script is the hero seal's coin
+    // turn (HeroSealTest), a build module that loads only when assets are built.
+    // With that single tag removed, nothing script-shaped may remain.
+    $withoutSeal = (string) preg_replace('/<script\b[^>]*\bsrc="[^"]*\/build\/assets\/public-seal-[^"\/]*\.js"[^>]*><\/script>/', '', $html);
+
+    expect($withoutSeal)->not->toContain('<script');
 });
 
 it('points the Arabic header to its localized home fragments', function (string $routeName, string $home) {
