@@ -37,169 +37,42 @@ use Filament\Actions\Action;
 use Filament\Forms\Components\Repeater;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
-use Filament\Infolists\Components\TextEntry;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Schemas\Components\Actions as ActionsRow;
+use Filament\Schemas\Components\Group;
 use Filament\Schemas\Components\Utilities\Get;
-use Filament\Schemas\Components\Wizard;
-use Filament\Schemas\Components\Wizard\Step;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 use Livewire\Attributes\Computed;
+use Livewire\Attributes\Locked;
 
 /**
- * The phase 2 primary surface (design section 2): one guided flow, not a set
- * of CRUD screens the operator assembles.
+ * Four visual stages around the existing financial Action boundary.
  *
- * ALL EIGHT STEPS ARE HERE: find or create the student, select the batch, an
- * optional enrolment discount, a preview of the price, confirm — which
- * creates the enrolment and the bill in one transaction — optional
- * immediate collection, cash/card/split tenders, and finally the receipt.
+ * The Collect stage previews the bill before explicit confirmation, then
+ * offers optional payment. Selection schemas remain mounted for validation
+ * and the permission-gated quick-create Action, while card views render only
+ * the current stage. Navigation is server-owned so Done reliably returns
+ * the next walk-in to Student.
  *
- * STEPS 6-8 ARE A SECOND, SEPARATE SCHEMA — NOT MORE WIZARD STEPS
- * -----------------------------------------------------------------
- * `confirm()` clears the enrol-and-bill Wizard's state (`$form`, steps 1-4
- * above) on success, so the next walk-in starts from empty fields rather
- * than the last student's.
- *
- * IT DOES NOT RETURN THE WIZARD TO STEP 1, AND AN EARLIER VERSION OF THIS
- * PARAGRAPH SAID IT DID. `$this->form->fill()` resets `$this->data`, not the
- * step: Filament keeps the current step in Alpine, seeded once as
- * `startStep` on a div carrying `wire:ignore.self` (`Wizard::render()`), and
- * `getCurrentStepIndex()` is per-request state no server call persists. The
- * page dispatches neither `go-to-wizard-step` nor `next-wizard-step`, so
- * after Confirm the operator is left on an emptied preview step. The
- * independent pre-PR review found the claim by reading Filament's own
- * source; it is recorded here rather than quietly deleted, because the
- * step-reset is a real gap worth closing and is a UI change that wants a
- * browser to verify, not a docblock edit.
- *
- * Collection is
- * therefore its own schema, `collectForm()` (statePath `collect`), rendered
- * only once `$collectionChargeId` is set — which `confirm()` does for an
- * actor holding `create_payment`, and never does otherwise. That mirrors
- * the discount step's own shape below: hidden as a courtesy, refused for
- * real by `RecordPaymentAction`'s own `Gate::forUser($actor)->authorize()`
- * if a crafted submission reaches `finalize()` regardless.
- *
- * `finalize()` AND `finishCollection()` ARE BARE LIVEWIRE METHODS, LIKE
- * confirm() — NOT MODAL ACTIONS
- * -----------------------------------------------------------------------
- * `collectAction()` and `doneAction()` below use the same
- * `Action::make(...)->action('methodName')` shape `confirmAction()` already
- * uses: a bare method-name string binds straight to `wire:click`, which
- * skips Filament's mount/unmount action lifecycle entirely
- * (`Filament\Actions\Concerns\HasAction::getLivewireClickHandler()`
- * returns the string as-is when the action carries one). That is load
- * bearing here, not incidental: an Action that unmounts itself the instant
- * its handler returns successfully cannot be called a second time to prove
- * anything about idempotency, and design section 5's whole retry-protection
- * story requires `finalize()` to be callable twice in a row with no
- * rerender between the calls and land on `RecordPaymentAction`'s replay
- * path the second time. `EnrollAndCollectFlowTest`'s double-submit case
- * calls the resolved instance's `finalize()` directly, twice, for exactly
- * that reason.
- *
- * THE IDEMPOTENCY KEY IS MINTED ONCE, WHEN THE PANEL FIRST APPEARS —
- * NEVER INSIDE finalize()
- * -----------------------------------------------------------------------
- * `beginCollection()` mints `$collectionIdempotencyKey` the moment
- * `$collectionChargeId` is set, i.e. the instant the collection panel
- * becomes relevant after a successful `confirm()`. `finalize()` reads that
- * same property on every call and never regenerates it — regenerating it
- * per submission is exactly the defect design section 5 names: a fresh key
- * per click turns a double-clicked button into two payments and two
- * receipts for one handover of cash, because both submissions would be
- * individually valid and `RecordPaymentAction`'s unique-index guard would
- * never see a collision to catch. A successful `finalize()` deliberately
- * does NOT clear the key either — see `finishCollection()`'s own docblock.
- *
- * STEP 4 (PREVIEW) AND STEP 5 (CONFIRM) SHARE ONE WIZARD STEP
- * -------------------------------------------------------------
- * The preview has nothing of its own to submit — it exists to be looked at
- * before the operator commits — so it is the Wizard's LAST step, and
- * `Wizard::submitAction()` supplies the "Confirm" button that step renders in
- * place of a "next" button. Confirming is therefore what clicking that button
- * on the preview step does, rather than a sixth array entry with a schema of
- * its own and nothing to show.
- *
- * THE DISCOUNT STEP HIDES; THE ACTION AUTHORIZES
- * -------------------------------------------------
- * discountStep() is `->visible()` on `apply_discount`, per design sections 2
- * and 10 — staff enrol walk-ins at full price and never see the step at all.
- * That visibility is a courtesy, not the guard: confirm() reads discount_id
- * from the schema's RAW state rather than its validated one (see confirm()'s
- * own docblock for why), so a crafted client-side update naming a discount
- * still reaches `EnrollAndBillAction`, and that Action's own
- * `Gate::authorize('apply_discount')` — server-side, unconditional — is what
- * actually refuses it. `EnrollAndCollectFlowTest` proves both halves.
- *
- * THE PREVIEW CALLS THE SAME `Money::afterDiscount()` THE BILL DOES
- * ---------------------------------------------------------------------
- * `previewFinalAmount()` below and `IssueChargeAction::execute()` compute the
- * discounted amount the same way: `PricingService::priceForBatch()` for the
- * list price, then `Money::afterDiscount()` on the chosen definition's
- * percentage. There is exactly one implementation of design section 3's
- * rounding rule, and this page calls it rather than repeating it — a second
- * implementation is how a preview and a bill come to disagree by a dirham.
- *
- * `extends Page`, NEVER `SimplePage`
- * ----------------------------------
- * See app/Filament/Pages/PasswordChange.php's own class docblock:
- * SimplePage extends BasePage, not Page, and the panel's discoverPages()
- * call filters on Page::class — so a class extending SimplePage would stop
- * being discovered and this route would silently cease to exist. This page
- * keeps the panel's ordinary chrome (topbar, sidebar, navigation), so there
- * is no reason to reach for SimplePage in the first place; it is named here
- * only because it is the mistake this file must not repeat.
- *
- * GATED ON create_enrollment, THE ABILITY THE WHOLE FLOW NEEDS
- * ---------------------------------------------------------------
- * Every step beyond this one assumes the actor may create an enrolment — an
- * actor who could search students and batches but not enrol anyone would
- * reach a dead end with no way to finish. canAccess() is Filament's page
- * authorization hook (Concerns\CanAuthorizeAccess): it is consulted on
- * mount and on every subsequent Livewire hydration of this page, not merely
- * on the first render, and a refusal aborts with a 403 before any of this
- * page's schema runs.
- *
- * STAFF NEVER SEE THE WORD "ALLOCATION"
- * ---------------------------------------
- * Design section 2 states this outright: the system allocates a payment to
- * a bill, and staff never make that decision or see the term. Nothing on
- * this page, its view, or lang/en/collect.php may use it —
- * EnrollAndCollectFlowTest scans all three.
- *
- * READS GO THROUGH THE ENROLLMENT MODELS DIRECTLY, NOT THROUGH
- * EnrollmentQueryService
- * ---------------------------------------------------------------
- * That service is the boundary for Finance reading ENROLMENT data — the
- * join from a charge or payment back to the student who owes it (its own
- * docblock lists the four consumers). Nothing here reads an Enrollment row
- * at all: step 1 reads Student directly, exactly as StudentResource and
- * EnrollmentsRelationManager already do, and step 2 reads Batch directly,
- * exactly as BatchResource already does. Both are read-only lookups feeding
- * a form the operator has not confirmed yet; no enrolment is created by this
- * unit.
- *
- * `$form` and `$collectForm` are resolved by Livewire's __get via
- * InteractsWithSchemas, discovered from the return type of a matching
- * zero-argument-or-Schema-argument method — see
- * `Filament\Schemas\Concerns\InteractsWithSchemas::cacheSchema()`. Declaring
- * both matches how Filament's own auth pages, and this panel's own
- * PasswordChange, type the same magic property.
+ * Payment keys are minted once by beginCollection(), retained across retries
+ * and successful payment, and cleared only by explicit finishCollection().
  *
  * @property-read Schema $form
  * @property-read Schema $collectForm
  * @property-read array{student: string, batch: string, list: ?Money, discount: string, amount: ?Money, reference: ?string, receipt: ?string} $bill
  * @property-read bool $tendersBalanced
+ * @property-read Collection<int, Student> $studentMatches
+ * @property-read Collection<int, Batch> $batchChoices
+ * @property-read array<int, array{id: int, label: string, amount: ?Money}> $discountChoices
  */
 class EnrollAndCollect extends Page
 {
@@ -218,6 +91,15 @@ class EnrollAndCollect extends Page
 
     /** @var array<string, mixed> */
     public array $data = [];
+
+    #[Locked]
+    public int $flowStep = 1;
+
+    public string $studentSearch = '';
+
+    public string $batchSearch = '';
+
+    public string $discountSearch = '';
 
     /**
      * Step 6-8's own backing state, separate from `$data` above because it
@@ -360,16 +242,98 @@ class EnrollAndCollect extends Page
     {
         return $schema
             ->components([
-                Wizard::make([
-                    $this->studentStep(),
-                    $this->batchStep(),
-                    $this->discountStep(),
-                    $this->previewStep(),
-                ])->contained(false)
-                    ->extraAttributes(['class' => '[&_.fi-sc-wizard-header]:gap-2 [&_.fi-sc-wizard-header]:flex-wrap [&_.fi-sc-wizard-header]:border-0 [&_.fi-sc-wizard-header-step]:min-w-32.5 [&_.fi-sc-wizard-header-step]:flex-1 [&_.fi-sc-wizard-header-step]:rounded-[11px] [&_.fi-sc-wizard-header-step]:border [&_.fi-sc-wizard-header-step]:border-hairline-faint [&_.fi-sc-wizard-header-step]:bg-white/3 [&_.fi-sc-wizard-header-step.fi-active]:border-primary-500/45 [&_.fi-sc-wizard-header-step.fi-active]:bg-primary-500/12 [&_.fi-sc-wizard-header-step-btn]:px-3.25 [&_.fi-sc-wizard-header-step-btn]:py-2.75 [&_.fi-sc-wizard-header-step-separator]:hidden [&_.fi-sc-wizard-header-step-icon-ctn]:size-6 [&_.fi-sc-wizard-header-step-label]:text-[12.5px] [&_.fi-sc-wizard-header-step-description]:text-[11px] [&_.fi-sc-wizard-step]:mt-4 [&_.fi-sc-wizard-step]:min-h-82.5 [&_.fi-sc-wizard-step]:rounded-[14px] [&_.fi-sc-wizard-step]:bg-gray-900 [&_.fi-sc-wizard-step]:p-5 [&_.fi-sc-wizard-step]:ring-1 [&_.fi-sc-wizard-step]:ring-hairline'])
-                    ->submitAction($this->confirmAction()),
+                $this->studentStep(),
+                $this->batchStep(),
+                $this->discountStep(),
             ])
+            ->gap(false)
             ->statePath('data');
+    }
+
+    public function advance(): void
+    {
+        if ($this->collectionChargeId !== null) {
+            return;
+        }
+
+        if ($this->flowStep === 1 || $this->flowStep === 2) {
+            $field = $this->flowStep === 1 ? 'data.student_id' : 'data.batch_id';
+            $this->validateOnly($field, $this->form->getValidationRules(),
+                $this->form->getValidationMessages(), $this->form->getValidationAttributes());
+        }
+
+        $this->flowStep = match ($this->flowStep) {
+            1 => 2,
+            2 => auth()->user()?->can('apply_discount') ? 3 : 4,
+            default => 4,
+        };
+    }
+
+    public function back(): void
+    {
+        $previous = $this->flowStep === 4 && ! auth()->user()?->can('apply_discount') ? 2 : $this->flowStep - 1;
+        $this->goToStep($previous);
+    }
+
+    public function goToStep(int $step): void
+    {
+        if ($this->collectionChargeId !== null || $step < 1 || $step >= $this->flowStep
+            || ($step === 3 && ! auth()->user()?->can('apply_discount'))) {
+            return;
+        }
+
+        $this->flowStep = $step;
+        $this->resetValidation();
+    }
+
+    /** @return Collection<int, Student> */
+    #[Computed]
+    public function studentMatches(): Collection
+    {
+        return Student::query()
+            ->whereKey(array_keys(self::searchStudents($this->studentSearch)))
+            ->orderBy('last_name')->orderBy('first_name')->get();
+    }
+
+    /** @return Collection<int, Batch> */
+    #[Computed]
+    public function batchChoices(): Collection
+    {
+        $batches = Batch::query()->with('course')
+            ->whereKey(array_keys(self::searchBatches($this->batchSearch)))
+            ->orderBy('code')->get();
+        $seatCounts = app(EnrollmentQueryService::class)->activeSeatCountsForBatches($batches->modelKeys());
+
+        foreach ($batches as $batch) {
+            $batch->setAttribute(Batch::ACTIVE_ENROLLMENTS_COUNT, $seatCounts[$batch->getKey()] ?? 0);
+        }
+
+        return $batches;
+    }
+
+    public function batchPrice(Batch $batch): Money
+    {
+        return app(PricingService::class)->priceForBatch($batch);
+    }
+
+    /** @return array<int, array{id: int, label: string, amount: ?Money}> */
+    #[Computed]
+    public function discountChoices(): array
+    {
+        if (! auth()->user()?->can('apply_discount')) {
+            return [];
+        }
+
+        $price = self::previewListPrice($this->data['batch_id'] ?? null);
+
+        return Discount::query()->select(['id', 'name', 'percentage'])
+            ->whereKey(array_keys(self::searchDiscounts($this->discountSearch)))
+            ->orderBy('name')->get()
+            ->map(fn (Discount $discount): array => [
+                'id' => (int) $discount->getKey(),
+                'label' => self::discountLabel($discount),
+                'amount' => $price?->afterDiscount($discount->percentage),
+            ])->all();
     }
 
     /**
@@ -392,12 +356,12 @@ class EnrollAndCollect extends Page
      * `Student::create()` directly on the grounds that students had no
      * write boundary to bypass; generated codes gave them one.
      */
-    private function studentStep(): Step
+    private function studentStep(): Group
     {
-        return Step::make(__('collect.step_student'))
-            ->description(fn (): string => $this->bill['student'])
+        return Group::make()
             ->schema([
                 Select::make('student_id')
+                    ->view('filament.finance.enroll-and-collect', ['picker' => 'student'])
                     ->label(__('collect.student'))
                     ->required()
                     ->live()
@@ -446,7 +410,8 @@ class EnrollAndCollect extends Page
                                 ->maxLength(30),
                         ]
                         : null)
-                    ->createOptionUsing(fn (array $data, Schema $schema): int => self::createStudentFromQuickCreate($data, $schema)),
+                    ->createOptionUsing(fn (array $data, Schema $schema): int => self::createStudentFromQuickCreate($data, $schema))
+                    ->createOptionAction(fn (Action $action): Action => $action->label(__('collect.new_student'))->button()->outlined()),
             ]);
     }
 
@@ -459,12 +424,12 @@ class EnrollAndCollect extends Page
      * BatchResource's own listing does not need to (it lists every batch),
      * is what keeps a completed or cancelled batch from ever being offered.
      */
-    private function batchStep(): Step
+    private function batchStep(): Group
     {
-        return Step::make(__('collect.step_batch'))
-            ->description(fn (): string => $this->bill['batch'])
+        return Group::make()
             ->schema([
                 Select::make('batch_id')
+                    ->view('filament.finance.enroll-and-collect', ['picker' => 'batch'])
                     ->label(__('collect.batch'))
                     ->required()
                     ->live()
@@ -517,15 +482,15 @@ class EnrollAndCollect extends Page
      * value without re-querying `getOptions()`, the same reason
      * studentStep()'s own `getOptionLabelUsing()` exists.
      */
-    private function discountStep(): Step
+    private function discountStep(): Group
     {
-        return Step::make(__('collect.step_discount'))
-            ->description(fn (): string => $this->bill['discount'])
+        return Group::make()
             ->visible(fn (): bool => auth()->user()?->can('apply_discount') ?? false)
             ->schema([
                 Select::make('discount_id')
+                    ->view('filament.finance.enroll-and-collect', ['picker' => 'discount'])
                     ->label(__('collect.discount'))
-                    ->options(fn (): array => self::searchDiscounts(''))
+                    ->options(fn (): array => self::searchDiscounts($this->discountSearch))
                     ->searchable()
                     ->live()
                     ->getSearchResultsUsing(fn (string $search): array => self::searchDiscounts($search))
@@ -534,111 +499,19 @@ class EnrollAndCollect extends Page
     }
 
     /**
-     * Step 4: preview the original price, the discount, and the final
-     * amount — the Wizard's last step, whose submit button IS step 5's
-     * confirm (see the class docblock).
+     * EnrollAndBillAction alone creates the enrolment and its bill.
      *
-     * Each entry recomputes on every render from `batch_id` and
-     * `discount_id` via `Get`, rather than being written once when either
-     * field changes — the three figures shown are therefore always the ones
-     * the currently-selected batch and discount actually produce, never a
-     * stale value left over from an earlier choice.
-     */
-    private function previewStep(): Step
-    {
-        return Step::make(__('collect.step_preview'))
-            ->description(fn (): string => $this->bill['amount'] === null ? __('collect.not_chosen') : self::formatMoney($this->bill['amount']->toDecimal()))
-            ->schema([
-                TextEntry::make('preview_list_price')
-                    ->label(__('collect.preview_list_price'))
-                    ->state(function (Get $get): string {
-                        $listPrice = self::previewListPrice($get('batch_id'));
-
-                        return $listPrice === null
-                            ? __('collect.preview_pending')
-                            : self::formatMoney($listPrice->toDecimal());
-                    }),
-
-                TextEntry::make('preview_discount')
-                    ->label(__('collect.preview_discount'))
-                    ->state(function (Get $get): string {
-                        $discount = self::previewDiscount($get('discount_id'));
-
-                        return $discount === null
-                            ? __('collect.no_discount')
-                            : __('collect.discount_percentage_value', [
-                                'percentage' => $discount->percentage,
-                            ]);
-                    }),
-
-                TextEntry::make('preview_final_amount')
-                    ->label(__('collect.preview_final_amount'))
-                    ->state(function (Get $get): string {
-                        $finalAmount = self::previewFinalAmount($get('batch_id'), $get('discount_id'));
-
-                        return $finalAmount === null
-                            ? __('collect.preview_pending')
-                            : self::formatMoney($finalAmount->toDecimal());
-                    }),
-            ]);
-    }
-
-    /**
-     * The Wizard's submit button on its last (preview) step. A bare string
-     * action name, not a closure: Filament dispatches a click on an action
-     * carrying one straight to the named method on this Livewire component —
-     * `confirm()` below — with no modal and no schema of its own, because
-     * everything it needs was already gathered by the earlier steps.
-     */
-    private function confirmAction(): Action
-    {
-        return Action::make('confirm')
-            ->label(__('collect.confirm'))
-            ->action('confirm');
-    }
-
-    /**
-     * Step 5: confirm. Creates the enrolment and raises its bill in one
-     * transaction, by calling `EnrollAndBillAction` and nothing else — see
-     * the class docblock's note on `ActionBoundaryArchTest`.
-     *
-     * `discount_id` IS READ FROM THE RAW SCHEMA STATE, NOT FROM `getState()`
-     * -------------------------------------------------------------------------
-     * `$this->form->getState()` validates and DEHYDRATES the schema, and
-     * Filament does not dehydrate a hidden component by default
-     * (`Filament\Schemas\Concerns\CanBeHidden::isHiddenAndNotDehydratedWhenHidden()`) —
-     * so for an actor without `apply_discount`, whose discount step is
-     * `->visible(false)`, `getState()` would silently PRUNE `discount_id`
-     * before this method ever saw it. That would turn a crafted client-side
-     * update naming a discount into a silent full-price bill: exactly the
-     * "filtering it out and billing full price" outcome
-     * `EnrollAndBillAction`'s own docblock names as one of the two wrong
-     * answers to a retired-or-unauthorized discount. Reading `$this->data`
-     * directly instead means whatever was actually submitted reaches the
-     * Action unchanged, and `Gate::authorize('apply_discount')` inside it —
-     * server-side, unconditional — is what actually refuses it.
-     *
-     * `student_id` and `batch_id` come from `getState()`, because both
-     * fields are always visible and `->required()`: validating them here,
-     * before the Action ever runs, is what turns a missing selection into a
-     * field error instead of a `TypeError` from an int cast on null.
-     *
-     * `beginCollection()` RUNS AFTER THE WIZARD RESETS, DELIBERATELY
-     * -------------------------------------------------------------------
-     * `$this->form->fill()` clears `$this->data` (steps 1-4's own state).
-     * `$this->collect` is a separate property (see its own docblock), so
-     * resetting the Wizard cannot disturb the collection panel this method
-     * is about to open — but the ORDER still matters for one reason: were
-     * `beginCollection()`'s own `$this->collectForm->fill()` to run BEFORE
-     * `$this->form->fill()`, both calls would go through
-     * `disableSchemaStateUpdateHooksForTesting()`-guarded state-update hooks
-     * on the SAME Livewire component and the second `fill()` would be
-     * filling a component whose "old state" bookkeeping the first fill just
-     * populated for a different schema. Doing the Wizard's reset first
-     * keeps the two fills independent of each other.
+     * Validate student and batch through their schema. Preserve the RAW discount
+     * id: dehydration prunes hidden fields, which would otherwise turn a crafted
+     * unauthorized discount into a silently accepted full-price enrolment.
+     * The Action is responsible for the authorization refusal.
      */
     public function confirm(): void
     {
+        if ($this->collectionChargeId !== null) {
+            return;
+        }
+
         $state = $this->form->getState();
 
         $rawDiscountId = $this->data['discount_id'] ?? null;
@@ -689,6 +562,12 @@ class EnrollAndCollect extends Page
         $this->form->fill();
 
         $this->beginCollection($enrollment);
+        $this->flowStep = $this->collectionChargeId === null ? 1 : 4;
+        if ($this->collectionChargeId === null) {
+            $this->studentSearch = '';
+            $this->batchSearch = '';
+            $this->discountSearch = '';
+        }
     }
 
     /**
@@ -748,58 +627,13 @@ class EnrollAndCollect extends Page
     }
 
     /**
-     * Steps 6-7: the amount to collect (full or an installment — the
-     * operator types a figure, never a "full vs partial" choice, per design
-     * section 2) and the tenders that make it up. Step 8, finalize, is
-     * `collectAction()` below, embedded in this same schema rather than a
-     * Wizard's `submitAction()` — there is no further step after it to be
-     * the "last" one of.
+     * Separate collection state survives the selection-form reset.
      *
-     * A SEPARATE SCHEMA, STATE-PATHED TO `collect`, NOT MORE `$data` KEYS
-     * ------------------------------------------------------------------------
-     * See the class docblock and `$collect`'s own docblock: this has to
-     * survive `confirm()`'s reset of the enrol-and-bill Wizard, which a key
-     * under `data` would not.
-     *
-     * NO `->numeric()` ANYWHERE HERE — see `ChargeResource::adjustAction()`'s
-     * own docblock, which this page follows exactly: the regex validates the
-     * same `decimal(12,3)` shape without installing Filament's float-casting
-     * `NumberStateCast`.
-     *
-     * THE REPEATER'S ITEMS ARE FILLED WITH PLAIN ARRAY KEYS, NOT RANDOM ONES
-     * -------------------------------------------------------------------------
-     * `beginCollection()` above fills `tenders` as a plain zero-indexed PHP
-     * array. Filament's Repeater only generates a random key for an item
-     * added through its own "add" button in the browser; an item present in
-     * the state a `fill()` call supplied keeps exactly the key that call
-     * gave it. That is what lets a test address `tenders.0.external_reference`
-     * directly instead of discovering a generated key first.
-     *
-     * `NotACardNumber` IS WIRED HERE — THIS UNIT IS ITS FIRST CALLER
-     * -----------------------------------------------------------------
-     * See that rule's own class docblock: it ships with no caller and names
-     * this task's collection form as the field it belongs on.
-     * `->required()` is conditioned on the SAME closure as `->visible()` so
-     * a hidden, non-card reference is never demanded — Laravel's own
-     * `required` rule already trims before comparing to an empty string
-     * (`Illuminate\Validation\Concerns\ValidatesAttributes::validateRequired()`),
-     * which is what turns a card tender's blank-after-trim reference into an
-     * ordinary field error with no extra code here.
-     *
-     * WHY THE TENDER-TOTAL CHECK IS A FORM RULE HERE, AND NOT A CAUGHT
-     * EXCEPTION IN `finalize()` AS `ChargeResource::adjustAction()` WOULD
-     * SUGGEST
-     * -----------------------------------------------------------------------------
-     * `PaymentInvariantService::assertRecordable()` still refuses a mismatch
-     * with a typed exception, under the charge's lock, exactly as design
-     * section 5 requires — that guard is untouched and unbypassable from
-     * here. But this page cannot import or catch that exception BY NAME:
-     * `EnrollAndCollectFlowTest`'s own scan (kept from unit 1) fails the
-     * build the instant a STRING LITERAL on this page contains the
-     * substring — identifiers and comments are not scanned, so the typed
-     * refusals this page catches may be named normally. The scan was
-     * narrowed during the pre-PR review, after its own header already
-     * claimed it read string literals while it read the whole source.
+     * Money stays decimal text; numeric() would install Filament's float cast.
+     * Card references are required only for card tenders, and a form rule
+     * checks the exact tender sum before the Action enforces the same invariant
+     * under its charge lock. Plain initial repeater keys allow deterministic
+     * validation paths; added rows receive Filament's generated keys.
      */
     public function collectForm(Schema $schema): Schema
     {
@@ -930,18 +764,9 @@ class EnrollAndCollect extends Page
     }
 
     /**
-     * Step 8: finalize. A bare Livewire method bound to a bare-string
-     * Action — see the class docblock for why that shape (not a modal
-     * Action with its own schema) is load-bearing here.
-     *
-     * `RecordPaymentData` IS BUILT WITH NAMED ARGUMENTS
-     * -----------------------------------------------------------------------------
-     * Named arguments are used here. An earlier version avoided them
-     * because the copy scan read identifiers as well as literals; it no
-     * longer does. Naming them matters on this call in particular:
-     * `RecordPaymentData`'s second and fourth parameters are both
-     * `string`, so a positional list would mis-bind the amount and the
-     * idempotency key with no type error if either ever moved.
+     * RecordPaymentAction is the only payment writer. Bare Livewire dispatch
+     * keeps the same submission callable twice, so its stable key protects
+     * retries and double-clicks rather than relying on an Action unmount.
      */
     public function finalize(): void
     {
@@ -1018,11 +843,7 @@ class EnrollAndCollect extends Page
             ->send();
     }
 
-    /**
-     * The "Collect payment" button — step 8's finalize, embedded in the
-     * collection schema rather than a Wizard `submitAction()` (see
-     * `collectForm()`'s own docblock).
-     */
+    /** Finalize the optional collection through the bare Livewire method. */
     private function collectAction(): Action
     {
         return Action::make('collect')
@@ -1030,13 +851,7 @@ class EnrollAndCollect extends Page
             ->action('finalize');
     }
 
-    /**
-     * "Done" — closes the collection panel, whether or not anything was
-     * ever collected against it. This is what makes collection genuinely
-     * OPTIONAL (design section 2): the operator may click this having typed
-     * nothing into `collectForm` at all, leaving the enrolment and its bill
-     * exactly as `confirm()` left them.
-     */
+    /** Finish with or without payment, without validating unsubmitted tenders. */
     private function doneAction(): Action
     {
         return Action::make('done')
@@ -1046,27 +861,28 @@ class EnrollAndCollect extends Page
     }
 
     /**
-     * Close the collection panel. See `doneAction()` for the "skip
-     * entirely" case and the class docblock for why a SUCCESSFUL
-     * `finalize()` does not call this itself: doing so would clear
-     * `$collectionIdempotencyKey` the instant the first click of a double
-     * submit succeeds, so the second click would mint a fresh key instead
-     * of reusing the first one — silently reintroducing the exact defect
-     * design section 5's idempotency key exists to remove.
+     * Explicitly close this collection session and reset the next walk-in.
+     * Successful finalize() retains the key until this distinct operator action.
      */
     public function finishCollection(): void
     {
         $this->collectionChargeId = null;
         $this->collectionIdempotencyKey = null;
         $this->collectForm->fill();
+        $this->form->fill();
+        $this->studentSearch = '';
+        $this->batchSearch = '';
+        $this->discountSearch = '';
+        $this->flowStep = 1;
+        $this->resetValidation();
     }
 
     /**
      * The batch's list price for the preview, or null before one is chosen.
      *
      * PUBLIC AND STATIC for the same testability reason as searchStudents()
-     * below: this is the exact closure previewStep()'s first TextEntry
-     * calls, so testing it directly tests the real behaviour. Delegates to
+     * below: this is the same price lookup the live bill uses, so testing
+     * it directly tests the real behaviour. Delegates to
      * `PricingService`, the one definition of a batch's effective price —
      * see that class's own docblock — rather than reading `$batch->price`
      * directly, which would silently drop the course-default inheritance a
@@ -1115,11 +931,8 @@ class EnrollAndCollect extends Page
      * discount choice, or null before a batch is chosen.
      *
      * `Money::afterDiscount()` AND NOTHING ELSE — see the class docblock.
-     * This is the one place this page computes a discounted figure, and
-     * `IssueChargeAction::execute()` is the only other place in the system
-     * that does; both call this same method on `Money`, so the preview and
-     * the frozen charge cannot compute the rule two different ways and
-     * disagree by a dirham.
+     * The live bill, discount cards and IssueChargeAction use the same
+     * Money primitive, so their rounding cannot disagree by a dirham.
      */
     public static function previewFinalAmount(mixed $batchId, mixed $discountId): ?Money
     {

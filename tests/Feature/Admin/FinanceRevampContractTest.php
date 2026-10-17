@@ -90,6 +90,59 @@ it('keeps the discounted bill preview visible in its aside before confirmation',
     Livewire::actingAs(($this->actor)([]))->test(EnrollAndCollect::class)->assertForbidden();
 });
 
+it('renders the numbered enrolment stages with accessible inline choices and an explicit confirmation', function () {
+    $actor = ($this->actor)(['create_enrollment', 'apply_discount', 'create_student']);
+    $student = Student::factory()->create();
+    $batch = Batch::factory()->active()->create(['price' => '216.350']);
+    $page = Livewire::actingAs($actor)->test(EnrollAndCollect::class);
+    $document = new DOMDocument;
+    $document->loadHTML('<?xml encoding="UTF-8">'.$page->html(), LIBXML_NOERROR | LIBXML_NOWARNING);
+    $xpath = new DOMXPath($document);
+    $steps = $xpath->query('//nav[@aria-label="Enrolment steps"]/ol/li/button');
+    expect($steps)->toHaveCount(4);
+    foreach (['Student', 'Batch', 'Discount', 'Collect'] as $index => $label) {
+        expect(preg_replace('/\s+/u', ' ', trim($steps->item($index)->textContent)))
+            ->toStartWith(($index + 1).' '.$label);
+    }
+    expect($xpath->query('//button[@aria-current="step"]'))->toHaveCount(1)
+        ->and($xpath->query('//input[@type="radio" and @name="student_id" and @value="'.$student->id.'"]'))->toHaveCount(1)
+        ->and($xpath->query('//label[@for="student-search"]'))->toHaveCount(1)
+        ->and($document->textContent)->toContain('New student instead');
+    $page->set('data.student_id', $student->id)->call('advance')
+        ->set('data.batch_id', $batch->id)->call('advance')->call('advance');
+    $html = preg_replace('/\s+wire:snapshot="[^"]*"/', '', $page->html());
+    expect($html)->toContain('Confirm enrolment')->not->toContain('wire:click="finalize"', 'RCT-', 'CHG-');
+    $page->call('confirm')->assertSet('flowStep', 1)->assertSet('collectionChargeId', null);
+    expect(Charge::query()->count())->toBe(1)->and(Payment::query()->count())->toBe(0);
+
+    $page = Livewire::actingAs(($this->actor)(['create_enrollment']))->test(EnrollAndCollect::class);
+    $document->loadHTML('<?xml encoding="UTF-8">'.$page->html(), LIBXML_NOERROR | LIBXML_NOWARNING);
+    expect($document->textContent)->not->toContain('New student instead', 'Discount');
+});
+
+it('searches all active discount choices beyond the first page and recomputes the live bill', function () {
+    $actor = ($this->actor)(['create_enrollment', 'apply_discount']);
+    Discount::factory()->count(25)->sequence(fn ($sequence): array => ['name' => 'Alpha offer '.$sequence->index])->create();
+    $discount = Discount::factory()->create(['name' => 'Zed award', 'percentage' => '1.00']);
+    $retired = Discount::factory()->inactive()->create(['name' => 'Zed retired']);
+    $student = Student::factory()->create();
+    $batch = Batch::factory()->active()->create(['price' => '216.350']);
+    $page = Livewire::actingAs($actor)->test(EnrollAndCollect::class)
+        ->set('data.student_id', $student->id)->call('advance')
+        ->set('data.batch_id', $batch->id)->call('advance')->set('discountSearch', 'Zed');
+    $document = new DOMDocument;
+    $document->loadHTML('<?xml encoding="UTF-8">'.$page->html(), LIBXML_NOERROR | LIBXML_NOWARNING);
+    $xpath = new DOMXPath($document);
+    $options = $xpath->query('//fieldset[@aria-label="Discount options"]');
+    expect($options)->toHaveCount(1)->and($options->item(0)->textContent)->toContain('Zed award', '214.187')
+        ->not->toContain('Alpha offer', $retired->name);
+    $page->set('data.discount_id', $discount->id);
+    expect($page->instance()->bill['amount']?->toDecimal())->toBe('214.187');
+    $page->set('data.discount_id', '');
+    expect($page->instance()->bill['amount']?->toDecimal())->toBe('216.350');
+    expect(Charge::query()->count())->toBe(0);
+});
+
 it('records the first partial collection and refuses a second installment with the exact notification', function () {
     $actor = ($this->actor)(['create_enrollment', 'create_payment']);
     $page = ($this->collection)($actor)->fillForm([

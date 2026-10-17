@@ -7,6 +7,7 @@ use App\Domain\Enrollment\Enums\StudentStatus;
 use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Enrollment;
 use App\Domain\Enrollment\Models\Student;
+use App\Domain\Enrollment\Services\EnrollmentQueryService;
 use App\Domain\Finance\Enums\TenderMethod;
 use App\Domain\Finance\Exceptions\DiscountNotApplicableException;
 use App\Domain\Finance\Filament\Pages\EnrollAndCollect;
@@ -25,6 +26,7 @@ use Database\Seeders\RolePermissionSeeder;
 use Filament\Notifications\Notification as FilamentNotification;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Lang;
 use Livewire\Livewire;
 use Spatie\Permission\PermissionRegistrar;
@@ -83,6 +85,131 @@ beforeEach(function () {
     $role = Role::findOrCreate('front_desk_without_enroll', 'web');
     $this->system->syncRolePermissions($role, ['access_admin_panel']);
     $this->noAbility = ($this->actorWith)('front_desk_without_enroll');
+});
+
+it('searches and selects students inline before advancing the numbered flow', function () {
+    $student = Student::factory()->create(['first_name' => 'Amira', 'last_name' => 'Walkin', 'phone' => '0912345678']);
+    $other = Student::factory()->create(['first_name' => 'Unrelated', 'last_name' => 'Person']);
+
+    $page = Livewire::actingAs($this->admin)->test(EnrollAndCollect::class)
+        ->assertSet('flowStep', 1)
+        ->call('advance')->assertHasErrors(['data.student_id'])
+        ->set('studentSearch', 'Amira');
+    $document = new DOMDocument;
+    $document->loadHTML('<?xml encoding="UTF-8">'.$page->html(), LIBXML_NOERROR | LIBXML_NOWARNING);
+    $xpath = new DOMXPath($document);
+    $results = $xpath->query('//*[@aria-label="Student results"]');
+    expect($results)->toHaveCount(1)
+        ->and($results->item(0)->textContent)->toContain($student->full_name, $student->student_code, '0912345678')
+        ->not->toContain($other->full_name);
+
+    $page->set('data.student_id', $student->id)->call('advance')->assertSet('flowStep', 2)
+        ->call('goToStep', 4)->assertSet('flowStep', 2)
+        ->call('advance')->assertHasErrors(['data.batch_id'])
+        ->call('back')->assertSet('flowStep', 1)->assertSet('data.student_id', $student->id);
+    expect(Enrollment::query()->count())->toBe(0)->and(Charge::query()->count())->toBe(0);
+});
+
+it('offers selectable batch cards with inherited price status and active seat counts', function () {
+    $student = Student::factory()->create();
+    $batch = Batch::factory()->active()->create(['code' => 'INTAKE-CARD', 'price' => null, 'capacity' => 1, 'start_date' => null, 'end_date' => null]);
+    $batch->course->update(['default_price' => '216.350']);
+    Enrollment::factory()->create(['batch_id' => $batch->id]);
+    Enrollment::factory()->withdrawn()->create(['batch_id' => $batch->id]);
+    $closed = Batch::factory()->create(['status' => BatchStatus::Completed]);
+    $page = Livewire::actingAs($this->admin)->test(EnrollAndCollect::class)
+        ->set('data.student_id', $student->id)->call('advance');
+    $document = new DOMDocument;
+    $document->loadHTML('<?xml encoding="UTF-8">'.$page->html(), LIBXML_NOERROR | LIBXML_NOWARNING);
+    $xpath = new DOMXPath($document);
+    $cards = $xpath->query('//*[@aria-label="Batch options"]');
+    expect($cards)->toHaveCount(1)
+        ->and(preg_replace('/\s+/u', ' ', $cards->item(0)->textContent))->toContain('INTAKE-CARD', '216.350 LYD', '1 / 1 seats', $batch->status->label())
+        ->not->toContain($closed->code);
+    $page->set('data.batch_id', $batch->id)->call('advance')->assertSet('flowStep', 3);
+    expect(Enrollment::query()->count())->toBe(2)->and(Charge::query()->count())->toBe(0);
+});
+
+it('projects active seats for only the supplied batches in one aggregate query', function () {
+    $batches = Batch::factory()->count(3)->create();
+    Enrollment::factory()->count(2)->create(['batch_id' => $batches[0]->id]);
+    Enrollment::factory()->withdrawn()->create(['batch_id' => $batches[0]->id]);
+    Enrollment::factory()->create(['batch_id' => $batches[1]->id]);
+    $outside = Enrollment::factory()->create();
+    $service = app(EnrollmentQueryService::class);
+    DB::enableQueryLog();
+    DB::flushQueryLog();
+    try {
+        $counts = $service->activeSeatCountsForBatches($batches->modelKeys());
+        $queries = DB::getQueryLog();
+        DB::flushQueryLog();
+        $empty = $service->activeSeatCountsForBatches([]);
+        $emptyQueries = DB::getQueryLog();
+    } finally {
+        DB::disableQueryLog();
+        DB::flushQueryLog();
+    }
+    expect($counts)->toHaveCount(2)->not->toHaveKey($outside->batch_id)
+        ->and($counts[$batches[0]->id])->toBe(2)
+        ->and($counts[$batches[1]->id])->toBe(1)
+        ->and($queries)->toHaveCount(1)
+        ->and(strtolower($queries[0]['query']))->toContain('count(', 'group by')
+        ->and($empty)->toBe([])->and($emptyQueries)->toBe([]);
+});
+
+it('skips confidential discount choices without the permission and refuses injected choices', function () {
+    $discount = Discount::factory()->create(['name' => 'Confidential award', 'percentage' => '17.00']);
+    $student = Student::factory()->create();
+    $batch = Batch::factory()->active()->create(['price' => '100.125']);
+    $page = Livewire::actingAs($this->staff)->test(EnrollAndCollect::class)
+        ->set('data.student_id', $student->id)->call('advance')
+        ->set('data.batch_id', $batch->id)->call('advance')->assertSet('flowStep', 4)
+        ->call('goToStep', 3)->assertSet('flowStep', 4)
+        ->set('data.discount_id', $discount->id);
+    expect($page->html())->not->toContain('Confidential award', '17.00%');
+    $page->call('confirm')->assertNotified(__('collect.enrollment_denied'));
+    expect(Enrollment::query()->count())->toBe(0)->and(Charge::query()->count())->toBe(0);
+});
+
+it('requires confirmation before collection and resets the next walk-in after skipping payment', function () {
+    $student = Student::factory()->create();
+    $batch = Batch::factory()->active()->create(['price' => '216.350']);
+    $discount = Discount::factory()->create(['percentage' => '1.00']);
+    $page = Livewire::actingAs($this->admin)->test(EnrollAndCollect::class)
+        ->set('studentSearch', 'Walkin')
+        ->set('data.student_id', $student->id)->call('advance')
+        ->set('data.batch_id', $batch->id)->call('advance')
+        ->set('data.discount_id', $discount->id)->call('advance')->assertSet('flowStep', 4)
+        ->assertSee(__('collect.confirm_before_payment'))->assertDontSee(__('collect.collect_action'));
+    expect(Charge::query()->count())->toBe(0)->and($page->instance()->bill['reference'])->toBeNull()
+        ->and($page->instance()->bill['receipt'])->toBeNull();
+    $page->call('confirm')->assertSet('flowStep', 4)->assertSee(__('collect.collect_action'));
+    expect(Charge::query()->sole()->amount)->toBe('214.187');
+    $page->call('back')->assertSet('flowStep', 4)
+        ->call('finishCollection')->assertSet('flowStep', 1)->assertSet('studentSearch', '')
+        ->assertSet('data.student_id', null)->assertSet('data.batch_id', null)
+        ->assertSet('collectionChargeId', null)->assertSet('collectionIdempotencyKey', null);
+    expect(Payment::query()->count())->toBe(0)->and(Enrollment::query()->count())->toBe(1)
+        ->and(Charge::query()->count())->toBe(1);
+});
+
+it('keeps the issued bill and retry key after invalid payment then resets after the receipt', function () {
+    $student = Student::factory()->create();
+    $batch = Batch::factory()->active()->create(['price' => '100.125']);
+    $page = Livewire::actingAs($this->admin)->test(EnrollAndCollect::class)
+        ->fillForm(['student_id' => $student->id, 'batch_id' => $batch->id])->call('confirm');
+    $key = $page->get('collectionIdempotencyKey');
+    $chargeId = $page->get('collectionChargeId');
+    $page->fillForm(['amount' => '40.125', 'tenders' => [['method' => 'cash', 'amount' => '40.124']]], 'collectForm')
+        ->call('finalize')->assertHasFormErrors(['amount'], 'collectForm')
+        ->assertSet('collectionIdempotencyKey', $key)->assertSet('collectionChargeId', $chargeId);
+    expect(Charge::query()->count())->toBe(1)->and(Payment::query()->count())->toBe(0)
+        ->and($page->instance()->bill['receipt'])->toBeNull();
+    $page->fillForm(['amount' => '40.125', 'tenders' => [['method' => 'cash', 'amount' => '40.125']]], 'collectForm')
+        ->call('finalize')->assertHasNoFormErrors()->assertSet('collectionIdempotencyKey', $key)
+        ->assertSee(Payment::query()->sole()->reference)
+        ->call('finishCollection')->assertSet('flowStep', 1);
+    expect(Payment::query()->count())->toBe(1)->and(Charge::query()->count())->toBe(1);
 });
 
 /*
