@@ -217,7 +217,7 @@ it('registers no create or edit action anywhere on this resource', function () {
     $recordActions = collect($list->instance()->getTable()->getRecordActions());
 
     expect($recordActions->map(fn ($action) => $action->getName())->all())
-        ->toBe(['adjust', 'writeOff'])
+        ->toBe(['collectPayment', 'adjust', 'writeOff'])
         ->and($recordActions->filter(
             fn ($action) => $action instanceof CreateAction || $action instanceof EditAction
         ))->toBeEmpty();

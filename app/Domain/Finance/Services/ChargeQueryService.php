@@ -32,10 +32,60 @@ use Illuminate\Support\Facades\DB;
  */
 final class ChargeQueryService
 {
+    /**
+     * The alias the Charges table selects "awaiting its first payment" into.
+     *
+     * Named here rather than spelled out at both ends, following
+     * ChargeBalance::OUTSTANDING_ALIAS: a typo against the alias the query
+     * selected reads as "never awaiting", which hides a button rather than
+     * failing.
+     */
+    public const AWAITING_FIRST_PAYMENT_ALIAS = 'awaiting_first_payment';
+
     /** Whether this enrolment has a bill at all. */
     public function existsForEnrollment(int $enrollmentId): bool
     {
         return DB::table('charges')->where('enrollment_id', $enrollmentId)->exists();
+    }
+
+    /**
+     * The one rule for a bill that is AWAITING ITS FIRST PAYMENT, as a SQL
+     * condition over `charges` — for `selectRaw` (the Charges table's button) and
+     * for `whereRaw` (the Enrol & Collect page's server-side check) alike.
+     *
+     * A bill is awaiting its first payment when ALL of these hold:
+     *
+     *   - no allocation stands against it, i.e. none from a payment that is not
+     *     reversed;
+     *   - it is not written off;
+     *   - something is outstanding.
+     *
+     * **A bill whose only payment was reversed is awaiting its first payment
+     * again.** That is a lead decision, flagged for the owner in the pull request,
+     * and this is the one place to change it: both the button and the page read
+     * this string.
+     *
+     * WHY IT LIVES HERE AND IS A SQL STRING, NOT A PHP FUNCTION OF A CHARGE. The
+     * table decides per row, and a PHP check would be a query per row. So the
+     * condition is selected into the list query once, and the page asks the
+     * database the identical question about one id. The same shape, and the same
+     * reasoning, as ChargeBalance::outstandingSql().
+     *
+     * NO SECOND REVERSAL RULE. "No allocation from a payment that is not
+     * reversed" is read off ChargeBalance::allocatedSql() being zero — sound
+     * because `payment_allocations.amount` has CHECK (amount > 0), so a live
+     * allocation always adds to the sum — and "outstanding" is
+     * ChargeBalance::outstandingSql(). The `reversed_at IS NULL` stays written
+     * exactly once, in ChargeBalance.
+     *
+     * The fragment names `charges` unqualified, like ChargeBalance's, so it
+     * composes into any query over that table.
+     */
+    public function awaitingFirstPaymentSql(): string
+    {
+        return '(charges.written_off_at IS NULL AND '
+            .ChargeBalance::allocatedSql().' = 0 AND '
+            .ChargeBalance::outstandingSql().' > 0)';
     }
 
     /**

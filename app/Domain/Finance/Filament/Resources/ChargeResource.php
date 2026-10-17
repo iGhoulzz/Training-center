@@ -14,9 +14,12 @@ use App\Domain\Finance\Data\AdjustChargeData;
 use App\Domain\Finance\Data\WriteOffChargeData;
 use App\Domain\Finance\Exceptions\ChargeAlreadyWrittenOffException;
 use App\Domain\Finance\Exceptions\ChargeAmountBelowAllocatedException;
+use App\Domain\Finance\Filament\Pages\EnrollAndCollect;
 use App\Domain\Finance\Filament\Resources\ChargeResource\Pages\ListCharges;
 use App\Domain\Finance\Filament\Resources\ChargeResource\Pages\ViewCharge;
 use App\Domain\Finance\Models\Charge;
+use App\Domain\Finance\Models\Payment;
+use App\Domain\Finance\Services\ChargeQueryService;
 use App\Domain\Finance\Support\ChargeBalance;
 use App\Domain\Finance\Support\Money;
 use App\Models\User;
@@ -78,6 +81,13 @@ use Illuminate\Support\HtmlString;
  * Both are shared static builders, exactly as `BatchResource::deleteAction()`
  * is, so the table row and the detail page cannot drift apart on what "adjust"
  * or "write off" does.
+ *
+ * A THIRD ROW ACTION IS ONLY A LINK
+ * -----------------------------------
+ * `collectPaymentAction()` ("Collect payment", P4-T32) writes nothing: it links
+ * to the Enrol & Collect page with the bill in the URL, and that page re-checks
+ * the bill and `create_payment` on the server before it opens anything. It is
+ * hidden unless the bill is awaiting its first payment and the actor may collect.
  *
  * OUTSTANDING GOES THROUGH ChargeBalance'S SQL SHAPE, NOT ITS PHP ONE
  * ----------------------------------------------------------------------
@@ -190,6 +200,11 @@ class ChargeResource extends Resource
      * balance is a correlated subquery, not a join, so it never multiplies a
      * charge into more than one row.
      *
+     * THE FLAG BEHIND "Collect payment" IS SELECTED HERE TOO. Whether a bill is
+     * awaiting its first payment is one SQL condition in ChargeQueryService,
+     * selected into `ChargeQueryService::AWAITING_FIRST_PAYMENT_ALIAS` so the
+     * row action reads an attribute rather than asking the database per row.
+     *
      * NOT `enrollment.student` — see the class docblock.
      *
      * @return Builder<Charge>
@@ -200,6 +215,7 @@ class ChargeResource extends Resource
             ->select('charges.*')
             ->selectRaw(ChargeBalance::outstandingSql().' as '.ChargeBalance::OUTSTANDING_ALIAS)
             ->selectRaw(ChargeBalance::allocatedSql().' as '.ChargeBalance::ALLOCATED_ALIAS)
+            ->selectRaw(app(ChargeQueryService::class)->awaitingFirstPaymentSql().' as '.ChargeQueryService::AWAITING_FIRST_PAYMENT_ALIAS)
             ->with(['enrollment.batch.course']);
 
         app(EnrollmentQueryService::class)->joinEnrollmentStudentLabelsTo($query->getQuery(), 'charges.enrollment_id');
@@ -251,7 +267,7 @@ class ChargeResource extends Resource
                         TextColumn::make('amount')
                             ->label(__('charges.amount'))
                             ->formatStateUsing(fn (string $state): string => self::formatMoney($state))
-                            ->sortable()->description(__('charges.billed_lyd')),
+                            ->sortable()->description(__('charges.billed')),
 
                         TextColumn::make('discount_percentage')
                             ->label(__('charges.discount'))
@@ -385,6 +401,7 @@ class ChargeResource extends Resource
             // docblock. Shared builders so the table row and ViewCharge's
             // header actions cannot drift apart.
             ->recordActions([
+                self::collectPaymentAction(),
                 self::adjustAction(),
                 self::writeOffAction(),
             ])
@@ -394,6 +411,37 @@ class ChargeResource extends Resource
             // identical reasoning) — stated explicitly rather than left absent,
             // the same defensive style ActivityResource::table() uses.
             ->toolbarActions([]);
+    }
+
+    /**
+     * Collect the first payment on a bill later (P4-T32, QA Q1): a link to the
+     * Enrol & Collect page with this bill in the URL, which opens its collection
+     * panel.
+     *
+     * WHICH BILLS: those AWAITING THEIR FIRST PAYMENT — the one condition in
+     * ChargeQueryService::awaitingFirstPaymentSql(), read here from the
+     * attribute `getEloquentQuery()` selected it into, so a row costs no query.
+     * `RecordPaymentAction` itself does not limit a bill to one payment; "one
+     * collection per bill" is only that the interface offers no later one, and
+     * design section 12 keeps later installments out. This is the entry point
+     * for a bill that has none yet.
+     *
+     * HIDDEN, NOT THE GUARD. `visible()` is a courtesy; the page re-checks the
+     * condition and `create_payment` on the server when it opens, and
+     * `RecordPaymentAction` authorizes again when it records. The button also
+     * asks `EnrollAndCollect::canAccess()`, because a link to a page the actor
+     * would be refused is worse than no link.
+     */
+    public static function collectPaymentAction(): Action
+    {
+        return Action::make('collectPayment')
+            ->label(__('charges.collect_payment'))
+            ->icon(Heroicon::OutlinedBanknotes)
+            ->color('success')
+            ->url(fn (Charge $record): string => EnrollAndCollect::getUrl(['charge' => $record->getKey()]))
+            ->visible(fn (Charge $record): bool => (bool) $record->getAttribute(ChargeQueryService::AWAITING_FIRST_PAYMENT_ALIAS)
+                && Gate::allows('create', Payment::class)
+                && EnrollAndCollect::canAccess());
     }
 
     /**

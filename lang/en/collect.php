@@ -84,7 +84,7 @@ return [
     // amount_format_error: the regex rejects a fourth decimal place, which
     // Money::fromDecimal() would otherwise refuse as a developer diagnostic
     // rather than a readable field error.
-    'amount_format_error' => 'Enter an amount with up to three decimal places.',
+    'amount_format_error' => 'Enter an amount with at most three decimal places, for example 125.500.',
 
     // The form-rule mirror of PaymentInvariantService::assertRecordable()'s
     // tender-total check — see EnrollAndCollect::collectForm()'s own
@@ -124,4 +124,10 @@ return [
     'balanced' => 'Balanced ✓',
     'unbalanced' => 'Check tender total',
     'first_collection_hint' => 'The first collection may be partial. Collecting a later installment against this bill is not available.',
+
+    // P4-T32: opening the panel for a bill from the Charges table. One whole
+    // sentence for every reason, so the page never says which of them it was —
+    // a bill that does not exist, one the actor may not collect on, and one
+    // that is already paid all read the same.
+    'charge_not_collectable' => 'This bill cannot be collected here. It may already have a payment, be written off or have nothing outstanding, or you may not be allowed to take payments.',
 ];
