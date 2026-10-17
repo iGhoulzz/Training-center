@@ -10,7 +10,7 @@
         @endforeach
     </nav>
 
-    <form wire:submit="applyFilters" class="flex min-w-0 flex-col gap-4 rounded-[14px] bg-gray-900 p-[18px] ring-1 ring-hairline">
+    <form wire:submit="applyFilters" class="tc-report-filters flex min-w-0 flex-col gap-4 rounded-[14px] bg-gray-900 p-[18px] ring-1 ring-hairline">
         {{ $this->form }}
         <div class="flex flex-wrap items-center justify-between gap-3">
             <p class="text-xs leading-relaxed text-gray-400">{{ __('reports.presentation.queued_hint') }}</p>
