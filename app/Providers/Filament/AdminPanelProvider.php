@@ -85,6 +85,7 @@ class AdminPanelProvider extends PanelProvider
             ->themeSwitcher(false)
             ->font('Instrument Sans', provider: LocalFontProvider::class)
             ->renderHook(PanelsRenderHook::STYLES_AFTER, fn (): Htmlable => Vite::fonts('instrument-sans'))
+            ->renderHook(PanelsRenderHook::SIDEBAR_NAV_START, fn (): Htmlable => view('filament.admin.sidebar-more-migration'))
             ->sidebarWidth('16.125rem')
             // 1440px, the prototype's main column. The class is defined in theme.css.
             ->maxContentWidth('tc-width-admin')
@@ -153,7 +154,7 @@ class AdminPanelProvider extends PanelProvider
                             };
 
                             if ($icon !== null) {
-                                $item->icon($icon);
+                                $item->icon($icon)->activeIcon($icon);
                             }
 
                             if ($destination === UserResource::class) {

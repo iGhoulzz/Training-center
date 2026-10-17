@@ -250,11 +250,23 @@ it('curates the primary sidebar in design order and collapses the remaining dest
     expect(array_map(fn ($item) => $item->getIcon(), $groups[0]->getItems()))
         ->toBe([Heroicon::OutlinedPlus, Heroicon::OutlinedSquares2x2])
         ->and($groups[1]->getItems()[3]->getIcon())->toBe(Heroicon::OutlinedTrophy)
-        ->and($groups[2]->getItems()[0]->getIcon())->toBe(Heroicon::OutlinedCurrencyDollar);
+        ->and($groups[2]->getItems()[0]->getIcon())->toBe(Heroicon::OutlinedCurrencyDollar)
+        ->and($groups[1]->getItems()[3]->getActiveIcon())->toBe(Heroicon::OutlinedTrophy)
+        ->and($groups[2]->getItems()[0]->getActiveIcon())->toBe(Heroicon::OutlinedCurrencyDollar);
 
     $document = HTMLDocument::createFromString($html, LIBXML_NOERROR);
     expect(trim($document->querySelector('.fi-sidebar-group[data-group-label="Administration"] .fi-sidebar-item-label')?->textContent ?? ''))->toBe('Users & roles')
         ->and($document->querySelector('.tc-sidebar-secondary.fi-collapsible .fi-sidebar-group-collapse-btn')?->hasAttribute('aria-controls'))->toBeTrue();
+
+    $migration = strpos($html, 'tc-sidebar-more-v1');
+    $filamentInitializer = strpos($html, 'var collapsedGroups = JSON.parse(');
+
+    expect($migration)->not->toBeFalse()
+        ->and($filamentInitializer)->not->toBeFalse()
+        ->and($migration)->toBeLessThan($filamentInitializer)
+        ->and($html)->toContain('const moreLabel = ')
+        ->toContain('groups.push(moreLabel)')
+        ->toContain("localStorage.setItem('collapsedGroups', JSON.stringify(groups))");
 });
 
 it('does not render empty sidebar groups for a desk-only actor', function () {
