@@ -34,8 +34,13 @@ use Illuminate\Support\Facades\Gate;
  * Rather than depend on model-event overrides or hidden fields, this resource
  * replaces Shield's role pages with app-owned ones that route every permission
  * write through UpdateRolePermissionsAction, which authorizes via RolePolicy.
- * Everything else — the form, the table, the model, the slug, the navigation —
- * is inherited unchanged from Shield.
+ * The model, the slug and the navigation are inherited unchanged from Shield.
+ * The table is inherited except for its write surfaces (see table()), and the
+ * form is inherited except for its custom-permissions tab (see
+ * getTabFormComponentForCustomPermissions()), which is overridden for two
+ * reasons: its labels come from staff.permissions.*, and every permission the
+ * seeder creates must be tickable, because a save syncs a role to exactly the
+ * boxes ticked and would otherwise strip any that has none (P4-T21).
  *
  * Because this class name ends in "RoleResource", FilamentShieldPlugin's
  * isResourcePublished() check treats the role resource as published and does

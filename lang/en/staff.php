@@ -170,7 +170,7 @@ return [
         'publish_article' => 'Publish articles',
         'replace_student_certificate' => 'Replace student certificates',
         'reset_portal_credential' => 'Reset a student\'s portal password',
-        'reset_user_password' => 'Reset a staff member\'s password',
+        'reset_user_password' => 'Reset staff passwords (also needed to create user accounts)',
         'reverse_expense' => 'Reverse a recorded expense',
         'reverse_payment' => 'Reverse a recorded payment',
         'revoke_student_certificate' => 'Revoke student certificates',

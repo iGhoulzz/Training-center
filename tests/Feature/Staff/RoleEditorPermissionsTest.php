@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Domain\Staff\Actions\SystemRoleWriter;
 use App\Domain\Staff\Filament\Resources\RoleResource\Pages\CreateRole;
 use App\Domain\Staff\Filament\Resources\RoleResource\Pages\EditRole;
+use App\Domain\Staff\Filament\Resources\RoleResource\Pages\ViewRole;
 use App\Models\Role;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
@@ -274,4 +275,76 @@ it('takes the rendered label from the translation file, not from the code', func
         ->getOptions();
 
     expect($options['access_admin_panel'])->toBe('SENTINEL-LABEL-4c1e');
+});
+
+it('ticks every custom permission when select all is switched on, and counts the tab afterwards', function () {
+    $create = Livewire::actingAs($this->superAdmin)->test(CreateRole::class);
+
+    // The expected set is worked out from the seeder's permissions and the other
+    // tabs the form really renders, not read from the config the tab is built
+    // from: whatever no other tab offers is what select all must tick here.
+    $lists = renderedPermissionLists($create);
+    $offeredElsewhere = array_merge(...array_values(array_diff_key($lists, ['custom_permissions_tab' => true])));
+    $expected = array_values(array_diff(Permission::query()->pluck('name')->all(), $offeredElsewhere));
+    sort($expected);
+
+    // Not vacuous: forty, counted by hand, including the permission whose loss
+    // locked everybody out.
+    expect($expected)->toHaveCount(40)
+        ->and(in_array('access_admin_panel', $expected, true))->toBeTrue();
+
+    $create->assertSet('data.custom_permissions_tab', [])->set('data.select_all', true);
+
+    $ticked = $create->get('data.custom_permissions_tab');
+    sort($ticked);
+
+    expect($ticked)->toBe($expected);
+
+    // The other direction: unticking one custom permission switches select all
+    // off again, so the tab is counted by it and not merely driven by it.
+    $create->set('data.custom_permissions_tab', array_slice($expected, 1));
+
+    expect($create->get('data.select_all'))->toBeFalse();
+});
+
+it('shows a role its custom permissions as ticked, under their translated labels', function () {
+    app('translator')->addLines(
+        [
+            'staff.permissions.access_admin_panel' => 'SENTINEL-VIEW-HELD-91ab',
+            'staff.permissions.manage_pricing' => 'SENTINEL-VIEW-NOT-HELD-5d07',
+        ],
+        app()->getLocale(),
+    );
+
+    $staff = Role::where('name', 'staff')->firstOrFail();
+
+    $view = Livewire::actingAs($this->superAdmin)
+        ->test(ViewRole::class, ['record' => $staff->getKey()])
+        ->assertOk()
+        ->assertSee('SENTINEL-VIEW-HELD-91ab')
+        ->assertSee('SENTINEL-VIEW-NOT-HELD-5d07');
+
+    // The custom permissions the seeder gives staff, written out by hand from
+    // RolePermissionSeeder: the panel, the scoped enrolment and completion
+    // grants, the two portal-credential acts, and reading enrolments. Not
+    // manage_pricing, which is why it is shown but not ticked.
+    $ticked = $view->get('data.custom_permissions_tab');
+    sort($ticked);
+
+    expect($ticked)->toBe([
+        'access_admin_panel',
+        'complete_assigned_batch_enrollment',
+        'create_enrollment',
+        'issue_portal_credential',
+        'reset_portal_credential',
+        'update_assigned_batch_enrollment',
+        'view_any_enrollment',
+        'view_enrollment',
+    ]);
+
+    // And the page itself answers over HTTP, the way a person reaches it.
+    $this->actingAs($this->superAdmin)
+        ->get('/admin/shield/roles/'.$staff->getKey())
+        ->assertSuccessful()
+        ->assertSee('SENTINEL-VIEW-HELD-91ab');
 });
