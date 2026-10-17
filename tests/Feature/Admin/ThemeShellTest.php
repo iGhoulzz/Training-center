@@ -41,6 +41,7 @@ use Filament\Panel;
 use Filament\PanelRegistry;
 use Filament\Support\Colors\Color;
 use Filament\Support\Colors\ColorManager;
+use Filament\Support\Icons\Heroicon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Hash;
@@ -224,9 +225,87 @@ it('keeps every registered resource and navigable page in the shell', function (
     }
 
     expect(array_map(fn ($group): ?string => $group->getLabel(), $panel->getNavigation()))
-        ->toBe(['Front desk', 'Enrolment', 'Finance', 'Reports', 'Administration', 'Publications']);
+        ->toBe(['Front desk', 'Enrolment', 'Finance', 'Administration', 'More']);
     expect($html)->not->toContain('href="'.PasswordChange::getNavigationUrl().'"');
 });
+
+it('curates the primary sidebar in design order and collapses the remaining destinations', function () {
+    $actor = User::factory()->create(['is_active' => true]);
+    $actor->givePermissionTo(Permission::query()->where('guard_name', 'web')->get());
+
+    $html = renderedWithoutLivewireState($this->actingAs($actor)->get('/admin')->assertSuccessful());
+    $groups = array_values(Filament::getPanel('admin')->getNavigation());
+
+    $urls = fn ($group): array => array_map(fn ($item): ?string => $item->getUrl(), $group->getItems());
+
+    expect(array_map($urls, array_slice($groups, 0, 4)))->toBe([
+        [EnrollAndCollect::getNavigationUrl(), Dashboard::getNavigationUrl()],
+        [StudentResource::getNavigationUrl(), BatchResource::getNavigationUrl(), CourseResource::getNavigationUrl(), StudentCertificateResource::getNavigationUrl()],
+        [FinanceHub::getNavigationUrl(), ChargeResource::getNavigationUrl(), PaymentResource::getNavigationUrl(), FinanceHub::getUrl().'#finance-group-reports', PayrollRunResource::getNavigationUrl()],
+        [UserResource::getNavigationUrl(), ActivityResource::getNavigationUrl()],
+    ])->and($groups[4]->isCollapsible())->toBeTrue()
+        ->and($groups[4]->isCollapsed())->toBeTrue()
+        ->and($urls($groups[4]))->toContain(RoleResource::getNavigationUrl(), ArticleResource::getNavigationUrl(), RevenueReportPage::getNavigationUrl(), ExportHistory::getNavigationUrl());
+
+    expect(array_map(fn ($item) => $item->getIcon(), $groups[0]->getItems()))
+        ->toBe([Heroicon::OutlinedPlus, Heroicon::OutlinedSquares2x2])
+        ->and($groups[1]->getItems()[3]->getIcon())->toBe(Heroicon::OutlinedTrophy)
+        ->and($groups[2]->getItems()[0]->getIcon())->toBe(Heroicon::OutlinedCurrencyDollar)
+        ->and($groups[1]->getItems()[3]->getActiveIcon())->toBe(Heroicon::OutlinedTrophy)
+        ->and($groups[2]->getItems()[0]->getActiveIcon())->toBe(Heroicon::OutlinedCurrencyDollar);
+
+    $document = HTMLDocument::createFromString($html, LIBXML_NOERROR);
+    expect(trim($document->querySelector('.fi-sidebar-group[data-group-label="Administration"] .fi-sidebar-item-label')?->textContent ?? ''))->toBe('Users & roles')
+        ->and($document->querySelector('.tc-sidebar-secondary.fi-collapsible .fi-sidebar-group-collapse-btn')?->hasAttribute('aria-controls'))->toBeTrue();
+
+    $migration = strpos($html, 'tc-sidebar-more-v1');
+    $filamentInitializer = strpos($html, 'var collapsedGroups = JSON.parse(');
+
+    expect($migration)->not->toBeFalse()
+        ->and($filamentInitializer)->not->toBeFalse()
+        ->and($migration)->toBeLessThan($filamentInitializer)
+        ->and($html)->toContain('const moreLabel = ')
+        ->toContain('groups.push(moreLabel)')
+        ->toContain("localStorage.setItem('collapsedGroups', JSON.stringify(groups))");
+});
+
+it('does not render empty sidebar groups for a desk-only actor', function () {
+    $actor = User::factory()->create(['is_active' => true]);
+    $actor->givePermissionTo('access_admin_panel');
+
+    $this->actingAs($actor)->get('/admin')->assertSuccessful();
+    $groups = array_values(Filament::getPanel('admin')->getNavigation());
+
+    expect($groups)->not->toBeEmpty();
+    foreach ($groups as $group) {
+        expect($group->getItems())->not->toBeEmpty($group->getLabel());
+    }
+});
+
+it('shows only accessible destinations in either sidebar tier', function (array $permissions, bool $reportsAllowed) {
+    $actor = User::factory()->create(['is_active' => true]);
+    $actor->givePermissionTo(['access_admin_panel', ...$permissions]);
+
+    $this->actingAs($actor)->get('/admin')->assertSuccessful();
+    $panel = Filament::getPanel('admin');
+    $urls = collect($panel->getNavigation())->flatMap(fn ($group): array => array_map(fn ($item): ?string => $item->getUrl(), $group->getItems()))->all();
+
+    foreach (array_merge($panel->getPages(), $panel->getResources()) as $destination) {
+        if (! $destination::shouldRegisterNavigation()) {
+            continue;
+        }
+
+        expect(in_array($destination::getNavigationUrl(), $urls, true))->toBe($destination::canAccess(), $destination);
+    }
+
+    expect(in_array(FinanceHub::getUrl().'#finance-group-reports', $urls, true))->toBe($reportsAllowed);
+})->with([
+    'no domain permissions' => [[], false],
+    'front desk only' => [['create_enrollment'], false],
+    'charge reader without reports' => [['view_any_charge'], false],
+    'report reader' => [['view_financial_report'], true],
+    'secondary resources only' => [['view_any_role', 'view_any_article'], false],
+]);
 
 it('shows the student destination to an actor holding its exact permission', function () {
     $actor = User::factory()->create(['is_active' => true]);

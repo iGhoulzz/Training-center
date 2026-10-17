@@ -242,6 +242,24 @@
         line-height: normal;
     }
 
+    /* Keep the extra destinations reachable through Filament's native disclosure. */
+    .tc-sidebar-secondary {
+        @apply mt-4 border-t border-hairline;
+
+        & > .fi-sidebar-group-btn {
+            @apply gap-x-2;
+        }
+
+        & .fi-sidebar-group-collapse-btn {
+            @apply ms-auto text-gray-400;
+
+            &:hover,
+            &:focus-visible {
+                @apply bg-fill-hover text-gray-50;
+            }
+        }
+    }
+
     /*
      * A nav item: 9px by 10px of padding, an 8px radius, an 11px gap, 14px at 500 in gray-400.
      * The icon and the label take the item's colour, so hovering or activating the item
