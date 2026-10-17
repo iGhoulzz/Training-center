@@ -125,14 +125,21 @@ it('renders its own exact report total and the complete profit definition where 
     $payment = Payment::factory()->create(['received_at' => '2026-10-05 10:00:00']);
     PaymentAllocation::factory()->create(['charge_id' => $charge->id, 'payment_id' => $payment->id, 'amount' => '100.125']);
     PaymentTender::factory()->for($payment)->create(['amount' => '100.125']);
+    $secondCharge = Charge::factory()->create();
+    $secondPayment = Payment::factory()->create(['received_at' => '2026-10-06 10:00:00']);
+    PaymentAllocation::factory()->create(['charge_id' => $secondCharge->id, 'payment_id' => $secondPayment->id, 'amount' => '0.875']);
+    PaymentTender::factory()->for($secondPayment)->bankTransfer()->create(['amount' => '0.875']);
     PayrollLine::factory()->finalized()->create(['posting_period_start' => '2026-10-01', 'computed_amount' => '150.250']);
+    PayrollLine::factory()->finalized()->create(['posting_period_start' => '2026-10-01', 'computed_amount' => '0.750']);
     Expense::factory()->create(['paid_on' => '2026-10-05', 'amount' => '25.001']);
     Expense::factory()->reversed()->create(['paid_on' => '2026-10-06', 'amount' => '999.000']);
     $page = Livewire::actingAs(($this->actor)(['view_financial_report']))->test($pageClass)->assertOk();
     $html = preg_replace('/\s+wire:snapshot="[^"]*"/', '', $page->html());
     $document = new DOMDocument;
     @$document->loadHTML('<?xml encoding="utf-8"?>'.$html);
-    $summary = (new DOMXPath($document))->query('//aside[@data-report-summary]')->item(0)?->textContent;
+    $xpath = new DOMXPath($document);
+    expect($xpath->query('//div[@role="region"]/table/tbody/tr')->length)->toBe($pageClass === ProfitReportPage::class ? 1 : 2);
+    $summary = $xpath->query('//aside[@data-report-summary]')->item(0)?->textContent;
     expect($summary)->toContain($total)->not->toContain('reports.presentation.');
     if ($pageClass === ProfitReportPage::class) {
         expect($summary)->toContain('Profit = collected revenue - finalized wage cost - expenses paid in the period (reversed expenses excluded).');
@@ -144,10 +151,10 @@ it('renders its own exact report total and the complete profit definition where 
     expect((new DOMXPath($document))->query('//aside[@data-report-summary]')->item(0)?->textContent)->toContain('0.000')->not->toContain($total);
     Livewire::actingAs(($this->actor)([]))->test($pageClass)->assertForbidden();
 })->with([
-    'revenue' => [RevenueReportPage::class, '100.125'],
-    'payment methods' => [PaymentMethodReportPage::class, '100.125'],
-    'wage cost' => [WageCostReportPage::class, '150.250'],
-    'profit with non-reversed paid expenses' => [ProfitReportPage::class, '-75.126'],
+    'revenue' => [RevenueReportPage::class, '101.000'],
+    'payment methods' => [PaymentMethodReportPage::class, '101.000'],
+    'wage cost' => [WageCostReportPage::class, '151.000'],
+    'profit with non-reversed paid expenses' => [ProfitReportPage::class, '-75.001'],
 ]);
 
 it('offers export history navigation only when its destination allows access', function () {
