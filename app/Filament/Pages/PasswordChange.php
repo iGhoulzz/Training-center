@@ -76,11 +76,12 @@ class PasswordChange extends Page
              * notifications component inside one
              * `@if (($hasTopbar ?? true) && filament()->auth()->check())` block.
              * Left at its default this layout would still co-render
-             * SimpleUserMenu and the leak would survive in reduced form. Only
-             * that one today: the database notifications component beside it is
-             * additionally gated on filament()->hasDatabaseNotifications(),
-             * which this panel does not enable. Enabling it would put a second
-             * component back behind this same flag.
+             * SimpleUserMenu and the leak would survive in reduced form. The
+             * database notifications component beside it is additionally gated
+             * on filament()->hasDatabaseNotifications(), and this panel DOES
+             * enable them (P4-T22, for the report PDF bell). So this flag is
+             * also what keeps the bell off this page, and
+             * ReportPdfNotificationTest proves it stays off.
              *
              * What cannot be removed here is Filament\Livewire\Notifications:
              * filament-panels::components.layout.base renders it unconditionally

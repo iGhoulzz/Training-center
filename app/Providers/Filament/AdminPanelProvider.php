@@ -155,6 +155,23 @@ class AdminPanelProvider extends PanelProvider
                 Dashboard::class,
             ])
             ->discoverWidgets(in: app_path('Filament/Widgets'), for: 'App\Filament\Widgets')
+            /*
+             * THE BELL (P4-T22). A queued report PDF is delivered as a database notification
+             * (GenerateReportPdfJob) and so is a finished spreadsheet export; without this there
+             * was no bell and neither signed download link could be reached. The student portal
+             * stays without it. PasswordChange renders no topbar, and with it no bell, so the
+             * forced password change is not reopened (ReportPdfNotificationTest proves both).
+             *
+             * NO POLLING, ON PURPOSE. Spec §4 gives sessions an 8-hour idle timeout, which is
+             * SESSION_LIFETIME on the database driver, and every Livewire poll is a request that
+             * refreshes the session's last_activity: Filament's default 30-second poll would keep
+             * a tab left open on a front-desk PC signed in for ever, background tabs included.
+             * No other admin component polls: the report chart widgets set $pollingInterval to
+             * null. The bell reads the table on each page load, which is when spec §8's
+             * "notified in-app when the file is ready" is delivered.
+             */
+            ->databaseNotifications()
+            ->databaseNotificationsPolling(null)
             ->middleware([
                 EncryptCookies::class,
                 AddQueuedCookiesToResponse::class,
