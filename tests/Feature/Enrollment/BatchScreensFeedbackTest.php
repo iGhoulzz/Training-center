@@ -106,14 +106,29 @@ beforeEach(function () {
         ]);
 
     /*
-     * A request that skips the button: mount the named table action and call
-     * it. MOUNTING IS NOT THE ATTACK, CALLING IS. mountAction() returns null
-     * identically for an unknown name, a disabled action and an unauthorized
-     * one, so each use is paired with an authorized call that did something.
+     * A request that skips the button: mount the named table action, fill its
+     * form with VALID data, and call it. MOUNTING IS NOT THE ATTACK, CALLING IS.
+     * mountAction() returns null identically for an unknown name, a disabled
+     * action and an unauthorized one, so each use is paired with an authorized
+     * call that did something.
+     *
+     * The data matters: without it an action with a required field fails form
+     * validation, and a refusal that is really a validation error would pass
+     * for the wrong reason when the authorization it stands for is removed.
+     *
+     * @param  array<string, mixed>  $data
      */
-    $this->crafted = fn ($component, string $name, ?Model $record = null) => $component
-        ->call('mountAction', $name, [], ['table' => true, ...($record === null ? [] : ['recordKey' => (string) $record->getKey()])])
-        ->call('callMountedAction');
+    $this->crafted = function ($component, string $name, ?Model $record = null, array $data = []) {
+        $component->call('mountAction', $name, [], ['table' => true, ...($record === null ? [] : ['recordKey' => (string) $record->getKey()])]);
+
+        if ($component->get('mountedActions') !== []) {
+            foreach ($data as $key => $value) {
+                $component->set("mountedActions.0.data.{$key}", $value);
+            }
+        }
+
+        return $component->call('callMountedAction');
+    };
 
     $this->instructor = function (string $name): User {
         $user = User::factory()->create(['is_active' => true, 'name' => $name]);
@@ -184,7 +199,10 @@ it('tells the reader an instructor was assigned, and an actor one grant short ge
     $short = ($this->actorWith)('view_batch');
     $other = Batch::factory()->for($this->course)->active()->create();
 
-    ($this->crafted)(($this->mountInstructors)($short, $other), 'assign');
+    ($this->crafted)(($this->mountInstructors)($short, $other), 'assign', null, [
+        'user_id' => $sara->getKey(),
+        'assigned_hours' => 18,
+    ]);
 
     expect(batchScreenSentNotifications())->toBe([])
         ->and(DB::table('batch_instructor')->where('batch_id', $other->getKey())->count())->toBe(0);
@@ -201,7 +219,7 @@ it('tells the reader the assigned hours were updated, and an actor one grant sho
     expect(batchScreenSentNotifications())->toBe([batchScreenSuccess('Assigned hours updated.')])
         ->and((int) DB::table('batch_instructor')->value('assigned_hours'))->toBe(24);
 
-    ($this->crafted)(($this->mountInstructors)(($this->actorWith)('view_batch')), 'edit_hours', $sara);
+    ($this->crafted)(($this->mountInstructors)(($this->actorWith)('view_batch')), 'edit_hours', $sara, ['assigned_hours' => 99]);
 
     expect(batchScreenSentNotifications())->toBe([])
         ->and((int) DB::table('batch_instructor')->value('assigned_hours'))->toBe(24);
@@ -251,7 +269,9 @@ it('tells the reader a student was enrolled, and an actor one grant short gets n
     expect(batchScreenSentNotifications())->toBe([batchScreenSuccess('Student enrolled.')])
         ->and(Enrollment::query()->count())->toBe(1);
 
-    ($this->crafted)(($this->mountEnrollments)(($this->actorWith)(...$permissions)), 'enroll');
+    ($this->crafted)(($this->mountEnrollments)(($this->actorWith)(...$permissions)), 'enroll', null, [
+        'student_id' => Student::factory()->create()->getKey(),
+    ]);
 
     expect(batchScreenSentNotifications())->toBe([])
         ->and(Enrollment::query()->count())->toBe(1);
@@ -398,7 +418,7 @@ it('hides "Enrol student" on a batch that takes no enrolments and offers it on o
 
     // A request that skips the button gets nowhere on a closed batch.
     if (! $offered) {
-        ($this->crafted)($panel, 'enroll');
+        ($this->crafted)($panel, 'enroll', null, ['student_id' => Student::factory()->create()->getKey()]);
         expect(Enrollment::query()->count())->toBe(0)
             ->and(batchScreenSentNotifications())->toBe([]);
     }
