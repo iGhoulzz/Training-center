@@ -60,18 +60,21 @@ beforeEach(function (): void {
 | catalogues is turned into a pattern at test time, so a key added tomorrow is
 | checked from the day it exists. A line with placeholders (`Starts :date`) becomes
 | a pattern with a gap where the placeholder is; a plural line becomes one pattern
-| per segment. Three kinds of value are not searched for:
+| per segment. Two kinds of value are not searched for:
 |
 |   - one that is the same in Arabic as in English (a code, a date pattern): it
 |     cannot tell the two languages apart, and CatalogueParityTest lists each one
 |     with its reason;
-|   - one whose own words, with the placeholders taken out, hold no run of three
-|     letters (`© :year :name`, `:page | :name`): there is nothing to look for;
-|   - any word that is not catalogue text. The centre's name and contact details
-|     come from config/public_site.php and are set to sentinels, and the fixtures
-|     (articles, courses, a student) use words no catalogue contains, so brand,
-|     references and user data are outside the search by construction. A test
-|     below checks the fixtures really are.
+|   - one too short to mean anything. Searching inside a page needs the value's own
+|     words, with the placeholders taken out, to hold a run of three letters
+|     (`© :year :name` and `:page | :name` have none). Matching a whole string
+|     needs one letter, so the dinar's two-letter "د.ل" is checked.
+|
+| BRAND, REFERENCES AND USER DATA ARE OUTSIDE THE SEARCH BY CONSTRUCTION, not by
+| filtering it. The centre's name and contact details come from
+| config/public_site.php and are set to sentinels, and the fixtures (articles,
+| courses, a student) use words no catalogue contains. A test below checks that
+| the fixtures really do.
 |
 | WHAT A MATCH IS. Text is read from the parsed page: its text nodes, and the
 | attributes that carry words (alt, title, aria-label, placeholder, a meta tag's
@@ -513,8 +516,9 @@ it('finds the English text on the same pages in English, so the search is not bl
         $keys += publicArabicFound(publicArabicReadableStrings($html), $needles);
     }
 
-    // The floor is far below what these pages show (about 100 of the 170 keys),
-    // and well above what a search that reads nothing would find.
+    // The floor is far below what these pages show (124 of the 166 searched keys
+    // when this was written; the rest are the staff screens' labels and states the
+    // fixtures do not reach), and well above what a search that reads nothing finds.
     expect(count($keys))->toBeGreaterThan(60);
 
     // Each state a page can be in shows its own line: every status of the verifier,
