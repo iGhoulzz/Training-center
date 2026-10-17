@@ -118,16 +118,65 @@ it('prints the 80 mm receipt for an active actor holding view_payment', function
     expect($missing)->toBe([]);
 });
 
-it('lays the page out for an 80 mm roll and prints it as soon as it loads', function (): void {
+it('prints as soon as it loads, from a self-contained page', function (): void {
     $html = (string) $this->actingAs(($this->actorWith)('view_payment'))->get($this->url)->getContent();
 
-    expect(str_contains($html, '@page'))->toBeTrue()
-        ->and(str_contains($html, 'size: 80mm auto'))->toBeTrue()
-        ->and(str_contains($html, "window.addEventListener('load'"))->toBeTrue()
+    expect(str_contains($html, "window.addEventListener('load'"))->toBeTrue()
         ->and(str_contains($html, 'window.print()'))->toBeTrue()
         ->and(str_contains($html, 'Print again'))->toBeTrue()
         // Self-contained: no stylesheet, script or image is fetched.
         ->and(preg_match('/<(?:link|img)\b|<script[^>]*\ssrc=|url\(\s*[\'"]?https?:/i', $html))->toBe(0);
+});
+
+it('declares a valid 80 mm page size in the stylesheet', function (): void {
+    $html = (string) $this->actingAs(($this->actorWith)('view_payment'))->get($this->url)->getContent();
+
+    // The rule text, parsed: `size` takes lengths or a keyword and never a
+    // length plus `auto`, which a browser drops whole before printing on Letter.
+    preg_match_all('#<style>(.*?)</style>#s', $html, $styles);
+    preg_match_all('/@page\s*\{([^}]*)\}/', implode("\n", $styles[1]), $rules);
+
+    expect($rules[1])->toHaveCount(1);
+
+    $declarations = array_values(array_filter(array_map('trim', explode(';', $rules[1][0]))));
+
+    expect($declarations)->toBe(['size: 80mm 297mm', 'margin: 0']);
+});
+
+it('has no @page rule containing auto anywhere in the document', function (): void {
+    $html = (string) $this->actingAs(($this->actorWith)('view_payment'))->get($this->url)->getContent();
+
+    // The stylesheet's rule and the one the script writes at run time.
+    preg_match_all('/@page\s*\{[^}]*\}/', $html, $rules);
+
+    expect(count($rules[0]))->toBeGreaterThanOrEqual(2);
+
+    $withAuto = array_values(array_filter($rules[0], fn (string $rule): bool => str_contains($rule, 'auto')));
+
+    expect($withAuto)->toBe([]);
+});
+
+it('fits the page to the receipt before each print, on load and from the button', function (): void {
+    $html = (string) $this->actingAs(($this->actorWith)('view_payment'))->get($this->url)->getContent();
+
+    preg_match('#<script>(.*?)</script>#s', $html, $script);
+    $js = $script[1] ?? '';
+
+    // Strings are all PHP can see; the printed size is checked in a browser.
+    expect(str_contains($js, "pageSize.id = 'page-size'"))->toBeTrue()
+        ->and(preg_match("/function fitPage\(\)\s*\{[^}]*pageSize\.textContent = '@page \{ size: 80mm ' \+ millimetres \+ 'mm; margin: 0 \}';/s", $js))->toBe(1)
+        ->and(preg_match("/addEventListener\('load',\s*function \(\) \{\s*fitPage\(\);\s*window\.print\(\);/", $js))->toBe(1)
+        ->and(preg_match("/getElementById\('print-again'\)\.addEventListener\('click',\s*function \(\) \{\s*fitPage\(\);\s*window\.print\(\);/", $js))->toBe(1);
+});
+
+it('keeps the button outside the element whose height sets the page size', function (): void {
+    $html = (string) $this->actingAs(($this->actorWith)('view_payment'))->get($this->url)->getContent();
+
+    preg_match('#<main class="receipt">(.*?)</main>#s', $html, $receipt);
+
+    expect(($receipt[1] ?? '') !== '')->toBeTrue()
+        ->and(str_contains($receipt[1], 'print-again'))->toBeFalse()
+        ->and(str_contains($html, 'id="print-again"'))->toBeTrue();
 });
 
 it('serves the print page as private, unsniffable and unindexed', function (): void {

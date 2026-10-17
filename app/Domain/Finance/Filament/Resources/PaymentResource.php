@@ -32,7 +32,8 @@ use Illuminate\Support\Facades\Gate;
 
 /**
  * Payments — listed and viewed, never created or edited through the panel.
- * Two row actions: a receipt download link (P35-T06) and a reversal (P2-T04).
+ * Three row actions: a receipt download link (P35-T06), a receipt print link
+ * (P4-T24) and a reversal (P2-T04).
  *
  * WHY THERE IS NO CREATE PAGE AND NO EDIT PAGE
  * ---------------------------------------------
@@ -50,13 +51,14 @@ use Illuminate\Support\Facades\Gate;
  * and `ActivityResource::canCreate()` already use, even though nothing here
  * is unconditionally refused the way theirs is.
  *
- * TWO ROW ACTIONS, BOTH GATED WITH authorize() — ONLY REVERSE IS GUARDED HERE
- * ---------------------------------------------------------------------------
+ * THREE ROW ACTIONS, ALL GATED WITH authorize() — ONLY REVERSE IS GUARDED HERE
+ * -----------------------------------------------------------------------------
  * `downloadReceiptAction()` (P35-T06) is a link to the policy-authorized
  * receipt route with no server handler of its own. Its `authorize()` only
  * decides whether the button renders; what protects the bytes is that
- * route — see its docblock. It is a static builder,
- * but `ViewPayment` does not use it: **only `reverseAction()` is shared with
+ * route — see its docblock. `printReceiptAction()` (P4-T24) is the same kind
+ * of link, to the 80 mm print page. Both are static builders,
+ * but `ViewPayment` does not use them: **only `reverseAction()` is shared with
  * that page**, so only "reverse" carries the no-drift guarantee described
  * below.
  *

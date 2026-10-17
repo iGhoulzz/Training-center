@@ -20,7 +20,12 @@
     <meta name="robots" content="noindex, nofollow">
     <title>{{ __('receipt.print_page_title', ['reference' => $snapshot->payment_reference]) }}</title>
     <style>
-        @@page { size: 80mm auto; margin: 0; }
+        {{-- 80 mm wide with a tall fallback height. `size` takes one or two lengths
+             and never a length plus `auto`: browsers drop that whole declaration
+             and print on Letter. The script below swaps in the receipt's own
+             height before every print; this is the width the page keeps if the
+             script never runs. --}}
+        @@page { size: 80mm 297mm; margin: 0; }
 
         * { box-sizing: border-box; }
 
@@ -53,7 +58,6 @@
 
         @@media print {
             .actions { display: none; }
-            .receipt { padding-block: 2mm; }
         }
     </style>
 </head>
@@ -89,15 +93,29 @@
             <div class="row"><span class="label">{{ __('receipt.payment_date') }}</span><span class="value ltr" dir="ltr">{{ $paymentDate }}</span></div>
             <div class="row"><span class="label">{{ __('receipt.recorded_by') }}</span><span class="value">{{ $snapshot->recorded_by_name }}</span></div>
         </section>
-
-        <div class="actions">
-            <button type="button" id="print-again">{{ __('receipt.print_again') }}</button>
-        </div>
     </main>
 
+    {{-- Outside .receipt, so the height the script measures is the paper's. --}}
+    <div class="actions">
+        <button type="button" id="print-again">{{ __('receipt.print_again') }}</button>
+    </div>
+
+    {{-- Fit the page to the receipt so a short one feeds only the paper it needs.
+         The same padding applies on screen and in print, so the measured height
+         is the printed height; the 4 mm buffer keeps rounding from pushing the
+         last line onto a second page. --}}
     <script>
-        window.addEventListener('load', function () { window.print(); });
-        document.getElementById('print-again').addEventListener('click', function () { window.print(); });
+        var pageSize = document.createElement('style');
+        pageSize.id = 'page-size';
+        document.head.appendChild(pageSize);
+
+        function fitPage() {
+            var millimetres = Math.ceil(document.querySelector('.receipt').getBoundingClientRect().height * 25.4 / 96) + 4;
+            pageSize.textContent = '@@page { size: 80mm ' + millimetres + 'mm; margin: 0 }';
+        }
+
+        window.addEventListener('load', function () { fitPage(); window.print(); });
+        document.getElementById('print-again').addEventListener('click', function () { fitPage(); window.print(); });
     </script>
 </body>
 </html>
