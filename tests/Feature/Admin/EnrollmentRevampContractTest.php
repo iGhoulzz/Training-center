@@ -263,6 +263,52 @@ it('renders student filters as wrapping pills while retaining scoped counts and 
     $page->set('activeTab', 'prospective')->assertCanSeeTableRecords([$prospective])->assertCanNotSeeTableRecords([$active]);
 })->with([true, false]);
 
+it('renders batch filters as wrapping status pills with counts and selected styling', function () {
+    $course = Course::factory()->create(['total_hours' => 30]);
+    $active = Batch::factory()->for($course)->active()->create(['capacity' => 1]);
+    Enrollment::factory()->count(2)->for($active)->create();
+    $planned = Batch::factory()->for($course)->create(['total_hours' => 0]);
+    $completed = Batch::factory()->for($course)->completed()->create(['total_hours' => 0]);
+    $actor = ($this->actor)(['view_any_batch']);
+    $page = Livewire::actingAs($actor)->test(ListBatches::class);
+    $tabs = [
+        'all' => [__('enrollment.all'), 'before:bg-gray-400', '3', [$active, $planned, $completed]],
+        'active' => [BatchStatus::Active->label(), 'before:bg-success-400', '1', [$active]],
+        'planned' => [BatchStatus::Planned->label(), 'before:bg-info-400', '1', [$planned]],
+        'over_capacity' => [__('enrollment.over_capacity'), 'before:bg-warning-400', '1', [$active]],
+        'hour_mismatch' => [__('enrollment.hour_mismatch'), 'before:bg-danger-400', '1', [$active]],
+    ];
+
+    foreach ($tabs as $selectedKey => [, , , $records]) {
+        $page->set('activeTab', $selectedKey)->assertCanSeeTableRecords($records)->assertCountTableRecords(count($records));
+        $document = HTMLDocument::createFromString($page->html(), LIBXML_NOERROR | \Dom\HTML_NO_DEFAULT_NS);
+        $xpath = new XPath($document);
+        $nav = $xpath->query('//nav[@role="tablist"]')->item(0);
+        expect($nav)->not->toBeNull();
+        expect($nav->parentElement->getAttribute('class'))->toContain(
+            '[&_.fi-tabs]:flex-wrap', '[&_.fi-tabs]:gap-2', '[&_.fi-tabs]:overflow-visible',
+            '[&_.fi-badge]:bg-transparent', '[&_.fi-badge]:text-inherit', '[&_.fi-badge]:opacity-74',
+        );
+        $buttons = $xpath->query('./button[@role="tab"]', $nav);
+        expect($buttons->length)->toBe(5);
+        foreach (array_keys($tabs) as $index => $key) {
+            [$label, $dot, $count] = $tabs[$key];
+            $button = $buttons->item($index);
+            expect($button->textContent)->toContain($label);
+            expect($button->getAttribute('wire:click'))->toContain($key);
+            expect($button->getAttribute('aria-selected'))->toBe($key === $selectedKey ? 'true' : 'false');
+            expect($button->getAttribute('class'))->toContain(
+                'rounded-full', 'before:size-[6px]', $dot, 'focus-visible:ring-2', 'focus-visible:ring-primary-400',
+                ...($key === $selectedKey
+                    ? ['border-primary-500/40', 'bg-primary-500/14', 'text-primary-400']
+                    : ['border-white/9', 'bg-white/4', 'text-gray-400']),
+            );
+            $badge = $xpath->query('.//*[contains(concat(" ", normalize-space(@class), " "), " fi-badge-label ")]', $button)->item(0);
+            expect(trim($badge->textContent))->toBe($count);
+        }
+    }
+});
+
 it('stacks every new student operation inside the preview footer', function () {
     $actor = ($this->actor)(['view_any_student', 'create_student', 'view_student', 'create_enrollment']);
     $page = Livewire::actingAs($actor)->test(CreateStudent::class);
