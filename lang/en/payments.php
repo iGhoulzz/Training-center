@@ -122,4 +122,7 @@ return [
     'tender_report' => 'Daily tender report',
     'register_hint' => 'Finance · Tender methods appear on each receipt row. Report exports are queued from the report page.',
     'receipt_details' => 'Receipt details',
+
+    // PaymentResource::printReceiptAction() (P4-T24).
+    'print_receipt' => 'Print receipt',
 ];

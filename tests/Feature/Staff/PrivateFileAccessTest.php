@@ -272,13 +272,6 @@ it('keeps the guard on the route group, which is what a future route inherits', 
      */
     $source = appSourceWithoutComments(base_path('routes/web.php'));
 
-    expect(substr_count($source, 'AuthenticatePrivateFileSession'))->toBe(
-        2,
-        'Expected exactly two mentions in the code of routes/web.php — the import '
-        .'and one group. More than that means the guard is being applied per '
-        .'route, so a route added outside the group would silently be unprotected.',
-    );
-
     /*
      * Matches Route::middleware(X::class) and Route::middleware([X::class, …]),
      * each followed by ->group(.
@@ -289,13 +282,42 @@ it('keeps the guard on the route group, which is what a future route inherits', 
      * codebase actually uses. Caught by running the negative controls, which is
      * the entire reason for having them.
      */
-    $declaresGroup = preg_match(
+    $groups = preg_match_all(
         '/Route(?:::|->)middleware\(\s*\[?[^)]*AuthenticatePrivateFileSession::class[^)]*\]?\s*\)\s*->group\(/',
         $source,
-    ) === 1;
+    );
 
-    expect($declaresGroup)->toBeTrue(
-        'The private-file route group is gone; new routes no longer inherit the guard.',
+    /*
+     * EXACTLY TWO GROUPS (P4-T24): the private files, and the receipt print page,
+     * which is a page rather than a file and so has a group of its own. Pinned,
+     * not "at least one": a group wrapping a single route is per-route
+     * application in another form, so a third group is a decision to make here,
+     * on purpose, never one that passes by itself.
+     */
+    expect($groups)->toBe(
+        2,
+        'Expected exactly two route groups declaring the guard: the private files and the receipt print page.',
+    );
+
+    // The import is asserted on its own, so a fully qualified mention cannot
+    // stand in for it and leave the count below unchanged.
+    expect(str_contains($source, 'use App\Http\Middleware\AuthenticatePrivateFileSession;'))->toBeTrue(
+        'routes/web.php no longer imports the guard.',
+    );
+
+    /*
+     * THE RULE. The guard is only ever declared on a route group, never on a
+     * route. Every mention in the code is therefore either the import or the
+     * middleware of one group, so the mentions are exactly one plus the number
+     * of groups. A mention that belongs to neither is a route carrying the
+     * guard on its own, which is the shape this test exists to refuse.
+     */
+    expect(substr_count($source, 'AuthenticatePrivateFileSession'))->toBe(
+        1 + $groups,
+        'Expected one mention in the code of routes/web.php for the import and one '
+        .'per route group that declares the guard. More than that means the guard '
+        .'is being applied per route, so a route added outside a group would '
+        .'silently be unprotected.',
     );
 });
 

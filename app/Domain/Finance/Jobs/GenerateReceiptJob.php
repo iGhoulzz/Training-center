@@ -5,10 +5,9 @@ declare(strict_types=1);
 namespace App\Domain\Finance\Jobs;
 
 use App\Domain\Finance\Actions\AttachReceiptAction;
-use App\Domain\Finance\Models\PaymentReceiptSnapshot;
-use App\Domain\Finance\Models\PaymentTender;
+use App\Domain\Finance\Models\Payment;
 use App\Domain\Finance\Support\ReceiptLocation;
-use App\Support\CentreCalendar;
+use App\Domain\Finance\Support\ReceiptViewData;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -38,41 +37,25 @@ final class GenerateReceiptJob implements ShouldQueue
     public function handle(
         ReceiptLocation $locations,
         AttachReceiptAction $receipts,
+        ReceiptViewData $viewData,
     ): void {
-        $snapshot = PaymentReceiptSnapshot::query()
-            ->where('payment_id', $this->paymentId)
-            ->firstOrFail();
-        $tenderRows = PaymentTender::query()
-            ->where('payment_id', $this->paymentId)
-            ->orderBy('id')
-            ->get();
+        $payment = Payment::query()->findOrFail($this->paymentId);
+        // The stored path is derived from the snapshot's reference, as it always
+        // was; AttachReceiptAction refuses it unless it matches the payment's.
+        $snapshot = $payment->receiptSnapshot()->firstOrFail();
 
-        $originalLocale = app()->getLocale();
+        // Built and rendered in the snapshot's locale by ReceiptViewData, the
+        // same place the 80 mm print page is built, so the PDF and the paper
+        // cannot drift apart. Only the PDF conversion lives here.
+        $html = $viewData->render('finance.receipt', $payment);
 
-        try {
-            app()->setLocale($snapshot->locale);
-            $direction = str_starts_with($snapshot->locale, 'ar') ? 'rtl' : 'ltr';
-            $tenders = $tenderRows->map(fn (PaymentTender $tender): array => [
-                'label' => $tender->method->label(),
-                'amount' => (string) $tender->amount,
-            ])->all();
+        File::ensureDirectoryExists(storage_path('app/mpdf'));
 
-            File::ensureDirectoryExists(storage_path('app/mpdf'));
+        $mpdf = new Mpdf(['tempDir' => storage_path('app/mpdf')]);
+        $mpdf->SetCompression(false);
+        $mpdf->WriteHTML($html);
 
-            $mpdf = new Mpdf(['tempDir' => storage_path('app/mpdf')]);
-            $mpdf->SetCompression(false);
-            $mpdf->WriteHTML(view('finance.receipt', [
-                'snapshot' => $snapshot,
-                'tenders' => $tenders,
-                'paymentDate' => CentreCalendar::localise($snapshot->received_at)->format('Y-m-d H:i'),
-                'locale' => $snapshot->locale,
-                'direction' => $direction,
-            ])->render());
-
-            $bytes = $mpdf->OutputBinaryData();
-        } finally {
-            app()->setLocale($originalLocale);
-        }
+        $bytes = $mpdf->OutputBinaryData();
 
         $receipts->execute(
             $this->paymentId,

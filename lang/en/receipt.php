@@ -21,4 +21,12 @@ return [
     'payment_date' => 'Payment date',
     'recorded_by' => 'Recorded by',
     'amount_lyd' => ':amount LYD',
+
+    // The discount is a percentage, shown beside three-decimal LYD amounts on
+    // both the A4 PDF and the 80 mm page (P4-T24).
+    'discount_percent' => ':percent%',
+
+    // The 80 mm print page (P4-T24).
+    'print_page_title' => 'Receipt :reference',
+    'print_again' => 'Print again',
 ];
