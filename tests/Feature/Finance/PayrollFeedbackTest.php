@@ -85,7 +85,9 @@ beforeEach(function (): void {
 it('finalizes with a success toast and re-renders the page as finalized without a reload', function () {
     [$run] = ($this->draftRun)(['309.000']);
 
-    $page = ($this->reviewPage)($run)->assertSee('Draft');
+    // The finalizer's name only appears once the run is finalized, so the assertSee
+    // below proves the page re-rendered, not that the name was there all along.
+    $page = ($this->reviewPage)($run)->assertSee('Draft')->assertDontSee('Payroll Operator');
 
     $page->callAction('finalize')
         ->assertNotified(FilamentNotification::make()->title('Payroll run finalized.')->success())
