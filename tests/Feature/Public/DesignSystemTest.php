@@ -750,7 +750,7 @@ it('lays a container out at the site width or the narrow article width', functio
 
 /*
 |--------------------------------------------------------------------------
-| The navigation names the page it is on
+| The navigation targets the home sections
 |--------------------------------------------------------------------------
 */
 
@@ -773,39 +773,73 @@ function designSystemNavigationLinks(string $html): array
 {
     $links = [];
 
-    foreach (designSystemDocument($html)->querySelectorAll('header nav a') as $link) {
+    foreach (designSystemDocument($html)->querySelectorAll('header nav ul a') as $link) {
         $links[] = [$link->getAttribute('href'), $link->hasAttribute('aria-current') ? $link->getAttribute('aria-current') : null];
     }
 
     return $links;
 }
 
-it('marks the link of the section the visitor is in, and no other, on its pages', function (string $page, ?string $sectionPath) {
+it('links both header menus to home fragments without claiming a current page', function (string $page) {
     $pages = designSystemPages();
-    $html = (string) $this->get($pages[$page])->assertOk()->getContent();
+    $path = $pages[$page];
+    $html = (string) $this->get($path)->assertOk()->getContent();
 
-    $marked = array_values(array_filter(designSystemNavigationLinks($html), fn (array $link): bool => $link[1] !== null));
+    $home = $page === 'home' ? '' : url('/');
+    $expected = array_map(fn (string $fragment): array => [$home.$fragment, null], ['#about', '#programmes', '#publications', '#verify', '#contact']);
+    $links = designSystemNavigationLinks($html);
 
-    if ($sectionPath === null) {
-        expect($marked)->toBe([], "{$page} marks a link as the current page.");
+    expect(array_slice($links, 0, 5))->toBe($expected)
+        ->and(array_slice($links, -5))->toBe($expected);
 
-        return;
+    if ($page === 'home') {
+        $document = designSystemDocument($html);
+
+        foreach (['about', 'programmes', 'publications', 'verify', 'contact'] as $id) {
+            $targets = $document->querySelectorAll('main section[id="'.$id.'"]');
+
+            expect(count($targets))->toBe(1, "{$id} must have one home target")
+                ->and($targets[0]->getAttribute('tabindex'))->toBe('-1');
+        }
     }
+})->with(['home', 'about', 'contact', 'programmes', 'programme', 'publications', 'article']);
 
-    // The navigation is rendered twice, as a menu and as a row, so the section's
-    // link is marked in both and nowhere else. The value is exactly "page".
-    expect($marked)->toBe([[url($sectionPath), 'page'], [url($sectionPath), 'page']]);
-})->with([
-    'home marks none' => ['home', null],
-    'about' => ['about', '/about'],
-    'contact' => ['contact', '/contact'],
-    'the programme index' => ['programmes', '/programmes'],
-    'a programme page' => ['programme', '/programmes'],
-    'the library' => ['publications', '/publications'],
-    'an article' => ['article', '/publications'],
-]);
+it('dismisses the mobile menu when one of its links is selected', function () {
+    $html = (string) $this->get('/')->assertOk()->getContent();
+    $document = designSystemDocument($html);
+    $nav = $document->querySelector('header nav#public-navigation');
+    $open = $document->querySelector('header nav a[href="#public-navigation"]');
+    $close = $document->querySelector('header nav a[href="#public-navigation-closed"]');
+    $menu = $document->querySelector('header nav ul#public-mobile-menu');
 
-it('keeps the current section marked when the route name carries the Arabic prefix', function (string $routeName, string $section) {
+    expect($nav)->not->toBeNull()
+        ->and($nav->getAttribute('tabindex'))->toBe('-1')
+        ->and($document->querySelector('header nav #public-navigation-closed')?->getAttribute('tabindex'))->toBe('-1')
+        ->and($open?->getAttribute('aria-controls'))->toBe('public-mobile-menu')
+        ->and($close?->getAttribute('aria-controls'))->toBe('public-mobile-menu')
+        ->and(explode(' ', $open?->getAttribute('class') ?? ''))->toContain('group-target/nav:hidden')
+        ->and(explode(' ', $close?->getAttribute('class') ?? ''))->toContain('group-target/nav:inline-flex')
+        ->and(explode(' ', $menu?->getAttribute('class') ?? ''))->toContain('hidden', 'group-target/nav:block')
+        ->and($html)->not->toContain('<script');
+});
+
+it('points the Arabic header to its localized home fragments', function (string $routeName, string $home) {
+    Route::get('/ar-test-home', fn (): string => 'home')->name('ar.public.home');
+    Route::get('/ar-test-navigation', function (): string {
+        app()->setLocale('ar');
+
+        return '<header>'.Blade::render("@include('public.partials.navigation')").'</header>';
+    })->name($routeName);
+    Route::getRoutes()->refreshNameLookups();
+
+    $links = designSystemNavigationLinks((string) $this->get('/ar-test-navigation')->assertOk()->getContent());
+    $expected = array_map(fn (string $fragment): array => [($home === '' ? '' : url($home)).$fragment, null], ['#about', '#programmes', '#publications', '#verify', '#contact']);
+
+    expect(array_slice($links, 0, 5))->toBe($expected)
+        ->and(array_slice($links, -5))->toBe($expected);
+})->with(['home' => ['ar.public.home', ''], 'internal page' => ['ar.public.about', '/ar-test-home']]);
+
+it('does not mark home fragment links current for an internal Arabic route name', function (string $routeName) {
     // T18 registers the Arabic copy of each page under `ar.` plus the English name.
     // The navigation reads only the route's name, so the page the route renders does
     // not matter, and each name is requested through a route of its own.
@@ -818,15 +852,15 @@ it('keeps the current section marked when the route name carries the Arabic pref
         fn (array $link): bool => $link[1] !== null,
     ));
 
-    expect($marked)->toBe([[url($section), 'page'], [url($section), 'page']]);
+    expect($marked)->toBe([]);
 })->with([
-    'about' => ['ar.public.about', '/about'],
-    'contact' => ['ar.public.contact', '/contact'],
-    'the programme index' => ['ar.public.programmes.index', '/programmes'],
-    'a programme page' => ['ar.public.programmes.show', '/programmes'],
-    'the library' => ['ar.public.publications.index', '/publications'],
-    'an article' => ['ar.public.publications.show', '/publications'],
-    'a download' => ['ar.public.publications.download', '/publications'],
+    'about' => ['ar.public.about'],
+    'contact' => ['ar.public.contact'],
+    'the programme index' => ['ar.public.programmes.index'],
+    'a programme page' => ['ar.public.programmes.show'],
+    'the library' => ['ar.public.publications.index'],
+    'an article' => ['ar.public.publications.show'],
+    'a download' => ['ar.public.publications.download'],
 ]);
 
 it('marks no link for a route that is not one of the sections', function () {
@@ -926,12 +960,12 @@ it('gives the navigation row the design line height, and the footer portal link 
 });
 
 it('keeps the open Menu button navy, with its light text, while it is hovered', function () {
-    $summary = designSystemDocument((string) $this->get('/about')->assertOk()->getContent())->querySelector('header nav details summary');
+    $close = designSystemDocument((string) $this->get('/about')->assertOk()->getContent())->querySelector('header nav a[href="#public-navigation-closed"]');
 
     // The hover tint is 5% navy, which under the open state's cream text would be
     // 1.1:1. The open and hovered state is a colour of its own.
-    expect(explode(' ', $summary->getAttribute('class')))
-        ->toContain('group-open:bg-navy')->toContain('group-open:text-cream')->toContain('group-open:hover:bg-navy-hover');
+    expect(explode(' ', $close->getAttribute('class')))
+        ->toContain('bg-navy')->toContain('text-cream')->toContain('hover:bg-navy-hover');
 });
 
 it('never marks the verifier link, which is not a page of this layout', function () {
