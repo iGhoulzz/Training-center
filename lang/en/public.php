@@ -32,6 +32,7 @@ return [
     'nav' => [
         'label' => 'Main navigation',
         'menu' => 'Menu',
+        'close_menu' => 'Close menu',
         // The design's short label for the verifier in the navigation row. The
         // footer and the pages say "Verify a certificate" (links.verify_certificate).
         'verify' => 'Verify',

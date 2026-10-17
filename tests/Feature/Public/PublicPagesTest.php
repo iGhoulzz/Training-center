@@ -258,7 +258,10 @@ it('shows no directions link when the map url is not set or is not a web link', 
 it('links to home sections from the navigation and full pages from the footer', function () {
     $html = (string) $this->get('/')->assertOk()->getContent();
 
-    $nav = publicLinksWithin($html, '<nav aria-label=', '</nav>');
+    $nav = array_values(array_filter(
+        publicLinksWithin($html, '<nav id="public-navigation"', '</nav>'),
+        fn (string $href): bool => ! in_array($href, ['#public-navigation', '#public-navigation-closed'], true),
+    ));
     $footer = publicLinksWithin($html, '<footer', '</footer>');
 
     // The navigation is rendered twice from one list, narrow then wide, so each

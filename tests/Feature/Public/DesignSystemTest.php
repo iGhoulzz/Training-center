@@ -773,7 +773,7 @@ function designSystemNavigationLinks(string $html): array
 {
     $links = [];
 
-    foreach (designSystemDocument($html)->querySelectorAll('header nav a') as $link) {
+    foreach (designSystemDocument($html)->querySelectorAll('header nav ul a') as $link) {
         $links[] = [$link->getAttribute('href'), $link->hasAttribute('aria-current') ? $link->getAttribute('aria-current') : null];
     }
 
@@ -803,6 +803,25 @@ it('links both header menus to home fragments without claiming a current page', 
         }
     }
 })->with(['home', 'about', 'contact', 'programmes', 'programme', 'publications', 'article']);
+
+it('dismisses the mobile menu when one of its links is selected', function () {
+    $html = (string) $this->get('/')->assertOk()->getContent();
+    $document = designSystemDocument($html);
+    $nav = $document->querySelector('header nav#public-navigation');
+    $open = $document->querySelector('header nav a[href="#public-navigation"]');
+    $close = $document->querySelector('header nav a[href="#public-navigation-closed"]');
+    $menu = $document->querySelector('header nav ul#public-mobile-menu');
+
+    expect($nav)->not->toBeNull()
+        ->and($nav->getAttribute('tabindex'))->toBe('-1')
+        ->and($document->querySelector('header nav #public-navigation-closed')?->getAttribute('tabindex'))->toBe('-1')
+        ->and($open?->getAttribute('aria-controls'))->toBe('public-mobile-menu')
+        ->and($close?->getAttribute('aria-controls'))->toBe('public-mobile-menu')
+        ->and(explode(' ', $open?->getAttribute('class') ?? ''))->toContain('group-target/nav:hidden')
+        ->and(explode(' ', $close?->getAttribute('class') ?? ''))->toContain('group-target/nav:inline-flex')
+        ->and(explode(' ', $menu?->getAttribute('class') ?? ''))->toContain('hidden', 'group-target/nav:block')
+        ->and($html)->not->toContain('<script');
+});
 
 it('points the Arabic header to its localized home fragments', function (string $routeName, string $home) {
     Route::get('/ar-test-home', fn (): string => 'home')->name('ar.public.home');
@@ -941,12 +960,12 @@ it('gives the navigation row the design line height, and the footer portal link 
 });
 
 it('keeps the open Menu button navy, with its light text, while it is hovered', function () {
-    $summary = designSystemDocument((string) $this->get('/about')->assertOk()->getContent())->querySelector('header nav details summary');
+    $close = designSystemDocument((string) $this->get('/about')->assertOk()->getContent())->querySelector('header nav a[href="#public-navigation-closed"]');
 
     // The hover tint is 5% navy, which under the open state's cream text would be
     // 1.1:1. The open and hovered state is a colour of its own.
-    expect(explode(' ', $summary->getAttribute('class')))
-        ->toContain('group-open:bg-navy')->toContain('group-open:text-cream')->toContain('group-open:hover:bg-navy-hover');
+    expect(explode(' ', $close->getAttribute('class')))
+        ->toContain('bg-navy')->toContain('text-cream')->toContain('hover:bg-navy-hover');
 });
 
 it('never marks the verifier link, which is not a page of this layout', function () {
