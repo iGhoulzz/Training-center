@@ -11,6 +11,8 @@ return [
     'finance' => 'Finance',
     'reports' => 'Reports',
     'administration' => 'Administration',
+    'users_and_roles' => 'Users & roles',
+    'more' => 'More',
     'publications' => 'Publications',
     'password_change' => 'Change your password',
     'password_change_description' => 'Confirm your current password and choose a new password of at least :minimum characters.',

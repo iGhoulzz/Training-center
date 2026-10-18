@@ -13,6 +13,7 @@ use App\Domain\Finance\Exports\ReportExporter;
 use App\Domain\Finance\Exports\ReportKind;
 use App\Domain\Finance\Exports\ReportSnapshot;
 use App\Domain\Finance\Jobs\GenerateReportPdfJob;
+use App\Domain\Finance\Support\Money;
 use App\Models\User;
 use App\Support\CentreCalendar;
 use Closure;
@@ -30,6 +31,7 @@ use Filament\Panel;
 use Filament\Schemas\Schema;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Fluent;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Locked;
 
@@ -37,6 +39,7 @@ use Livewire\Attributes\Locked;
  * Shared filter, authorization, and queued-export shell for report pages.
  *
  * @property-read Schema $form
+ * @property-read ReportDataset $dataset
  */
 abstract class ReportPage extends Page
 {
@@ -120,6 +123,69 @@ abstract class ReportPage extends Page
     public function applyFilters(): void
     {
         $this->appliedFilters = $this->form->getState();
+    }
+
+    /** Keep the registered charts inside the report's chart-and-summary row. */
+    public function headerWidgets(Schema $schema): Schema
+    {
+        return $schema->components([])->hidden();
+    }
+
+    public function reportCharts(Schema $schema): Schema
+    {
+        return $schema->components($this->getWidgetsSchemaComponents($this->getHeaderWidgets()));
+    }
+
+    /** @return list<Fluent<string, mixed>> */
+    public function reportNavigation(): array
+    {
+        $pages = [
+            RevenueReportPage::class,
+            OutstandingAgedReportPage::class,
+            PaymentMethodReportPage::class,
+            DailyTenderReportPage::class,
+            WageCostReportPage::class,
+            ProfitReportPage::class,
+            StudentPaymentHistoryPage::class,
+        ];
+
+        return array_values(array_map(
+            static fn (string $page): Fluent => new Fluent([
+                'url' => $page::getUrl(),
+                'label' => $page::getNavigationLabel(),
+                'active' => $page === static::class,
+            ]),
+            array_filter($pages, static fn (string $page): bool => $page::canAccess()),
+        ));
+    }
+
+    public function periodTotal(): ?string
+    {
+        $column = match (static::kind()) {
+            ReportKind::Revenue => 'batch_total',
+            ReportKind::PaymentMethod, ReportKind::WageCost => 'total',
+            ReportKind::Profit => 'profit',
+            default => null,
+        };
+
+        if ($column === null) {
+            return null;
+        }
+
+        $total = Money::zero();
+
+        foreach ($this->dataset->rows as $row) {
+            $total = $total->add(Money::fromDecimal((string) $row['cells'][$column]));
+        }
+
+        return $total->toDecimal();
+    }
+
+    public function summaryDescription(): string
+    {
+        return static::kind() === ReportKind::Profit
+            ? (string) __('reports.profit_definition')
+            : (string) __(implode('.', ['reports', 'presentation', 'summaries', static::kind()->value]));
     }
 
     #[Computed]
@@ -222,7 +288,8 @@ abstract class ReportPage extends Page
     protected function getViewData(): array
     {
         return [
-            'dataset' => $this->dataset(),
+            'dataset' => $this->dataset,
+            'periodTotal' => $this->periodTotal(),
         ];
     }
 
@@ -232,6 +299,9 @@ abstract class ReportPage extends Page
         return [
             ExportAction::make('export_xlsx')
                 ->label(__('reports.actions.export_xlsx'))
+                ->icon('heroicon-o-arrow-down-tray')
+                ->color('success')
+                ->outlined()
                 ->exporter(static::exporter())
                 ->job(PrepareReportCsvExport::class)
                 ->formats([ExportFormat::Xlsx])
@@ -245,6 +315,9 @@ abstract class ReportPage extends Page
                 ->authorize(fn (): bool => $this->canExport()),
             Action::make('export_pdf')
                 ->label(__('reports.actions.export_pdf'))
+                ->icon('heroicon-o-arrow-down-tray')
+                ->color('danger')
+                ->outlined()
                 ->authorize(fn (): bool => $this->canExport())
                 ->action(function (): void {
                     $user = $this->requester();

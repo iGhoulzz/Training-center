@@ -14,9 +14,14 @@
     and cannot see through three levels of nested parentheses, so the inline form
     reads to it as a sentence.
 
-    Both fonts are self-hosted (vite.config.js), so no script and no third-party
-    origin is loaded by this layout. The title is the centre's full English name,
-    from config/public_site.php, unless a page gives its own.
+    Both fonts are self-hosted (vite.config.js), so no third-party origin is loaded
+    by this layout. The title is the centre's full English name, from
+    config/public_site.php, unless a page gives its own.
+
+    ONE SCRIPT, ON ONE PAGE. A page that sets the `seal_coin` section (the home
+    page) gets resources/js/public-seal.js, the hero seal's coin turn. It is a
+    same-origin module from the build, inside the same guard. Every other public
+    page loads no script at all.
 --}}
 @use('Illuminate\Support\Facades\Vite')
 
@@ -34,6 +39,9 @@
     @if ($stylesheetBuilt)
         {{ Vite::fonts(['instrument-serif', 'ibm-plex-sans-arabic']) }}
         @vite('resources/css/public.css')
+        @hasSection('seal_coin')
+            @vite('resources/js/public-seal.js')
+        @endif
     @endif
 </head>
 <body class="flex min-h-screen flex-col bg-cream font-sans text-ink antialiased">

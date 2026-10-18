@@ -120,7 +120,7 @@ it('puts the portal link in the header bar, as the last item of the narrow menu,
             ->and($inNavigation)->toHaveCount(1, "{$label}: the menu holds one portal link.");
 
         // The menu's is the LAST item of the list the menu opens.
-        $menuItems = $document->querySelectorAll('header nav details ul > li');
+        $menuItems = $document->querySelectorAll('header nav #public-mobile-menu > li');
         $last = $menuItems[count($menuItems) - 1];
 
         expect($last->querySelector('a')?->getAttribute('href'))->toBe($login, "{$label}: the portal link is not the menu's last item.");
@@ -150,7 +150,7 @@ it('hides the pill below 640px and the menu item from 640px, so the portal is re
         ->and(explode(' ', (string) $menuItem->parentNode->getAttribute('class')))->toContain('sm:hidden');
 
     // The menu itself is for narrow screens only, from 1024px up the links are a row.
-    expect(explode(' ', (string) $document->querySelector('header nav details')->getAttribute('class')))->toContain('lg:hidden');
+    expect(explode(' ', (string) $document->querySelector('header nav #public-mobile-menu')->parentNode->getAttribute('class')))->toContain('lg:hidden');
 });
 
 it('links each form to the student panel login route, which renders', function () {
