@@ -361,21 +361,22 @@ it('shows the message on the login page, and only when the redirect asked for it
         ->assertSee('Your account has been deactivated, so you have been signed out.');
 });
 
-it('does not tell somebody still signed in that they were deactivated', function () {
+it('does not tell somebody still signed in that they were deactivated', function (string $panel) {
     // The login page sends a signed-in visitor on to the panel. A crafted link
-    // must not carry the message there with them.
-    $admin = ($this->makeUser)('admin');
+    // must not carry the message there with them. Both panels, because each
+    // login page must ask its own panel's guard.
+    $scenario = openSessionScenario($panel, $this->makeUser);
 
-    $this->actingAs($admin)
-        ->get('/admin/login?reason=deactivated')
+    $this->actingAs($scenario['user'], $scenario['guard'])
+        ->get($scenario['login'])
         ->assertRedirect();
 
-    $this->get('/admin')
+    $this->get($scenario['page'])
         ->assertSuccessful()
         ->assertDontSee('Your account has been deactivated');
 
-    $this->assertAuthenticatedAs($admin, 'web');
-});
+    $this->assertAuthenticatedAs($scenario['user'], $scenario['guard']);
+})->with(['admin', 'portal']);
 
 it('keeps the message after the browser itself followed the livewire redirect', function () {
     // Livewire's client does not stop at the 302: fetch() follows it on its own,
