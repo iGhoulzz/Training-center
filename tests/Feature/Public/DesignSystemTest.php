@@ -606,8 +606,13 @@ it('takes every part of the brand from config, on every public page', function (
             ->and($home->querySelector('img')->getAttribute('src'))->toBe(url('/images/brand/sentinel-logo.png'));
 
         // Two Arabic strings and no more: the top bar's and the footer's. Each is
-        // marked as Arabic and right to left.
-        $arabic = $document->querySelectorAll('[lang="ar"]');
+        // marked as Arabic and right to left. The language switch's own link to the
+        // Arabic page is marked lang="ar" too (P4-T18a), and is not the centre's name,
+        // so it is left out of the count.
+        $arabic = array_values(array_filter(
+            iterator_to_array($document->querySelectorAll('[lang="ar"]')),
+            fn ($element): bool => $element->closest('[data-locale-switch]') === null,
+        ));
 
         expect(count($arabic))->toBe(2, "{$label}: expected the top bar's and the footer's Arabic name.");
 
@@ -833,7 +838,8 @@ it('dismisses the mobile menu when one of its links is selected', function () {
 });
 
 it('points the Arabic header to its localized home fragments', function (string $routeName, string $home) {
-    Route::get('/ar-test-home', fn (): string => 'home')->name('ar.public.home');
+    // The real `ar.public.home` (P4-T18a) is the localized home; only the page the
+    // navigation is rendered on is a throwaway, so it can be named as the test needs.
     Route::get('/ar-test-navigation', function (): string {
         app()->setLocale('ar');
 
@@ -846,18 +852,28 @@ it('points the Arabic header to its localized home fragments', function (string 
 
     expect(array_slice($links, 0, 5))->toBe($expected)
         ->and(array_slice($links, -5))->toBe($expected);
-})->with(['home' => ['ar.public.home', ''], 'internal page' => ['ar.public.about', '/ar-test-home']]);
+})->with(['home' => ['ar.public.home', ''], 'internal page' => ['ar.public.about', '/ar']]);
 
 it('does not mark home fragment links current for an internal Arabic route name', function (string $routeName) {
-    // T18 registers the Arabic copy of each page under `ar.` plus the English name.
+    // T18a registers the Arabic copy of each page under `ar.` plus the English name.
     // The navigation reads only the route's name, so the page the route renders does
     // not matter, and each name is requested through a route of its own.
-    $uri = '/ar-temporary/'.$routeName;
+    //
+    // A page that has parameters needs them in its throwaway URI as well: the page
+    // renders the language switch, which builds the same route in English from the
+    // parameters the request arrived with.
+    $parameters = [
+        'ar.public.programmes.show' => ['course' => '7'],
+        'ar.public.publications.show' => ['slug' => 'a-paper'],
+        'ar.public.publications.download' => ['slug' => 'a-paper'],
+    ][$routeName] ?? [];
+    $declared = '/ar-temporary/'.$routeName.implode('', array_map(fn (string $name): string => '/{'.$name.'}', array_keys($parameters)));
+    $requested = '/ar-temporary/'.$routeName.implode('', array_map(fn (string $value): string => '/'.$value, $parameters));
 
-    designSystemTemporaryRoute($uri, $routeName, 'public.about');
+    designSystemTemporaryRoute($declared, $routeName, 'public.about');
 
     $marked = array_values(array_filter(
-        designSystemNavigationLinks((string) $this->get($uri)->assertOk()->getContent()),
+        designSystemNavigationLinks((string) $this->get($requested)->assertOk()->getContent()),
         fn (array $link): bool => $link[1] !== null,
     ));
 

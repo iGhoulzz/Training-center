@@ -303,8 +303,13 @@ it('takes every part of the brand from config on every verifier page', function 
     expect($home->querySelector('.sr-only')?->textContent)->toBe('SENTINEL-FULL-NAME')
         ->and($home->querySelector('[aria-hidden="true"]')?->textContent)->toBe('SENTINEL-SHORT');
 
-    // The Arabic name is marked as Arabic and right to left, once.
-    $arabic = $document->querySelectorAll('header [lang="ar"]');
+    // The Arabic name is marked as Arabic and right to left, once. The language
+    // switch's link to the Arabic page is marked lang="ar" as well (P4-T18a) and is not
+    // the centre's name, so it is left out of the count.
+    $arabic = array_values(array_filter(
+        iterator_to_array($document->querySelectorAll('header [lang="ar"]')),
+        fn ($element): bool => $element->closest('[data-locale-switch]') === null,
+    ));
 
     expect(count($arabic))->toBe(1)
         ->and($arabic[0]->textContent)->toBe('SENTINEL-ARABIC')

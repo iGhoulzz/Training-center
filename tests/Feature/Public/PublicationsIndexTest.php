@@ -375,10 +375,15 @@ it('trims the search, cuts it at 100 characters and prints what it used', functi
     $trimmed = libraryBody($this->get('/publications?'.http_build_query(['q' => "   safety  \t"]))->assertOk());
     $capped = libraryBody($this->get('/publications?'.http_build_query(['q' => $long]))->assertOk());
 
+    // "Prints what it used" is the search box's value. It is read from the box and not
+    // from the whole page: the language switch and the head's alternate links carry the
+    // request's own query string as it was sent (P4-T18a), 150 characters and all.
+    $box = HTMLDocument::createFromString($capped, LIBXML_NOERROR)->querySelector('input[name="q"]');
+
     expect($trimmed)->toContain('name="q"')->toContain('value="safety"')
         ->and(libraryCardTitles($trimmed))->toBe(['Safety Guide'])
         ->and($capped)->toContain('value="'.str_repeat('x', 100).'"')
-        ->and(str_contains($capped, str_repeat('x', 101)))->toBeFalse();
+        ->and($box?->getAttribute('value'))->toBe(str_repeat('x', 100));
 });
 
 it('reads a search, topic or sort that is not text as no filter, and invalid UTF-8 as text', function (string $query) {
