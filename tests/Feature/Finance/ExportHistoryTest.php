@@ -238,7 +238,12 @@ it('refuses an inactive user who holds every permission', function (): void {
     $actor = ($this->owner)();
     $actor->update(['is_active' => false]);
 
-    $this->actingAs($actor->fresh())->get(ExportHistory::getUrl())->assertForbidden();
+    // Was a bare 403. Since P4-T33 LogOutInactiveUser signs an inactive account
+    // out and sends it to the login with the reason; the page is still never
+    // reached.
+    $this->actingAs($actor->fresh())->get(ExportHistory::getUrl())
+        ->assertRedirect(Filament::getPanel('admin')->getLoginUrl(['reason' => 'deactivated']));
+    $this->assertGuest('web');
 
     // The page's own rule, asked directly: the panel refuses an inactive account
     // before the page is reached, so the request above alone would not show it.
