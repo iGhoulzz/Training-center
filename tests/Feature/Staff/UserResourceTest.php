@@ -112,8 +112,15 @@ it('allows an admin to see the user list', function () {
 it('refuses a crafted super_admin submission from an admin', function () {
     // The role dropdown is not the control. This submits a value straight into
     // the component's state, exactly as a hand-written Livewire payload would.
-    // SyncUserRolesAction is what refuses it (guard 4: an admin holds no
-    // assign_role ability; guard 1: only a super admin may grant super_admin).
+    //
+    // Since P4-T33 the dropdown offers only the roles the actor may assign, and a
+    // Select validates its state against its options, so the form now refuses this
+    // value at validation, before SyncUserRolesAction is reached. It was the
+    // Action's refusal (a toast); it is a form error on the roles field now. The
+    // Action's own refusal (guard 4: an admin holds no assign_role ability; guard 1:
+    // only a super admin may grant super_admin) is still proven directly, without
+    // the form in front of it, by ActionBoundaryTest "forbids an admin from
+    // granting super_admin" and by AccountRulesTest for `student`.
     $admin = ($this->makeUser)('admin');
     $target = ($this->makeUser)('staff');
 
@@ -123,7 +130,7 @@ it('refuses a crafted super_admin submission from an admin', function () {
         ->test(EditUser::class, ['record' => $target->getKey()])
         ->fillForm(['roles' => ['super_admin']])
         ->call('save')
-        ->assertNotified(__('staff.save_refused_unauthorized'));
+        ->assertHasFormErrors(['roles.0']);
 
     expect($target->fresh()->roles()->pluck('name')->all())->toBe(['staff'])
         ->and($target->fresh()->isSuperAdmin())->toBeFalse()
@@ -150,7 +157,9 @@ it('refuses a crafted super_admin submission on the create page', function () {
             'roles' => ['super_admin'],
         ])
         ->call('create')
-        ->assertNotified(__('staff.save_refused_unauthorized'));
+        // A form error since P4-T33, not the Action's toast: the picker never offers
+        // super_admin to an admin and the Select validates against what it offers.
+        ->assertHasFormErrors(['roles.0']);
 
     expect(User::withTrashed()->where('email', 'smuggled@example.test')->exists())->toBeFalse()
         ->and(User::query()->role('super_admin')->count())->toBe(0);
@@ -159,23 +168,25 @@ it('refuses a crafted super_admin submission on the create page', function () {
 it('rolls the attribute changes back when the role change is refused', function () {
     // Without $hasDatabaseTransactions = true this is a partial save: the rename
     // commits and only the role change is refused.
-    $admin = ($this->makeUser)('admin');
-    $target = ($this->makeUser)('staff', ['name' => 'Original Name']);
+    //
+    // The refusal is guard 2 (nobody edits their own roles) on the admin's OWN
+    // record: a role the picker does offer, so the form passes and
+    // SyncUserRolesAction is what refuses. It was a super_admin submission on
+    // someone else's record until P4-T33, when the picker stopped offering
+    // super_admin and the form began to reject it before the Action.
+    $admin = ($this->makeUser)('admin', ['name' => 'Original Name']);
 
     Livewire::actingAs($admin)
-        ->test(EditUser::class, ['record' => $target->getKey()])
+        ->test(EditUser::class, ['record' => $admin->getKey()])
         ->fillForm([
             'name' => 'Renamed By Admin',
-            // super_admin, because admins may now assign lesser roles freely
-            // (P1-T05b). Guard 1 is what refuses this, and the refusal must
-            // take the rename with it.
-            'roles' => ['staff', 'super_admin'],
+            'roles' => ['admin', 'staff'],
         ])
         ->call('save')
         ->assertNotified(__('staff.save_refused_unauthorized'));
 
-    expect($target->fresh()->name)->toBe('Original Name')
-        ->and($target->fresh()->roles()->pluck('name')->all())->toBe(['staff']);
+    expect($admin->fresh()->name)->toBe('Original Name')
+        ->and($admin->fresh()->roles()->pluck('name')->all())->toBe(['admin']);
 });
 
 /*
@@ -188,17 +199,22 @@ it('refuses to deactivate the last active super admin through the UI', function 
     // The is_active toggle is dehydrated(false); DeactivateUserAction performs
     // the write and SuperAdminInvariantService refuses this one (guard 3, the
     // 422 business rule).
-    $superAdmin = ($this->makeUser)('super_admin');
+    //
+    // Reached through another account since P4-T33: nobody deactivates themself,
+    // so the actor is a super admin deactivated while their session stayed open,
+    // as the delete test below does for the same reason.
+    $lastActive = ($this->makeUser)('super_admin');
+    $deactivatedActor = ($this->makeUser)('super_admin', ['is_active' => false]);
 
     expect(User::query()->role('super_admin')->where('is_active', true)->count())->toBe(1);
 
-    Livewire::actingAs($superAdmin)
-        ->test(EditUser::class, ['record' => $superAdmin->getKey()])
+    Livewire::actingAs($deactivatedActor)
+        ->test(EditUser::class, ['record' => $lastActive->getKey()])
         ->fillForm(['is_active' => false])
         ->call('save')
         ->assertNotified(__('staff.save_refused_last_super_admin'));
 
-    expect($superAdmin->fresh()->is_active)->toBeTrue()
+    expect($lastActive->fresh()->is_active)->toBeTrue()
         ->and(User::query()->role('super_admin')->where('is_active', true)->count())->toBe(1);
 });
 

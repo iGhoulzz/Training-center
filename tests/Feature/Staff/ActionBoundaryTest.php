@@ -198,21 +198,29 @@ it('lets a super admin delete an ordinary account', function () {
 */
 
 it('refuses to deactivate the last active super admin (guard 3, 422 business rule)', function () {
-    // A super admin deactivating their own account when nobody else can manage
-    // roles is the one request-path route to zero super admins.
-    expect(fn () => $this->deactivate->execute($this->superAdmin, $this->superAdmin))
+    // Self-deactivation is refused outright since P4-T33, so the invariant is
+    // reached the one way left: a super admin whose account was deactivated while
+    // their session stayed open (two super admins deactivating each other at the
+    // same moment ends up here) acts on the single active super admin.
+    $staleSuperAdmin = User::factory()->create(['is_active' => false]);
+    $staleSuperAdmin->assignRole('super_admin');
+
+    expect(fn () => $this->deactivate->execute($staleSuperAdmin, $this->superAdmin))
         ->toThrow(LastSuperAdminException::class);
 
     expect($this->superAdmin->fresh()->is_active)->toBeTrue();
 });
 
 it('allows deactivating a super admin when another active one remains', function () {
+    // Was a super admin deactivating themself; nobody may do that since P4-T33, so
+    // the surviving super admin deactivates the other one.
     $second = User::factory()->create();
     $second->assignRole('super_admin');
 
-    $this->deactivate->execute($this->superAdmin, $this->superAdmin);
+    $this->deactivate->execute($this->superAdmin, $second);
 
-    expect($this->superAdmin->fresh()->is_active)->toBeFalse();
+    expect($second->fresh()->is_active)->toBeFalse()
+        ->and($this->superAdmin->fresh()->is_active)->toBeTrue();
 });
 
 /*

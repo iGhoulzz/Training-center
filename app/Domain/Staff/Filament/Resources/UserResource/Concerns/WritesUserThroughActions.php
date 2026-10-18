@@ -12,6 +12,7 @@ use App\Models\User;
 use Filament\Notifications\Notification;
 use Filament\Support\Exceptions\Halt;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Validation\ValidationException;
 
 /**
  * The save-hook half of UserResource's Action boundary, shared by CreateUser and
@@ -34,9 +35,16 @@ use Illuminate\Auth\Access\AuthorizationException;
  * tells Filament's catch block to roll the whole save back, so a rejected role or
  * activation change undoes the attribute write with it.
  *
- * Only the two domain refusals are caught — an authorization denial and the
- * last-super-admin business rule. Anything else propagates; a genuine fault must
- * not be dressed up as a polite notification.
+ * Only the three domain refusals are caught — an authorization denial, the
+ * last-super-admin business rule, and the no-self-deactivation rule (a
+ * ValidationException from DeactivateUserAction). Anything else propagates; a
+ * genuine fault must not be dressed up as a polite notification.
+ *
+ * The self-deactivation refusal belongs here for a reason beyond tidiness: the
+ * toggle is disabled on one's own record, but a forged Livewire payload can still
+ * set its state. Left uncaught, that ValidationException would reach Livewire as a
+ * validation error hanging off a control the person cannot use; caught here it is
+ * the same persistent toast and the same full rollback as every other refusal.
  */
 trait WritesUserThroughActions
 {
@@ -52,6 +60,8 @@ trait WritesUserThroughActions
             $this->refuseSave(__('staff.save_refused_unauthorized'));
         } catch (LastSuperAdminException) {
             $this->refuseSave(__('staff.save_refused_last_super_admin'));
+        } catch (ValidationException $refusal) {
+            $this->refuseSave(collect($refusal->errors())->flatten()->first() ?? $refusal->getMessage());
         }
     }
 

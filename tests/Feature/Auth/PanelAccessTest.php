@@ -25,7 +25,10 @@ it('denies a deactivated user', function () {
     $user = User::factory()->create(['is_active' => false]);
     $user->assignRole('admin');
 
-    $this->actingAs($user)->get('/admin')->assertForbidden();
+    // Was a bare 403. Since P4-T33 LogOutInactiveUser signs the account out and
+    // sends it to the login with the reason; the panel is still closed to it.
+    $this->actingAs($user)->get('/admin')->assertRedirect('/admin/login?reason=deactivated');
+    $this->assertGuest('web');
 });
 
 it('denies a student the admin panel', function () {
@@ -113,7 +116,9 @@ it('denies a deactivated student the portal', function () {
     $user = portalStudent();
     $user->update(['is_active' => false]);
 
-    $this->actingAs($user, 'student')->get('/portal/password-change')->assertForbidden();
+    // Was a bare 403; see the admin case above (P4-T33).
+    $this->actingAs($user, 'student')->get('/portal/password-change')->assertRedirect('/portal/login?reason=deactivated');
+    $this->assertGuest('student');
 });
 
 it('denies a student account with no linked student record', function () {

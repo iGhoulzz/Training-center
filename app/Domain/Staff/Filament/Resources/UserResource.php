@@ -49,11 +49,17 @@ use Illuminate\Auth\Access\AuthorizationException;
  *
  * FILTERING THE OPTIONS LIST IS NOT THE CONTROL
  * ---------------------------------------------
- * The role dropdown below offers every role, and `visible()` on the record
- * actions is a UX affordance only. A crafted Livewire payload can submit a role
- * the dropdown never rendered and can invoke a hidden action. Every one of these
- * paths therefore re-authorizes inside its Action on execute; that is the
- * boundary, and UserResourceTest drives the real component to prove it.
+ * The role dropdown offers only the roles the actor may assign (P4-T33: it used
+ * to offer every role and let the save refuse the ones the actor could not give),
+ * and `visible()` on the record actions is a UX affordance only. A crafted
+ * Livewire payload can submit a role the dropdown never rendered and can invoke a
+ * hidden action. Every one of these paths therefore re-authorizes inside its
+ * Action on execute; that is the boundary, and UserResourceTest drives the real
+ * component to prove it. The dropdown asks the SAME ability the Action does
+ * (UserPolicy::assignRole), so what it offers and what the save accepts cannot
+ * drift apart. A Select also validates its state against its options, so a role
+ * it did not offer is now turned back by the form itself before the Action is
+ * reached; that is an extra layer, not a replacement for the Action.
  *
  * WHY THERE IS NO EditAction ON THE TABLE
  * ---------------------------------------
@@ -117,10 +123,18 @@ class UserResource extends Resource
             // NOT model-bound: a direct is_active write skips DeactivateUserAction
             // and its last-super-admin invariant, and the architecture test fails
             // the build on it. The pages route the change through the Actions.
+            //
+            // Disabled on one's own record (P4-T33): nobody deactivates themself.
+            // Disabled is the UX half only - a forged payload can still set the
+            // state, and DeactivateUserAction is what refuses it.
             Toggle::make('is_active')
                 ->label(__('staff.is_active'))
                 ->dehydrated(false)
-                ->default(true),
+                ->default(true)
+                ->disabled(fn (?User $record): bool => self::isOwnRecord($record))
+                ->helperText(fn (?User $record): ?string => self::isOwnRecord($record)
+                    ? __('staff.is_active_own_account_hint')
+                    : null),
 
             // NOTE: no ->relationship('roles'). This field is display-only;
             // SyncUserRolesAction performs the write from the page's save hook.
@@ -134,13 +148,54 @@ class UserResource extends Resource
                 // to, silently created and needing a second edit to fix.
                 ->required()
                 ->minItems(1)
-                // Bounded by the four system-defined roles. Roles are not a
-                // user-generated catalogue and do not grow with account count.
-                ->options(fn (): array => Role::query()->pluck('name', 'name')->all())
+                ->options(fn (?User $record): array => self::assignableRoleOptions($record))
                 ->afterStateHydrated(fn (Select $component, ?User $record) => $component->state(
                     $record?->roles()->pluck('name')->all() ?? [],
                 )),
         ]);
+    }
+
+    /**
+     * Is this the account the signed-in person is using?
+     */
+    private static function isOwnRecord(?User $record): bool
+    {
+        return $record instanceof User && $record->is(auth()->user());
+    }
+
+    /**
+     * The roles the signed-in actor may put on an account, plus the ones the
+     * edited account already holds.
+     *
+     * Each role is asked of UserPolicy::assignRole - the ability SyncUserRolesAction
+     * authorizes - so the picker offers exactly what a save would accept: super_admin
+     * only to a super admin, nothing at all without assign_role, and never `student`
+     * (portal accounts are issued by IssuePortalCredentialAction).
+     *
+     * THE HELD ROLES STAY LISTED. A portal account is an ordinary user row that
+     * holds `student`, and the Users list shows it. The form's own state for that
+     * account contains `student`; a Select validates its state against its options,
+     * so leaving it out would reject every edit of the account, including a rename
+     * that touches no role. Listing a role already held offers nothing new: a save
+     * that leaves the set alone is a no-op in SyncUserRolesAction.
+     *
+     * Bounded by the system-defined roles. Roles are not a user-generated
+     * catalogue and do not grow with account count.
+     *
+     * @return array<string, string>
+     */
+    private static function assignableRoleOptions(?User $record): array
+    {
+        $actor = auth()->user();
+        $held = $record?->roles()->pluck('name')->all() ?? [];
+
+        return Role::query()
+            ->orderBy('name')
+            ->get()
+            ->filter(fn (Role $role): bool => in_array($role->name, $held, true)
+                || ($actor?->can('assignRole', [User::class, $role]) ?? false))
+            ->pluck('name', 'name')
+            ->all();
     }
 
     public static function table(Table $table): Table

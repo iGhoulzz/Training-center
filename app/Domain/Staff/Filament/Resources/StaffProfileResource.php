@@ -251,11 +251,23 @@ class StaffProfileResource extends Resource
         ]);
     }
 
-    /** @return array<int, string> */
+    /**
+     * Accounts that can still be given an employment profile.
+     *
+     * An account with a profile is left out, because `staff_profiles.user_id` is
+     * unique and the form would only refuse it after the person had chosen it
+     * (P4-T33). The same shape as InstructorsRelationManager::searchEligibleInstructors:
+     * offer what the save will accept. This list is for CREATING a profile; the
+     * edit form's user field is disabled and labels its own account through
+     * userOptionLabel(), so excluding the profile's owner here does not hide them.
+     *
+     * @return array<int, string>
+     */
     public static function searchUsers(string $search): array
     {
         return User::query()
             ->select(['id', 'name'])
+            ->whereNotIn('users.id', StaffProfile::query()->select('user_id'))
             ->where('name', 'like', "%{$search}%")
             ->orderBy('name')
             ->limit(25)

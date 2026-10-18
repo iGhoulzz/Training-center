@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Domain\Enrollment\Filament\Resources\StudentResource\Pages;
 
 use App\Domain\Enrollment\Filament\Resources\StudentResource;
+use App\Domain\Enrollment\Models\Student;
 use Filament\Actions\DeleteAction;
 use Filament\Resources\Pages\EditRecord;
 
@@ -61,6 +62,10 @@ class EditStudent extends EditRecord
         return [
             DeleteAction::make()
                 ->authorize('delete')
+                // DeleteStudentAction refuses a student with an active enrolment or an
+                // outstanding balance (P4-T33). A refusal returns false, so neither the
+                // success toast nor this redirect fires and the page stays open.
+                ->using(fn (Student $record): bool => StudentResource::deleteThroughAction($record))
                 ->successRedirectUrl(fn (): string => StudentResource::getUrl('index')),
         ];
     }
