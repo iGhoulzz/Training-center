@@ -2,7 +2,12 @@
 
 declare(strict_types=1);
 
+use App\Domain\Enrollment\Filament\Resources\BatchResource\Pages\ViewBatch;
+use App\Domain\Enrollment\Filament\Resources\BatchResource\RelationManagers\EnrollmentsRelationManager;
+use App\Domain\Enrollment\Filament\Resources\StudentCertificateResource\Pages\ListStudentCertificates;
 use App\Domain\Enrollment\Filament\Resources\StudentCertificateResource\Pages\ViewStudentCertificate;
+use App\Domain\Enrollment\Models\Batch;
+use App\Domain\Enrollment\Models\Enrollment;
 use App\Domain\Enrollment\Models\StudentCertificate;
 use App\Domain\Finance\Actions\RecordPaymentAction;
 use App\Domain\Finance\Data\RecordPaymentData;
@@ -302,6 +307,43 @@ it('lists an article\'s publication time on the Tripoli calendar', function (): 
         ->test(ListArticles::class)
         ->assertTableColumnFormattedStateSet('published_at', 'Apr 1, 2026 00:30:00', $article)
         ->assertTableColumnFormattedStateNotSet('published_at', 'Mar 31, 2026 22:30:00', $article);
+});
+
+/*
+|--------------------------------------------------------------------------
+| A date-only column on a TIMESTAMP names the centre's zone itself
+|--------------------------------------------------------------------------
+|
+| `->date()` reads its zone through `getTimezone()`, which answers Filament's
+| display zone only for a column that called `dateTime()` / `isoDateTime()` /
+| `since()`; a plain `->date()` falls back to `config('app.timezone')`. That is
+| right for a DATE column (a due date is a calendar day, not an instant) and WRONG
+| for a TIMESTAMP column, which prints the UTC day: an enrolment stamped 22:30 UTC
+| on the 31st reads as the 31st to a centre that is already on the 1st.
+|
+| So those two columns carry `timezone: CentreCalendar::TIMEZONE` themselves,
+| exactly as CertificateIssuanceQueue's issue date already does.
+*/
+
+it('shows the batch enrolments tab on the Tripoli DATE of the enrolment', function (): void {
+    $batch = Batch::factory()->create();
+    $enrollment = Enrollment::factory()->for($batch)->create(['enrolled_at' => '2026-03-31 22:30:00']);
+    $actor = ($this->actorWith)('view_batch', 'view_any_batch', 'view_any_enrollment');
+
+    Livewire::actingAs($actor)
+        ->test(EnrollmentsRelationManager::class, ['ownerRecord' => $batch, 'pageClass' => ViewBatch::class])
+        ->assertTableColumnFormattedStateSet('enrolled_at', 'Apr 1, 2026', $enrollment)
+        ->assertTableColumnFormattedStateNotSet('enrolled_at', 'Mar 31, 2026', $enrollment);
+});
+
+it('lists a certificate\'s issue date on the Tripoli DATE', function (): void {
+    $certificate = StudentCertificate::factory()->create(['issued_at' => '2026-03-31 22:30:00']);
+    $actor = ($this->actorWith)('view_any_student_certificate');
+
+    Livewire::actingAs($actor)
+        ->test(ListStudentCertificates::class)
+        ->assertTableColumnFormattedStateSet('issued_at', 'Apr 1, 2026', $certificate)
+        ->assertTableColumnFormattedStateNotSet('issued_at', 'Mar 31, 2026', $certificate);
 });
 
 /*
