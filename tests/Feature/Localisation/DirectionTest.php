@@ -215,6 +215,28 @@ it('draws a programme\'s start date and an article\'s date with the language\'s 
         ->and($arabic)->not->toContain('Nov 2026')->not->toContain('Mar 2026');
 });
 
+it('lets each language own the separator and the order of the article\'s download line', function () {
+    // Sentinels in both languages, with the three parts in different orders and different
+    // separators: a view that joined the parts itself would print one order for both.
+    foreach (['en', 'ar'] as $locale) {
+        app('translator')->load('*', 'public', $locale);
+        app('translator')->load('*', 'publications', $locale);
+    }
+
+    app('translator')->addLines(['public.article.download_line' => ':note ## :uploader ## :downloads'], 'en');
+    app('translator')->addLines(['public.article.download_line' => ':uploader @@ :downloads @@ :note'], 'ar');
+    app('translator')->addLines(['publications.public.downloads_note' => 'NOTE-PART', 'publications.public.uploaded_by' => 'UPLOADER-PART', 'publications.public.downloads' => 'COUNT-PART|COUNT-PART'], 'en');
+    app('translator')->addLines(['publications.public.downloads_note' => 'NOTE-PART', 'publications.public.uploaded_by' => 'UPLOADER-PART', 'publications.public.downloads' => 'COUNT-PART|COUNT-PART|COUNT-PART|COUNT-PART|COUNT-PART|COUNT-PART'], 'ar');
+
+    Article::factory()->published()->create(['slug' => 'composite-line', 'download_count' => 4]);
+
+    $english = directionDocument($this->get('/publications/composite-line')->assertOk())->querySelector('main p.text-caption');
+    $arabic = directionDocument($this->get('/ar/publications/composite-line')->assertOk())->querySelector('main p.text-caption');
+
+    expect($english?->textContent)->toBe('NOTE-PART ## UPLOADER-PART ## COUNT-PART')
+        ->and($arabic?->textContent)->toBe('UPLOADER-PART @@ COUNT-PART @@ NOTE-PART');
+});
+
 /*
 |--------------------------------------------------------------------------
 | The CSS that makes Arabic Arabic
