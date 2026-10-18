@@ -1323,6 +1323,36 @@ it('lets an enroller without create_student enrol an existing student but not cr
     );
 });
 
+it('keeps the quick-create modal inside its Livewire root and selects the created student', function () {
+    $page = Livewire::actingAs($this->staff)->test(EnrollAndCollect::class);
+    $initial = $page->html();
+    $dom = new DOMDocument;
+    @$dom->loadHTML($initial);
+    $xpath = new DOMXPath($dom);
+    $root = $xpath->query('//*[@*[name()="wire:id" and .="'.$page->id().'"]]')->item(0);
+
+    // Filament searches only inside this root when applying action-modal partials.
+    expect($root)->toBeInstanceOf(DOMElement::class);
+    expect($xpath->query('.//*[@*[name()="wire:partial" and .="action-modals"]]', $root)->length)->toBe(1);
+
+    $button = $xpath->query('//button[contains(., "'.__('collect.new_student').'")]')->item(0);
+    $handler = $button->getAttribute('wire:click');
+    preg_match("/mountAction\\('([^']+)',.*JSON\\.parse\\('([^']+)'\\)\\)/", $handler, $matches);
+    $context = json_decode(json_decode('"'.$matches[2].'"', flags: JSON_THROW_ON_ERROR), true, flags: JSON_THROW_ON_ERROR);
+    $page->call('mountAction', $matches[1], [], $context)
+        ->assertSet('mountedActions.0.name', 'createOption');
+    expect($page->getMountedActionModalHtml())->toContain('first_name');
+
+    $page->fillForm(['first_name' => 'Modal', 'last_name' => 'Walkin'], 'mountedActionSchema0')
+        ->callMountedAction()
+        ->assertHasNoFormErrors()
+        ->assertSet('flowStep', 1);
+
+    $created = Student::query()->where('first_name', 'Modal')->where('last_name', 'Walkin')->sole();
+    expect((string) $page->get('data.student_id'))->toBe((string) $created->getKey())
+        ->and($created->student_code)->not->toBeEmpty();
+});
+
 it('offers the quick-create form to an actor who does hold create_student', function () {
     /*
      * The positive control for the assertion above. Without it, a

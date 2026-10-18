@@ -361,7 +361,7 @@ class EnrollAndCollect extends Page
         return Group::make()
             ->schema([
                 Select::make('student_id')
-                    ->view('filament.finance.enroll-and-collect', ['picker' => 'student'])
+                    ->view('filament.finance.enroll-and-collect-picker', ['picker' => 'student'])
                     ->label(__('collect.student'))
                     ->required()
                     ->live()
@@ -429,7 +429,7 @@ class EnrollAndCollect extends Page
         return Group::make()
             ->schema([
                 Select::make('batch_id')
-                    ->view('filament.finance.enroll-and-collect', ['picker' => 'batch'])
+                    ->view('filament.finance.enroll-and-collect-picker', ['picker' => 'batch'])
                     ->label(__('collect.batch'))
                     ->required()
                     ->live()
@@ -488,7 +488,7 @@ class EnrollAndCollect extends Page
             ->visible(fn (): bool => auth()->user()?->can('apply_discount') ?? false)
             ->schema([
                 Select::make('discount_id')
-                    ->view('filament.finance.enroll-and-collect', ['picker' => 'discount'])
+                    ->view('filament.finance.enroll-and-collect-picker', ['picker' => 'discount'])
                     ->label(__('collect.discount'))
                     ->options(fn (): array => self::searchDiscounts($this->discountSearch))
                     ->searchable()
