@@ -1521,9 +1521,9 @@ physical CSS property is introduced · `composer verify` green.
 restyle, so its Arabic does not wait for T16d–T16e:
 
 - **T17a** — the public site's three catalogues, now (below).
-- **T18a** — the `/ar` public site and verifier: T18's public, verifier and
-  logical-properties parts. Its section is written when T17a's Arabic has been
-  reviewed.
+- **T18a** — the `/ar` public site and verifier, and the language switch: T18's
+  public, verifier and logical-properties parts (below). The owner reads Arabic and
+  reviews T17a's wording on T18a's pages before T18a merges.
 - **T17 and T18** — every other catalogue and surface (both login pages, every
   panel screen, the activity field names), after T16e as before. Their sections
   below stand, less what T17a and T18a have already done.
@@ -1570,6 +1570,95 @@ PR says so, and T18a does not merge before that review.
   - The verifier's uniform miss stays byte-identical across its four entry
     shapes in Arabic too.
 - `composer verify` green.
+
+### Task 18a — The Arabic public site, its direction, and the language switch
+**Owner: Claude · `p4/t18a-public-rtl` · depends on T17a (stacked on it until it merges)**
+
+T18's public half, brought forward with the public Arabic. Everything T18 says
+about the public site and the verifier applies here unchanged, including:
+- the URL-carried locale;
+- the distinct `ar.*` route names;
+- one limiter budget across both prefixes;
+- every link and redirect through `PublicRoute`;
+- byte-identical misses;
+- the logical-properties scan.
+
+T18 keeps the login pages, the guest-locale middleware, the panels' direction and
+the locale-carrying portal link.
+
+**The language switch (owner, 2026-10-18).** One Blade component, used on the
+public site and in the admin.
+- **The design draws no switch.** So it is built from the design's own tokens.
+- **Its look** is a two-segment toggle, `EN | ع`, in the top bar, with a sliding
+  thumb on the current language. Hovering nudges the thumb toward the other
+  side.
+- **Its motion, with no script.** Switching language is a navigation, so the slide
+  is a CSS cross-document view transition:
+  - `@view-transition { navigation: auto; }` in `public.css`;
+  - the thumb carries a `view-transition-name`, so the browser slides it from one
+    side to the other as the page and its direction change;
+  - with reduced motion there is no animation;
+  - where the browser lacks view transitions it simply navigates.
+- **On the public site and the verifier it is a link,** not a button: the same
+  page in the other language. On a verifier miss it is the other-language form,
+  never the submitted path, so the miss stays byte-identical. It carries
+  `hreflang` and `lang`, and an accessible name in the target language.
+- **The head of every public page** lists both languages as
+  `<link rel="alternate" hreflang>`.
+- **In the admin** it changes the signed-in user's own `users.locale`.
+  - The write goes through a new Action, as every write here does.
+  - It is built and tested now, but **hidden until the admin has its Arabic and
+    its direction** (T17 and T18). A config flag, off by default, turns it on.
+
+**File scope**
+- `routes/web.php` — the `/ar` public group (`ar.public.*`, the same middleware) and
+  `/ar/verify/…` routes inside the existing verifier group (`ar.verify.certificates.*`);
+  the admin locale route (seam, last)
+- `app/Http/Middleware/SetPublicLocale.php` — new: sets the locale from the route
+  and touches no session
+- `app/Support/PublicRoute.php` — a counterpart helper: the current page's URL in
+  another locale (seam, after T11)
+- `app/Http/Controllers/VerifyCertificateController.php` — `submit()`'s redirect
+  through `PublicRoute` (seam)
+- `resources/views/layouts/public.blade.php`, `resources/views/public/**`,
+  `resources/views/components/public/*`, `resources/views/verify/*` — `lang` and
+  `dir` from the locale, Arabic dates, the Arabic brand on the Arabic home page,
+  the switch, and `PublicRoute` for every link (seam, last)
+- `resources/views/components/locale-switch.blade.php` — new, shared
+- `resources/css/public.css` — the switch, the view transition, and RTL fixes (seam, last)
+- `app/Domain/Staff/Actions/UpdateOwnLocaleAction.php` — new; the controller
+  that calls it; and the admin render hook behind its flag in
+  `AdminPanelProvider.php` (seam, last)
+- `lang/en/public.php` and `lang/ar/public.php`, `verify.php` — the switch's
+  strings and any key a view needs, in both languages; parity stays exact
+- `config/public_site.php` or a new config key — the admin switch's flag
+- Tests:
+  - `tests/Feature/Localisation/` — `PublicLocaleTest`, `VerifierLocaleTest`,
+    `DirectionTest` (public and verifier), `LogicalPropertiesTest`,
+    `LocaleSwitchTest`;
+  - `PublicArabicRenderTest` moves onto the real `ar.*` routes.
+
+**Done when**
+- **Every public page and all three verifier pages render in both languages,**
+  with `lang` and `dir` correct:
+  - `/ar/...` is Arabic and the unprefixed path English, with no session;
+  - every `PublicRoute` link stays in its language.
+- **The Arabic and English verifier journeys each stay in their language** through
+  the form, submit, result and "verify another".
+  - Both prefixes' misses are byte-identical within each language.
+  - Both prefixes share one limiter budget, and the test fails if they don't.
+  - Both prefixes carry identical middleware lists, compared from the routes.
+- **The switch on every public page** links to that page's counterpart, query
+  string included. On a miss it links to the other-language form.
+- **The admin switch:**
+  - it is absent while the flag is off;
+  - when on, it changes only the signed-in user's own locale, to a supported
+    value, through the Action, with CSRF;
+  - a guest cannot use it.
+- **The logical-properties scan** passes, and a planted `margin-left` fails it.
+- **No new script on any public page;** the seal's stays the only one.
+- `composer verify` green.
+- The owner has reviewed the Arabic.
 
 ### Task 17 — The Arabic catalogues
 **Owner: Claude · `p4/t17-arabic-catalogues` · depends on T16b–T16e (and T17a)**
