@@ -9,6 +9,7 @@ use App\Domain\Enrollment\Enums\CertificateStatus;
 use App\Domain\Enrollment\Models\StudentCertificate;
 use App\Domain\Enrollment\Support\CertificateReference;
 use App\Support\CentreCalendar;
+use App\Support\PublicRoute;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -65,7 +66,9 @@ final class VerifyCertificateController extends Controller
             return $this->notFound();
         }
 
-        return redirect()->route('verify.certificates.show', ['reference' => $reference]);
+        // Through PublicRoute, so a reference looked up on the Arabic form lands on
+        // the Arabic result page and not the English one (P4-T18a).
+        return redirect(PublicRoute::url('verify.certificates.show', ['reference' => $reference]));
     }
 
     public function show(string $reference): Response
