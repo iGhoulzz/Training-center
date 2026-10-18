@@ -499,3 +499,22 @@ it('refuses a link from an actor who may not view that bill, and hides the butto
     Livewire::actingAs($this->collector)->test(ListCharges::class)
         ->assertActionVisible(($this->collectPaymentAction)($charge));
 });
+
+it('answers an actor without create_payment with a 403 even when the rewritten bill could not be collected anyway', function () {
+    // finalize() authorizes before it checks the bill. Checking the bill first would
+    // tell this actor whether a bill still awaits its first payment.
+    $partPaid = Charge::factory()->create(['list_price' => '100.000']);
+    ($this->payTowards)($partPaid, '30.000');
+    $withoutPayment = ($this->actor)(array_values(array_diff($this->collectorPermissions, ['create_payment'])));
+
+    Livewire::actingAs($withoutPayment)
+        ->test(EnrollAndCollect::class)
+        ->set('collectionChargeId', $partPaid->getKey())
+        ->set('collectionIdempotencyKey', (string) str()->uuid())
+        ->fillForm(['amount' => '10.000', 'tenders' => [['method' => 'cash', 'amount' => '10.000', 'external_reference' => null]]], 'collectForm')
+        ->call('finalize')
+        ->assertForbidden();
+
+    expect(PaymentAllocation::query()->where('charge_id', $partPaid->getKey())->count())->toBe(1)
+        ->and(Payment::query()->count())->toBe(1);
+});
