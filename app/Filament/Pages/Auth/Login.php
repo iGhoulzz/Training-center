@@ -6,6 +6,7 @@ namespace App\Filament\Pages\Auth;
 
 use App\Http\Middleware\LogOutInactiveUser;
 use Filament\Auth\Pages\Login as FilamentLogin;
+use Filament\Facades\Filament;
 use Filament\Notifications\Notification;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Validation\ValidationException;
@@ -61,7 +62,12 @@ class Login extends FilamentLogin
     {
         parent::mount();
 
-        if (request()->query(LogOutInactiveUser::REASON_QUERY) === LogOutInactiveUser::REASON_DEACTIVATED) {
+        // Only for somebody signed out. parent::mount() sends a signed-in visitor on
+        // to the panel, and the toast would travel with them: an active admin who
+        // followed a crafted link would be told, on their own dashboard, that they
+        // had been deactivated.
+        if (request()->query(LogOutInactiveUser::REASON_QUERY) === LogOutInactiveUser::REASON_DEACTIVATED
+            && ! Filament::auth()->check()) {
             Notification::make()
                 ->title(__('auth.session_ended_inactive'))
                 ->danger()

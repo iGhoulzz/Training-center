@@ -7,6 +7,7 @@ use App\Domain\Staff\Actions\DeactivateUserAction;
 use App\Domain\Staff\Actions\SyncUserRolesAction;
 use App\Domain\Staff\Actions\SystemRoleWriter;
 use App\Domain\Staff\Exceptions\LastSuperAdminException;
+use App\Domain\Staff\Exceptions\SelfDeactivationException;
 use App\Domain\Staff\Filament\Resources\StaffProfileResource\Pages\CreateStaffProfile;
 use App\Domain\Staff\Filament\Resources\StaffProfileResource\Pages\EditStaffProfile;
 use App\Domain\Staff\Filament\Resources\UserResource\Pages\CreateUser;
@@ -23,7 +24,6 @@ use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Route;
-use Illuminate\Validation\ValidationException;
 use Livewire\Livewire;
 use Livewire\Mechanisms\HandleRequests\HandleRequests;
 
@@ -79,10 +79,10 @@ it('refuses an actor deactivating their own account, with the rule\'s message', 
         $this->deactivate->execute($actor, $actor);
 
         $this->fail('Deactivating your own account was not refused.');
-    } catch (ValidationException $refusal) {
-        expect($refusal->errors())->toBe(['is_active' => [
-            'You cannot deactivate your own account. Ask another administrator to do it.',
-        ]]);
+    } catch (SelfDeactivationException $refusal) {
+        expect($refusal->getMessage())
+            ->toBe('You cannot deactivate your own account. Ask another administrator to do it.')
+            ->and($refusal->userId)->toBe($actor->getKey());
     }
 
     expect($actor->fresh()->is_active)->toBeTrue();
@@ -359,6 +359,22 @@ it('shows the message on the login page, and only when the redirect asked for it
     $this->get('/portal/login?reason=deactivated')
         ->assertSuccessful()
         ->assertSee('Your account has been deactivated, so you have been signed out.');
+});
+
+it('does not tell somebody still signed in that they were deactivated', function () {
+    // The login page sends a signed-in visitor on to the panel. A crafted link
+    // must not carry the message there with them.
+    $admin = ($this->makeUser)('admin');
+
+    $this->actingAs($admin)
+        ->get('/admin/login?reason=deactivated')
+        ->assertRedirect();
+
+    $this->get('/admin')
+        ->assertSuccessful()
+        ->assertDontSee('Your account has been deactivated');
+
+    $this->assertAuthenticatedAs($admin, 'web');
 });
 
 it('keeps the message after the browser itself followed the livewire redirect', function () {

@@ -7,6 +7,7 @@ namespace App\Domain\Enrollment\Filament\Resources;
 use App\Domain\Enrollment\Actions\DeleteStudentAction;
 use App\Domain\Enrollment\Enums\EnrollmentStatus;
 use App\Domain\Enrollment\Enums\StudentStatus;
+use App\Domain\Enrollment\Exceptions\StudentNotDeletableException;
 use App\Domain\Enrollment\Filament\Resources\StudentResource\Pages\CreateStudent;
 use App\Domain\Enrollment\Filament\Resources\StudentResource\Pages\EditStudent;
 use App\Domain\Enrollment\Filament\Resources\StudentResource\Pages\ListStudents;
@@ -46,7 +47,6 @@ use Filament\Tables\Filters\Filter;
 use Filament\Tables\Table;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Validation\ValidationException;
 
 /**
  * The student register (P1-T07).
@@ -336,9 +336,9 @@ class StudentResource extends Resource
 
         try {
             app(DeleteStudentAction::class)->execute($actor, $record);
-        } catch (ValidationException $refusal) {
+        } catch (StudentNotDeletableException $refusal) {
             Notification::make()
-                ->title(collect($refusal->errors())->flatten()->first() ?? $refusal->getMessage())
+                ->title($refusal->getMessage())
                 ->danger()
                 ->persistent()
                 ->send();

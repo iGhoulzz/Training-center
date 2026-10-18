@@ -5,19 +5,19 @@ declare(strict_types=1);
 namespace App\Domain\Enrollment\Actions;
 
 use App\Domain\Enrollment\Enums\EnrollmentStatus;
+use App\Domain\Enrollment\Exceptions\StudentNotDeletableException;
 use App\Domain\Enrollment\Models\Student;
 use App\Domain\Finance\Services\StudentBalanceQuery;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
-use Illuminate\Validation\ValidationException;
 
 /**
  * Delete (soft-delete) a student, refusing while the student still matters to the
  * centre's books (QA Q2, owner decision of 2026-10-17: "refuse while owing").
  *
- * Two refusals, each a ValidationException carrying the rule's own sentence so
- * the caller can show it as it stands:
+ * Two refusals, each a StudentNotDeletableException carrying the rule's own
+ * sentence so the caller can show it as it stands:
  *
  *   - an ACTIVE enrolment: the student is, as far as the register goes, studying
  *     here. Withdraw or complete it first.
@@ -49,7 +49,7 @@ final class DeleteStudentAction
     public function __construct(private readonly StudentBalanceQuery $balances) {}
 
     /**
-     * @throws ValidationException if the student has an active enrolment or owes money.
+     * @throws StudentNotDeletableException if the student has an active enrolment or owes money.
      */
     public function execute(User $actor, Student $student): void
     {
@@ -64,15 +64,11 @@ final class DeleteStudentAction
             }
 
             if ($held->enrollments()->where('status', EnrollmentStatus::Active)->exists()) {
-                throw ValidationException::withMessages([
-                    'student' => __('enrollment.student_delete_has_active_enrollment'),
-                ]);
+                throw StudentNotDeletableException::hasActiveEnrollment((int) $held->getKey());
             }
 
             if ($this->balances->forStudent((int) $held->getKey())->total->isPositive()) {
-                throw ValidationException::withMessages([
-                    'student' => __('enrollment.student_delete_owes_balance'),
-                ]);
+                throw StudentNotDeletableException::owesBalance((int) $held->getKey());
             }
 
             $held->delete();

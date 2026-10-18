@@ -4,12 +4,12 @@ declare(strict_types=1);
 
 namespace App\Domain\Staff\Actions;
 
+use App\Domain\Staff\Exceptions\SelfDeactivationException;
 use App\Domain\Staff\Services\SuperAdminInvariantService;
 use App\Models\Role;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
-use Illuminate\Validation\ValidationException;
 
 /**
  * Deactivates a staff account (sets is_active = false).
@@ -21,8 +21,8 @@ use Illuminate\Validation\ValidationException;
  * refused atomically (guard 3, 422).
  *
  * Nobody deactivates their own account (P4-T33, owner decision of 2026-10-17):
- * the actor being the target is refused with a ValidationException, the same 422
- * shape as the last-super-admin refusal. The invariant only catches the case
+ * the actor being the target is refused with SelfDeactivationException, a typed
+ * refusal like the last-super-admin one. The invariant only catches the case
  * where nobody else is left, so without this rule a sole administrator could
  * still lock themselves out of a working install while a second one exists.
  */
@@ -58,9 +58,7 @@ final class DeactivateUserAction
             // and before the invariant: the invariant is about the population,
             // this is about who is asking.
             if ($actor->is($lockedUser)) {
-                throw ValidationException::withMessages([
-                    'is_active' => __('staff.cannot_deactivate_self'),
-                ]);
+                throw new SelfDeactivationException((int) $lockedUser->getKey());
             }
 
             // The idempotent no-op is decided under the lock too. Read from the

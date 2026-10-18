@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Domain\Enrollment\Actions\DeleteStudentAction;
 use App\Domain\Enrollment\Enums\EnrollmentStatus;
+use App\Domain\Enrollment\Exceptions\StudentNotDeletableException;
 use App\Domain\Enrollment\Filament\Resources\StudentResource\Pages\EditStudent;
 use App\Domain\Enrollment\Filament\Resources\StudentResource\Pages\ListStudents;
 use App\Domain\Enrollment\Models\Enrollment;
@@ -16,7 +17,6 @@ use Database\Seeders\RolePermissionSeeder;
 use Filament\Notifications\Notification;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Validation\ValidationException;
 use Livewire\Livewire;
 use Spatie\Activitylog\Models\Activity;
 
@@ -94,8 +94,9 @@ it('refuses to delete a student with an active enrolment, and writes nothing', f
         $this->delete->execute($this->remover, $student);
 
         $this->fail('Deleting a student with an active enrolment was not refused.');
-    } catch (ValidationException $refusal) {
-        expect($refusal->errors())->toBe(['student' => [ACTIVE_ENROLMENT_REFUSAL]]);
+    } catch (StudentNotDeletableException $refusal) {
+        expect($refusal->getMessage())->toBe(ACTIVE_ENROLMENT_REFUSAL)
+            ->and($refusal->studentId)->toBe($student->getKey());
     }
 
     expect($student->fresh()->trashed())->toBeFalse()
@@ -111,8 +112,9 @@ it('refuses to delete a student who owes money, even with no enrolment still act
         $this->delete->execute($this->remover, $student);
 
         $this->fail('Deleting a student who owes 600.000 was not refused.');
-    } catch (ValidationException $refusal) {
-        expect($refusal->errors())->toBe(['student' => [OWES_REFUSAL]]);
+    } catch (StudentNotDeletableException $refusal) {
+        expect($refusal->getMessage())->toBe(OWES_REFUSAL)
+            ->and($refusal->studentId)->toBe($student->getKey());
     }
 
     expect($student->fresh()->trashed())->toBeFalse()
@@ -124,7 +126,24 @@ it('refuses a student who owes a single thousandth of a dinar', function () {
     // would let this one through.
     $student = ($this->studentWith)(EnrollmentStatus::Withdrawn, '1000.000', '999.999');
 
-    expect(fn () => $this->delete->execute($this->remover, $student))->toThrow(ValidationException::class);
+    expect(fn () => $this->delete->execute($this->remover, $student))->toThrow(StudentNotDeletableException::class, OWES_REFUSAL);
+
+    expect($student->fresh()->trashed())->toBeFalse();
+});
+
+it('refuses a student whose only debt was written off, because a write-off is still owed', function () {
+    // The owner's Q8 answer: a written-off charge keeps showing as owed. The
+    // balance does not subtract it, so it blocks the delete like any other debt.
+    $student = Student::factory()->create();
+    $enrollment = Enrollment::factory()->for($student)->create(['status' => EnrollmentStatus::Withdrawn]);
+    Charge::factory()->writtenOff()->create([
+        'enrollment_id' => $enrollment->getKey(),
+        'list_price' => '750.000',
+        'amount' => '750.000',
+    ]);
+
+    expect(fn () => $this->delete->execute($this->remover, $student))
+        ->toThrow(StudentNotDeletableException::class, OWES_REFUSAL);
 
     expect($student->fresh()->trashed())->toBeFalse();
 });
