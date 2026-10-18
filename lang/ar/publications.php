@@ -139,4 +139,9 @@ return [
         'full_text_note' => 'يُوزَّع النص الكامل لهذه الورقة بصيغة PDF الأصلية كما أُودع لدى المركز تمامًا. يمكنكم تنزيله من الأعلى لقراءة الورقة كاملة بما فيها من حجج وجداول ومراجع قانونية.',
         'more_in' => 'المزيد في :topic',
     ],
+
+    // The upload field's validation wording (P4-T31). A draft, like the rest of
+    // this catalogue, until the owner or a translator reviews it.
+    'pdf_file_attribute' => 'ملف PDF',
+    'pdf_file_not_pdf' => 'يجب أن يكون الملف بصيغة PDF.',
 ];
