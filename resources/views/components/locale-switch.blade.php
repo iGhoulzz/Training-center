@@ -77,12 +77,12 @@
             dir="ltr"
             data-locale-switch
             data-current="{{ $current }}"
-            class="relative isolate inline-flex rounded-pill bg-gray-800 text-xs font-semibold"
+            class="relative isolate inline-flex rounded-full bg-gray-800 text-xs font-semibold"
         >
             {{-- Placed by the server (start-*) and moved by Alpine (translate), so the two never fight over one property. --}}
             <span
                 aria-hidden="true"
-                class="{{ $current === 'ar' ? 'start-[calc(50%+0.125rem)]' : 'start-0.5' }} absolute inset-y-0.5 w-[calc(50%-0.25rem)] rounded-pill bg-primary-500 motion-safe:transition-transform motion-safe:duration-200"
+                class="{{ $current === 'ar' ? 'start-[calc(50%+0.125rem)]' : 'start-0.5' }} absolute inset-y-0.5 w-[calc(50%-0.25rem)] rounded-full bg-primary-500 motion-safe:transition-transform motion-safe:duration-200"
                 x-bind:class="moved ? '{{ $current === 'ar' ? '-translate-x-[calc(100%+0.25rem)]' : 'translate-x-[calc(100%+0.25rem)]' }}' : ''"
             ></span>
 

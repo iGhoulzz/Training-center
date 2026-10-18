@@ -302,6 +302,36 @@ it('holds 4.5:1 for the admin pill from the panel\'s own palettes', function () 
         ->and(localeSwitchContrast(localeSwitchHex($onPrimary[1]), localeSwitchHex($amber[500])))->toEqualWithDelta(8.59, 0.01);
 });
 
+it('draws the admin pill only with classes the admin theme compiles', function () {
+    $source = (string) preg_replace('/\{\{--.*?--\}\}/s', ' ', (string) file_get_contents(resource_path('views/components/locale-switch.blade.php')));
+    $start = (int) strpos($source, "@if (\$variant === 'admin')");
+    $admin = substr($source, $start, (int) strpos($source, '@else') - $start);
+
+    // The public site's own tokens (rounded-pill, text-caption, bg-gold ...) live in
+    // public.css, which the panel does not load: such a class would compile to nothing
+    // in the admin, and the pill would lose its shape without any error.
+    // Plain class attributes only: x-bind:class holds an Alpine expression, not class names.
+    preg_match_all('/\sclass="([^"]*)"/', $admin, $attributes);
+    $classes = array_values(array_unique(array_filter(
+        preg_split('/\s+/', implode(' ', array_map(fn (string $value): string => (string) preg_replace('/\{\{.*?\}\}/s', ' ', $value), $attributes[1]))) ?: [],
+        fn (string $class): bool => preg_match('/^[a-z][a-z0-9-]*$/', $class) === 1,
+    )));
+
+    expect($classes)->toContain('rounded-full', 'bg-gray-800', 'bg-primary-500', 'text-on-primary')
+        ->not->toContain('rounded-pill')->not->toContain('text-caption')->not->toContain('bg-gold');
+
+    $built = glob(public_path('build/assets/theme-*.css')) ?: [];
+
+    if ($built === []) {
+        return;
+    }
+
+    $css = (string) file_get_contents($built[0]);
+    $missing = array_values(array_filter($classes, fn (string $class): bool => ! str_contains($css, '.'.$class)));
+
+    expect($missing)->toBe([], 'These classes are not in the compiled admin theme: '.implode(', ', $missing));
+});
+
 it('slides the thumb by a cross-document view transition that reduced motion switches off entirely', function () {
     $css = (string) file_get_contents(resource_path('css/public.css'));
 
