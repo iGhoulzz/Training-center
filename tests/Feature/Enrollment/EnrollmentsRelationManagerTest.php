@@ -162,7 +162,7 @@ it('refuses a crafted status on enrollment', function () {
 });
 
 it('offers no enrollment into a completed batch, where the button could only be refused', function () {
-    // P4-T25: the button is hidden on a batch that takes no enrolments. The
+    // P4-T31: the button is hidden on a batch that takes no enrolments. The
     // refusal itself is EnrollStudentAction's, pinned by EnrollmentTest, and its
     // toast by BatchScreensFeedbackTest.
     $closed = Batch::factory()->for($this->course)->completed()->create();

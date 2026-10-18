@@ -238,7 +238,7 @@ return [
         'withdrawn' => 'Withdrawn',
     ],
 
-    // What the batch screens say when a write worked (P4-T25).
+    // What the batch screens say when a write worked (P4-T31).
     'instructor_assigned' => 'Instructor assigned.',
     'assigned_hours_updated' => 'Assigned hours updated.',
     'instructor_removed' => 'Instructor removed.',

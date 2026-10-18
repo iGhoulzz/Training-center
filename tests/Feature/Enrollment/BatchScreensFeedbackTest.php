@@ -16,6 +16,7 @@ use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Course;
 use App\Domain\Enrollment\Models\Enrollment;
 use App\Domain\Enrollment\Models\Student;
+use App\Domain\Finance\Actions\EnrollAndBillAction;
 use App\Domain\Finance\Filament\Resources\DiscountResource\Pages\ListDiscounts;
 use App\Domain\Finance\Models\Charge;
 use App\Domain\Finance\Models\Discount;
@@ -33,7 +34,7 @@ use Illuminate\Support\Facades\DB;
 use Livewire\Livewire;
 
 /**
- * The batch screens say what happened, and offer only what can work (P4-T25).
+ * The batch screens say what happened, and offer only what can work (P4-T31).
  *
  * Seven writes used to succeed in silence, two buttons used to be offered on
  * rows where they could only be refused, and the Enrolments tab labelled the
@@ -339,6 +340,19 @@ it('refuses a departed instructor\'s hours with the refusal toast alone', functi
     expect(batchScreenSentNotifications())->toBe([
         batchScreenRefusal('This person is not an eligible instructor.'),
     ])->and((int) DB::table('batch_instructor')->value('assigned_hours'))->toBe(12);
+});
+
+it('keeps the closed-batch refusal on enrol, with no success toast and nothing written', function () {
+    // "Enrol student" is hidden on a closed batch, so the Action is stood in for:
+    // this is the toast a batch closing while the enrol dialog is open would send.
+    ($this->refusingAction)(EnrollAndBillAction::class, new BatchClosedException(1));
+
+    ($this->mountEnrollments)(($this->actorWith)('view_batch', 'view_any_enrollment', 'create_enrollment'))
+        ->callTableAction('enroll', null, ['student_id' => Student::factory()->create()->getKey()]);
+
+    expect(batchScreenSentNotifications())->toBe([
+        batchScreenRefusal('Completed and cancelled batches take no new enrolments and no instructor changes.'),
+    ])->and(Enrollment::query()->count())->toBe(0);
 });
 
 it('keeps the closed-batch refusal on assign and remove, with no success toast', function () {
