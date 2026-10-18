@@ -28,6 +28,7 @@ use App\Domain\Staff\Filament\Resources\ActivityResource\Pages\ListActivities;
 use App\Domain\Staff\Filament\Resources\ActivityResource\Pages\ViewActivity;
 use App\Domain\Staff\Filament\Resources\UserResource\Pages\ListUsers;
 use App\Models\User;
+use Carbon\CarbonImmutable;
 use Database\Seeders\RolePermissionSeeder;
 use Filament\Actions\Exports\Models\Export;
 use Filament\Facades\Filament;
@@ -77,8 +78,9 @@ beforeEach(function (): void {
     $this->seed(RolePermissionSeeder::class);
     Filament::setCurrentPanel(Filament::getPanel('admin'));
 
-    // 22:30 UTC on 31 March: 00:30 on 1 April in Tripoli.
-    $this->travelTo('2026-03-31 22:30:00');
+    // 22:30 UTC on 31 March: 00:30 on 1 April in Tripoli. The zone is named in
+    // the call, so the instant is the same whatever `config('app.timezone')` says.
+    $this->travelTo(CarbonImmutable::parse('2026-03-31 22:30:00', 'UTC'));
 
     $this->actorWith = function (string ...$permissions): User {
         $actor = User::factory()->create(['is_active' => true]);
@@ -377,16 +379,30 @@ it('keeps a date picker without a time on the storage zone, while a picker with 
 it('does not shift a date picker\'s state: the day typed is the day the filter receives', function (): void {
     $actor = ($this->actorWith)('view_any_activity', 'view_activity');
 
-    $table = Livewire::actingAs($actor)
+    $filter = Livewire::actingAs($actor)
         ->test(ListActivities::class)
         ->filterTable('created_at', ['from' => '2026-04-01', 'until' => '2026-04-02'])
         ->instance()
-        ->getTable();
+        ->getTable()
+        ->getFilter('created_at');
 
-    expect($table->getFilter('created_at')->getState())->toMatchArray([
+    expect($filter->getState())->toMatchArray([
         'from' => '2026-04-01',
         'until' => '2026-04-02',
     ]);
+
+    // And the two pickers are the application's own, date-only ones: a picker
+    // WITH a time would read the day as Tripoli's wall clock and hand over the
+    // 31st (see the component test above for the contrast).
+    $pickers = $filter->getSchemaComponents();
+
+    expect($pickers)->toHaveCount(2);
+
+    foreach ($pickers as $picker) {
+        expect($picker)->toBeInstanceOf(DateTimePicker::class)
+            ->and($picker->hasTime())->toBeFalse()
+            ->and($picker->getTimezone())->toBe('UTC');
+    }
 });
 
 it('filters the audit log by the centre\'s day: one day, both edges', function (): void {
