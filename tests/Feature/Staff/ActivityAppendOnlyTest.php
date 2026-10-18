@@ -13,7 +13,9 @@ use App\Domain\Staff\Filament\Resources\ActivityResource\Pages\ListActivities;
 use App\Domain\Staff\Filament\Resources\ActivityResource\Pages\ViewActivity;
 use App\Domain\Staff\Support\ActivityEvent;
 use App\Models\User;
+use App\Support\CentreCalendar;
 use BezhanSalleh\FilamentShield\Facades\FilamentShield;
+use Carbon\CarbonImmutable;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Gate;
@@ -544,15 +546,19 @@ it('filters the log by record type', function () {
 it('filters the log by date range, inclusively at both ends', function () {
     /*
      * The boundaries are the point. The filter compares timestamps rather than
-     * calling whereDate() — so it can use the created_at index — and startOfDay /
-     * endOfDay are what keep "from today until today" matching everything that
-     * happened today rather than only midnight exactly.
+     * calling whereDate() — so it can use the created_at index — and the picked
+     * days are the centre's (P4-T34): "from today until today" is the Tripoli day,
+     * mapped to its UTC range. The clock is pinned at 22:30 UTC, already the next
+     * day in Tripoli, so a filter that read the day as UTC would miss the entry.
      */
+    $this->travelTo(CarbonImmutable::parse('2026-10-18 22:30:00', 'UTC'));
+    $today = CentreCalendar::localise(now())->toDateString();
+
     $admin = ($this->actorWith)('admin');
     $this->actingAs($admin);
 
     Student::factory()->create();
-    $today = Activity::query()->latest('id')->first();
+    $todayEntry = Activity::query()->latest('id')->first();
 
     Student::factory()->create();
     $old = Activity::query()->latest('id')->first();
@@ -561,10 +567,10 @@ it('filters the log by date range, inclusively at both ends', function () {
     Livewire::actingAs($admin)
         ->test(ListActivities::class)
         ->filterTable('created_at', [
-            'from' => now()->toDateString(),
-            'until' => now()->toDateString(),
+            'from' => $today,
+            'until' => $today,
         ])
-        ->assertCanSeeTableRecords([$today])
+        ->assertCanSeeTableRecords([$todayEntry])
         ->assertCanNotSeeTableRecords([$old->fresh()]);
 });
 
