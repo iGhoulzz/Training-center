@@ -19,8 +19,13 @@ use Spatie\Activitylog\Models\Activity;
 uses(RefreshDatabase::class);
 
 // Livewire marks "a component rendered this request" in static state that outlives
-// the test, and injects its script into the next page rendered. Flushed before each test.
+// the test, and injects its script into the next page rendered. Flushed before each test,
+// and after it too: the admin tests below render a panel page, which sets it.
 beforeEach(function (): void {
+    Livewire::flushState();
+});
+
+afterEach(function (): void {
     Livewire::flushState();
 });
 
