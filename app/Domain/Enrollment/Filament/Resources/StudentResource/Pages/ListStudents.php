@@ -14,10 +14,10 @@ use App\Domain\Enrollment\Models\Student;
 use App\Domain\Finance\Filament\Resources\ChargeResource;
 use App\Domain\Finance\Filament\Resources\PaymentResource;
 use App\Domain\Finance\Services\StudentBalanceQuery;
+use App\Filament\StatusTabs;
 use Filament\Actions\Action;
 use Filament\Resources\Pages\ListRecords;
 use Filament\Schemas\Components\Actions;
-use Filament\Schemas\Components\Component;
 use Filament\Schemas\Components\EmbeddedTable;
 use Filament\Schemas\Components\Grid;
 use Filament\Schemas\Components\Tabs\Tab;
@@ -36,6 +36,8 @@ use Livewire\Attributes\Url;
 /** @property-read Student|null $selectedStudent */
 class ListStudents extends ListRecords
 {
+    use StatusTabs;
+
     protected static string $resource = StudentResource::class;
 
     #[Url(as: 'student')]
@@ -111,30 +113,11 @@ class ListStudents extends ListRecords
             ->badge(fn (): int => $this->tabCounts['no_portal'] ?? 0)
             ->modifyQueryUsing(fn (Builder $query): Builder => $query->whereNull('user_id'));
 
-        foreach ($tabs as $key => $tab) {
-            $dot = match ($key) {
-                'active' => 'before:bg-success-400',
-                'prospective' => 'before:bg-info-400',
-                'owes_money' => 'before:bg-primary-400',
-                'no_portal' => 'before:bg-no-portal',
-                default => 'before:bg-gray-400',
-            };
-            $tab->extraAttributes(fn (): array => ['class' => implode(' ', [
-                "rounded-full border px-[13px] py-[7px] text-[12.5px] font-medium gap-[7px] focus-visible:ring-2 focus-visible:ring-primary-400 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-950 before:size-[6px] before:shrink-0 before:rounded-full before:content-['']",
-                $dot,
-                $this->activeTab === $key
-                    ? 'border-primary-500/40 bg-primary-500/14 text-primary-400 hover:bg-primary-500/14 focus-visible:bg-primary-500/14'
-                    : 'border-white/9 bg-white/4 text-gray-400 hover:bg-white/4 focus-visible:bg-white/4',
-            ])]);
-        }
-
-        return $tabs;
-    }
-
-    public function getTabsContentComponent(): Component
-    {
-        return parent::getTabsContentComponent()->extraAttributes([
-            'class' => '[&_.fi-tabs]:mx-0 [&_.fi-tabs]:flex-wrap [&_.fi-tabs]:gap-2 [&_.fi-tabs]:overflow-visible [&_.fi-tabs]:rounded-none [&_.fi-tabs]:bg-transparent [&_.fi-tabs]:p-0 [&_.fi-tabs]:shadow-none [&_.fi-tabs]:ring-0 [&_.fi-tabs-item-label]:text-inherit [&_.fi-badge]:min-w-0 [&_.fi-badge]:bg-transparent [&_.fi-badge]:p-0 [&_.fi-badge]:text-[12.5px] [&_.fi-badge]:tracking-normal [&_.fi-badge]:text-inherit [&_.fi-badge]:opacity-74 [&_.fi-badge]:ring-0',
+        return $this->styleStatusTabs($tabs, [
+            'active' => 'before:bg-success-400',
+            'prospective' => 'before:bg-info-400',
+            'owes_money' => 'before:bg-primary-400',
+            'no_portal' => 'before:bg-no-portal',
         ]);
     }
 
