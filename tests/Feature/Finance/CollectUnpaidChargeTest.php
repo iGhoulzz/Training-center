@@ -80,7 +80,7 @@ beforeEach(function (): void {
 
     // Everything the button and the page need: read the list, reach the page,
     // and record a payment.
-    $this->collectorPermissions = ['view_any_charge', 'create_enrollment', 'create_payment'];
+    $this->collectorPermissions = ['view_any_charge', 'view_charge', 'create_enrollment', 'create_payment'];
 
     $this->collector = ($this->actor)($this->collectorPermissions);
 
@@ -390,4 +390,112 @@ it('opens no panel and shows no refusal when the page is opened without a charge
         ->assertDontSee(__('collect.take_payment'));
 
     expect(collectUnpaidSentNotifications())->toBe([]);
+});
+
+/*
+|--------------------------------------------------------------------------
+| The bill is re-checked when the payment is submitted (P4-T32 review)
+|--------------------------------------------------------------------------
+|
+| The panel is opened for a bill awaiting its first payment, but the bill can
+| change before the button is pressed, and the panel's bill id is a client-side
+| property. finalize() therefore checks the same predicate again before writing.
+| Its own payment is the one exception, so a double-click still replays.
+*/
+
+it('refuses the second of two tabs opened on the same link once the first has paid', function () {
+    $charge = Charge::factory()->create(['list_price' => '100.000']);
+    $open = fn () => Livewire::actingAs($this->collector)
+        ->withQueryParams(['charge' => $charge->getKey()])
+        ->test(EnrollAndCollect::class)
+        ->fillForm(['amount' => '40.000', 'tenders' => [['method' => 'cash', 'amount' => '40.000', 'external_reference' => null]]], 'collectForm');
+
+    $first = $open();
+    $second = $open();
+
+    $first->call('finalize')->assertNotified(__('collect.collected_successfully'));
+    $second->call('finalize')->assertNotified(__('collect.charge_not_collectable'));
+
+    expect(PaymentAllocation::query()->where('charge_id', $charge->getKey())->pluck('amount')->all())->toBe(['40.000'])
+        ->and(Payment::query()->count())->toBe(1);
+});
+
+it('refuses to collect a bill that was written off after its panel opened', function () {
+    $charge = Charge::factory()->create(['list_price' => '100.000']);
+    $page = Livewire::actingAs($this->collector)
+        ->withQueryParams(['charge' => $charge->getKey()])
+        ->test(EnrollAndCollect::class)
+        ->assertSet('collectionChargeId', $charge->getKey());
+    collectUnpaidSentNotifications();
+
+    $charge->forceFill(['written_off_at' => now(), 'written_off_by' => $this->collector->getKey(), 'written_off_reason' => 'SENTINEL-WRITE-OFF'])->save();
+
+    $page->call('finalize');
+
+    expect(PaymentAllocation::query()->count())->toBe(0)
+        ->and(Payment::query()->count())->toBe(0)
+        ->and(collectUnpaidSentNotifications())->toBe([
+            ['title' => __('collect.charge_not_collectable'), 'status' => 'danger'],
+        ]);
+});
+
+it('refuses a panel whose bill id was rewritten to a bill that cannot take a first payment', function (Closure $makeTarget) {
+    $opened = Charge::factory()->create(['list_price' => '100.000']);
+    $target = $makeTarget($this);
+    $before = PaymentAllocation::query()->where('charge_id', $target->getKey())->count();
+
+    $page = Livewire::actingAs($this->collector)
+        ->withQueryParams(['charge' => $opened->getKey()])
+        ->test(EnrollAndCollect::class);
+    collectUnpaidSentNotifications();
+
+    $page->set('collectionChargeId', $target->getKey())
+        ->fillForm(['amount' => '10.000', 'tenders' => [['method' => 'cash', 'amount' => '10.000', 'external_reference' => null]]], 'collectForm')
+        ->call('finalize');
+
+    expect(PaymentAllocation::query()->where('charge_id', $target->getKey())->count())->toBe($before)
+        ->and(PaymentAllocation::query()->where('charge_id', $opened->getKey())->count())->toBe(0)
+        ->and(collectUnpaidSentNotifications())->toBe([
+            ['title' => __('collect.charge_not_collectable'), 'status' => 'danger'],
+        ]);
+})->with([
+    'a bill with a live partial payment' => [function ($test): Charge {
+        $charge = Charge::factory()->create(['list_price' => '100.000']);
+        ($test->payTowards)($charge, '30.000');
+
+        return $charge;
+    }],
+    'a written-off bill' => [fn ($test): Charge => tap(Charge::factory()->create(['list_price' => '100.000']), fn (Charge $charge) => $charge->forceFill(['written_off_at' => now(), 'written_off_by' => $test->collector->getKey(), 'written_off_reason' => 'SENTINEL'])->save())],
+]);
+
+it('still records one payment for a double-clicked submit, because the panel recognises its own payment', function () {
+    $charge = Charge::factory()->create(['list_price' => '100.000']);
+    $page = Livewire::actingAs($this->collector)
+        ->withQueryParams(['charge' => $charge->getKey()])
+        ->test(EnrollAndCollect::class)
+        ->fillForm(['amount' => '40.000', 'tenders' => [['method' => 'cash', 'amount' => '40.000', 'external_reference' => null]]], 'collectForm');
+    collectUnpaidSentNotifications();
+
+    $page->call('finalize')->call('finalize');
+
+    expect(Payment::query()->count())->toBe(1)
+        ->and(PaymentAllocation::query()->sole()->amount)->toBe('40.000')
+        ->and(array_column(collectUnpaidSentNotifications(), 'title'))->not->toContain(__('collect.charge_not_collectable'));
+});
+
+it('refuses a link from an actor who may not view that bill, and hides the button from them', function () {
+    $charge = Charge::factory()->create(['list_price' => '100.000']);
+    $withoutView = ($this->actor)(array_values(array_diff($this->collectorPermissions, ['view_charge'])));
+
+    Livewire::actingAs($withoutView)
+        ->withQueryParams(['charge' => $charge->getKey()])
+        ->test(EnrollAndCollect::class)
+        ->assertSet('collectionChargeId', null)
+        ->assertNotified(__('collect.charge_not_collectable'));
+
+    Livewire::actingAs($withoutView)->test(ListCharges::class)
+        ->assertActionHidden(($this->collectPaymentAction)($charge));
+
+    Livewire::actingAs($this->collector)->test(ListCharges::class)
+        ->assertActionVisible(($this->collectPaymentAction)($charge));
 });

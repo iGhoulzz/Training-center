@@ -441,6 +441,7 @@ class ChargeResource extends Resource
             ->url(fn (Charge $record): string => EnrollAndCollect::getUrl(['charge' => $record->getKey()]))
             ->visible(fn (Charge $record): bool => (bool) $record->getAttribute(ChargeQueryService::AWAITING_FIRST_PAYMENT_ALIAS)
                 && Gate::allows('create', Payment::class)
+                && Gate::allows('view', $record)
                 && EnrollAndCollect::canAccess());
     }
 

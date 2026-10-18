@@ -459,6 +459,12 @@ class EnrollAndCollect extends Page
                 ->first()
             : null;
 
+        // The panel names the bill's student, batch, amount and reference, so opening it
+        // by id needs the right to see that bill too (P4-T32 review).
+        if ($charge !== null && ! Gate::allows('view', $charge)) {
+            $charge = null;
+        }
+
         if ($charge === null) {
             Notification::make()
                 ->title(__('collect.charge_not_collectable'))
@@ -470,6 +476,26 @@ class EnrollAndCollect extends Page
         }
 
         $this->beginCollection($charge);
+    }
+
+    /**
+     * Whether the open panel's bill may still take the payment about to be submitted.
+     *
+     * True when this panel's own payment already exists (the Action replays it, or
+     * refuses a different second amount), or when the bill still awaits its first
+     * payment by `ChargeQueryService::awaitingFirstPaymentSql()`, the same predicate
+     * that offered it. See `finalize()` for why this runs at submit as well as at open.
+     */
+    private function collectionStillAwaitsThisPayment(): bool
+    {
+        if (Payment::query()->where('idempotency_key', $this->collectionIdempotencyKey)->exists()) {
+            return true;
+        }
+
+        return Charge::query()
+            ->whereKey($this->collectionChargeId)
+            ->whereRaw(app(ChargeQueryService::class)->awaitingFirstPaymentSql())
+            ->exists();
     }
 
     public function form(Schema $schema): Schema
@@ -1103,7 +1129,47 @@ class EnrollAndCollect extends Page
             return;
         }
 
+        /*
+         * THE BILL IS RE-CHECKED HERE, NOT ONLY WHEN THE PANEL OPENED (P4-T32 review).
+         *
+         * `collectionChargeId` is a courtesy guard that the client can rewrite (see its
+         * docblock), and the bill can change between opening the panel and pressing the
+         * button. A second tab on the same "Collect payment" link may pay it first, or it
+         * may be written off. So every collection is checked against the same predicate
+         * that offered it, and a bill no longer awaiting its first payment is refused
+         * before anything is written.
+         *
+         * Authorization stays first and unchanged, so an actor without `create_payment`
+         * still gets the 403 that `RecordPaymentAction` has always given. Form validation
+         * comes next, so malformed input still gets its own message.
+         *
+         * THE ONE EXCEPTION IS THIS PANEL'S OWN PAYMENT. When a payment already holds this
+         * panel's idempotency key, the bill is no longer "awaiting" precisely because this
+         * panel paid it. The call goes on to the Action, which replays the original receipt
+         * for a double-click and refuses a different second amount with the
+         * installment-conflict message, exactly as before.
+         *
+         * KNOWN LIMIT, FOR THE OWNER: the check runs before `RecordPaymentAction` takes its
+         * lock on the bill, so two submits landing in the same instant could both pass it.
+         * Closing that fully would make "first payment only" a rule inside the Action, under
+         * its lock; that changes the write boundary and is recorded as a follow-up, not done
+         * here.
+         */
+        Gate::authorize('create', Payment::class);
+
+        // Malformed input gets its own message first; the bill is checked last, as close
+        // to the write as this page can put it.
         $state = $this->collectForm->getState();
+
+        if (! $this->collectionStillAwaitsThisPayment()) {
+            Notification::make()
+                ->title(__('collect.charge_not_collectable'))
+                ->danger()
+                ->persistent()
+                ->send();
+
+            return;
+        }
 
         /** @var array<int, array{method: string, amount: string, external_reference: ?string}> $tenderStates */
         $tenderStates = $state['tenders'];
