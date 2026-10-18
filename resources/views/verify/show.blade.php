@@ -16,10 +16,17 @@
     pages must be the same bytes every time (the uniform miss is compared byte for byte
     across requests), so each render starts from a clean slate.
 --}}
+@use('App\Support\PublicRoute')
 @use('Illuminate\Support\Facades\Vite')
 
 @php
     $stylesheetBuilt = file_exists(public_path('build/manifest.json')) || file_exists(public_path('hot'));
+
+    // The status as a word, from this catalogue and not the staff register's
+    // (certificates.certificate_status.*), which follows the admin's translation.
+    $statusLabel = $view->status === \App\Domain\Enrollment\Enums\CertificateStatus::Valid
+        ? __('verify.status_valid')
+        : ($view->status === \App\Domain\Enrollment\Enums\CertificateStatus::Replaced ? __('verify.status_replaced') : __('verify.status_revoked'));
 @endphp
 <!DOCTYPE html>
 <html lang="{{ app()->getLocale() }}" dir="{{ str_starts_with(app()->getLocale(), 'ar') ? 'rtl' : 'ltr' }}">
@@ -326,20 +333,26 @@
                 to { opacity: 1; transform: none; }
             }
         }
+        @include('verify.partials.locale')
     </style>
 </head>
 <body>
     <header class="site-header">
         <div class="bar">
-            <a class="brand" href="{{ url('/') }}">
+            <a class="brand" href="{{ PublicRoute::url('public.home') }}">
                 <img class="brand-mark" src="{{ asset(config('public_site.brand.logo')) }}" alt="" width="44" height="44">
                 <span>
-                    <span class="brand-name" aria-hidden="true">{{ config('public_site.brand.short_name') }}</span>
-                    <span class="sr-only">{{ config('public_site.brand.name') }}</span>
+                    <span class="brand-name" lang="en" aria-hidden="true">{{ config('public_site.brand.short_name') }}</span>
+                    <span class="sr-only">{{ config('public_site.brand.'.(str_starts_with(app()->getLocale(), 'ar') ? 'name_ar' : 'name')) }}</span>
                     <span class="brand-name-ar"><span lang="ar" dir="rtl">{{ config('public_site.brand.name_ar') }}</span></span>
                 </span>
             </a>
-            <a class="back-link" href="{{ url('/') }}">{{ __('verify.back_to_site') }}</a>
+            <div class="bar-end">
+                <a class="back-link" href="{{ PublicRoute::url('public.home') }}">{{ __('verify.back_to_site') }}</a>
+                <div class="locale-cell">
+                    <x-locale-switch variant="verifier" />
+                </div>
+            </div>
         </div>
     </header>
     <main>
@@ -363,14 +376,14 @@
                         </svg>
                     </span>
                     <div class="result-text">
-                        <h2 id="result-heading">{{ $view->status->label() }}</h2>
+                        <h2 id="result-heading">{{ $statusLabel }}</h2>
                         <p class="status-message">{{ __($statusMessageKey, $statusMessageReplacements) }}</p>
                     </div>
                 </div>
                 <dl>
                     <div class="field">
                         <dt>{{ __('verify.field_status') }}</dt>
-                        <dd>{{ $view->status->label() }}</dd>
+                        <dd>{{ $statusLabel }}</dd>
                     </div>
                     <div class="field">
                         <dt>{{ __('verify.field_student') }}</dt>
@@ -395,7 +408,7 @@
                 </dl>
             </section>
             <p class="actions">
-                <a class="button" href="{{ route('verify.certificates.form') }}">{{ __('verify.verify_another') }}</a>
+                <a class="button" href="{{ PublicRoute::url('verify.certificates.form') }}">{{ __('verify.verify_another') }}</a>
             </p>
             <p class="note">{{ __('verify.privacy_note') }}</p>
         </div>

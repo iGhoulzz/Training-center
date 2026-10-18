@@ -63,7 +63,7 @@
 
     <div class="border-t border-cream/11">
         <x-public.container class="py-4.5 text-caption text-cream/50">
-            <p>{{ __('public.footer.copyright', ['year' => CentreCalendar::yearOf(now()), 'name' => config('public_site.brand.name')]) }}</p>
+            <p>{{ __('public.footer.copyright', ['year' => CentreCalendar::yearOf(now()), 'name' => config('public_site.brand.'.(str_starts_with(app()->getLocale(), 'ar') ? 'name_ar' : 'name'))]) }}</p>
         </x-public.container>
     </div>
 </footer>

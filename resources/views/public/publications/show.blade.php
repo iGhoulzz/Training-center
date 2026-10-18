@@ -25,7 +25,7 @@
 @use('Carbon\CarbonImmutable')
 
 @section('title')
-    {{ __('public.page_title', ['page' => $article->title, 'name' => config('public_site.brand.name')]) }}
+    <x-public.page-title :page="$article->title" />
 @endsection
 
 @section('content')
@@ -49,7 +49,7 @@
 
             <div class="min-w-45 flex-1">
                 <h2 id="article-download-heading" class="text-ui-lg font-semibold text-navy">{{ __('publications.public.original_filing') }}</h2>
-                <p class="mt-0.5 text-caption text-meta">{{ trans_choice('publications.public.downloads', $article->downloadCount) }} · {{ __('publications.public.downloads_note') }} · {{ __('publications.public.uploaded_by') }}</p>
+                <p class="mt-0.5 text-caption text-meta">{{ __('public.article.download_line', ['downloads' => trans_choice('publications.public.downloads', $article->downloadCount), 'note' => __('publications.public.downloads_note'), 'uploader' => __('publications.public.uploaded_by')]) }}</p>
             </div>
 
             <x-public.button :href="PublicRoute::url('public.publications.download', ['slug' => $article->slug])" variant="control" size="control-lg" class="flex-none">

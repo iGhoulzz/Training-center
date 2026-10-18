@@ -26,6 +26,7 @@
     pages must be the same bytes every time (the uniform miss is compared byte for byte
     across requests), so each render starts from a clean slate.
 --}}
+@use('App\Support\PublicRoute')
 @use('Illuminate\Support\Facades\Vite')
 
 @php
@@ -281,20 +282,26 @@
                 to { opacity: 1; transform: none; }
             }
         }
+        @include('verify.partials.locale')
     </style>
 </head>
 <body>
     <header class="site-header">
         <div class="bar">
-            <a class="brand" href="{{ url('/') }}">
+            <a class="brand" href="{{ PublicRoute::url('public.home') }}">
                 <img class="brand-mark" src="{{ asset(config('public_site.brand.logo')) }}" alt="" width="44" height="44">
                 <span>
-                    <span class="brand-name" aria-hidden="true">{{ config('public_site.brand.short_name') }}</span>
-                    <span class="sr-only">{{ config('public_site.brand.name') }}</span>
+                    <span class="brand-name" lang="en" aria-hidden="true">{{ config('public_site.brand.short_name') }}</span>
+                    <span class="sr-only">{{ config('public_site.brand.'.(str_starts_with(app()->getLocale(), 'ar') ? 'name_ar' : 'name')) }}</span>
                     <span class="brand-name-ar"><span lang="ar" dir="rtl">{{ config('public_site.brand.name_ar') }}</span></span>
                 </span>
             </a>
-            <a class="back-link" href="{{ url('/') }}">{{ __('verify.back_to_site') }}</a>
+            <div class="bar-end">
+                <a class="back-link" href="{{ PublicRoute::url('public.home') }}">{{ __('verify.back_to_site') }}</a>
+                <div class="locale-cell">
+                    <x-locale-switch variant="verifier" to="verify.certificates.form" />
+                </div>
+            </div>
         </div>
     </header>
     <main>
@@ -318,7 +325,7 @@
                 </div>
             </section>
             <p class="actions">
-                <a class="button" href="{{ route('verify.certificates.form') }}">{{ __('verify.verify_another') }}</a>
+                <a class="button" href="{{ PublicRoute::url('verify.certificates.form') }}">{{ __('verify.verify_another') }}</a>
             </p>
             <p class="note">{{ __('verify.privacy_note') }}</p>
         </div>

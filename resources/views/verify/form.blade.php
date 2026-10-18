@@ -16,6 +16,7 @@
     pages must be the same bytes every time (the uniform miss is compared byte for byte
     across requests), so each render starts from a clean slate.
 --}}
+@use('App\Support\PublicRoute')
 @use('Illuminate\Support\Facades\Vite')
 
 @php
@@ -267,20 +268,26 @@
             .hint { font-size: .78125rem; }
             .note { font-size: .78125rem; }
         }
+        @include('verify.partials.locale')
     </style>
 </head>
 <body>
     <header class="site-header">
         <div class="bar">
-            <a class="brand" href="{{ url('/') }}">
+            <a class="brand" href="{{ PublicRoute::url('public.home') }}">
                 <img class="brand-mark" src="{{ asset(config('public_site.brand.logo')) }}" alt="" width="44" height="44">
                 <span>
-                    <span class="brand-name" aria-hidden="true">{{ config('public_site.brand.short_name') }}</span>
-                    <span class="sr-only">{{ config('public_site.brand.name') }}</span>
+                    <span class="brand-name" lang="en" aria-hidden="true">{{ config('public_site.brand.short_name') }}</span>
+                    <span class="sr-only">{{ config('public_site.brand.'.(str_starts_with(app()->getLocale(), 'ar') ? 'name_ar' : 'name')) }}</span>
                     <span class="brand-name-ar"><span lang="ar" dir="rtl">{{ config('public_site.brand.name_ar') }}</span></span>
                 </span>
             </a>
-            <a class="back-link" href="{{ url('/') }}">{{ __('verify.back_to_site') }}</a>
+            <div class="bar-end">
+                <a class="back-link" href="{{ PublicRoute::url('public.home') }}">{{ __('verify.back_to_site') }}</a>
+                <div class="locale-cell">
+                    <x-locale-switch variant="verifier" />
+                </div>
+            </div>
         </div>
     </header>
     <main>
@@ -290,7 +297,7 @@
             <p class="intro">{{ __('verify.form_intro') }}</p>
         </div>
         <div class="panel">
-            <form method="POST" action="{{ route('verify.certificates.submit') }}">
+            <form method="POST" action="{{ PublicRoute::url('verify.certificates.submit') }}">
                 @csrf
 
                 <label for="reference">{{ __('verify.reference_label') }}</label>

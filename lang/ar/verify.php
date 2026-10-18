@@ -40,6 +40,11 @@ return [
     'field_issued_at' => 'تاريخ الإصدار',
     'field_confirmation' => 'جهة التأكيد',
 
+    // The status as a single word, in the glossary's terms.
+    'status_valid' => 'صالحة',
+    'status_revoked' => 'ملغاة',
+    'status_replaced' => 'مستبدَلة',
+
     // One sentence per status, as in English. Only the revoked one interpolates the
     // date, which the controller fills in as YYYY-MM-DD.
     'status_message_valid' => 'هذه الشهادة صالحة.',

@@ -36,7 +36,7 @@
 @endphp
 
 @section('title')
-    {{ __('public.page_title', ['page' => __('publications.public.heading'), 'name' => config('public_site.brand.name')]) }}
+    <x-public.page-title :page="__('publications.public.heading')" />
 @endsection
 
 @section('content')

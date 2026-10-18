@@ -66,6 +66,19 @@ return [
         'copyright' => '© :year :name',
     ],
 
+    // The language switch. Each language names itself in its own catalogue, and the
+    // switch asks for the line through the language it is naming.
+    'locale_switch' => [
+        'label' => 'اللغة',
+        'name' => 'العربية',
+        'short' => 'ع',
+    ],
+
+    // The separator and the order are the language's to choose, so the Arabic owns them too.
+    'article' => [
+        'download_line' => ':downloads · :note · :uploader',
+    ],
+
     'home' => [
         'heading' => ':name',
         // Must occur inside config('public_site.brand.name_ar'), as the English phrase

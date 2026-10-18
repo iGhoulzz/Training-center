@@ -15,26 +15,36 @@
     reads to it as a sentence.
 
     Both fonts are self-hosted (vite.config.js), so no third-party origin is loaded
-    by this layout. The title is the centre's full English name, from
-    config/public_site.php, unless a page gives its own.
+    by this layout. The title is the centre's full name, from config/public_site.php
+    and in the page's language, unless a page gives its own (x-public.page-title).
+
+    THE LANGUAGE AND THE DIRECTION COME FROM THE LOCALE (P4-T18a), which SetPublicLocale
+    sets from the URL: `/ar/...` is Arabic and right to left, every other public URL
+    English and left to right. The head lists the page in both languages as
+    `<link rel="alternate" hreflang>`, so a search engine finds each from the other, and
+    the language switch in the header links to the same page's counterpart.
 
     ONE SCRIPT, ON ONE PAGE. A page that sets the `seal_coin` section (the home
     page) gets resources/js/public-seal.js, the hero seal's coin turn. It is a
     same-origin module from the build, inside the same guard. Every other public
     page loads no script at all.
 --}}
+@use('App\Support\PublicRoute')
 @use('Illuminate\Support\Facades\Vite')
 
 @php
     $stylesheetBuilt = file_exists(public_path('build/manifest.json')) || file_exists(public_path('hot'));
 @endphp
 <!DOCTYPE html>
-<html lang="{{ str_replace('_', '-', app()->getLocale()) }}" dir="ltr">
+<html lang="{{ str_replace('_', '-', app()->getLocale()) }}" dir="{{ str_starts_with(app()->getLocale(), 'ar') ? 'rtl' : 'ltr' }}">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>@yield('title', config('public_site.brand.name'))</title>
+    <title>@hasSection('title')@yield('title')@else<x-public.page-title />@endif</title>
     <meta name="description" content="{{ __('public.meta.description') }}">
+    @foreach (PublicRoute::alternates() as $alternateLocale => $alternateUrl)
+        <link rel="alternate" hreflang="{{ $alternateLocale }}" href="{{ $alternateUrl }}">
+    @endforeach
 
     @if ($stylesheetBuilt)
         {{ Vite::fonts(['instrument-serif', 'ibm-plex-sans-arabic']) }}
