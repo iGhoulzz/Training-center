@@ -149,6 +149,8 @@ return [
     'search_discounts' => 'Search discounts by name',
     'full_price' => 'Full list price',
     'enrolment_discount' => 'Applies to this enrolment only',
+    'discount_savings' => 'Discount savings',
+    'discount_savings_amount' => '-:amount LYD',
     'review_enrolment' => 'Review enrolment',
     'confirm_before_payment' => 'Review the bill before confirming. Confirmation creates the enrolment and bill; immediate payment is optional.',
     'confirm_and_continue' => 'Confirm enrolment & continue',

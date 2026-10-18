@@ -134,8 +134,8 @@ it('searches all active discount choices beyond the first page and recomputes th
     $document->loadHTML('<?xml encoding="UTF-8">'.$page->html(), LIBXML_NOERROR | LIBXML_NOWARNING);
     $xpath = new DOMXPath($document);
     $options = $xpath->query('//fieldset[@aria-label="Discount options"]');
-    expect($options)->toHaveCount(1)->and($options->item(0)->textContent)->toContain('Zed award', '214.187')
-        ->not->toContain('Alpha offer', $retired->name);
+    expect($options)->toHaveCount(1)->and($options->item(0)->textContent)->toContain('Zed award', '-2.163 LYD')
+        ->not->toContain('Alpha offer', $retired->name, '214.187');
     $page->set('data.discount_id', $discount->id);
     expect($page->instance()->bill['amount']?->toDecimal())->toBe('214.187');
     $page->set('data.discount_id', '');

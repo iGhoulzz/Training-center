@@ -34,6 +34,8 @@ return [
     'search_discounts' => 'ابحث باسم الخصم',
     'full_price' => 'السعر الكامل',
     'enrolment_discount' => 'يسري على هذا التسجيل فقط',
+    'discount_savings' => 'قيمة الخصم',
+    'discount_savings_amount' => '-:amount د.ل',
     'review_enrolment' => 'مراجعة التسجيل',
     'confirm_before_payment' => 'راجع الفاتورة قبل التأكيد. ينشئ التأكيد التسجيل والفاتورة، والتحصيل الفوري اختياري.',
     'confirm_and_continue' => 'تأكيد التسجيل والمتابعة',

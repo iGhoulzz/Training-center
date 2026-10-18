@@ -193,6 +193,44 @@ it('requires confirmation before collection and resets the next walk-in after sk
         ->and(Charge::query()->count())->toBe(1);
 });
 
+it('shows a deleted discount refusal on the collect review without issuing a bill', function () {
+    $student = Student::factory()->create();
+    $batch = Batch::factory()->active()->create(['price' => '216.350']);
+    $discount = Discount::factory()->create(['percentage' => '1.00']);
+    $page = Livewire::actingAs($this->admin)->test(EnrollAndCollect::class)
+        ->set('data.student_id', $student->id)->call('advance')
+        ->set('data.batch_id', $batch->id)->call('advance')
+        ->set('data.discount_id', $discount->id)->call('advance')->assertSet('flowStep', 4);
+
+    $discount->delete();
+    $page->call('confirm')->assertHasFormErrors(['discount_id'])->assertSet('flowStep', 4);
+    $message = $page->instance()->getErrorBag()->first('data.discount_id');
+    $document = new DOMDocument;
+    $document->loadHTML('<?xml encoding="UTF-8">'.$page->html(), LIBXML_NOERROR | LIBXML_NOWARNING);
+    $xpath = new DOMXPath($document);
+    $alerts = $xpath->query('//section[@aria-label="Collect"]//*[@role="alert"]');
+    expect($message)->not->toBe('')->and($alerts)->toHaveCount(1)
+        ->and(trim($alerts->item(0)->textContent))->toBe($message)
+        ->and(Enrollment::query()->count())->toBe(0)->and(Charge::query()->count())->toBe(0)
+        ->and(Payment::query()->count())->toBe(0);
+});
+
+it('renders batch dates without language-specific month names', function (string $locale) {
+    $this->admin->update(['locale' => $locale]);
+    app()->setLocale($locale);
+    $student = Student::factory()->create();
+    $batch = Batch::factory()->active()->create(['start_date' => '2026-07-01', 'end_date' => '2026-08-15']);
+    $page = Livewire::actingAs($this->admin)->test(EnrollAndCollect::class)
+        ->set('data.student_id', $student->id)->call('advance');
+    $document = new DOMDocument;
+    $document->loadHTML('<?xml encoding="UTF-8">'.$page->html(), LIBXML_NOERROR | LIBXML_NOWARNING);
+    $xpath = new DOMXPath($document);
+    $card = $xpath->query('//label[input[@name="batch_id" and @value="'.$batch->id.'"]]');
+    expect(app()->getLocale())->toBe($locale)
+        ->and($card)->toHaveCount(1)->and($card->item(0)->textContent)
+        ->toContain('2026-07-01', '2026-08-15')->not->toContain('Jul', 'Aug');
+})->with(['en', 'ar']);
+
 it('keeps the issued bill and retry key after invalid payment then resets after the receipt', function () {
     $student = Student::factory()->create();
     $batch = Batch::factory()->active()->create(['price' => '100.125']);

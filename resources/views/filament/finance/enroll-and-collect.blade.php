@@ -3,7 +3,7 @@
         <div class="flex flex-col gap-3.5">
             <h2 class="text-[15px] font-semibold">{{ __('collect.who_enrolling') }}</h2>
             <label for="student-search" class="sr-only">{{ __('collect.search_students') }}</label>
-            <div class="flex items-center gap-3 rounded-[10px] border border-primary-500/35 bg-white/5 px-3.25 py-2.75">
+            <div class="flex items-center gap-3 rounded-[10px] border border-primary-500/35 bg-white/5 px-3.25 py-2.75 focus-within:ring-2 focus-within:ring-primary-500">
                 <x-filament::icon icon="heroicon-o-magnifying-glass" class="size-4 shrink-0 text-gray-400" />
                 <input id="student-search" type="search" wire:model.live.debounce.300ms="studentSearch" placeholder="{{ __('collect.search_students') }}" class="min-w-0 flex-1 border-0 bg-transparent text-base text-gray-100 outline-none placeholder:text-gray-500" />
                 <span class="shrink-0 text-[11.5px] text-gray-500" aria-live="polite">{{ trans_choice('collect.matches', $this->studentMatches->count(), ['count' => $this->studentMatches->count()]) }}</span>
@@ -37,7 +37,7 @@
                         <input type="radio" name="batch_id" value="{{ $batch->id }}" wire:model.live="data.batch_id" class="sr-only" />
                         <span class="flex flex-wrap items-center gap-2"><span class="flex-1 text-[13.5px] font-semibold">{{ $batch->code }}</span><span @class(['rounded-full px-2 py-0.75 text-[11px] font-semibold', 'bg-success-500/12 text-success-400' => $batch->status->value === 'active', 'bg-info-500/12 text-info-400' => $batch->status->value !== 'active'])>{{ $batch->status->label() }}</span></span>
                         <span class="text-xs text-gray-400">{{ $batch->course->name() }}</span>
-                        <span class="text-[11.5px] text-gray-400">{{ __('collect.batch_dates', ['start' => $batch->start_date?->format('d M Y') ?? __('collect.date_pending'), 'end' => $batch->end_date?->format('d M Y') ?? __('collect.date_pending')]) }}</span>
+                        <span class="text-[11.5px] text-gray-400">{{ __('collect.batch_dates', ['start' => $batch->start_date?->toDateString() ?? __('collect.date_pending'), 'end' => $batch->end_date?->toDateString() ?? __('collect.date_pending')]) }}</span>
                         <span class="flex items-center gap-2.25"><progress class="h-1.25 min-w-0 flex-1 accent-primary-500" max="{{ max(1, $batch->capacity, $batch->activeEnrollmentCount()) }}" value="{{ $batch->activeEnrollmentCount() }}" aria-label="{{ __('collect.seats_used') }}"></progress><span @class(['text-[11.5px]', 'text-warning-400' => $batch->isOverCapacity(), 'text-gray-400' => ! $batch->isOverCapacity()])>{{ $batch->capacity > 0 ? __('collect.seats', ['count' => $batch->activeEnrollmentCount(), 'capacity' => $batch->capacity]) : __('collect.open_capacity', ['count' => $batch->activeEnrollmentCount()]) }}</span></span>
                         @if ($batch->isOverCapacity())<span class="text-[11.5px] text-warning-400">{{ __('collect.over_capacity') }}</span>@endif
                         <span class="flex items-center justify-between gap-2 text-[13px] font-semibold text-primary-400"><x-admin.money :amount="$this->batchPrice($batch)" />@if ((string) ($this->data['batch_id'] ?? '') === (string) $batch->id)<span aria-hidden="true">✓</span>@endif</span>
@@ -63,7 +63,7 @@
                     <label wire:key="discount-choice-{{ $choice['id'] }}" @class(['flex cursor-pointer items-center gap-3 rounded-[11px] border p-3.25 focus-within:ring-2 focus-within:ring-primary-500 hover:bg-white/6', 'border-primary-500/45 bg-primary-500/8' => (string) ($this->data['discount_id'] ?? '') === (string) $choice['id'], 'border-hairline-faint bg-white/3' => (string) ($this->data['discount_id'] ?? '') !== (string) $choice['id']])>
                         <input type="radio" name="discount_id" value="{{ $choice['id'] }}" wire:model.live="data.discount_id" class="size-4 accent-primary-500" />
                         <span class="min-w-0 flex-1"><span class="block text-[13.5px] font-medium">{{ $choice['label'] }}</span><span class="block text-[11.5px] text-gray-500">{{ __('collect.enrolment_discount') }}</span></span>
-                        @if ($choice['amount'] !== null)<span class="text-[13px] font-semibold text-success-400"><x-admin.money :amount="$choice['amount']" /></span>@endif
+                        @if ($choice['savings'] !== null)<span class="text-[13px] font-semibold text-success-400" aria-label="{{ __('collect.discount_savings') }}">{{ __('collect.discount_savings_amount', ['amount' => $choice['savings']->toDecimal()]) }}</span>@endif
                     </label>
                 @endforeach
             </fieldset>
@@ -103,6 +103,7 @@
                         <div class="rounded-xl border border-primary-500/30 bg-primary-500/8 p-4 text-[22px] font-semibold text-primary-400">@if ($bill['amount'] !== null)<x-admin.money :amount="$bill['amount']" />@endif</div>
                         @error('data.student_id')<p role="alert" class="text-sm text-danger-400">{{ $message }}</p>@enderror
                         @error('data.batch_id')<p role="alert" class="text-sm text-danger-400">{{ $message }}</p>@enderror
+                        @error('data.discount_id')<p role="alert" class="text-sm text-danger-400">{{ $message }}</p>@enderror
                     @endif
                     <div class="mt-auto flex flex-wrap gap-2.25 border-t border-hairline-faint pt-4">
                         @if ($this->flowStep > 1)<x-filament::button color="gray" wire:click="back">{{ __('collect.back') }}</x-filament::button>@endif

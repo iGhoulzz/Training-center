@@ -72,7 +72,7 @@ use Livewire\Attributes\Locked;
  * @property-read bool $tendersBalanced
  * @property-read Collection<int, Student> $studentMatches
  * @property-read Collection<int, Batch> $batchChoices
- * @property-read array<int, array{id: int, label: string, amount: ?Money}> $discountChoices
+ * @property-read array<int, array{id: int, label: string, savings: ?Money}> $discountChoices
  */
 class EnrollAndCollect extends Page
 {
@@ -316,7 +316,7 @@ class EnrollAndCollect extends Page
         return app(PricingService::class)->priceForBatch($batch);
     }
 
-    /** @return array<int, array{id: int, label: string, amount: ?Money}> */
+    /** @return array<int, array{id: int, label: string, savings: ?Money}> */
     #[Computed]
     public function discountChoices(): array
     {
@@ -332,7 +332,7 @@ class EnrollAndCollect extends Page
             ->map(fn (Discount $discount): array => [
                 'id' => (int) $discount->getKey(),
                 'label' => self::discountLabel($discount),
-                'amount' => $price?->afterDiscount($discount->percentage),
+                'savings' => $price?->subtract($price->afterDiscount($discount->percentage)),
             ])->all();
     }
 
