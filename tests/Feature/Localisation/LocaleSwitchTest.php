@@ -539,20 +539,29 @@ describe('the admin switch', function () {
             ->and(Activity::query()->where('subject_type', User::class)->where('event', 'updated')->count())->toBe(0);
     });
 
-    it('refuses an inactive account and a portal sign-in with a 403', function () {
+    it('refuses an inactive account with a 403', function () {
         $inactive = localeSwitchStaff(['is_active' => false]);
-        $student = User::factory()->create(['locale' => 'en']);
 
         $this->actingAs($inactive)->post(route('account.locale.update'), ['locale' => 'ar'])->assertForbidden();
 
-        // The portal signs in on its own guard, which this route does not read. The user is
-        // put on that guard directly: actingAs($user, 'student') would also make it the
-        // DEFAULT guard, which it is not in a request to this route.
+        expect($inactive->refresh()->locale)->toBe('en');
+    });
+
+    it('refuses a portal-only sign-in with a 403', function () {
+        // Its own test, with no staff user signed in at all (Codex, #122): sharing one with
+        // the inactive case left that user on the default guard, so the second request
+        // proved nothing about the portal. The student is put on its own guard directly:
+        // actingAs($user, 'student') would also make it the DEFAULT guard, which it is not
+        // in a request to this route.
+        $student = User::factory()->create(['locale' => 'en']);
+
         Auth::guard('student')->setUser($student);
+
+        expect(Auth::guard('web')->user())->toBeNull();
+
         $this->post(route('account.locale.update'), ['locale' => 'ar'])->assertForbidden();
 
-        expect($inactive->refresh()->locale)->toBe('en')
-            ->and($student->refresh()->locale)->toBe('en');
+        expect($student->refresh()->locale)->toBe('en');
     });
 
     it('refuses a POST without a CSRF token, and accepts the same one with it', function () {
@@ -648,12 +657,33 @@ describe('the admin switch', function () {
             ->and($actor->refresh()->locale)->toBe('en');
     });
 
+    it('keeps its own throttle budget, apart from every other per-user throttle', function () {
+        // An unprefixed numeric throttle keys an authenticated request by the user alone,
+        // so every such route shares one budget: the staff file, photo and receipt routes
+        // use them. The locale route's prefix gives it its own (Codex, #122). A stand-in
+        // route with the same unprefixed throttle is used up first.
+        Route::middleware(['web', 'throttle:10,1'])->get('/locale-switch-throttle-neighbour', fn (): string => 'ok');
+
+        $actor = localeSwitchStaff();
+        $this->actingAs($actor);
+
+        foreach (range(1, 10) as $attempt) {
+            $this->get('/locale-switch-throttle-neighbour')->assertOk();
+        }
+
+        $this->get('/locale-switch-throttle-neighbour')->assertStatus(429);
+
+        $this->post(route('account.locale.update'), ['locale' => 'ar'])->assertRedirect();
+
+        expect($actor->refresh()->locale)->toBe('ar');
+    });
+
     it('carries the panel\'s session check, its password hold and a throttle on the route itself', function () {
         $middleware = Route::getRoutes()->getByName('account.locale.update')->gatherMiddleware();
 
         // in_array, not expect()->toContain(): that helper is variadic, so a message would be
         // read as a second expected value.
-        foreach ([AuthenticateAccountSession::class, ForcePasswordChange::class, 'throttle:10,1'] as $expected) {
+        foreach ([AuthenticateAccountSession::class, ForcePasswordChange::class, 'throttle:10,1,account-locale'] as $expected) {
             expect(in_array($expected, $middleware, true))->toBeTrue("account.locale.update does not carry {$expected}.");
         }
     });

@@ -267,8 +267,10 @@ Route::middleware([VerificationResponseHeaders::class, 'throttle:certificate-ver
 |   groups that declare AuthenticatePrivateFileSession.
 | - ForcePasswordChange: the panel's own hold, so a user who must change their
 |   password is sent to that form and nothing is written.
-| - throttle:10,1: every toggle that changes the language appends a row, so the rate
-|   is the bound on how fast the log can grow.
+| - throttle:10,1,account-locale: every toggle that changes the language appends a row,
+|   so the rate bounds how fast the log can grow. The prefix gives it its own budget: an
+|   unprefixed numeric throttle keys a signed-in request by the user alone, so it would
+|   share one budget with the file, photo and receipt routes (Codex, #122).
 | - The panel-access check is the controller's, with is_active, because it needs the
 |   user: it answers a guest, a student and a user without access with a 403.
 |
@@ -276,7 +278,7 @@ Route::middleware([VerificationResponseHeaders::class, 'throttle:certificate-ver
 | token is refused. It is a group of its own and not a route in the private-file
 | groups above, which no phase 4 task touches, and it streams nothing.
 */
-Route::middleware([AuthenticateAccountSession::class, ForcePasswordChange::class, 'throttle:10,1'])
+Route::middleware([AuthenticateAccountSession::class, ForcePasswordChange::class, 'throttle:10,1,account-locale'])
     ->group(function (): void {
         Route::post('account/locale', UpdateOwnLocaleController::class)
             ->name('account.locale.update');

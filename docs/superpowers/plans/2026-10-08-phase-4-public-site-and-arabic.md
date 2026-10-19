@@ -1668,7 +1668,9 @@ public site and in the admin.
     private-file one);
   - `ForcePasswordChange`;
   - the panel-access check, in the controller;
-  - `throttle:10,1`, because every toggle appends to the audit log.
+  - `throttle:10,1,account-locale`, because every toggle appends to the audit log.
+    The prefix gives the route its own budget; unprefixed, it would share the
+    per-user budget of the file, photo and receipt routes (Codex, #122).
 
   The flag is `public_site.admin_locale_switch` (`ADMIN_LOCALE_SWITCH`, off).
 - **The logical-properties scan** extends the existing one in `LocalizationTest`,
