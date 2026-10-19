@@ -248,6 +248,12 @@ it('sets the locale from the route name and reads no session', function (?string
  * each is: anchors and form actions. A fragment, a mailto, a tel and any other origin
  * are not paths of this site.
  *
+ * THE LANGUAGE SWITCH IS LEFT OUT BY ELEMENT, NOT BY ADDRESS. Its one link is meant to
+ * leave the page's language, and the tests below check it on its own. An earlier version
+ * skipped every link whose address equalled the switch's, which also skipped a search form
+ * that posted to the library in the wrong language: the Arabic library's switch points at
+ * the English library, so the English library was waved through wherever it appeared.
+ *
  * @return list<array{0: string, 1: string}> [kind, path]
  */
 function publicLocaleSiteLinks(HTMLDocument $document): array
@@ -256,6 +262,10 @@ function publicLocaleSiteLinks(HTMLDocument $document): array
     $found = [];
 
     foreach ($document->querySelectorAll('a[href], form[action]') as $element) {
+        if ($element->closest('[data-locale-switch]') !== null) {
+            continue;
+        }
+
         $value = $element->getAttribute($element->localName === 'form' ? 'action' : 'href');
 
         if (str_starts_with($value, $origin.'/') || $value === $origin) {
@@ -272,19 +282,14 @@ it('keeps every link of an Arabic page under /ar, the language switch and the st
     foreach (publicLocalePages() as $label => $path) {
         $document = publicLocaleDocument($this->get(publicLocaleArabicPath($path))->assertOk());
 
-        // The switch's own link to the English page is the one link meant to leave.
-        $switchHrefs = [];
-
-        foreach ($document->querySelectorAll('[data-locale-switch] a') as $link) {
-            $switchHrefs[] = $link->getAttribute('href');
-        }
-
-        expect($switchHrefs)->toHaveCount(1, "{$label}: the switch should hold exactly one link.");
+        // The switch is the one element meant to leave, and it holds exactly one link: to
+        // the English counterpart. publicLocaleSiteLinks() leaves it out.
+        expect(count($document->querySelectorAll('[data-locale-switch] a')))->toBe(1, "{$label}: the switch should hold exactly one link.");
 
         $checked = 0;
 
         foreach (publicLocaleSiteLinks($document) as [, $linkPath]) {
-            if ($linkPath === $portal || url($linkPath) === $switchHrefs[0] || url($linkPath) === rtrim($switchHrefs[0], '/')) {
+            if ($linkPath === $portal) {
                 continue;
             }
 
@@ -302,15 +307,12 @@ it('keeps every link of an Arabic page under /ar, the language switch and the st
 it('keeps every link of an English page out of /ar, the language switch excepted', function () {
     foreach (publicLocalePages() as $label => $path) {
         $document = publicLocaleDocument($this->get($path)->assertOk());
-        $switchHref = $document->querySelector('[data-locale-switch] a')->getAttribute('href');
+
+        expect(count($document->querySelectorAll('[data-locale-switch] a')))->toBe(1, "{$label}: the switch should hold exactly one link.");
 
         $checked = 0;
 
         foreach (publicLocaleSiteLinks($document) as [, $linkPath]) {
-            if (url($linkPath) === $switchHref) {
-                continue;
-            }
-
             $checked++;
 
             expect($linkPath === '/ar' || str_starts_with($linkPath, '/ar/') || str_starts_with($linkPath, '/ar?'))
