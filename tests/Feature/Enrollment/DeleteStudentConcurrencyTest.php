@@ -245,3 +245,38 @@ it('still deletes a settled student when nothing changed while it waited', funct
     expect($result)->toBe(['outcome' => 'deleted'])
         ->and($student->fresh()->trashed())->toBeTrue();
 })->group('enrollment');
+
+it('refuses a student whose settled enrolment became active after the delete took its snapshot', function () {
+    ['student' => $student, 'charge' => $charge] = ($this->settledStudent)();
+
+    // A completion undone, as ReverseEnrollmentCompletionAction does, without the student row.
+    $result = deleteStudentAfterConcurrentChange(
+        $this->remover,
+        $student,
+        fn () => Enrollment::query()->whereKey($charge->enrollment_id)->update(['status' => EnrollmentStatus::Active]),
+    );
+
+    expect($result)->toBe(['outcome' => 'refused'])
+        ->and($student->fresh()->trashed())->toBeFalse();
+})->group('enrollment');
+
+it('refuses a student who owes on an enrolment that appeared after the delete took its snapshot', function () {
+    ['student' => $student] = ($this->settledStudent)();
+
+    // Enrolled and withdrawn (two commits) between the snapshot and the decision:
+    // no active enrolment to refuse on, only the unpaid bill the balance must find.
+    $result = deleteStudentAfterConcurrentChange(
+        $this->remover,
+        $student,
+        function () use ($student): void {
+            Charge::factory()->create([
+                'enrollment_id' => Enrollment::factory()->for($student)->create(['status' => EnrollmentStatus::Withdrawn])->getKey(),
+                'list_price' => '400.000',
+                'amount' => '400.000',
+            ]);
+        },
+    );
+
+    expect($result)->toBe(['outcome' => 'refused'])
+        ->and($student->fresh()->trashed())->toBeFalse();
+})->group('enrollment');
