@@ -144,6 +144,15 @@ class EnrollAndCollect extends Page
     #[Locked]
     public ?int $preselectedBatchId = null;
 
+    /**
+     * The student "New student instead" just created, kept on the cards even with
+     * a blank search. The operator typed its details, so it is shown without
+     * view_student, as main's Select showed its label; the card's own @can branch
+     * still limits such an actor to name and code. Set only by createOptionUsing().
+     */
+    #[Locked]
+    public ?int $createdStudentId = null;
+
     public string $studentSearch = '';
 
     public string $batchSearch = '';
@@ -428,6 +437,9 @@ class EnrollAndCollect extends Page
         if ($preselected !== null && Gate::allows('view', $preselected)) {
             $ids[] = $preselected->getKey();
         }
+        if ($this->createdStudentId !== null) {
+            $ids[] = $this->createdStudentId;
+        }
 
         return Student::query()
             ->whereKey($ids)
@@ -562,7 +574,7 @@ class EnrollAndCollect extends Page
                                 ->maxLength(30),
                         ]
                         : null)
-                    ->createOptionUsing(fn (array $data, Schema $schema): int => self::createStudentFromQuickCreate($data, $schema))
+                    ->createOptionUsing(fn (array $data, Schema $schema): int => $this->createdStudentId = self::createStudentFromQuickCreate($data, $schema))
                     ->createOptionAction(fn (Action $action): Action => $action->label(__('collect.new_student'))->button()->outlined()),
             ]);
     }
@@ -747,6 +759,7 @@ class EnrollAndCollect extends Page
             $this->discountSearch = '';
             $this->preselectedStudentId = null;
             $this->preselectedBatchId = null;
+            $this->createdStudentId = null;
         }
     }
 
@@ -1105,6 +1118,7 @@ class EnrollAndCollect extends Page
         $this->collectionIdempotencyKey = null;
         $this->preselectedStudentId = null;
         $this->preselectedBatchId = null;
+        $this->createdStudentId = null;
         $this->collectForm->fill();
         $this->form->fill();
         $this->studentSearch = '';

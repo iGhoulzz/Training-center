@@ -136,6 +136,7 @@ return [
     'no_phone' => 'No phone recorded',
     'new_student' => 'New student instead',
     'no_students' => 'No matching students. Try another name or code.',
+    'search_students_prompt' => 'Type a name or student code to find a student.',
     'search_batches' => 'Search by batch or course code',
     'batch_options' => 'Batch options',
     'batch_dates' => ':start – :end',

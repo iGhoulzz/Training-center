@@ -175,8 +175,22 @@ it('refuses client changes to authorized picker hint provenance', function (stri
     $batch = Batch::factory()->active()->create();
     $page = Livewire::actingAs($this->admin)->test(EnrollAndCollect::class);
 
-    $page->set($property, $property === 'preselectedStudentId' ? $student->id : $batch->id);
-})->with(['preselectedStudentId', 'preselectedBatchId'])->throws(CannotUpdateLockedPropertyException::class);
+    $page->set($property, $property === 'preselectedBatchId' ? $batch->id : $student->id);
+})->with(['preselectedStudentId', 'preselectedBatchId', 'createdStudentId'])->throws(CannotUpdateLockedPropertyException::class);
+
+it('prompts for a search instead of reporting no matches before anything is typed', function () {
+    Student::factory()->create(['first_name' => 'Amira', 'last_name' => 'Walkin']);
+    $page = Livewire::actingAs($this->admin)->test(EnrollAndCollect::class);
+
+    $page->assertSee(__('collect.search_students_prompt'))
+        ->assertDontSee(__('collect.no_students'))
+        ->assertDontSee(trans_choice('collect.matches', 0, ['count' => 0]));
+
+    $page->set('studentSearch', 'no-such-student')
+        ->assertSee(__('collect.no_students'))
+        ->assertSee(trans_choice('collect.matches', 0, ['count' => 0]))
+        ->assertDontSee(__('collect.search_students_prompt'));
+});
 
 it('keeps an authorized open batch hint visible beyond the search limit and outside search matches', function () {
     $student = Student::factory()->create();
@@ -1431,8 +1445,16 @@ it('lets an enroller without create_student enrol an existing student but not cr
     );
 });
 
-it('keeps the quick-create modal inside its Livewire root and selects the created student', function () {
-    $page = Livewire::actingAs($this->staff)->test(EnrollAndCollect::class);
+it('keeps the quick-create modal inside its Livewire root and selects the created student', function (bool $canViewStudents) {
+    if ($canViewStudents) {
+        $actor = $this->staff;
+    } else {
+        $role = Role::findOrCreate('quick-creator-without-student-read', 'web');
+        $this->system->syncRolePermissions($role, ['access_admin_panel', 'create_enrollment', 'create_student']);
+        $actor = ($this->actorWith)('quick-creator-without-student-read');
+    }
+    expect($actor->can('view_student'))->toBe($canViewStudents);
+    $page = Livewire::actingAs($actor)->test(EnrollAndCollect::class);
     $initial = $page->html();
     $dom = new DOMDocument;
     @$dom->loadHTML($initial);
@@ -1451,7 +1473,7 @@ it('keeps the quick-create modal inside its Livewire root and selects the create
         ->assertSet('mountedActions.0.name', 'createOption');
     expect($page->getMountedActionModalHtml())->toContain('first_name');
 
-    $page->fillForm(['first_name' => 'Modal', 'last_name' => 'Walkin'], 'mountedActionSchema0')
+    $page->fillForm(['first_name' => 'Modal', 'last_name' => 'Walkin', 'phone' => '0912000111'], 'mountedActionSchema0')
         ->callMountedAction()
         ->assertHasNoFormErrors()
         ->assertSet('flowStep', 1);
@@ -1459,7 +1481,25 @@ it('keeps the quick-create modal inside its Livewire root and selects the create
     $created = Student::query()->where('first_name', 'Modal')->where('last_name', 'Walkin')->sole();
     expect((string) $page->get('data.student_id'))->toBe((string) $created->getKey())
         ->and($created->student_code)->not->toBeEmpty();
-});
+
+    // The new student is the selected card, though the search is still blank.
+    $document = new DOMDocument;
+    $document->loadHTML('<?xml encoding="UTF-8">'.$page->html(), LIBXML_NOERROR | LIBXML_NOWARNING);
+    $card = (new DOMXPath($document))->query('//label[input[@name="student_id" and @value="'.$created->getKey().'"]]');
+    expect($page->get('studentSearch'))->toBe('')
+        ->and($card)->toHaveCount(1)
+        ->and($card->item(0)->textContent)->toContain($created->full_name, $created->student_code, '✓');
+    if ($canViewStudents) {
+        expect($card->item(0)->textContent)->toContain('0912000111', $created->status->label());
+    } else {
+        expect($card->item(0)->textContent)->not->toContain('0912000111')
+            ->not->toContain($created->status->label());
+    }
+
+    // The next walk-in starts from a blank list again.
+    $page->call('finishCollection');
+    expect($page->instance()->studentMatches)->toBeEmpty();
+})->with(['student reader' => true, 'creator without student read' => false]);
 
 it('offers the quick-create form to an actor who does hold create_student', function () {
     /*

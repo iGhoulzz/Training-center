@@ -5,7 +5,7 @@
         <div class="flex items-center gap-3 rounded-[10px] border border-primary-500/35 bg-white/5 px-3.25 py-2.75 focus-within:ring-2 focus-within:ring-primary-500">
             <x-filament::icon icon="heroicon-o-magnifying-glass" class="size-4 shrink-0 text-gray-400" />
             <input id="student-search" type="search" wire:model.live.debounce.300ms="studentSearch" placeholder="{{ __('collect.search_students') }}" class="min-w-0 flex-1 border-0 bg-transparent text-base text-gray-100 outline-none placeholder:text-gray-500" />
-            <span class="shrink-0 text-[11.5px] text-gray-500" aria-live="polite">{{ trans_choice('collect.matches', $this->studentMatches->count(), ['count' => $this->studentMatches->count()]) }}</span>
+            @if (filled($this->studentSearch))<span class="shrink-0 text-[11.5px] text-gray-500" aria-live="polite">{{ trans_choice('collect.matches', $this->studentMatches->count(), ['count' => $this->studentMatches->count()]) }}</span>@endif
         </div>
         <fieldset aria-label="{{ __('collect.student_results') }}" class="flex flex-col gap-2">
             @forelse ($this->studentMatches as $student)
@@ -19,7 +19,7 @@
                     @if ((string) ($this->data['student_id'] ?? '') === (string) $student->id)<span aria-hidden="true" class="text-primary-400">✓</span>@endif
                 </label>
             @empty
-                <p class="py-3 text-sm text-gray-400">{{ __('collect.no_students') }}</p>
+                <p class="py-3 text-sm text-gray-400">{{ blank($this->studentSearch) ? __('collect.search_students_prompt') : __('collect.no_students') }}</p>
             @endforelse
         </fieldset>
         @error('data.student_id')<p role="alert" class="text-sm text-danger-400">{{ $message }}</p>@enderror
