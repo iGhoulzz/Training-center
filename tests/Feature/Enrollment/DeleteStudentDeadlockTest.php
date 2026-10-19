@@ -70,7 +70,7 @@ function deadlockWorkerEnvironment(): array
  * moment its enrolment lock is taken, then reports the outcome and how many
  * transactions it began: 1 means no retry, 2 means one deadlock retry.
  *
- * @param  'delete'|'issue'  $kind
+ * @param  'delete'|'issue'|'replace'  $kind
  */
 function deadlockWorker(string $kind, int $actorId, int $subjectId, string $readyPath, string $lockedPath, string $resultPath): Process
 {
@@ -105,6 +105,12 @@ function deadlockWorker(string $kind, int $actorId, int $subjectId, string $read
                     App\Domain\Enrollment\Models\Student::query()->findOrFail((int) $subjectId),
                 );
                 $outcome = 'deleted';
+            } elseif ($kind === 'replace') {
+                app(App\Domain\Enrollment\Actions\ReplaceStudentCertificateAction::class)->execute(
+                    $actor,
+                    App\Domain\Enrollment\Models\Enrollment::query()->findOrFail((int) $subjectId),
+                );
+                $outcome = 'issued';
             } else {
                 app(App\Domain\Enrollment\Actions\IssueStudentCertificateAction::class)->execute(
                     $actor,
@@ -175,9 +181,9 @@ afterEach(function () {
     File::delete(glob(storage_path("framework/testing/deadlock-{$this->token}-*")) ?: []);
 });
 
-it('issues a certificate and refuses the delete when they deadlock on the student and its enrolments', function () {
+it('writes the certificate and refuses the delete when they deadlock on the student and its enrolments', function (string $kind, string $permission) {
     $remover = ($this->userWith)('delete_student');
-    $issuer = ($this->userWith)('issue_student_certificate');
+    $issuer = ($this->userWith)($permission);
 
     // Five enrolments, the one to certify LAST: the delete has locked the other
     // four by the time it needs it, so it is the heavier transaction and InnoDB
@@ -185,12 +191,15 @@ it('issues a certificate and refuses the delete when they deadlock on the studen
     $student = Student::factory()->create();
     $earlier = Enrollment::factory()->for($student)->count(4)->create(['status' => EnrollmentStatus::Withdrawn]);
     $target = Enrollment::factory()->for($student)->completed()->create();
+    if ($kind === 'replace') {
+        StudentCertificate::factory()->create(['enrollment_id' => $target->getKey()]);
+    }
     // The student owes on the first one, so the delete's answer is a refusal and
     // the student row survives for the certificate to read.
     Charge::factory()->create(['enrollment_id' => $earlier->first()->getKey(), 'list_price' => '300.000', 'amount' => '300.000']);
 
     $deleteWorker = deadlockWorker('delete', (int) $remover->getKey(), (int) $student->getKey(), ($this->path)('d-ready'), ($this->path)('d-locked'), ($this->path)('d-result.json'));
-    $issueWorker = deadlockWorker('issue', (int) $issuer->getKey(), (int) $target->getKey(), ($this->path)('i-ready'), ($this->path)('i-locked'), ($this->path)('i-result.json'));
+    $issueWorker = deadlockWorker($kind, (int) $issuer->getKey(), (int) $target->getKey(), ($this->path)('i-ready'), ($this->path)('i-locked'), ($this->path)('i-result.json'));
 
     $connection = DB::connection();
     $connection->beginTransaction();
@@ -222,7 +231,7 @@ it('issues a certificate and refuses the delete when they deadlock on the studen
 
         expect($issue['outcome'])->toBe('issued', json_encode($issue))
             ->and($delete['outcome'])->toBe('refused', json_encode($delete))
-            ->and(StudentCertificate::query()->where('enrollment_id', $target->getKey())->count())->toBe(1)
+            ->and(StudentCertificate::query()->where('enrollment_id', $target->getKey())->count())->toBe($kind === 'replace' ? 2 : 1)
             ->and($student->fresh()->trashed())->toBeFalse();
     } finally {
         if (! $released && $connection->transactionLevel() > 0) {
@@ -235,7 +244,10 @@ it('issues a certificate and refuses the delete when they deadlock on the studen
             }
         }
     }
-})->group('enrollment');
+})->with([
+    'issue' => ['issue', 'issue_student_certificate'],
+    'replace' => ['replace', 'replace_student_certificate'],
+])->group('enrollment');
 
 it('retries the delete when a payment being recorded deadlocks with it, then decides', function () {
     $remover = ($this->userWith)('delete_student');
