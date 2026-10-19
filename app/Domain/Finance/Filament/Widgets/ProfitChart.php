@@ -4,34 +4,17 @@ declare(strict_types=1);
 
 namespace App\Domain\Finance\Filament\Widgets;
 
-use App\Domain\Finance\Exports\ReportDataBuilder;
+use App\Domain\Finance\Exports\ReportDataset;
 use App\Domain\Finance\Exports\ReportKind;
-use App\Domain\Finance\Filament\Pages\Reports\ReportPage;
-use App\Models\User;
-use Filament\Widgets\ChartWidget;
-use Livewire\Attributes\Reactive;
+use App\Domain\Finance\Support\Money;
 
-final class ProfitChart extends ChartWidget
+/**
+ * Profit as a breakdown: collected revenue, wage cost, expenses, then the
+ * result. The four values are the Profit dataset's own cells; nothing is
+ * computed here beyond the sign a cost is drawn with.
+ */
+final class ProfitChart extends ReportBarsWidget
 {
-    protected static bool $isDiscovered = false;
-
-    protected static bool $isLazy = false;
-
-    protected int|string|array $columnSpan = 'full';
-
-    protected ?string $pollingInterval = null;
-
-    protected ?string $maxHeight = '300px';
-
-    /** @var array<string, mixed> */
-    #[Reactive]
-    public array $reportFilters = [];
-
-    public static function canView(): bool
-    {
-        return ReportPage::canAccess();
-    }
-
     public function getHeading(): string
     {
         return __('reports.charts.profit');
@@ -42,35 +25,44 @@ final class ProfitChart extends ChartWidget
         return __('reports.profit_definition');
     }
 
-    /** @return array<string, mixed> */
-    protected function getData(): array
+    protected function kind(): ReportKind
     {
-        $user = auth()->user();
-        abort_unless($user instanceof User, 403);
+        return ReportKind::Profit;
+    }
 
-        $dataset = app(ReportDataBuilder::class)->build(ReportKind::Profit, $this->reportFilters, $user);
+    protected function isSigned(): bool
+    {
+        return true;
+    }
 
-        $cells = array_column($dataset->rows, 'cells');
+    /** @return list<array{label: string, value: Money, tone: string, emphasis?: bool}> */
+    protected function rows(ReportDataset $dataset): array
+    {
+        $cells = $dataset->rows[0]['cells'];
+        $result = Money::fromDecimal($cells['profit']);
 
         return [
-            'labels' => [__('reports.charts.period', [
-                'from' => $this->reportFilters['from'],
-                'to' => $this->reportFilters['to'],
-            ])],
-            'datasets' => [[
-                'label' => $dataset->columns['profit'],
-                'data' => array_column($cells, 'profit'),
-            ]],
+            [
+                'label' => __('reports.charts.bars.revenue'),
+                'value' => Money::fromDecimal($cells['revenue']),
+                'tone' => 'success',
+            ],
+            [
+                'label' => __('reports.charts.bars.wage_cost'),
+                'value' => Money::zero()->subtract(Money::fromDecimal($cells['wage_cost'])),
+                'tone' => 'danger',
+            ],
+            [
+                'label' => __('reports.charts.bars.expenses'),
+                'value' => Money::zero()->subtract(Money::fromDecimal($cells['expenses'])),
+                'tone' => 'danger',
+            ],
+            [
+                'label' => $result->isNegative() ? __('reports.charts.bars.loss') : __('reports.charts.bars.profit'),
+                'value' => $result,
+                'tone' => $result->isNegative() ? 'danger' : 'success',
+                'emphasis' => true,
+            ],
         ];
-    }
-
-    public function getEmptyStateHeading(): string
-    {
-        return __('reports.empty');
-    }
-
-    protected function getType(): string
-    {
-        return 'bar';
     }
 }

@@ -80,6 +80,16 @@ return [
         'wage_cost' => 'Wage cost by staff member',
         'payment_method' => 'Collected payments by method',
         'period' => ':from – :to',
+        'date_format' => 'j M Y',
+        'sign_positive' => '+',
+        'sign_negative' => '−',
+        'bars' => [
+            'revenue' => 'Collected revenue',
+            'wage_cost' => 'Wage cost',
+            'expenses' => 'Expenses',
+            'profit' => 'Profit',
+            'loss' => 'Loss',
+        ],
     ],
     'presentation' => [
         'queued_hint' => 'Exports run in the background. You will be notified when your file is ready.',

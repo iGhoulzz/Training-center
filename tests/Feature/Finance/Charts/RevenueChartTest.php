@@ -5,9 +5,8 @@ declare(strict_types=1);
 use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Course;
 use App\Domain\Enrollment\Models\Enrollment;
-use App\Domain\Finance\Exports\ReportDataBuilder;
-use App\Domain\Finance\Exports\ReportKind;
 use App\Domain\Finance\Filament\Pages\Reports\RevenueReportPage;
+use App\Domain\Finance\Filament\Widgets\ReportBarsWidget;
 use App\Domain\Finance\Filament\Widgets\RevenueChart;
 use App\Domain\Finance\Models\Charge;
 use App\Domain\Finance\Models\Payment;
@@ -16,7 +15,9 @@ use App\Domain\Staff\Actions\SystemRoleWriter;
 use App\Models\Role;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
+use Dom\HTMLDocument;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Livewire\Attributes\Reactive;
 use Livewire\Livewire;
 
 uses(RefreshDatabase::class);
@@ -30,14 +31,32 @@ beforeEach(function () {
     $system->assignRoles($this->viewer, 'chart_viewer');
     $this->actingAs($this->viewer->refresh());
     $this->reportOptions = ['from' => '2026-10-01', 'to' => '2026-10-31'];
-    $this->chartData = fn ($widget): array => (new ReflectionMethod($widget, 'getData'))->invoke($widget);
+    $this->bars = function (string $html): array {
+        $document = HTMLDocument::createFromString($html, LIBXML_NOERROR);
+        $bars = [];
+        foreach ($document->querySelectorAll('[data-report-bar]') as $item) {
+            $rects = $item->querySelectorAll('rect');
+            $bars[] = [
+                'label' => trim($item->querySelector('span')->textContent),
+                'value' => trim($item->querySelector('[data-bar-value]')->textContent),
+                'width' => $rects[1]->getAttribute('width'),
+                'tone' => $item->querySelector('svg')->getAttribute('data-bar-tone'),
+                'set_apart' => str_contains($item->getAttribute('class'), 'border-t'),
+            ];
+        }
+
+        return $bars;
+    };
+    $this->period = fn (string $html): ?string => HTMLDocument::createFromString($html, LIBXML_NOERROR)
+        ->querySelector('[data-report-period]')?->textContent;
 });
 
-it('plots the exact Revenue report rows with hand-computed signed decimal values', function () {
+it('draws each batch as a bar, largest first, with its value as text and the period it covers', function () {
     $course = Course::factory()->create(['code' => 'ENG-101']);
-    $first = Batch::factory()->for($course)->create(['code' => 'ENG-A']);
-    $second = Batch::factory()->for($course)->create(['code' => 'ENG-B']);
-    foreach ([[$first, '100.125', false, '2026-10-05'], [$first, '25.125', false, '2026-10-06'], [$second, '99.001', false, '2026-10-07'], [$first, '900.000', true, '2026-10-08'], [$first, '800.000', false, '2026-09-08']] as [$batch, $amount, $reversed, $date]) {
+    $small = Batch::factory()->for($course)->create(['code' => 'ENG-A']);
+    $medium = Batch::factory()->for($course)->create(['code' => 'ENG-B']);
+    $large = Batch::factory()->for($course)->create(['code' => 'ENG-C']);
+    foreach ([[$small, '40.000', false, '2026-10-05'], [$medium, '99.001', false, '2026-10-07'], [$large, '100.125', false, '2026-10-05'], [$large, '25.125', false, '2026-10-06'], [$large, '900.000', true, '2026-10-08'], [$large, '800.000', false, '2026-09-08']] as [$batch, $amount, $reversed, $date]) {
         $enrollment = Enrollment::factory()->for($batch)->create();
         $charge = Charge::factory()->create(['enrollment_id' => $enrollment->getKey()]);
         $payment = ($reversed ? Payment::factory()->reversed() : Payment::factory())
@@ -45,21 +64,53 @@ it('plots the exact Revenue report rows with hand-computed signed decimal values
         PaymentAllocation::factory()->create(['charge_id' => $charge->getKey(), 'payment_id' => $payment->getKey(), 'amount' => $amount]);
     }
 
-    $dataset = app(ReportDataBuilder::class)->build(ReportKind::Revenue, $this->reportOptions, $this->viewer);
-    $widget = Livewire::test(RevenueChart::class, ['reportFilters' => $this->reportOptions, 'lazy' => false])->assertOk()->instance();
-    $data = ($this->chartData)($widget);
+    $html = Livewire::test(RevenueChart::class, ['reportFilters' => $this->reportOptions, 'lazy' => false])->assertOk()->html();
 
-    expect($data['labels'] ?? null)->toBe(['ENG-A', 'ENG-B'])
-        ->and($data['datasets'][0]['data'] ?? null)->toBe(['125.250', '99.001'])
-        ->and($data['datasets'][0]['data'])->toBe(array_column(array_column($dataset->rows, 'cells'), 'batch_total'));
+    // 125.250 is the largest, so it is the full bar; 99.001 / 125.250 is 79.04% and 40.000 / 125.250 is 31.94%.
+    expect(($this->period)($html))->toBe('1 Oct 2026 – 31 Oct 2026')
+        ->and(($this->bars)($html))->toBe([
+            ['label' => 'ENG-C', 'value' => '125.250 LYD', 'width' => '100', 'tone' => 'primary', 'set_apart' => false],
+            ['label' => 'ENG-B', 'value' => '99.001 LYD', 'width' => '79', 'tone' => 'primary', 'set_apart' => false],
+            ['label' => 'ENG-A', 'value' => '40.000 LYD', 'width' => '32', 'tone' => 'primary', 'set_apart' => false],
+        ]);
 });
 
-it('preserves the report meaning when the period has no data', function () {
-    $widget = Livewire::test(RevenueChart::class, ['reportFilters' => $this->reportOptions, 'lazy' => false])->instance();
-    $dataset = app(ReportDataBuilder::class)->build(ReportKind::Revenue, $this->reportOptions, $this->viewer);
-    expect($dataset->rows)->toBe([])
-        ->and(($this->chartData)($widget))->toBe([])
-        ->and($widget->isEmpty())->toBeTrue();
+it('writes the dates of the chosen range, not the month, for a day-based report', function () {
+    $html = Livewire::test(RevenueChart::class, ['reportFilters' => ['from' => '2026-10-05', 'to' => '2026-10-20'], 'lazy' => false])->html();
+
+    expect(($this->period)($html))->toBe('5 Oct 2026 – 20 Oct 2026');
+});
+
+it('draws the same rows as the table beneath it', function () {
+    $this->travelTo(now()->setDate(2026, 10, 15));
+    $course = Course::factory()->create();
+    foreach (['ENG-A' => '40.000', 'ENG-B' => '99.001'] as $code => $amount) {
+        $enrollment = Enrollment::factory()->for(Batch::factory()->for($course)->create(['code' => $code]))->create();
+        $charge = Charge::factory()->create(['enrollment_id' => $enrollment->getKey()]);
+        $payment = Payment::factory()->create(['received_at' => '2026-10-05 10:00:00']);
+        PaymentAllocation::factory()->create(['charge_id' => $charge->getKey(), 'payment_id' => $payment->getKey(), 'amount' => $amount]);
+    }
+
+    $html = Livewire::test(RevenueReportPage::class)->html();
+    $document = HTMLDocument::createFromString($html, LIBXML_NOERROR);
+    $tableCells = array_map(fn ($cell): string => trim($cell->textContent), iterator_to_array($document->querySelectorAll('tbody td')));
+
+    expect(array_column(($this->bars)($html), 'label'))->toHaveCount(2)
+        ->and($tableCells)->toContain('ENG-A', 'ENG-B', '40.000', '99.001');
+});
+
+it('says so, still naming the period, when the period has no data', function () {
+    $html = Livewire::test(RevenueChart::class, ['reportFilters' => $this->reportOptions, 'lazy' => false])->html();
+
+    expect(($this->bars)($html))->toBe([])
+        ->and(($this->period)($html))->toBe('1 Oct 2026 – 31 Oct 2026')
+        ->and($html)->toContain('No rows match these filters.');
+});
+
+it('redraws when its reactive filters change', function () {
+    $property = new ReflectionProperty(ReportBarsWidget::class, 'reportFilters');
+
+    expect($property->getAttributes(Reactive::class))->toHaveCount(1);
 });
 
 it('passes only applied filters to its mounted header chart', function () {
@@ -76,7 +127,7 @@ it('passes only applied filters to its mounted header chart', function () {
 
 it('updates the existing child chart only when the edited period is applied', function () {
     $this->travelTo(now()->setDate(2026, 10, 15));
-    $enrollment = Enrollment::factory()->create();
+    $enrollment = Enrollment::factory()->for(Batch::factory()->create(['code' => 'ENG-S']))->create();
     $charge = Charge::factory()->create(['enrollment_id' => $enrollment->getKey()]);
     foreach (['2026-10' => '100.125', '2026-09' => '75.001'] as $month => $amount) {
         $payment = Payment::factory()->create(['received_at' => $month.'-05 10:00:00']);
@@ -102,7 +153,7 @@ it('updates the existing child chart only when the edited period is applied', fu
     $parent = json_decode($response->json('components.0.snapshot'), true, flags: JSON_THROW_ON_ERROR);
     $child = json_decode($response->json('components.1.snapshot'), true, flags: JSON_THROW_ON_ERROR);
     expect($child['data']['reportFilters'][0])->toBe($this->reportOptions)
-        ->and($response->json('components.1.effects.dispatches') ?? [])->toBe([]);
+        ->and(($this->bars)($response->json('components.1.effects.html'))[0]['value'])->toBe('100.125 LYD');
 
     $response = $this->postJson(Livewire::getUpdateUri(), [
         'components' => [
@@ -114,8 +165,10 @@ it('updates the existing child chart only when the edited period is applied', fu
     $updatedChild = json_decode($response->json('components.1.snapshot'), true, flags: JSON_THROW_ON_ERROR);
     expect($updatedChild['memo']['id'])->toBe($child['memo']['id'])
         ->and($updatedChild['data']['reportFilters'][0])->toBe($edited)
-        ->and($response->json('components.1.effects.dispatches.0.name'))->toBe('updateChartData')
-        ->and($response->json('components.1.effects.dispatches.0.params.data.datasets.0.data'))->toBe(['75.001']);
+        ->and(($this->bars)($response->json('components.1.effects.html')))->toBe([
+            ['label' => 'ENG-S', 'value' => '75.001 LYD', 'width' => '100', 'tone' => 'primary', 'set_apart' => false],
+        ])
+        ->and(($this->period)($response->json('components.1.effects.html')))->toBe('1 Sep 2026 – 30 Sep 2026');
 });
 
 it('refuses an independently mounted chart without report permission', function () {
