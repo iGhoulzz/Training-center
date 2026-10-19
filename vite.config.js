@@ -11,6 +11,7 @@ export default defineConfig({
                 'resources/css/public.css',
                 'resources/css/filament/admin/theme.css',
                 'resources/js/app.js',
+                'resources/js/public-seal.js',
             ],
             refresh: true,
             fonts: [

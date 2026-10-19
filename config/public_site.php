@@ -42,6 +42,10 @@ return [
         'tagline' => 'Legal Studies & Training',
         'name_ar' => 'المركز العربي التخصصي للدراسات القانونية والتدريب',
         'logo' => 'images/brand/asclst-logo.jpg',
+        // The cut-out seal, a transparent PNG, that turns like a coin in the home
+        // page's hero (owner, 2026-10-17). Until the file exists, the hero shows
+        // `logo` in its circle instead.
+        'seal' => 'images/brand/asclst-seal.png',
     ],
 
     'contact' => [

@@ -161,7 +161,7 @@ final class FinanceHub extends Page
      * inside a bound `:heading="..."` attribute as a hardcoded string, which it
      * is not.
      *
-     * @return array{groups: list<Fluent<string, mixed>>}
+     * @return array{groups: list<Fluent<string, mixed>>, exportHistoryUrl: ?string}
      */
     protected function getViewData(): array
     {
@@ -183,10 +183,13 @@ final class FinanceHub extends Page
             ]);
         }
 
-        return ['groups' => array_map(
-            static fn (array $group): Fluent => new Fluent($group),
-            array_values($groups),
-        )];
+        return [
+            'exportHistoryUrl' => ExportHistory::canAccess() ? ExportHistory::getUrl() : null,
+            'groups' => array_map(
+                static fn (array $group): Fluent => new Fluent($group),
+                array_values($groups),
+            ),
+        ];
     }
 
     /**

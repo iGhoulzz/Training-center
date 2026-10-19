@@ -40,6 +40,7 @@
     --color-hairline: rgb(255 255 255 / 0.1);
     --color-hairline-soft: rgb(255 255 255 / 0.06);
     --color-hairline-faint: rgb(255 255 255 / 0.08);
+    --color-control: rgb(255 255 255 / 0.09);
     --color-fill-hover: rgb(255 255 255 / 0.06);
     --color-fill-subtle: rgb(255 255 255 / 0.04);
     --color-scrollbar: rgb(255 255 255 / 0.12);
@@ -242,6 +243,24 @@
         line-height: normal;
     }
 
+    /* Keep the extra destinations reachable through Filament's native disclosure. */
+    .tc-sidebar-secondary {
+        @apply mt-4 border-t border-hairline;
+
+        & > .fi-sidebar-group-btn {
+            @apply gap-x-2;
+        }
+
+        & .fi-sidebar-group-collapse-btn {
+            @apply ms-auto text-gray-400;
+
+            &:hover,
+            &:focus-visible {
+                @apply bg-fill-hover text-gray-50;
+            }
+        }
+    }
+
     /*
      * A nav item: 9px by 10px of padding, an 8px radius, an 11px gap, 14px at 500 in gray-400.
      * The icon and the label take the item's colour, so hovering or activating the item
@@ -333,6 +352,116 @@
     .fi-input-wrp,
     .fi-btn {
         @apply rounded-[10px];
+    }
+
+    /* Shared list controls: 8px wrapping gaps, 9px fields and rounded filter pills.
+     * Only native table controls and the report form participate; edit forms and tabs
+     * keep their own layout. Touch inputs stay 16px with 44px targets. */
+    .fi-ta-ctn .fi-ta-header-toolbar {
+        @apply flex-wrap gap-2;
+    }
+
+    .fi-ta-ctn .fi-ta-header-toolbar > * {
+        @apply min-w-0 shrink flex-wrap gap-2;
+    }
+
+    .fi-ta-ctn .fi-ta-header-toolbar > :nth-child(1) {
+        @apply shrink;
+    }
+
+    .fi-ta-header-toolbar .fi-ta-search-field {
+        @apply min-w-0 max-w-full;
+    }
+
+    .fi-ta-header-toolbar .fi-ta-search-field .fi-input-wrp {
+        @apply rounded-[9px] bg-fill-subtle shadow-none ring-control;
+    }
+
+    .fi-ta-header-toolbar .fi-ta-search-field input.fi-input {
+        @apply min-h-11 py-2 pe-3 text-base leading-normal placeholder:text-gray-400;
+    }
+
+    .fi-ta-header-toolbar .fi-ta-search-field .fi-input-wrp-prefix.fi-inline {
+        @apply ps-3 pe-2;
+    }
+
+    .fi-ta-header-toolbar .fi-ta-search-field .fi-icon {
+        @apply size-[15px] text-gray-400;
+    }
+
+    .fi-ta-header-toolbar :is(.fi-ta-filters-dropdown > .fi-dropdown-trigger, .fi-ta-filters-trigger-action-ctn) > button {
+        @apply m-0 size-auto min-h-11 min-w-11 gap-[7px] rounded-full bg-fill-subtle px-[13px] py-[7px] text-[12.5px] font-medium text-gray-400 shadow-none ring-1 ring-control ring-inset;
+
+        &:hover {
+            @apply bg-fill-hover text-gray-50;
+        }
+
+        &:focus-visible {
+            @apply outline-2 outline-offset-2 outline-primary-400;
+        }
+
+        & > .fi-icon {
+            @apply size-[15px] text-inherit;
+        }
+    }
+
+    .fi-ta-ctn:has(.fi-ta-filter-indicators) .fi-ta-header-toolbar :is(.fi-ta-filters-dropdown > .fi-dropdown-trigger, .fi-ta-filters-trigger-action-ctn) > button {
+        @apply bg-primary-500/14 text-primary-400 ring-primary-500/40;
+    }
+
+    .fi-ta-ctn .fi-ta-filter-indicators {
+        @apply flex-wrap gap-2 bg-transparent;
+    }
+
+    .fi-ta-ctn .fi-ta-filter-indicators .fi-ta-filter-indicators-badges-ctn {
+        @apply gap-2;
+    }
+
+    .fi-ta-ctn .fi-ta-filter-indicators .fi-badge {
+        @apply gap-[7px] rounded-full bg-primary-500/14 px-[13px] py-[7px] text-[12.5px] font-medium text-primary-400 ring-primary-500/40;
+    }
+
+    .fi-ta-filter-indicators :is(.fi-badge-delete-btn, .fi-icon-btn) {
+        @apply min-h-11 min-w-11 rounded-full;
+
+        &:focus-visible {
+            @apply outline-2 outline-offset-2 outline-primary-400;
+        }
+    }
+
+    .fi-ta-ctn .fi-ta-filter-indicators .fi-badge-delete-btn-icon {
+        @apply text-primary-400;
+    }
+
+    :is(.fi-ta-filters, .tc-report-filters) .fi-input-wrp:not(.fi-invalid):not(.fi-disabled) {
+        @apply rounded-[9px] bg-fill-subtle shadow-none ring-control;
+    }
+
+    :is(.fi-ta-filters, .tc-report-filters) :is(input.fi-input, select.fi-select-input) {
+        @apply min-h-11 py-2 text-base placeholder:text-gray-400;
+    }
+
+    :is(.fi-ta-filters, .tc-report-filters) .fi-select-input-btn {
+        @apply min-h-11 py-2 text-base;
+    }
+
+    .tc-report-filters button[type='submit'] {
+        @apply min-h-11;
+    }
+
+    @media (hover: hover) and (pointer: fine) {
+        .fi-ta-header-toolbar .fi-ta-search-field input.fi-input {
+            @apply min-h-0 text-[12.5px];
+        }
+
+        .fi-ta-header-toolbar :is(.fi-ta-filters-dropdown > .fi-dropdown-trigger, .fi-ta-filters-trigger-action-ctn) > button,
+        .fi-ta-filter-indicators :is(.fi-badge-delete-btn, .fi-icon-btn) {
+            @apply min-h-0 min-w-0;
+        }
+
+        :is(.fi-ta-filters, .tc-report-filters) :is(input.fi-input, select.fi-select-input, .fi-select-input-btn) {
+            @apply min-h-0 text-[12.5px];
+        }
     }
 
     /* The primary button: primary-500, primary-400 on hover, with the on-primary text and icon. */

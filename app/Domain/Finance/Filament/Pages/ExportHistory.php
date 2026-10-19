@@ -74,8 +74,7 @@ use Illuminate\Support\Facades\URL;
  * PDFs: a queued, refused or failed PDF leaves no row anywhere (the job stores the
  * file and, on success only, sends a notification), so there is nothing to list;
  * the subheading says so. No retry action: an export is run again from its report
- * page, and nothing here re-runs one. No styling and no markup beyond the table, which the look task
- * (P4-T16d) owns.
+ * page, and nothing here re-runs one.
  *
  * `extends Page`, NEVER `SimplePage`
  * ----------------------------------

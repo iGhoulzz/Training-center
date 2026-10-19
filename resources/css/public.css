@@ -259,6 +259,59 @@
 }
 
 /*
+ * THE HERO SEAL, TURNED LIKE A COIN (owner, 2026-10-17).
+ *
+ * resources/js/public-seal.js sets two properties from the pointer's position over
+ * the seal:
+ * - --seal-turn: -180deg at the left edge, 0 at the centre, +180deg at the right.
+ * - --seal-tilt: a slight lean, up or down.
+ *
+ * While the pointer is over the seal (.is-turning), the turn follows it closely.
+ * When it leaves, both properties return to zero and the seal eases back to
+ * face-on.
+ *
+ * - The frame holds the perspective and keeps the float, so the float and the turn
+ *   never fight over one transform.
+ * - The two faces show the same image, the back one already turned half a circle,
+ *   so the seal reads correctly from either side.
+ * - With reduced motion it never turns. Without the script it simply faces forward.
+ */
+@layer components {
+    .seal-coin-frame {
+        perspective: 62.5rem;
+    }
+
+    .seal-coin {
+        position: relative;
+        transform-style: preserve-3d;
+        transform: rotateX(var(--seal-tilt, 0deg)) rotateY(var(--seal-turn, 0deg));
+        transition: transform 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    [data-seal-coin].is-turning .seal-coin {
+        transition-duration: 0.12s;
+        transition-timing-function: ease-out;
+    }
+
+    .seal-coin-face {
+        backface-visibility: hidden;
+    }
+
+    .seal-coin-back {
+        position: absolute;
+        inset: 0;
+        transform: rotateY(180deg);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .seal-coin {
+            transform: none;
+            transition: none;
+        }
+    }
+}
+
+/*
  * The tokens the page sections first need (P4-T20b).
  *
  * Appended, as T20a's header promises: a value that only a page section draws
@@ -337,4 +390,6 @@
     --shadow-panel: 0 8px 30px rgb(13 39 69 / 0.09);
     --shadow-thumb: 0 4px 14px rgb(13 39 69 / 0.24);
     --shadow-seal: 0 22px 60px rgb(0 0 0 / 0.42);
+    /* The same shadow for the cut-out seal, which has no box to cast one from. */
+    --drop-shadow-seal: 0 22px 30px rgb(0 0 0 / 0.42);
 }
