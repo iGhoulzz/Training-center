@@ -441,7 +441,25 @@ it('derives the arabic-empty check from a set that cannot be empty', function ()
         );
 });
 
-it('keeps the arabic catalogues empty until phase 4', function (string $file) {
+/*
+ * The catalogues the Arabic work has reached: P4-T17a, the public site's three
+ * (owner, 2026-10-17; the plan's `lang/ar/*` seam row).
+ * - Each is held to real Arabic by tests/Feature/Localisation/CatalogueParityTest.php:
+ *   the same keys as English, the same placeholders, Arabic script in every value.
+ *   That is what makes it safe to exempt them from the emptiness check below.
+ * - T17 adds the rest here as it translates them.
+ * - The last test in this group fails if the two lists ever disagree, so a file
+ *   cannot leave the emptiness check without entering the parity check.
+ */
+const TRANSLATED_ARABIC_CATALOGUES = ['public', 'publications', 'verify'];
+
+it('keeps every arabic catalogue empty until its translation lands', function (string $file) {
+    if (in_array($file, TRANSLATED_ARABIC_CATALOGUES, true)) {
+        expect(require lang_path("ar/{$file}.php"))->not->toBe([], "lang/ar/{$file}.php is listed as translated but is empty.");
+
+        return;
+    }
+
     // Deliberate, and asserted so that nobody "helpfully" fills these with the
     // English strings. Copied English would render identically to a real
     // translation, so no screenshot, review or test could tell how much of the
@@ -459,6 +477,19 @@ it('keeps the arabic catalogues empty until phase 4', function (string $file) {
     // single failure for the whole set and does not say which catalogue broke.
     expect(require lang_path("ar/{$file}.php"))->toBe([]);
 })->with(englishCatalogueNames());
+
+it('exempts from emptiness exactly the catalogues the parity test covers', function () {
+    $parity = (string) file_get_contents(base_path('tests/Feature/Localisation/CatalogueParityTest.php'));
+
+    expect(preg_match('/function catalogueParityNames\(\): array\s*\{\s*return \[([^\]]*)\];/', $parity, $match))->toBe(1);
+
+    $covered = array_map(fn (string $name): string => trim($name, " '\"\n\r\t"), explode(',', $match[1]));
+    sort($covered);
+    $exempt = TRANSLATED_ARABIC_CATALOGUES;
+    sort($exempt);
+
+    expect($covered)->toBe($exempt);
+});
 
 it('falls back to english for a key arabic does not have', function () {
     app()->setLocale('ar');

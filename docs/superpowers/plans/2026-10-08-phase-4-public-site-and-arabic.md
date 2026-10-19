@@ -174,7 +174,7 @@ first attempt.
 | `app/Domain/Finance/Reports/ProfitReport.php` | **T04 → T10** | T04 teaches it expenses; T10 charts what it returns and must not change what the figure means |
 | `app/Domain/Finance/Filament/Pages/Reports/*` | **T04 (`ProfitReportPage` subheading only) → T10 → T16d** | T04 shows the Profit definition under the page title and touches nothing else there; T10 adds the charts; T16d restyles. T16d must not change what a chart plots |
 | `lang/en/*` other than `activity.php` | Every task, each in its own catalogue | No task ships a user-facing string without an English key. A task adding to an existing catalogue appends its own keys and edits nobody else's |
-| `lang/ar/*` | **T16a** (`navigation.php` empty placeholder); **T17 only** for Arabic strings | Stay empty until T17, so an untranslated string stays visible. The task that adds an English catalogue may add the matching **empty** placeholder (`return [];`), because `LocalizationTest` requires one per English file; only T17 writes Arabic strings |
+| `lang/ar/*` | **T16a** (`navigation.php` empty placeholder); **T17a** (`public.php`, `publications.php`, `verify.php`), then **T17** (every other file) for Arabic strings | Stay empty until T17a or T17 fills them, so an untranslated string stays visible. The task that adds an English catalogue may add the matching **empty** placeholder (`return [];`), because `LocalizationTest` requires one per English file. Only T17a, T17 and T18a's locale-switch keys write Arabic strings |
 | `app/Domain/Staff/Jobs/PurgeDeletedFileJob.php` (`isOwned()`) | **T03** first; any later task that stores a file on the private disk | `isOwned()` must know every kind of row that owns a file there, or a stale provisional upload receipt lets the sweep unlink a live file. T03 adds articles; a later task adds its own owner here, with a test in the style of `ArticleFileOwnershipTest` |
 | `tests/Feature/Finance/FinancePermissionSeedingTest.php` (the non-finance classification list) | **T03 → T04** | The test fails on any seeded permission it does not classify. T03 classifies the six article permissions; T04 classifies the expense and expense-category ones |
 
@@ -1517,8 +1517,62 @@ physical CSS property is introduced · `composer verify` green.
 
 ## Wave 6 — Arabic and RTL, last
 
+**Split by surface (owner, 2026-10-17).** The public site finished before the admin
+restyle, so its Arabic does not wait for T16d–T16e:
+
+- **T17a** — the public site's three catalogues, now (below).
+- **T18a** — the `/ar` public site and verifier: T18's public, verifier and
+  logical-properties parts. Its section is written when T17a's Arabic has been
+  reviewed.
+- **T17 and T18** — every other catalogue and surface (both login pages, every
+  panel screen, the activity field names), after T16e as before. Their sections
+  below stand, less what T17a and T18a have already done.
+
+The admin's catalogues wait because T16d–T16e still append to them. The public
+site's three files are settled: no remaining public task adds a string except
+T18a's locale switch, which adds each key in both languages.
+
+### Task 17a — The public site's Arabic catalogues
+**Owner: Claude · `p4/t17a-public-arabic` · depends on T20b**
+
+**File scope**
+- `lang/ar/public.php`, `lang/ar/publications.php`, `lang/ar/verify.php` — filled
+- `tests/Feature/Localisation/CatalogueParityTest.php` — new. It covers these three
+  catalogues now; T17 extends it to every catalogue.
+- `tests/Feature/Localisation/PublicArabicRenderTest.php` — new
+
+**Does**
+- Every key of the three English catalogues gets real Arabic: Modern Standard
+  Arabic, in the register a Libyan legal-studies institution uses with the public.
+- Placeholders (`:name`, `:count` …) and pluralisation segments stay intact.
+- Brand names keep coming from `config/public_site.php`; the Arabic name is
+  already there.
+- Composite strings keep their own keys, with Arabic separators and ordering where
+  the language needs them.
+
+**The Arabic wording is a draft** until the owner or a translator reviews it. The
+PR says so, and T18a does not merge before that review.
+
+**Done when**
+- **Parity:** `CatalogueParityTest` proves the three Arabic catalogues have
+  exactly the English keys, no more and no fewer.
+  - Each value carries the same placeholders as its English counterpart.
+  - A pluralised English key stays pluralised in Arabic. It covers Arabic's own
+    plural forms, which Laravel's selector numbers 0–5, rather than copying the
+    English segments.
+  - A planted missing key, an extra key, a dropped placeholder and an
+    unpluralised plural each fail it.
+- **Rendering:** with the locale set to `ar`, every public page and all three
+  verifier pages render with no English catalogue value left in the body.
+  - The check is computed from the English catalogues themselves, not from a
+    hand list. Brand names, references and user data are excluded by
+    construction.
+  - The verifier's uniform miss stays byte-identical across its four entry
+    shapes in Arabic too.
+- `composer verify` green.
+
 ### Task 17 — The Arabic catalogues
-**Owner: Claude · `p4/t17-arabic-catalogues` · depends on T16b–T16e**
+**Owner: Claude · `p4/t17-arabic-catalogues` · depends on T16b–T16e (and T17a)**
 
 **File scope**
 - `lang/ar/*.php` — every catalogue, existing and new
@@ -1732,6 +1786,105 @@ file is ready.
 
 No Action, service or model changes: the refusals were already correct, only their
 display was missing.
+
+### QA follow-ups: the P3 findings and the owner's answers (2026-10-17)
+
+The owner answered the QA report's questions on 2026-10-17:
+- **Q1:** a bill with no payment can be collected later.
+- **Q2:** a student who owes money, or has an active enrolment, cannot be deleted.
+- **Q3:** no one deactivates their own account.
+- **Q7:** a correct password without panel access gets a clear message.
+- **Q4 and Q8 stay as they are:** portal accounts stay in Users, and a written-off bill still shows as owed.
+- **Q5 (email) and Q6 (the dashboard)** are open.
+
+The fixes are split into four tasks with no shared files. **T25–T27 were taken on
+`main` by other work on 2026-10-17, so these are numbered T31–T34.** On the owner's
+instruction, T31 and T32 run now. T33 (account rules: Q2, Q3, Q7, P3-14, and the
+role and staff-profile pickers) and T34 (admin times in the centre's time zone,
+P3-2) are briefed and paused.
+
+### Task 31 — Enrolment and pricing screens say what happened
+**Owner: Claude · `p4/t31-enrolment-screens-feedback` · from main · QA P3-4, P3-5, P3-6, P3-7**
+
+**Why.**
+- Instructor assignment, discount deactivation and the enrolment actions
+  succeeded without a word (P3-4).
+- "Enrol student" on a closed batch, and "Withdraw" on a completed enrolment,
+  were offered and then always refused (P3-5).
+- A non-PDF article upload said "The pDF file field…" (P3-6).
+- The batch Enrolments tab's "Outstanding" showed the student's whole balance,
+  not that enrolment's (P3-7).
+
+**File scope**
+- `app/Domain/Enrollment/Filament/Resources/BatchResource/RelationManagers/EnrollmentsRelationManager.php`,
+  `InstructorsRelationManager.php`
+- `app/Domain/Finance/Filament/Resources/DiscountResource.php`: the deactivate action only
+- `app/Domain/Publications/Filament/Resources/ArticleResource.php`: the PDF upload's wording only
+- `app/Domain/Finance/Services/ChargeQueryService.php`: one method, the per-enrolment outstanding subselect
+- `lang/en/enrollment.php`, `pricing.php`, `publications.php`: appended
+- `tests/Feature/Enrollment/BatchScreensFeedbackTest.php`,
+  `tests/Feature/Publications/ArticleUploadMessageTest.php` (new)
+- Changed expectations, listed in the PR:
+  - `tests/Feature/Enrollment/EnrollmentsRelationManagerTest.php`: the closed-batch
+    case, because the button is now hidden;
+  - `tests/Feature/Performance/ListQueryCountTest.php`: the roster cases now read the
+    enrolment's own figure.
+- This plan: these entries
+
+**Contract rules asserted:**
+- every success says so, and a refusal keeps its own message with no success beside it;
+- an action every rule would refuse is not offered, while the Action still refuses
+  server-side;
+- each enrolment row shows its own outstanding, computed in SQL decimal
+  arithmetic (`ChargeBalance::outstandingSql()`) and never stored, at a fixed query
+  count.
+
+**A recorded choice reversed:** "Withdraw" used to stay on a completed row and
+answer with the refusal. It now shows only on an active enrolment, because
+`WithdrawEnrollmentAction` refuses every other status.
+
+### Task 32 — Enrol & Collect and charges
+**Owner: Claude · `p4/t32-collect-and-charges` · from main · QA Q1, P3-1, P3-3, P3-6, P3-8, P3-11, P3-16**
+
+**Why.**
+- A bill whose page was closed after Confirm could never be collected from the
+  app (Q1).
+- Enrol & Collect gave no over-capacity warning (P3-1).
+- Enrol & Collect left Confirm live on an emptied preview (P3-3).
+- Its wizard header overlapped (P3-11).
+- A negative amount got the decimals message (P3-6).
+- The charges list read "LYD billed LYD" (P3-8).
+- The charge view showed no student (P3-16).
+
+**File scope**
+- `app/Domain/Finance/Filament/Pages/EnrollAndCollect.php` and its view
+- `app/Domain/Finance/Filament/Resources/ChargeResource.php`,
+  `ChargeResource/Pages/ViewCharge.php`
+- `app/Domain/Finance/Actions/RecordExpenseAction.php`: message wording only
+- `app/Domain/Finance/Services/ChargeQueryService.php`: one method, the
+  "awaiting its first payment" predicate
+- `lang/en/collect.php`, `charges.php`, `expenses.php`: appended, plus the three
+  "three decimal places" messages reworded alike
+- `tests/Feature/Finance/CollectUnpaidChargeTest.php`,
+  `EnrollAndCollectFeedbackTest.php`, `ChargeScreensTest.php` (new)
+
+**Decisions**
+- **"Collect payment" is offered only on a bill awaiting its first payment:**
+  - no allocation from a payment that is not reversed;
+  - not written off;
+  - something outstanding.
+
+  The rule is one predicate, used by the button and re-checked by the page
+  server-side. `RecordPaymentAction` and `PaymentInvariantService` are unchanged,
+  and later installments stay out (§12).
+- **For the owner to confirm:** a bill whose only payment was reversed counts as
+  awaiting its first payment again.
+
+**Contract rules asserted:**
+- the button, the page and an unauthorized or ineligible request all agree;
+- collecting through it records exactly one payment with the exact amounts;
+- the Charges table's query count is fixed;
+- a second Confirm creates nothing.
 
 ---
 
