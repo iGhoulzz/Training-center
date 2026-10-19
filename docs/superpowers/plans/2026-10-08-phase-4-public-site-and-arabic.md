@@ -1660,6 +1660,33 @@ public site and in the admin.
 - `composer verify` green.
 - The owner has reviewed the Arabic.
 
+**Settled in the build (lead, 2026-10-19)**
+- **The admin route has the panel's own protections** (Opus review). It is a plain
+  web route, so it was given them:
+  - a session-integrity check (`AuthenticateAccountSession`, its own small class,
+    because `PrivateFileAccessTest` pins exactly the groups that use the
+    private-file one);
+  - `ForcePasswordChange`;
+  - the panel-access check, in the controller;
+  - `throttle:10,1`, because every toggle appends to the audit log.
+
+  The flag is `public_site.admin_locale_switch` (`ADMIN_LOCALE_SWITCH`, off).
+- **The logical-properties scan** extends the existing one in `LocalizationTest`,
+  which already covers `resources/css/` and the views, instead of a new
+  `LogicalPropertiesTest`.
+- **Files added beyond the list above:**
+  - `components/public/page-title`, so the title is composed in one place;
+  - `verify/partials/locale`, the verifier's switch styles;
+  - `UpdateOwnLocaleController`;
+  - `AuthenticateAccountSession`.
+- **Arabic text is never letter-spaced.** `*:lang(ar):not(input)` sets
+  `letter-spacing: normal`, which overrides the prototype's tracking on the top bar's
+  Arabic name, on English pages too. Spacing out Arabic letters breaks how they
+  join; the Latin brand lines keep their tracking.
+- **The composite " · " line** was in `publications/show.blade.php`, not
+  `verify/show.blade.php`. It now uses `public.article.download_line`, which owns
+  its separator and order in each language.
+
 ### Task 17 — The Arabic catalogues
 **Owner: Claude · `p4/t17-arabic-catalogues` · depends on T16b–T16e (and T17a)**
 
