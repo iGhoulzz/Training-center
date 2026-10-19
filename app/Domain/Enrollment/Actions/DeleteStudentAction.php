@@ -75,6 +75,13 @@ use Illuminate\Support\Facades\Gate;
  *     before charge before allocations, as here. They take no student row.
  *   - AdjustChargeAction: the charge, then allocatedForUpdate() - charge before
  *     allocations, as here. WriteOffChargeAction: the charge alone.
+ *   - IssueStudentCertificateAction / ReplaceStudentCertificateAction: batch, then
+ *     the enrolment (EnrollmentMutex), THEN the student, shared, for the snapshot
+ *     read. That is the opposite order to step 1 then step 3, and it was a real
+ *     deadlock: with several enrolments InnoDB named the certificate side the
+ *     victim, and issuing failed with a raw 1213. Their lock order is unchanged
+ *     (batch first is what serialises an enrolment's writers); they run their
+ *     transaction again on a deadlock, as this Action does.
  *   - ReversePaymentAction: the payment row alone, which step 3 reaches last.
  *   - RecordPaymentAction: the charge, THEN the student, because inserting a
  *     payment takes a shared lock on its student's row for the foreign key. That

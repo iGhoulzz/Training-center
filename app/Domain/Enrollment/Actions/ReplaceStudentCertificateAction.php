@@ -95,6 +95,18 @@ final class ReplaceStudentCertificateAction
     /** See IssueStudentCertificateAction's identical constant. */
     private const MAX_ATTEMPTS = 5;
 
+    /**
+     * How many times the transaction is run when InnoDB names it a deadlock
+     * victim. This Action locks batch, enrolment, then the student (shared, for
+     * the snapshot read); DeleteStudentAction locks the student, then the
+     * student's enrolments, so the two can meet in a cycle and InnoDB rolls one
+     * back with 1213. The retry re-runs the whole attempt, which has no effect
+     * outside its own transaction. It engages only at the outermost transaction,
+     * which this loop's attempt() is, and it is separate from MAX_ATTEMPTS, which
+     * counts reference collisions.
+     */
+    private const DEADLOCK_ATTEMPTS = 3;
+
     public function __construct(
         private readonly EnrollmentMutex $mutex,
         private readonly CertificateReference $reference,
@@ -225,7 +237,7 @@ final class ReplaceStudentCertificateAction
                     ]);
                 },
             );
-        });
+        }, self::DEADLOCK_ATTEMPTS);
     }
 
     /**
