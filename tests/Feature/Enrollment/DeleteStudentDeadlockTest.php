@@ -11,6 +11,7 @@ use App\Domain\Finance\Models\Payment;
 use App\Domain\Finance\Models\PaymentAllocation;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\DatabaseTruncation;
 use Illuminate\Foundation\Testing\RefreshDatabaseState;
 use Illuminate\Support\Facades\DB;
@@ -152,6 +153,48 @@ function deadlockWaitFor(string $path, Process $worker): void
 }
 
 /**
+ * Wait, without a sleep standing in for it, until $worker HOLDS the student row.
+ *
+ * The test database user cannot read performance_schema or innodb_trx (both need
+ * PROCESS), so the lock is probed from a second connection with
+ * `FOR SHARE NOWAIT`: it succeeds while nobody holds the row exclusively and
+ * fails at once with error 3572 when someone does. The only exclusive locker the
+ * parent allows is the worker, so the first failure means it has the student.
+ * Each probe that succeeds releases its own lock as it commits (autocommit).
+ * Bounded, and a clear failure rather than a hang.
+ */
+function deadlockAwaitStudentHeld(int $studentId, Process $worker, float $seconds = 10): void
+{
+    config(['database.connections.deadlock_probe' => config('database.connections.'.config('database.default'))]);
+    $probe = DB::connection('deadlock_probe');
+    $deadline = hrtime(true) + (int) ($seconds * 1_000_000_000);
+
+    try {
+        while (hrtime(true) < $deadline) {
+            if (! $worker->isRunning()) {
+                Assert::fail('Worker died before it took the student: '.$worker->getErrorOutput());
+            }
+
+            try {
+                $probe->select('select id from students where id = ? for share nowait', [$studentId]);
+            } catch (QueryException $exception) {
+                if (($exception->errorInfo[1] ?? null) === 3572) {
+                    return;
+                }
+
+                throw $exception;
+            }
+
+            usleep(10_000);
+        }
+
+        Assert::fail("The worker never took a lock on student {$studentId} within {$seconds} seconds.");
+    } finally {
+        DB::purge('deadlock_probe');
+    }
+}
+
+/**
  * @return array<string, mixed>
  */
 function deadlockResultOf(Process $worker, string $resultPath): array
@@ -206,19 +249,19 @@ it('writes the certificate and refuses the delete when they deadlock on the stud
     $released = false;
 
     try {
-        // The parent holds the student, so both workers queue behind it - the
-        // delete first, then the certificate, which has by then taken its batch
-        // and enrolment and is waiting for the student (shared).
-        Student::query()->whereKey($student->getKey())->lockForUpdate()->firstOrFail();
+        // The parent holds the first enrolment, not the student. The delete takes
+        // the student and then waits for that enrolment; the certificate takes its
+        // batch and its own enrolment and then wants the student. Committing the
+        // parent lets the delete walk on to the certified enrolment: a cycle,
+        // whichever of the two gets there first.
+        Enrollment::query()->whereKey($earlier->first()->getKey())->lockForUpdate()->firstOrFail();
 
         $deleteWorker->start();
-        deadlockWaitFor(($this->path)('d-ready'), $deleteWorker);
-        usleep(700_000);
+        deadlockAwaitStudentHeld((int) $student->getKey(), $deleteWorker);
 
         $issueWorker->start();
         deadlockWaitFor(($this->path)('i-ready'), $issueWorker);
         deadlockWaitFor(($this->path)('i-locked'), $issueWorker);
-        usleep(700_000);
 
         expect($deleteWorker->isRunning())->toBeTrue()
             ->and($issueWorker->isRunning())->toBeTrue();
@@ -229,8 +272,13 @@ it('writes the certificate and refuses the delete when they deadlock on the stud
         $delete = deadlockResultOf($deleteWorker, ($this->path)('d-result.json'));
         $issue = deadlockResultOf($issueWorker, ($this->path)('i-result.json'));
 
+        // begins: the cycle formed and the certificate side was its victim, so it
+        // ran twice; the delete, the heavier transaction, ran once. Without a
+        // deadlock both would be 1 and the outcomes alone would still pass.
         expect($issue['outcome'])->toBe('issued', json_encode($issue))
+            ->and($issue['begins'])->toBe(2)
             ->and($delete['outcome'])->toBe('refused', json_encode($delete))
+            ->and($delete['begins'])->toBe(1)
             ->and(StudentCertificate::query()->where('enrollment_id', $target->getKey())->count())->toBe($kind === 'replace' ? 2 : 1)
             ->and($student->fresh()->trashed())->toBeFalse();
     } finally {
@@ -273,9 +321,8 @@ it('retries the delete when a payment being recorded deadlocks with it, then dec
         Charge::query()->whereKey($charge->getKey())->lockForUpdate()->firstOrFail();
 
         $worker->start();
-        deadlockWaitFor(($this->path)('ready'), $worker);
-        // ...the delete takes the student and waits for that charge...
-        usleep(1_500_000);
+        // ...the delete takes the student and goes on to wait for that charge...
+        deadlockAwaitStudentHeld((int) $student->getKey(), $worker);
 
         // ...and the payment's insert then needs the student for its foreign key.
         Payment::factory()->create(['student_id' => $student->getKey()]);
