@@ -28,6 +28,7 @@ use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Lang;
+use Livewire\Features\SupportLockedProperties\CannotUpdateLockedPropertyException;
 use Livewire\Livewire;
 use Spatie\Permission\PermissionRegistrar;
 
@@ -108,6 +109,111 @@ it('searches and selects students inline before advancing the numbered flow', fu
         ->call('advance')->assertHasErrors(['data.batch_id'])
         ->call('back')->assertSet('flowStep', 1)->assertSet('data.student_id', $student->id);
     expect(Enrollment::query()->count())->toBe(0)->and(Charge::query()->count())->toBe(0);
+});
+
+it('keeps student cards empty until a search is entered without an authorized hint', function (bool $canView) {
+    $student = Student::factory()->create(['first_name' => 'UnpromptedSecret', 'last_name' => 'Student', 'phone' => '0911111222']);
+    $role = Role::findOrCreate('picker-enroller', 'web');
+    $this->system->syncRolePermissions($role, ['access_admin_panel', 'create_enrollment', ...($canView ? ['view_student'] : [])]);
+    $actor = ($this->actorWith)('picker-enroller');
+
+    $page = Livewire::actingAs($actor)->withQueryParams($canView ? [] : ['student' => $student->id])
+        ->test(EnrollAndCollect::class)
+        ->assertDontSee($student->first_name)->assertDontSee($student->student_code)->assertDontSee($student->phone);
+
+    expect($page->instance()->studentMatches)->toBeEmpty();
+    $page->set('studentSearch', '   ');
+    expect($page->instance()->studentMatches)->toBeEmpty();
+
+    $page->set('studentSearch', 'UnpromptedSecret');
+    $document = new DOMDocument;
+    $document->loadHTML('<?xml encoding="UTF-8">'.$page->html(), LIBXML_NOERROR | LIBXML_NOWARNING);
+    $results = (new DOMXPath($document))->query('//*[@aria-label="Student results"]');
+    expect($results)->toHaveCount(1)
+        ->and($results->item(0)->textContent)->toContain($student->full_name, $student->student_code);
+    if ($canView) {
+        expect($results->item(0)->textContent)->toContain($student->phone, $student->status->label());
+    } else {
+        $page->assertDontSee($student->phone);
+        expect($results->item(0)->textContent)->not->toContain($student->status->label());
+    }
+})->with(['student reader' => true, 'enroller without student read' => false]);
+
+it('keeps only the authorized student hint visible before search and retains it beyond the search limit', function () {
+    Student::factory()->count(25)->create(['first_name' => 'Matching', 'last_name' => 'Earlier']);
+    $student = Student::factory()->create(['first_name' => 'Matching', 'last_name' => 'ZzzHint']);
+    $other = Student::factory()->create(['first_name' => 'Other', 'last_name' => 'Unrelated']);
+    $page = Livewire::actingAs($this->admin)->withQueryParams(['student' => $student->id])
+        ->test(EnrollAndCollect::class)->assertSet('flowStep', 1)->assertSet('data.student_id', $student->id);
+
+    expect($page->instance()->studentMatches->modelKeys())->toBe([$student->id]);
+    $page->set('studentSearch', 'Matching');
+    expect($page->instance()->studentMatches)->toHaveCount(26);
+    $document = new DOMDocument;
+    $document->loadHTML('<?xml encoding="UTF-8">'.$page->html(), LIBXML_NOERROR | LIBXML_NOWARNING);
+    $card = (new DOMXPath($document))->query('//label[input[@name="student_id" and @value="'.$student->id.'"]]');
+    expect($card)->toHaveCount(1)->and($card->item(0)->textContent)->toContain($student->full_name, $student->student_code);
+
+    $page->set('studentSearch', 'Unrelated');
+    expect($page->instance()->studentMatches->modelKeys())->toEqualCanonicalizing([$student->id, $other->id]);
+    $page->set('studentSearch', '')->set('data.student_id', $other->id);
+    expect($page->instance()->studentMatches->modelKeys())->toBe([$student->id]);
+    $page->call('finishCollection');
+    expect($page->instance()->studentMatches)->toBeEmpty();
+});
+
+it('does not treat editable student state as an authorized preselection', function () {
+    $student = Student::factory()->create();
+    $page = Livewire::actingAs($this->admin)->test(EnrollAndCollect::class)
+        ->set('data.student_id', $student->id);
+
+    expect($page->instance()->studentMatches)->toBeEmpty();
+});
+
+it('refuses client changes to authorized picker hint provenance', function (string $property) {
+    $student = Student::factory()->create();
+    $batch = Batch::factory()->active()->create();
+    $page = Livewire::actingAs($this->admin)->test(EnrollAndCollect::class);
+
+    $page->set($property, $property === 'preselectedStudentId' ? $student->id : $batch->id);
+})->with(['preselectedStudentId', 'preselectedBatchId'])->throws(CannotUpdateLockedPropertyException::class);
+
+it('keeps an authorized open batch hint visible beyond the search limit and outside search matches', function () {
+    $student = Student::factory()->create();
+    $batch = Batch::factory()->active()->create(['code' => 'ZZZ-HINT']);
+    Batch::factory()->count(25)->active()->create(['course_id' => $batch->course_id]);
+    $page = Livewire::actingAs($this->admin)->withQueryParams(['batch' => $batch->id])
+        ->test(EnrollAndCollect::class)->set('data.student_id', $student->id)->call('advance');
+
+    expect($page->instance()->batchChoices)->toHaveCount(26);
+    $page->set('batchSearch', 'no-matching-batch');
+    expect($page->instance()->batchChoices->modelKeys())->toBe([$batch->id]);
+    $document = new DOMDocument;
+    $document->loadHTML('<?xml encoding="UTF-8">'.$page->html(), LIBXML_NOERROR | LIBXML_NOWARNING);
+    $card = (new DOMXPath($document))->query('//label[input[@name="batch_id" and @value="'.$batch->id.'"]]');
+    expect($card)->toHaveCount(1)->and($card->item(0)->textContent)->toContain('ZZZ-HINT');
+
+    $batch->update(['status' => BatchStatus::Completed]);
+    $page->set('batchSearch', 'still-no-match');
+    expect($page->instance()->batchChoices)->toBeEmpty();
+});
+
+it('does not promote forbidden hints or editable batch state into retained cards', function () {
+    $student = Student::factory()->create();
+    $batch = Batch::factory()->active()->create(['code' => 'ZZZ-FORBIDDEN-HINT']);
+    Batch::factory()->count(25)->active()->create(['course_id' => $batch->course_id]);
+    $role = Role::findOrCreate('enroller-without-hint-reads', 'web');
+    $this->system->syncRolePermissions($role, ['access_admin_panel', 'create_enrollment']);
+    $actor = ($this->actorWith)('enroller-without-hint-reads');
+    $page = Livewire::actingAs($actor)->withQueryParams(['student' => $student->id, 'batch' => $batch->id])
+        ->test(EnrollAndCollect::class)->assertSet('data.student_id', null)->assertSet('data.batch_id', null);
+
+    $page->set('studentSearch', 'no-student-match');
+    expect($page->instance()->studentMatches)->toBeEmpty();
+    $page->set('data.student_id', $student->id)->call('advance')->set('data.batch_id', $batch->id);
+    expect($page->instance()->batchChoices->modelKeys())->not->toContain($batch->id);
+    $page->set('batchSearch', 'no-batch-match');
+    expect($page->instance()->batchChoices)->toBeEmpty();
 });
 
 it('offers selectable batch cards with inherited price status and active seat counts', function () {
@@ -458,18 +564,20 @@ it('never says "allocation" in code or copy a user could see', function () {
         );
     }
 
-    $viewPath = resource_path('views/filament/finance/enroll-and-collect.blade.php');
+    $viewPaths = glob(resource_path('views/filament/finance/enroll-and-collect*.blade.php'));
 
     /*
      * NOT CONDITIONAL. An earlier version wrapped this in is_file(), so
-     * renaming or moving the view silently stopped the assertion running
-     * rather than failing — a guard that disappears when the thing it guards
-     * moves. The view is required for the page to render at all, so its
-     * absence is itself a failure.
+     * moving the views silently stopped the assertion running. Require a
+     * nonempty glob, then scan the page and every picker view it renders.
      */
-    expect(is_file($viewPath))->toBeTrue("The page's view is missing: {$viewPath}");
-
-    expect(mb_stripos((string) file_get_contents($viewPath), 'allocation'))->toBe(false);
+    expect($viewPaths)->not->toBeFalse()->not->toBeEmpty();
+    foreach ($viewPaths as $viewPath) {
+        expect(mb_stripos((string) file_get_contents($viewPath), 'allocation'))->toBe(
+            false,
+            "A page view mentions allocation: {$viewPath}",
+        );
+    }
 
     /*
      * BOTH CATALOGUES. `ar` is empty until phase 4, which makes scanning it

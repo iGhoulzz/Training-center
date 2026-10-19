@@ -66,6 +66,12 @@ use Livewire\Attributes\Locked;
  * Payment keys are minted once by beginCollection(), retained across retries
  * and successful payment, and cleared only by explicit finishCollection().
  *
+ * Extends Page, not SimplePage, so panel page discovery registers the route.
+ * Staff never see allocation terminology; EnrollAndCollectFlowTest scans this
+ * page's string literals, both views and catalogues to enforce that contract.
+ * RecordPaymentData uses named arguments to distinguish same-type parameters.
+ * NotACardNumber is wired into the tender reference field here.
+ *
  * @property-read Schema $form
  * @property-read Schema $collectForm
  * @property-read array{student: string, batch: string, list: ?Money, discount: string, amount: ?Money, reference: ?string, receipt: ?string} $bill
@@ -81,7 +87,7 @@ class EnrollAndCollect extends Page
     protected string $view = 'filament.finance.enroll-and-collect';
 
     /**
-     * How many students the picker offers for one search.
+     * How many matches a picker search retrieves before retaining its hint.
      *
      * A bound, not a preference — the same reasoning and the same figure
      * EnrollmentsRelationManager::SEARCH_RESULT_LIMIT already uses for the
@@ -94,6 +100,13 @@ class EnrollAndCollect extends Page
 
     #[Locked]
     public int $flowStep = 1;
+
+    /** Only mount-authorized hints may supplement the bounded card searches. */
+    #[Locked]
+    public ?int $preselectedStudentId = null;
+
+    #[Locked]
+    public ?int $preselectedBatchId = null;
 
     public string $studentSearch = '';
 
@@ -230,10 +243,12 @@ class EnrollAndCollect extends Page
         if ($studentId !== false && ($student = Student::query()->find($studentId)) !== null
             && Gate::allows('view', $student)) {
             $state['student_id'] = $studentId;
+            $this->preselectedStudentId = $studentId;
         }
         if ($batchId !== false && ($batch = Batch::query()->open()->find($batchId)) !== null
             && Gate::allows('view', $batch)) {
             $state['batch_id'] = $batchId;
+            $this->preselectedBatchId = $batchId;
         }
         $this->form->fill($state);
     }
@@ -290,8 +305,14 @@ class EnrollAndCollect extends Page
     #[Computed]
     public function studentMatches(): Collection
     {
+        $ids = blank($this->studentSearch) ? [] : array_keys(self::searchStudents($this->studentSearch));
+        $preselected = $this->preselectedStudentId === null ? null : Student::query()->find($this->preselectedStudentId);
+        if ($preselected !== null && Gate::allows('view', $preselected)) {
+            $ids[] = $preselected->getKey();
+        }
+
         return Student::query()
-            ->whereKey(array_keys(self::searchStudents($this->studentSearch)))
+            ->whereKey($ids)
             ->orderBy('last_name')->orderBy('first_name')->get();
     }
 
@@ -299,8 +320,14 @@ class EnrollAndCollect extends Page
     #[Computed]
     public function batchChoices(): Collection
     {
-        $batches = Batch::query()->with('course')
-            ->whereKey(array_keys(self::searchBatches($this->batchSearch)))
+        $ids = array_keys(self::searchBatches($this->batchSearch));
+        $preselected = $this->preselectedBatchId === null ? null : Batch::query()->open()->find($this->preselectedBatchId);
+        if ($preselected !== null && Gate::allows('view', $preselected)) {
+            $ids[] = $preselected->getKey();
+        }
+
+        $batches = Batch::query()->open()->with('course')
+            ->whereKey($ids)
             ->orderBy('code')->get();
         $seatCounts = app(EnrollmentQueryService::class)->activeSeatCountsForBatches($batches->modelKeys());
 
@@ -358,6 +385,7 @@ class EnrollAndCollect extends Page
      */
     private function studentStep(): Group
     {
+        // Select search/options remain for schema validation and quick-create integration; cards own the visible picker.
         return Group::make()
             ->schema([
                 Select::make('student_id')
@@ -868,6 +896,8 @@ class EnrollAndCollect extends Page
     {
         $this->collectionChargeId = null;
         $this->collectionIdempotencyKey = null;
+        $this->preselectedStudentId = null;
+        $this->preselectedBatchId = null;
         $this->collectForm->fill();
         $this->form->fill();
         $this->studentSearch = '';

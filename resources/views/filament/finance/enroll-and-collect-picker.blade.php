@@ -12,8 +12,10 @@
                 <label wire:key="student-choice-{{ $student->id }}" @class(['flex cursor-pointer items-center gap-3 rounded-[11px] border px-3.25 py-3 focus-within:ring-2 focus-within:ring-primary-500 hover:bg-white/6', 'border-primary-500/45 bg-primary-500/8' => (string) ($this->data['student_id'] ?? '') === (string) $student->id, 'border-hairline-faint bg-white/3' => (string) ($this->data['student_id'] ?? '') !== (string) $student->id])>
                     <input type="radio" name="student_id" value="{{ $student->id }}" wire:model.live="data.student_id" class="sr-only" />
                     <x-admin.avatar :name="$student->full_name" :identity="$student->id" />
-                    <span class="min-w-0 flex-1"><span class="block text-[13.5px] font-medium">{{ $student->full_name }}</span><span class="block text-[11.5px] text-gray-400">{{ __('collect.student_detail', ['code' => $student->student_code, 'phone' => $student->phone ?: __('collect.no_phone')]) }}</span></span>
-                    <span class="rounded-full bg-primary-500/12 px-2.25 py-0.75 text-[11.5px] font-semibold text-primary-400">{{ $student->status->label() }}</span>
+                    <span class="min-w-0 flex-1"><span class="block text-[13.5px] font-medium">{{ $student->full_name }}</span><span class="block text-[11.5px] text-gray-400">@can('view', $student){{ __('collect.student_detail', ['code' => $student->student_code, 'phone' => $student->phone ?: __('collect.no_phone')]) }}@else{{ $student->student_code }}@endcan</span></span>
+                    @can('view', $student)
+                        <span class="rounded-full bg-primary-500/12 px-2.25 py-0.75 text-[11.5px] font-semibold text-primary-400">{{ $student->status->label() }}</span>
+                    @endcan
                     @if ((string) ($this->data['student_id'] ?? '') === (string) $student->id)<span aria-hidden="true" class="text-primary-400">✓</span>@endif
                 </label>
             @empty
