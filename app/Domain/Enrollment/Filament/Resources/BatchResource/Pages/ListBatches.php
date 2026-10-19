@@ -7,6 +7,7 @@ namespace App\Domain\Enrollment\Filament\Resources\BatchResource\Pages;
 use App\Domain\Enrollment\Enums\BatchStatus;
 use App\Domain\Enrollment\Filament\Resources\BatchResource;
 use App\Domain\Enrollment\Models\Batch;
+use App\Filament\StatusTabs;
 use Filament\Actions\Action;
 use Filament\Resources\Pages\ListRecords;
 use Filament\Schemas\Components\Tabs\Tab;
@@ -18,6 +19,8 @@ use Illuminate\Support\Facades\DB;
 
 class ListBatches extends ListRecords
 {
+    use StatusTabs;
+
     protected static string $resource = BatchResource::class;
 
     /** @var array<string, int> */
@@ -85,7 +88,12 @@ class ListBatches extends ListRecords
                 'COALESCE('.Batch::ASSIGNED_HOURS_SUM.', 0) <> COALESCE(total_hours, (SELECT total_hours FROM courses WHERE courses.id = batches.course_id))',
             ));
 
-        return $tabs;
+        return $this->styleStatusTabs($tabs, [
+            'active' => 'before:bg-success-400',
+            'planned' => 'before:bg-info-400',
+            'over_capacity' => 'before:bg-warning-400',
+            'hour_mismatch' => 'before:bg-danger-400',
+        ]);
     }
 
     /**

@@ -727,11 +727,12 @@ it('lays the home page out as the design does, and points the hero at its own se
         ->and($document->querySelector('main #contact a[href="'.url('/contact').'"]'))->not->toBeNull();
 
     // The seal is decoration (the h1 already names the centre) and both glows and both
-    // circles are hidden from assistive technology.
+    // circles are hidden from assistive technology. It is the owner's cut-out PNG, now
+    // committed (2026-10-18); HeroSealTest covers the fallback to the round logo.
     $seal = $hero->querySelector('img');
 
     expect($seal->getAttribute('alt'))->toBe('')
-        ->and($seal->getAttribute('src'))->toBe(url('/images/brand/asclst-logo.jpg'))
+        ->and($seal->getAttribute('src'))->toBe(url('/images/brand/asclst-seal.png'))
         ->and(count($hero->querySelectorAll('div[aria-hidden="true"]')))->toBeGreaterThanOrEqual(5);
 });
 
