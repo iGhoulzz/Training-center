@@ -40,6 +40,7 @@ use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
 use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Session\Middleware\StartSession;
+use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\Vite;
 use Illuminate\Support\HtmlString;
 use Illuminate\View\Middleware\ShareErrorsFromSession;
@@ -86,6 +87,20 @@ class AdminPanelProvider extends PanelProvider
             ->font('Instrument Sans', provider: LocalFontProvider::class)
             ->renderHook(PanelsRenderHook::STYLES_AFTER, fn (): Htmlable => Vite::fonts('instrument-sans'))
             ->renderHook(PanelsRenderHook::SIDEBAR_NAV_START, fn (): Htmlable => view('filament.admin.sidebar-more-migration'))
+            /*
+             * THE LANGUAGE SWITCH (P4-T18a), before the user menu in the topbar. Registered
+             * always and EMPTY while `public_site.admin_locale_switch` is off, which it is
+             * until the admin has its Arabic and its direction: the flag is read when the
+             * hook renders, not when the panel is built, so turning it on needs no rebuild
+             * and a test can turn it on and off. The switch is a form that posts to
+             * UpdateOwnLocaleAction's route (routes/web.php).
+             */
+            ->renderHook(
+                PanelsRenderHook::USER_MENU_BEFORE,
+                fn (): Htmlable => new HtmlString(config('public_site.admin_locale_switch') === true
+                    ? Blade::render('<x-locale-switch variant="admin" />')
+                    : ''),
+            )
             ->sidebarWidth('16.125rem')
             // 1440px, the prototype's main column. The class is defined in theme.css.
             ->maxContentWidth('tc-width-admin')

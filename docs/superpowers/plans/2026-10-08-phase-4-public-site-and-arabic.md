@@ -146,25 +146,25 @@ first attempt.
 | `app/Providers/Filament/StudentPanelProvider.php` | **T18 only** | The guest-locale middleware |
 | `docs/design/design_handoff_training_centre/` | **T19 → T20a** | Read-only reference for every other task. T20a notes in `docs/design/README.md` that the real logo and name are now committed (owner, 2026-10-13), and corrects the handoff README's "Assets" sentence and "Files" row, which said the logo is not committed |
 | `database/seeders/RolePermissionSeeder.php` | **T03 → T04** | T03 adds the article permissions, T04 the expense and category permissions. T04 rebases on T03 and must not reorder T03's rows |
-| `app/Providers/Filament/AdminPanelProvider.php` | **T03 → T09 → T16a → T20c → T18** | T03 adds `discoverResources` for `Domain/Publications`; T09 adds `discoverPages` for `Domain/Enrollment/Filament/Pages`; T16a owns the theme, colours and navigation; T20c sets the real brand logo and name and checks the shell's tokens against the prototype; T18 adds the guest-locale middleware. Each adds its own lines and edits no other task's |
+| `app/Providers/Filament/AdminPanelProvider.php` | **T03 → T09 → T16a → T20c → T18a → T18** | T03 adds `discoverResources` for `Domain/Publications`; T09 adds `discoverPages` for `Domain/Enrollment/Filament/Pages`; T16a owns the theme, colours and navigation; T20c sets the real brand logo and name and checks the shell's tokens against the prototype; T18 adds the guest-locale middleware. Each adds its own lines and edits no other task's |
 | `app/Providers/AppServiceProvider.php` | **T11 → T13** | T11 registers the `public-site` rate limiter, T13 the `publication-download` limiter. Nothing else in the file is touched |
-| `routes/web.php` | **T11 → T12 → T13 → T20b → T24 → T18** | T11 creates the sessionless public group; T12 and T13 add routes inside it and may not alter the group or its middleware. T15, folded into T20a, adds no route: its portal entry is a link. T20b adds one GET route, `verify.certificates.lookup`, inside the existing verifier group, under its middleware and limiter, routed to the POST's own `VerifyCertificateController::submit()`, for the home page's verifier box (owner, 2026-10-13). Its path stays outside `verify/certificates/{reference}`. T18 adds the `/ar` copies of the public group and the `/ar/` verifier routes **inside the existing verifier group**, under the same middleware and the same named limiter, **named `ar.` plus the English name** so the English names never move. **No task touches the private-file group.** T24 adds one GET route, `finance.receipts.print`, in a group of its own placed after it, carrying the same two middleware (`AuthenticatePrivateFileSession` and `throttle:60,1`); `PrivateFileAccessTest`'s guard now pins exactly two groups declaring that middleware (the private files and the print page), asserts the import, and requires every other mention to be one of those group declarations |
+| `routes/web.php` | **T11 → T12 → T13 → T20b → T24 → T18a → T18** | T11 creates the sessionless public group; T12 and T13 add routes inside it and may not alter the group or its middleware. T15, folded into T20a, adds no route: its portal entry is a link. T20b adds one GET route, `verify.certificates.lookup`, inside the existing verifier group, under its middleware and limiter, routed to the POST's own `VerifyCertificateController::submit()`, for the home page's verifier box (owner, 2026-10-13). Its path stays outside `verify/certificates/{reference}`. T18 adds the `/ar` copies of the public group and the `/ar/` verifier routes **inside the existing verifier group**, under the same middleware and the same named limiter, **named `ar.` plus the English name** so the English names never move. **No task touches the private-file group.** T24 adds one GET route, `finance.receipts.print`, in a group of its own placed after it, carrying the same two middleware (`AuthenticatePrivateFileSession` and `throttle:60,1`); `PrivateFileAccessTest`'s guard now pins exactly two groups declaring that middleware (the private files and the print page), asserts the import, and requires every other mention to be one of those group declarations |
 | `resources/css/app.css`, `vite.config.js` | **T11 → T16a → T20a → T18** | T11 adds the public site's stylesheet entry; T16a the Filament theme entry; T20a the public site's self-hosted fonts; T18 the direction work over both |
-| `resources/css/public.css` | **T11 → T20a → T20b → T18** | T11 creates it; T20a replaces its palette with the design system's tokens; T20b appends the tokens a page first needs and edits none of T20a's; T18 the direction work |
+| `resources/css/public.css` | **T11 → T20a → T20b → T18a → T18** | T11 creates it; T20a replaces its palette with the design system's tokens; T20b appends the tokens a page first needs and edits none of T20a's; T18 the direction work |
 | `app/Http/Controllers/Public/PageController.php` | **T12 → T20b** | T12 creates it; T20b adds the home teaser's articles to `home()` |
 | `app/Domain/Publications/Queries/PublicArticleCatalogue.php` | **T13 → T20b** | T13 creates it; T20b adds a bounded, published-only `latest()` and changes no existing method |
 | `tests/Feature/Public/PublicPagesTest.php`, `ProgrammesTest.php`, `PublicationsIndexTest.php`, `PublicSessionlessTest.php` | **T11–T13 → T20a → T20b** | T20a and T20b change only the assertions that name markup they rebuild, and list each one in their PR; T20b adds the teaser's tests to `PublicPagesTest.php` |
-| `resources/views/layouts/public.blade.php` | **T11 → T20a → T18** | T11 creates it; T20a rebuilds it to the design; T18 makes it directional. The verifier does **not** use it — see T14 |
+| `resources/views/layouts/public.blade.php` | **T11 → T20a → T18a → T18** | T11 creates it; T20a rebuilds it to the design; T18 makes it directional. The verifier does **not** use it — see T14 |
 | `resources/views/public/partials/header.blade.php` | **T11 → T12 → T20a (with T15) → T18** | T11 creates it; T12 replaces its own copy of the contact-link rule with the shared contact components (lead's amendment, 2026-10-12, from T12's pre-push review); T20a rebuilds it to the design and adds T15's portal link (T15 folded in, owner, 2026-10-13); T18 makes that link carry the locale |
 | `resources/views/public/partials/navigation.blade.php`, `footer.blade.php` | **T11 → T12 → T13 → T20a** | Owner-approved amendment (2026-10-12). T11 creates them, linking only to pages that exist: the home page and the verifier. T12 adds About, Programmes and Contact; T13 adds Publications. Each adds its own links through `PublicRoute` and edits no other task's. T20a then rebuilds both to the design, keeping every link |
 | `resources/views/public/home.blade.php` | **T11 → T12 → T20b** | T11 creates a minimal page at `public.home` so `/` has somewhere to go once `welcome.blade.php` is deleted; T12 replaces it with the real home page; T20b rebuilds it to the design |
-| `config/public_site.php`, `.env.example` | **T11 → T12 → T20a** | Owner-approved amendment (2026-10-12). T11 creates the public contact details: the centre's real public email and telephone as committed defaults, each overridable from `.env`, plus a map-link key that defaults to null. T12 sets the map link's default once the owner provides it, and touches nothing else. T20a adds `brand` (the real name, owner, 2026-10-13) and sets `APP_NAME` |
-| `resources/views/verify/*` | **T14 → T20c → T18** | T14 restyles; T20c brings them to the prototype's exact values and the real brand; T18 makes them directional and converts their three `route()` call sites to `PublicRoute`, **and the six `url('/')` links T14's headers added** (two a page), which no `route()` search finds. Both keep them standalone and scriptless |
+| `config/public_site.php`, `.env.example` | **T11 → T12 → T20a → T18a** | Owner-approved amendment (2026-10-12). T11 creates the public contact details: the centre's real public email and telephone as committed defaults, each overridable from `.env`, plus a map-link key that defaults to null. T12 sets the map link's default once the owner provides it, and touches nothing else. T20a adds `brand` (the real name, owner, 2026-10-13) and sets `APP_NAME` |
+| `resources/views/verify/*` | **T14 → T20c → T18a → T18** | T14 restyles; T20c brings them to the prototype's exact values and the real brand; T18 makes them directional and converts their three `route()` call sites to `PublicRoute`, **and the six `url('/')` links T14's headers added** (two a page), which no `route()` search finds. Both keep them standalone and scriptless |
 | `resources/views/public/**` (pages), `resources/views/components/public/*` | **T11 → T12 → T13 → T20a → T20b → T18** | T11–T13 build the pages and components; T20a defines the design system (tokens, components, no inline `style`) and brings the existing components onto it; T20b rebuilds the pages to the prototype. Every later public page uses the system, and none adds an inline `style` |
 | `resources/css/filament/admin/theme.css` | **T16a → T20c → T16c → T16b (token only)** | T16a creates the admin theme; T20c checks every token against `Filament Revamp.dc.html`. Owner-approved T16c exception (2026-10-15): only the named orange ageing-card token (`#fb923c`). Review-approved T16b exception (2026-10-16): only the no-portal dot token (`#a78bfa`). Neither changes existing theme rules; T16d–T16e read it without editing |
 | `resources/views/components/admin/side-panel.blade.php` | **T16b** | Review-approved scope amendment, 2026-10-16: the student preview footer's stacked actions |
-| `app/Http/Controllers/VerifyCertificateController.php` | **T20c → T20b → T18** | T20c (lead's amendment, 2026-10-13): one line, so the result's `centreName` reads `config('public_site.brand.name')` and not `app.name`, which is now the short display name. T20b (owner, 2026-10-16): `submit()` reads `reference` only as a string, so an array is the uniform miss rather than a 500. T18: one line, the `submit()` redirect goes through `PublicRoute`. In none of them do the lookup, the normalisation or the uniform miss move |
-| `app/Support/PublicRoute.php` | **T11 only** | Complete from the start, so T18 adds routes and a locale without editing it |
+| `app/Http/Controllers/VerifyCertificateController.php` | **T20c → T20b → T18a → T18** | T20c (lead's amendment, 2026-10-13): one line, so the result's `centreName` reads `config('public_site.brand.name')` and not `app.name`, which is now the short display name. T20b (owner, 2026-10-16): `submit()` reads `reference` only as a string, so an array is the uniform miss rather than a 500. T18: one line, the `submit()` redirect goes through `PublicRoute`. In none of them do the lookup, the normalisation or the uniform miss move |
+| `app/Support/PublicRoute.php` | **T11 → T18a** | T11 makes it complete for links: T18a adds routes and a locale without changing how a link resolves. T18a adds only the counterpart helpers the language switch and the `hreflang` list need (`urlIn`, `nameIn`, `localeOf`, `baseName`, `counterpart`, `alternates`) |
 | `app/Domain/Enrollment/Models/Batch.php` | **T05 only** | Scopes beside the existing predicates |
 | `app/Domain/Enrollment/Services/EnrollmentQueryService.php` | **T05 → T16c** | T05 supplies portal balance labels; owner-approved T16c expansion (2026-10-15) adds a batched/joined student-name projection for charge rows. Existing portal behavior and fixed query counts stay unchanged; Finance does not traverse `enrollment.student` |
 | `app/Domain/Finance/Data/EnrollmentBalance.php`, `app/Domain/Finance/Filament/Portal/Pages/MyBalance.php`, `resources/views/portal/my-balance.blade.php`, `lang/en/portal.php`, `tests/Feature/Finance/StudentBalanceQueryTest.php`, `tests/Feature/Portal/MyBalancePageTest.php`, `tests/Feature/Portal/PortalQueryCountTest.php` | **T05 only** | Owner-approved scope expansion (2026-10-10): show localized course names and batch codes on balance rows now. Ownership, existing unbilled-row handling and fixed query counts are preserved regression behavior |
@@ -1521,9 +1521,9 @@ physical CSS property is introduced · `composer verify` green.
 restyle, so its Arabic does not wait for T16d–T16e:
 
 - **T17a** — the public site's three catalogues, now (below).
-- **T18a** — the `/ar` public site and verifier: T18's public, verifier and
-  logical-properties parts. Its section is written when T17a's Arabic has been
-  reviewed.
+- **T18a** — the `/ar` public site and verifier, and the language switch: T18's
+  public, verifier and logical-properties parts (below). The owner reads Arabic and
+  reviews T17a's wording on T18a's pages before T18a merges.
 - **T17 and T18** — every other catalogue and surface (both login pages, every
   panel screen, the activity field names), after T16e as before. Their sections
   below stand, less what T17a and T18a have already done.
@@ -1570,6 +1570,124 @@ PR says so, and T18a does not merge before that review.
   - The verifier's uniform miss stays byte-identical across its four entry
     shapes in Arabic too.
 - `composer verify` green.
+
+### Task 18a — The Arabic public site, its direction, and the language switch
+**Owner: Claude · `p4/t18a-public-rtl` · depends on T17a (stacked on it until it merges)**
+
+T18's public half, brought forward with the public Arabic. Everything T18 says
+about the public site and the verifier applies here unchanged, including:
+- the URL-carried locale;
+- the distinct `ar.*` route names;
+- one limiter budget across both prefixes;
+- every link and redirect through `PublicRoute`;
+- byte-identical misses;
+- the logical-properties scan.
+
+T18 keeps the login pages, the guest-locale middleware, the panels' direction and
+the locale-carrying portal link.
+
+**The language switch (owner, 2026-10-18).** One Blade component, used on the
+public site and in the admin.
+- **The design draws no switch.** So it is built from the design's own tokens.
+- **Its look** is a two-segment toggle, `EN | ع`, in the top bar, with a sliding
+  thumb on the current language. Hovering nudges the thumb toward the other
+  side.
+- **Its motion, with no script.** Switching language is a navigation, so the slide
+  is a CSS cross-document view transition:
+  - `@view-transition { navigation: auto; }` in `public.css`;
+  - the thumb carries a `view-transition-name`, so the browser slides it from one
+    side to the other as the page and its direction change;
+  - with reduced motion there is no animation;
+  - where the browser lacks view transitions it simply navigates.
+- **On the public site and the verifier it is a link,** not a button: the same
+  page in the other language. On a verifier miss it is the other-language form,
+  never the submitted path, so the miss stays byte-identical. It carries
+  `hreflang` and `lang`, and an accessible name in the target language.
+- **The head of every public page** lists both languages as
+  `<link rel="alternate" hreflang>`.
+- **In the admin** it changes the signed-in user's own `users.locale`.
+  - The write goes through a new Action, as every write here does.
+  - It is built and tested now, but **hidden until the admin has its Arabic and
+    its direction** (T17 and T18). A config flag, off by default, turns it on.
+
+**File scope**
+- `routes/web.php` — the `/ar` public group (`ar.public.*`, the same middleware) and
+  `/ar/verify/…` routes inside the existing verifier group (`ar.verify.certificates.*`);
+  the admin locale route (seam, last)
+- `app/Http/Middleware/SetPublicLocale.php` — new: sets the locale from the route
+  and touches no session
+- `app/Support/PublicRoute.php` — a counterpart helper: the current page's URL in
+  another locale (seam, after T11)
+- `app/Http/Controllers/VerifyCertificateController.php` — `submit()`'s redirect
+  through `PublicRoute` (seam)
+- `resources/views/layouts/public.blade.php`, `resources/views/public/**`,
+  `resources/views/components/public/*`, `resources/views/verify/*` — `lang` and
+  `dir` from the locale, Arabic dates, the Arabic brand on the Arabic home page,
+  the switch, and `PublicRoute` for every link (seam, last)
+- `resources/views/components/locale-switch.blade.php` — new, shared
+- `resources/css/public.css` — the switch, the view transition, and RTL fixes (seam, last)
+- `app/Domain/Staff/Actions/UpdateOwnLocaleAction.php` — new; the controller
+  that calls it; and the admin render hook behind its flag in
+  `AdminPanelProvider.php` (seam, last)
+- `lang/en/public.php` and `lang/ar/public.php`, `verify.php` — the switch's
+  strings and any key a view needs, in both languages; parity stays exact
+- `config/public_site.php` or a new config key — the admin switch's flag
+- Tests:
+  - `tests/Feature/Localisation/` — `PublicLocaleTest`, `VerifierLocaleTest`,
+    `DirectionTest` (public and verifier), `LogicalPropertiesTest`,
+    `LocaleSwitchTest`;
+  - `PublicArabicRenderTest` moves onto the real `ar.*` routes.
+
+**Done when**
+- **Every public page and all three verifier pages render in both languages,**
+  with `lang` and `dir` correct:
+  - `/ar/...` is Arabic and the unprefixed path English, with no session;
+  - every `PublicRoute` link stays in its language.
+- **The Arabic and English verifier journeys each stay in their language** through
+  the form, submit, result and "verify another".
+  - Both prefixes' misses are byte-identical within each language.
+  - Both prefixes share one limiter budget, and the test fails if they don't.
+  - Both prefixes carry identical middleware lists, compared from the routes.
+- **The switch on every public page** links to that page's counterpart, query
+  string included. On a miss it links to the other-language form.
+- **The admin switch:**
+  - it is absent while the flag is off;
+  - when on, it changes only the signed-in user's own locale, to a supported
+    value, through the Action, with CSRF;
+  - a guest cannot use it.
+- **The logical-properties scan** passes, and a planted `margin-left` fails it.
+- **No new script on any public page;** the seal's stays the only one.
+- `composer verify` green.
+- The owner has reviewed the Arabic.
+
+**Settled in the build (lead, 2026-10-19)**
+- **The admin route has the panel's own protections** (Opus review). It is a plain
+  web route, so it was given them:
+  - a session-integrity check (`AuthenticateAccountSession`, its own small class,
+    because `PrivateFileAccessTest` pins exactly the groups that use the
+    private-file one);
+  - `ForcePasswordChange`;
+  - the panel-access check, in the controller;
+  - `throttle:10,1,account-locale`, because every toggle appends to the audit log.
+    The prefix gives the route its own budget; unprefixed, it would share the
+    per-user budget of the file, photo and receipt routes (Codex, #122).
+
+  The flag is `public_site.admin_locale_switch` (`ADMIN_LOCALE_SWITCH`, off).
+- **The logical-properties scan** extends the existing one in `LocalizationTest`,
+  which already covers `resources/css/` and the views, instead of a new
+  `LogicalPropertiesTest`.
+- **Files added beyond the list above:**
+  - `components/public/page-title`, so the title is composed in one place;
+  - `verify/partials/locale`, the verifier's switch styles;
+  - `UpdateOwnLocaleController`;
+  - `AuthenticateAccountSession`.
+- **Arabic text is never letter-spaced.** `*:lang(ar):not(input)` sets
+  `letter-spacing: normal`, which overrides the prototype's tracking on the top bar's
+  Arabic name, on English pages too. Spacing out Arabic letters breaks how they
+  join; the Latin brand lines keep their tracking.
+- **The composite " · " line** was in `publications/show.blade.php`, not
+  `verify/show.blade.php`. It now uses `public.article.download_line`, which owns
+  its separator and order in each language.
 
 ### Task 17 — The Arabic catalogues
 **Owner: Claude · `p4/t17-arabic-catalogues` · depends on T16b–T16e (and T17a)**

@@ -920,47 +920,106 @@ it('passes the logical forms that replace them', function (string $sample) {
     "{ 'right': 12 }",
 ]);
 
-it('uses logical CSS properties only', function () {
-    /*
-     * BOTH ROOTS, AND JAVASCRIPT TOO (P1-T15, finding L2).
-     *
-     * This scanned resources/ alone and accepted only .css and .php, so app/ was
-     * invisible — and app/ is where every Filament resource lives, the place
-     * class strings are most likely to be written next. resources/js/ was
-     * excluded by the extension filter for the same reason.
-     *
-     * Markdown is still not scanned: resources/css/README.md's "Never" column
-     * spells out every forbidden property, so scanning documentation would make
-     * the rule report itself as a violation.
-     */
+/**
+ * Every file the logical-CSS scan reads.
+ *
+ * BOTH ROOTS, AND JAVASCRIPT TOO (P1-T15, finding L2). This scanned resources/
+ * alone and accepted only .css and .php, so app/ was invisible — and app/ is where
+ * every Filament resource lives, the place class strings are most likely to be
+ * written next. resources/js/ was excluded by the extension filter for the same
+ * reason.
+ *
+ * Markdown is still not scanned: resources/css/README.md's "Never" column spells
+ * out every forbidden property, so scanning documentation would make the rule
+ * report itself as a violation.
+ *
+ * @return list<SplFileInfo>
+ */
+function logicalCssScanFiles(): array
+{
+    return array_values(array_filter(
+        array_merge(File::allFiles(app_path()), File::allFiles(resource_path())),
+        fn (SplFileInfo $file): bool => ! in_array($file->getFilename(), STOCK_TAILWIND_PAGES, true)
+            && in_array($file->getExtension(), ['css', 'php', 'js'], true),
+    ));
+}
+
+/**
+ * The files among these that hold a physical CSS property, each with the first one
+ * found. A named function so the scan itself can be handed a planted file.
+ *
+ * @param  iterable<SplFileInfo>  $files
+ * @return list<string> "path → construct"
+ */
+function physicalCssOffenders(iterable $files): array
+{
     $offenders = [];
 
-    $files = array_merge(
-        File::allFiles(app_path()),
-        File::allFiles(resource_path()),
-    );
-
     foreach ($files as $file) {
-        $name = $file->getFilename();
         $path = (string) $file->getRealPath();
-
-        if (in_array($name, STOCK_TAILWIND_PAGES, true)) {
-            continue;
-        }
-
-        if (! in_array($file->getExtension(), ['css', 'php', 'js'], true)) {
-            continue;
-        }
 
         if (($match = firstPhysicalCssProperty((string) file_get_contents($path))) !== null) {
             $offenders[] = str_replace(base_path().DIRECTORY_SEPARATOR, '', $path).' → '.$match;
         }
     }
 
+    return $offenders;
+}
+
+it('uses logical CSS properties only', function () {
+    $offenders = physicalCssOffenders(logicalCssScanFiles());
+
     expect($offenders)->toBeEmpty(
         "Physical CSS properties do not flip for Arabic. Use the logical form (margin-inline-start, ms-*, text-start, inset-inline-start):\n  "
         .implode("\n  ", $offenders),
     );
+});
+
+it('scans the three stylesheets, the public site, the language switch and the verifier\'s inline styles', function () {
+    // The control for the scan above, which passes on a file list that is missing the
+    // very files the Arabic site is built from (P4-T18a): each is named here.
+    $scanned = array_map(
+        fn (SplFileInfo $file): string => str_replace([base_path().DIRECTORY_SEPARATOR, '\\'], ['', '/'], (string) $file->getRealPath()),
+        logicalCssScanFiles(),
+    );
+
+    expect($scanned)->toContain(
+        'resources/css/app.css',
+        'resources/css/public.css',
+        'resources/css/filament/admin/theme.css',
+        'resources/views/layouts/public.blade.php',
+        'resources/views/public/home.blade.php',
+        'resources/views/public/partials/header.blade.php',
+        'resources/views/components/public/brand.blade.php',
+        'resources/views/components/locale-switch.blade.php',
+        'resources/views/verify/form.blade.php',
+        'resources/views/verify/show.blade.php',
+        'resources/views/verify/not-found.blade.php',
+        'resources/views/verify/partials/locale.blade.php',
+    );
+});
+
+it('fails on a margin-left planted in a stylesheet, a Blade view or a verifier-style inline block', function () {
+    // Planted in a directory of its own and handed to the same function the real scan
+    // uses, so the proof does not write a physical property into a file the suite reads.
+    $directory = sys_get_temp_dir().DIRECTORY_SEPARATOR.'training-center-planted-'.bin2hex(random_bytes(6));
+    File::makeDirectory($directory);
+
+    try {
+        File::put($directory.'/stylesheet.css', ".bar {\n    margin-left: 1rem;\n}\n");
+        File::put($directory.'/view.blade.php', "<p class=\"mt-2 ml-4\">x</p>\n");
+        File::put($directory.'/verifier-page.blade.php', "<style>\n        .bar { display: flex; margin-left: 1rem; }\n</style>\n<body></body>\n");
+        File::put($directory.'/clean.css', ".bar {\n    margin-inline-start: 1rem;\n}\n");
+        File::put($directory.'/clean.blade.php', "<style>\n        .bar { margin-inline-start: 1rem; }\n</style>\n<p class=\"ms-4\">x</p>\n");
+
+        $offenders = physicalCssOffenders(File::allFiles($directory));
+        $names = array_map(fn (string $offender): string => basename(explode(' → ', $offender)[0]), $offenders);
+        sort($names);
+
+        expect($names)->toBe(['stylesheet.css', 'verifier-page.blade.php', 'view.blade.php']);
+    } finally {
+        File::deleteDirectory($directory);
+    }
 });
 
 /*

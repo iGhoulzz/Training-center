@@ -393,3 +393,187 @@
     /* The same shadow for the cut-out seal, which has no box to cast one from. */
     --drop-shadow-seal: 0 22px 30px rgb(0 0 0 / 0.42);
 }
+
+/*
+ * THE LANGUAGE SWITCH (P4-T18a): a pill, `EN | ع`, with a thumb under the current
+ * language. The markup and the reasoning are resources/views/components/locale-switch.blade.php;
+ * this is the public site's half of its CSS, and the verifier restates the same rules in
+ * its own inline <style> (resources/views/verify/partials/locale.blade.php) because
+ * those pages load no stylesheet.
+ *
+ * THE PILL IS dir="ltr" ITSELF, so EN is the left half and ع the right in both page
+ * directions, and "the left half" is the start of the pill. That is why the thumb is
+ * placed with `inset-inline-start` (logical, and left here) and nudged with `translate`
+ * by a signed distance: toward the other half is rightward from EN and leftward from ع,
+ * whichever way the page reads.
+ *
+ * The values are the design's own tokens: a gold hairline at 30%, a cream fill at 6%, a
+ * gold thumb with ink text, the other half in cream at 72% (6.94:1 on the pill, measured
+ * with WCAG's formula and recomputed by LocaleSwitchTest). The pill is 30px tall; below
+ * 1024px its link's `tap-target` extension makes the hit area 44 by 44 inside the bar's
+ * 44px row (header.blade.php).
+ *
+ * MOTION, WITH NO SCRIPT.
+ * - Hovering or focusing the link nudges the thumb 3px toward it.
+ * - Changing language is a navigation, so the slide is a CROSS-DOCUMENT VIEW TRANSITION:
+ *   both documents opt in with `@view-transition`, the thumb and the two labels carry a
+ *   `view-transition-name`, and the browser slides the thumb from one half to the other
+ *   while the page behind it cross-fades. The labels are named too so they stay above the
+ *   thumb as it passes under them; the thumb is painted before them, so it stays below. A
+ *   browser without view transitions simply navigates.
+ * - With prefers-reduced-motion: reduce there is no view transition at all (the
+ *   `@view-transition` rule is only in effect for no-preference) and no nudge.
+ */
+@layer components {
+    .locale-switch {
+        @apply relative isolate inline-flex items-stretch rounded-pill border border-gold/30 bg-cream/6 text-caption font-semibold;
+
+        --locale-nudge: 3px;
+    }
+
+    .locale-switch[data-current='ar'] {
+        --locale-nudge: -3px;
+    }
+
+    .locale-switch__thumb {
+        @apply rounded-pill bg-gold;
+
+        position: absolute;
+        inset-block: 2px;
+        inset-inline-start: 2px;
+        inline-size: calc(50% - 4px);
+        transition: translate 0.2s ease;
+        view-transition-name: locale-thumb;
+    }
+
+    .locale-switch[data-current='ar'] .locale-switch__thumb {
+        inset-inline-start: calc(50% + 2px);
+    }
+
+    .locale-switch__option {
+        @apply rounded-pill text-cream/72;
+
+        position: relative;
+        z-index: 1;
+        display: flex;
+        flex: 1 1 0;
+        align-items: center;
+        justify-content: center;
+        min-inline-size: 2.5rem;
+        padding-block: 0.25rem;
+        padding-inline: 0.75rem;
+        transition: color 0.2s ease;
+    }
+
+    .locale-switch__option--en {
+        view-transition-name: locale-en;
+    }
+
+    .locale-switch__option--ar {
+        view-transition-name: locale-ar;
+    }
+
+    a.locale-switch__option:hover {
+        @apply text-cream;
+    }
+
+    .locale-switch__option--current {
+        @apply text-ink;
+    }
+
+    .locale-switch__option:focus-visible {
+        outline: 2px solid var(--color-gold-light);
+        outline-offset: 1px;
+    }
+
+    .locale-switch:has(a:is(:hover, :focus-visible)) .locale-switch__thumb {
+        translate: var(--locale-nudge) 0;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .locale-switch__thumb,
+        .locale-switch__option {
+            transition: none;
+        }
+
+        .locale-switch:has(a:is(:hover, :focus-visible)) .locale-switch__thumb {
+            translate: none;
+        }
+    }
+
+    /* In forced colours the fills are dropped, so the current half is marked by the system's own highlight. */
+    @media (forced-colors: active) {
+        .locale-switch__thumb {
+            background-color: Highlight;
+        }
+
+        .locale-switch__option--current {
+            color: HighlightText;
+        }
+    }
+}
+
+/*
+ * THE CROSS-DOCUMENT VIEW TRANSITION (P4-T18a). Switching language is the one
+ * navigation the site animates on purpose; the rule opts every public page in, because
+ * both the page left and the page arrived at must opt in for the browser to animate
+ * between them. It sits inside `no-preference`, so a visitor who prefers reduced motion
+ * gets no transition at all, not a shortened one.
+ *
+ * The page behind the switch cross-fades quickly (200ms), so a language change reads as
+ * the same page changing language and not as a new page loading. The thumb and its two
+ * labels slide a little longer.
+ */
+@media (prefers-reduced-motion: no-preference) {
+    @view-transition {
+        navigation: auto;
+    }
+}
+
+::view-transition-group(root) {
+    animation-duration: 0.2s;
+}
+
+::view-transition-group(locale-thumb),
+::view-transition-group(locale-en),
+::view-transition-group(locale-ar) {
+    animation-duration: 0.35s;
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/*
+ * ARABIC TYPE (P4-T18a). Three things the Latin design never needed, written once and
+ * keyed on the language so no view carries a class for them.
+ *
+ * - THE DISPLAY FACE HAS NO ARABIC. Instrument Serif has no Arabic glyphs, so Arabic set
+ *   in `font-display` would fall through the stack to whichever serif the visitor's system
+ *   offers. An element in Arabic (or holding Arabic) takes the UI face, IBM Plex Sans
+ *   Arabic, at 600 so a heading keeps its weight against the body text, and it has no
+ *   italic. `:lang(ar)` tests the element's OWN language, so the Latin brand lockup in the
+ *   header (lang="en") keeps the serif on an Arabic page.
+ * - ARABIC IS CURSIVE, so letter-spacing pulls the joined letters apart. The tracking the
+ *   type tokens carry is for Latin; an Arabic element takes none. The reference field
+ *   keeps its tracking, because what is typed in it is a Latin code.
+ * - ARABIC IS TALLER than the tight leading the display tokens use for Latin (1.06 to
+ *   1.3), so a display heading gets 1.4 and a two-line heading does not collide.
+ */
+@layer utilities {
+    *:lang(ar):not(input) {
+        letter-spacing: normal;
+    }
+
+    .font-display:lang(ar),
+    .font-display :lang(ar) {
+        font-family: var(--font-sans);
+        font-weight: 600;
+        font-style: normal;
+    }
+
+    :is(h1, h2, h3, h4).font-display:lang(ar) {
+        line-height: 1.4;
+    }
+
+    .italic:lang(ar) {
+        font-style: normal;
+    }
+}

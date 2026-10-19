@@ -53,4 +53,17 @@ return [
         'phone' => env('PUBLIC_CONTACT_PHONE', '+218-928421304'),
         'map_url' => env('PUBLIC_CONTACT_MAP_URL', 'https://maps.app.goo.gl/nrs5mzbxjh9A7wci8'),
     ],
+
+    /*
+     * Whether the admin panel's topbar shows the language switch (P4-T18a). OFF, and
+     * meant to stay off until the admin has its Arabic and its direction (T17 and T18):
+     * a switch that flips a user into a half-translated, left-to-right panel is worse
+     * than no switch. The switch itself is built and tested; this is the one flag that
+     * turns it on, with `ADMIN_LOCALE_SWITCH=true` in `.env`.
+     *
+     * It lives here because the plan names this file for it, and it is the file that
+     * already holds the language-facing deployment settings. `filter_var` and not a
+     * cast, so `off`, `0` and `false` all mean off.
+     */
+    'admin_locale_switch' => filter_var(env('ADMIN_LOCALE_SWITCH', false), FILTER_VALIDATE_BOOLEAN),
 ];

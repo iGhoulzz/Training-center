@@ -10,7 +10,7 @@
 @use('App\Support\PublicRoute')
 
 @section('title')
-    {{ __('public.page_title', ['page' => __('public.programmes.heading'), 'name' => config('public_site.brand.name')]) }}
+    <x-public.page-title :page="__('public.programmes.heading')" />
 @endsection
 
 @section('content')

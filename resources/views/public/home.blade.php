@@ -27,7 +27,12 @@
     THE H1 IS THE CENTRE'S NAME with the phrase `home.heading_emphasis` set in italic
     gold wherever the translated heading contains it, as the design draws "Legal
     Studies". The three parts are each escaped; nothing is printed raw. A heading that
-    does not contain the phrase is printed plainly.
+    does not contain the phrase is printed plainly. On the Arabic page the name is the
+    Arabic one (`name_ar`) and the phrase is the Arabic key's, which occurs inside it;
+    the stylesheet takes the italic off Arabic, which has none.
+
+    THE HERO'S GLOWS ARE POSITIONED FROM THE LEFT, so each has a mirrored twin under
+    `rtl:` (P4-T18a): the seal sits at the inline end, and in Arabic that is the left.
 
     THE SEAL TURNS LIKE A COIN (owner, 2026-10-17).
     - Across the seal, the pointer turns it a full 360 degrees: -180 at the left
@@ -47,7 +52,7 @@
 
 @php
     $contact = PublicContact::fromConfig();
-    $heading = __('public.home.heading', ['name' => config('public_site.brand.name')]);
+    $heading = __('public.home.heading', ['name' => config('public_site.brand.'.(str_starts_with(app()->getLocale(), 'ar') ? 'name_ar' : 'name'))]);
     $emphasis = __('public.home.heading_emphasis');
     $emphasisAt = $emphasis === '' ? false : mb_strpos($heading, $emphasis);
     $sealPath = config('public_site.brand.seal');
@@ -62,8 +67,8 @@
 
 @section('content')
     <section aria-labelledby="home-heading" class="relative overflow-hidden bg-navy text-cream">
-        <div aria-hidden="true" class="absolute inset-0 bg-radial-[circle_at_78%_22%] from-gold/26 to-transparent to-46%"></div>
-        <div aria-hidden="true" class="absolute inset-0 bg-radial-[circle_at_12%_82%] from-gold/13 to-transparent to-44%"></div>
+        <div aria-hidden="true" class="absolute inset-0 bg-radial-[circle_at_78%_22%] from-gold/26 to-transparent to-46% rtl:bg-radial-[circle_at_22%_22%]"></div>
+        <div aria-hidden="true" class="absolute inset-0 bg-radial-[circle_at_12%_82%] from-gold/13 to-transparent to-44% rtl:bg-radial-[circle_at_88%_82%]"></div>
         <div aria-hidden="true" class="absolute -end-22.5 -top-22.5 size-105 rounded-pill border border-gold/16"></div>
         <div aria-hidden="true" class="absolute -end-7.5 -top-7.5 size-75 rounded-pill border border-gold/12"></div>
 
@@ -132,7 +137,7 @@
     </section>
 
     <section id="verify" tabindex="-1" aria-labelledby="home-verify-heading" class="relative overflow-hidden bg-navy text-cream">
-        <div aria-hidden="true" class="absolute inset-0 bg-radial-[circle_at_20%_30%] from-gold/18 to-transparent to-45%"></div>
+        <div aria-hidden="true" class="absolute inset-0 bg-radial-[circle_at_20%_30%] from-gold/18 to-transparent to-45% rtl:bg-radial-[circle_at_80%_30%]"></div>
 
         <x-public.container class="relative flex flex-wrap items-start gap-13 py-20">
             <div class="min-w-0 flex-[1_1_340px]">

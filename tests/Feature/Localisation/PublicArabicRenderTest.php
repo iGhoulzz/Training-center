@@ -14,7 +14,6 @@ use Dom\Node;
 use Dom\Text;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Arr;
-use Illuminate\Support\Facades\Route;
 use Livewire\Livewire;
 use Tests\TestCase;
 
@@ -38,23 +37,15 @@ beforeEach(function (): void {
 | can still read a key the Arabic file lacks, or print an English string of its own
 | beside the translated ones.
 |
-| HOW THE LOCALE IS SET. The public pages are sessionless, with no user and no
-| locale middleware: `SetLocale` is panel authentication middleware and never runs
-| for them. The only input to their language is the application's locale, so these
-| tests call `app()->setLocale('ar')` before the request, and the page renders in
-| Arabic exactly as it will once P4-T18a's `/ar` URLs set it per request.
+| HOW THE LOCALE IS SET. The pages are requested at their real `/ar` URLs, so the
+| language is the one a visitor gets: SetPublicLocale reads it from the route's name
+| and sets it, with no session and no user (P4-T18a). Before that task the public
+| pages had no Arabic routes and this file registered throwaway twins; they are gone.
 |
-| WHAT THAT ALONE IS NOT ENOUGH FOR. Every link on a public page goes through
-| PublicRoute::url(), which under a non-English locale needs an `ar.`-named twin
-| of the English route and throws when it is missing (it never falls back to
-| English). Those twins are T18a's work, so publicArabicUseArabic() registers
-| throwaway ones from the router's own English routes, the way PublicRouteTest and
-| DesignSystemTest do. They only have to EXIST for the links to resolve; the
-| pages are still requested at their English URLs.
-|
-| T18a REPLACES BOTH SHIMS in the one place that issues requests,
-| publicArabicRenderedPages(): the request goes to the real `/ar` URL, which sets
-| the locale itself, and publicArabicUseArabic() goes.
+| THE VERIFIER'S LIMITER IS ONE BUDGET OF TEN A MINUTE ACROSS BOTH PREFIXES. Five
+| verifier pages in each of two languages is ten requests, exactly the limit, so a sixth
+| page here needs the limiter cleared between the languages or its first request
+| answers 429.
 |
 | THE NEEDLES ARE COMPUTED, NOT LISTED. Every string of the three English
 | catalogues is turned into a pattern at test time, so a key added tomorrow is
@@ -329,31 +320,14 @@ const PUBLIC_ARABIC_BRAND_SENTINELS = [
 ];
 
 /**
- * Put the application in Arabic, as a request to an `/ar` URL will: the locale,
- * and an `ar.`-named twin of every English public and verifier route, which
- * PublicRoute::url() requires before it will build a link.
- *
- * The twins copy the English route's methods and URI under a throwaway prefix.
- * They are never requested. Idempotent within one application, and the
- * application is rebuilt for every test, so none outlives its test.
+ * The Arabic URL of an English one: the same path under `/ar`, the home page being `/ar`.
  */
-function publicArabicUseArabic(): void
+function publicArabicPath(string $english): string
 {
-    if (! Route::has('ar.public.home')) {
-        $english = array_filter(
-            Route::getRoutes()->getRoutes(),
-            fn ($route): bool => is_string($route->getName())
-                && (str_starts_with($route->getName(), 'public.') || str_starts_with($route->getName(), 'verify.certificates.')),
-        );
+    $path = parse_url($english, PHP_URL_PATH);
+    $query = parse_url($english, PHP_URL_QUERY);
 
-        foreach ($english as $route) {
-            Route::match($route->methods(), '/ar-render-test/'.ltrim($route->uri(), '/'), fn (): string => 'twin')->name('ar.'.$route->getName());
-        }
-
-        Route::getRoutes()->refreshNameLookups();
-    }
-
-    app()->setLocale('ar');
+    return ($path === '/' ? '/ar' : '/ar'.$path).($query === null ? '' : "?{$query}");
 }
 
 /**
@@ -364,7 +338,7 @@ function publicArabicUseArabic(): void
  * fixtures are created and the full pages rendered. Rendering is memoised for the
  * life of the process, because the rows are rolled back after each test but the
  * HTML is plain text that every check below reads. This is the one function that
- * issues requests: P4-T18a changes it to request the `/ar` URLs.
+ * issues requests, each page at its English URL and at its `/ar` URL.
  *
  * @return array{pages: array<string, array<string, string>>, fixtures: list<string>} the HTML by
  *                                                                                    locale and then label, and every string of fixture data
@@ -384,9 +358,7 @@ function publicArabicRenderedPages(TestCase $test): array
 
     $render = function (string $label, string $path, int $status) use ($test, &$pages): void {
         foreach (['en', 'ar'] as $locale) {
-            $locale === 'ar' ? publicArabicUseArabic() : app()->setLocale('en');
-
-            $response = $test->get($path);
+            $response = $test->get($locale === 'ar' ? publicArabicPath($path) : $path);
             $response->assertStatus($status);
 
             $pages[$locale][$label] = (string) $response->getContent();
@@ -489,9 +461,23 @@ function publicArabicRenderedPages(TestCase $test): array
 |--------------------------------------------------------------------------
 */
 
+/**
+ * The English catalogue values that an Arabic page shows ON PURPOSE, each with its reason.
+ *
+ * The language switch names a language in that language's own catalogue and reads it
+ * through the language it is naming (P4-T18a), so the Arabic page's link to the English
+ * page is named "English", the English catalogue's line, and a page that translated it
+ * would be wrong. The test after the leak check holds the exemption to exactly that.
+ *
+ * @var array<string, string>
+ */
+const PUBLIC_ARABIC_SHOWN_AS_ENGLISH = [
+    'public.locale_switch.name' => 'The accessible name of the language switch\'s link to the English page: a language is named in its own language.',
+];
+
 it('renders every public page and verifier page in Arabic with no English catalogue text', function () {
     $rendered = publicArabicRenderedPages($this);
-    $needles = publicArabicNeedles('en', anchored: false);
+    $needles = array_diff_key(publicArabicNeedles('en', anchored: false), PUBLIC_ARABIC_SHOWN_AS_ENGLISH);
 
     $leaks = [];
 
@@ -504,6 +490,25 @@ it('renders every public page and verifier page in Arabic with no English catalo
     }
 
     expect($leaks)->toBe([], "English catalogue text on an Arabic page:\n".implode("\n", $leaks));
+});
+
+it('shows the English language name on an Arabic page only as the name of the switch\'s link to English', function () {
+    $rendered = publicArabicRenderedPages($this);
+
+    foreach ($rendered['pages']['ar'] as $label => $html) {
+        $link = HTMLDocument::createFromString($html, LIBXML_NOERROR)->querySelector('[data-locale-switch] a');
+
+        // Written by hand: the English page's name for itself, on the one link that leads there.
+        expect($link?->getAttribute('aria-label'))->toBe('English', "{$label}: the switch does not name the English page in English.");
+
+        // And no other readable string on the page carries the word.
+        $others = array_values(array_filter(
+            publicArabicReadableStrings($html),
+            fn (string $string): bool => str_contains($string, 'English') && $string !== 'English',
+        ));
+
+        expect($others)->toBe([], "{$label}: the word English appears outside the switch's link.");
+    }
 });
 
 it('finds the English text on the same pages in English, so the search is not blind', function () {
@@ -602,14 +607,12 @@ it('sets the home heading phrase inside the Arabic name of the centre', function
 */
 
 it('renders byte-identical bodies at 404 for a malformed GET, an unknown GET, an empty POST and a malformed POST, in Arabic too', function () {
-    publicArabicUseArabic();
-
     $unknown = app(CertificateReference::class)->mint(now());
 
-    $malformedGet = $this->get(route('verify.certificates.show', ['reference' => 'not-a-real-reference']));
-    $unknownGet = $this->get(route('verify.certificates.show', ['reference' => $unknown]));
-    $emptyPost = $this->post(route('verify.certificates.submit'), ['reference' => '']);
-    $malformedPost = $this->post(route('verify.certificates.submit'), ['reference' => 'not-a-real-reference']);
+    $malformedGet = $this->get('/ar/verify/certificates/not-a-real-reference');
+    $unknownGet = $this->get("/ar/verify/certificates/{$unknown}");
+    $emptyPost = $this->post('/ar/verify/certificates', ['reference' => '']);
+    $malformedPost = $this->post('/ar/verify/certificates', ['reference' => 'not-a-real-reference']);
 
     foreach ([$malformedGet, $unknownGet, $emptyPost, $malformedPost] as $response) {
         $response->assertNotFound();
@@ -641,7 +644,6 @@ it('shows the Arabic plural form that belongs to each count, on the library and 
         'publications.public.downloads' => 'D-ZERO|D-ONE|D-TWO|D-FEW :count|D-MANY :count|D-OTHER :count',
         'public.programmes.hours' => 'H-ZERO|H-ONE|H-TWO|H-FEW :count|H-MANY :count|H-OTHER :count',
     ], 'ar');
-    publicArabicUseArabic();
 
     $downloads = [0 => 'D-ZERO', 1 => 'D-ONE', 2 => 'D-TWO', 7 => 'D-FEW 7', 30 => 'D-MANY 30', 103 => 'D-FEW 103', 111 => 'D-MANY 111', 200 => 'D-OTHER 200'];
 
@@ -659,8 +661,8 @@ it('shows the Arabic plural form that belongs to each count, on the library and 
         Course::factory()->create(['name_en' => "Plural Course {$index}", 'total_hours' => $total]);
     }
 
-    $library = publicArabicReadableStrings((string) $this->get('/publications')->assertOk()->getContent());
-    $programmes = publicArabicReadableStrings((string) $this->get('/programmes')->assertOk()->getContent());
+    $library = publicArabicReadableStrings((string) $this->get('/ar/publications')->assertOk()->getContent());
+    $programmes = publicArabicReadableStrings((string) $this->get('/ar/programmes')->assertOk()->getContent());
 
     // in_array and not toContain(): that is variadic, so a second argument would
     // be a second expected string rather than the failure message.

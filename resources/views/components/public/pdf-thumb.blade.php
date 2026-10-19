@@ -13,7 +13,7 @@
 @props(['size' => 'lg'])
 
 <div aria-hidden="true" {{ $attributes->class([
-    'flex flex-none flex-col items-center justify-center bg-linear-160 from-navy-hover to-navy',
+    'flex flex-none flex-col items-center justify-center bg-linear-160 from-navy-hover to-navy rtl:bg-linear-200',
     'h-20 w-16 gap-1.25 rounded-thumb shadow-thumb' => $size === 'lg',
     'h-16.5 w-13 gap-1 rounded-thumb-sm' => $size === 'sm',
 ]) }}>

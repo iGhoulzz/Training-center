@@ -375,10 +375,32 @@ it('trims the search, cuts it at 100 characters and prints what it used', functi
     $trimmed = libraryBody($this->get('/publications?'.http_build_query(['q' => "   safety  \t"]))->assertOk());
     $capped = libraryBody($this->get('/publications?'.http_build_query(['q' => $long]))->assertOk());
 
+    // "Prints what it used" is the search box's value, and the cap holds EVERYWHERE the
+    // page prints the term: the box, the count line, the sort link, the chips. The one
+    // exception is the language switch and the head's alternate links, which carry the
+    // request's own query string exactly as it was sent (P4-T18a), 150 characters and
+    // all, so that the other language's page is the same search. Those are taken out and
+    // the rest of the page must hold no run of 101.
+    $document = HTMLDocument::createFromString($capped, LIBXML_NOERROR);
+    $box = $document->querySelector('input[name="q"]');
+
+    foreach ($document->querySelectorAll('[data-locale-switch], link[rel="alternate"]') as $element) {
+        $element->remove();
+    }
+
+    $rest = $document->saveHtml();
+
     expect($trimmed)->toContain('name="q"')->toContain('value="safety"')
         ->and(libraryCardTitles($trimmed))->toBe(['Safety Guide'])
         ->and($capped)->toContain('value="'.str_repeat('x', 100).'"')
-        ->and(str_contains($capped, str_repeat('x', 101)))->toBeFalse();
+        ->and($box?->getAttribute('value'))->toBe(str_repeat('x', 100))
+        // The controls: the whole page DOES carry the full 150 (in the switch and the head),
+        // so removing them is what this check rests on, and the rest still prints the 100.
+        ->and(preg_match('/x{150}/', $capped))->toBe(1)
+        ->and(preg_match('/x{101}/', $rest))->toBe(0, 'The page prints more than 100 characters of the search outside the switch and the head.')
+        ->and(preg_match('/x{100}/', $rest))->toBe(1)
+        // The count line prints it too, capped.
+        ->and(libraryCountLine($capped))->toBe('0 MATCHSENT '.str_repeat('x', 100));
 });
 
 it('reads a search, topic or sort that is not text as no filter, and invalid UTF-8 as text', function (string $query) {

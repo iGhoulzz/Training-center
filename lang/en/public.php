@@ -69,6 +69,28 @@ return [
     ],
 
     /*
+    | The language switch (P4-T18a), on every public page and in the verifier. Each
+    | language names itself in its OWN catalogue and the switch asks for that line
+    | through the language it is naming, so a page in either language shows the other
+    | one's name and letter as that language's readers write them.
+    */
+    'locale_switch' => [
+        // The pill's accessible name, in the page's own language.
+        'label' => 'Language',
+        // This language's own name: the accessible name of the link that switches to it.
+        'name' => 'English',
+        // The label on this language's half of the pill.
+        'short' => 'EN',
+    ],
+
+    // The line under an article's download button: the count, the note about it and who
+    // uploaded the file. One key, because the separator and the order are the
+    // language's to choose and not something to join in the view.
+    'article' => [
+        'download_line' => ':downloads · :note · :uploader',
+    ],
+
+    /*
     | Draft copy pending the owner's text (2026-10-12): replace freely; keep the keys.
     |
     | Home. The page is the design's: the hero, About, Programmes, the verifier's box,

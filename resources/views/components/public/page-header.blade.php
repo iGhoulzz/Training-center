@@ -29,8 +29,8 @@
         aria-hidden="true"
         @class([
             'absolute inset-0 to-transparent',
-            'bg-radial-[circle_at_84%_18%] from-gold/20 to-48%' => $size === 'default',
-            'bg-radial-[circle_at_80%_24%] from-gold/19 to-48%' => $size === 'narrow',
+            'bg-radial-[circle_at_84%_18%] from-gold/20 to-48% rtl:bg-radial-[circle_at_16%_18%]' => $size === 'default',
+            'bg-radial-[circle_at_80%_24%] from-gold/19 to-48% rtl:bg-radial-[circle_at_20%_24%]' => $size === 'narrow',
         ])
     ></div>
 

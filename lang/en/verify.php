@@ -35,6 +35,14 @@ return [
     'field_issued_at' => 'Issued on',
     'field_confirmation' => 'Confirmed by',
 
+    // The status as a single word, for the result's headline and its Status row
+    // (P4-T18a). These are the verifier's own: the public pages must not depend on
+    // lang/en/certificates.php, which is the staff register's catalogue and follows
+    // the admin's translation on the admin's schedule.
+    'status_valid' => 'Valid',
+    'status_revoked' => 'Revoked',
+    'status_replaced' => 'Replaced',
+
     // Exactly the three values CertificateStatus admits. The sentence differs
     // per status rather than a label being dropped into one shared template,
     // which is why these are three keys and not one.

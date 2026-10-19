@@ -51,38 +51,40 @@ it('passes route parameters through in English', function () {
 });
 
 it('resolves the ar. route under an Arabic locale', function () {
-    registerTemporaryRoute('/ar-temporary', 'ar.public.home');
     app()->setLocale('ar');
 
+    // The real Arabic route (P4-T18a), under its own prefix, and not the English URL.
     expect(PublicRoute::url('public.home'))
-        ->toBe(url('/ar-temporary'))
+        ->toBe(url('/ar'))
         ->not->toBe(url('/'));
 });
 
 it('passes route parameters through under an Arabic locale', function () {
-    registerTemporaryRoute('/ar-temporary/verify/{reference}', 'ar.verify.certificates.show');
     app()->setLocale('ar');
 
     expect(PublicRoute::url('verify.certificates.show', ['reference' => 'CERT-2026-0087']))
-        ->toBe(url('/ar-temporary/verify/CERT-2026-0087'));
+        ->toBe(url('/ar/verify/certificates/CERT-2026-0087'));
 });
 
 it('throws, naming both routes, when the Arabic route does not exist, and never returns the English URL', function () {
+    // An English route with no Arabic twin: what a page added to one language only
+    // would be. The real public pages all have one now, so this one is made here.
+    registerTemporaryRoute('/english-only', 'public.english-only');
     app()->setLocale('ar');
 
     $thrown = null;
     $returned = null;
 
     try {
-        $returned = PublicRoute::url('public.home');
+        $returned = PublicRoute::url('public.english-only');
     } catch (LogicException $exception) {
         $thrown = $exception;
     }
 
     expect($thrown)->toBeInstanceOf(LogicException::class)
         ->and($returned)->toBeNull()
-        ->and($thrown->getMessage())->toContain('ar.public.home')
-        ->and($thrown->getMessage())->toContain('public.home');
+        ->and($thrown->getMessage())->toContain('ar.public.english-only')
+        ->and($thrown->getMessage())->toContain('public.english-only');
 });
 
 it('throws for any locale that is not English, not only Arabic', function () {
