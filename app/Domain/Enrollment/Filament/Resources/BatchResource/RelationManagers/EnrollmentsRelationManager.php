@@ -25,8 +25,10 @@ use App\Domain\Finance\Actions\EnrollAndBillAction;
 use App\Domain\Finance\Data\EnrollAndBillData;
 use App\Domain\Finance\Exceptions\ChargeAlreadyCommittedException;
 use App\Domain\Finance\Filament\Resources\ChargeResource;
-use App\Domain\Finance\Services\StudentBalanceQuery;
+use App\Domain\Finance\Services\ChargeQueryService;
+use App\Domain\Finance\Support\ChargeBalance;
 use App\Models\User;
+use App\Support\CentreCalendar;
 use Filament\Actions\Action;
 use Filament\Actions\BulkAction;
 use Filament\Forms\Components\Select;
@@ -40,7 +42,6 @@ use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Support\Facades\Gate;
 
 /*
@@ -148,15 +149,25 @@ class EnrollmentsRelationManager extends RelationManager
     {
         return $table
             ->recordTitleAttribute('id')
-            // Eager-load the student, or every row queries for its own name. The
-            // relation is withTrashed(), so departed students still resolve.
-            ->modifyQueryUsing(fn (Builder $query): Builder => $query->with([
-                'student' => function (Relation $student): void {
-                    if (auth()->user()?->can('view_any_charge')) {
-                        app(StudentBalanceQuery::class)->withOutstanding($student->getQuery());
-                    }
-                },
-            ]))
+            ->modifyQueryUsing(function (Builder $query): Builder {
+                // Eager-load the student, or every row queries for its own name. The
+                // relation is withTrashed(), so departed students still resolve.
+                $query->with('student');
+
+                /*
+                 * Each row's OWN outstanding, selected by the same statement that
+                 * lists the rows. The student's whole balance is not the answer
+                 * here: a student on two batches would see the sum of both bills
+                 * on each batch's tab, under a heading that reads as this
+                 * enrolment's. Selected only for an actor who can see the column,
+                 * so the page reads no balance for everybody else.
+                 */
+                if (auth()->user()?->can('view_any_charge')) {
+                    app(ChargeQueryService::class)->withEnrollmentOutstanding($query);
+                }
+
+                return $query;
+            })
             ->defaultSort('enrolled_at', 'desc')
             ->columns([
                 /*
@@ -201,12 +212,14 @@ class EnrollmentsRelationManager extends RelationManager
                         EnrollmentStatus::Withdrawn => 'danger',
                     }),
 
+                // A bare date() is not reached by the global display zone (AppServiceProvider), so a
+                // timestamp column shown as a day names the centre's zone itself (P4-T34).
                 TextColumn::make('enrolled_at')
                     ->label(__('enrollment.enrolled_at'))
-                    ->date()
+                    ->date(timezone: CentreCalendar::TIMEZONE)
                     ->sortable(),
 
-                TextColumn::make('student.'.StudentBalanceQuery::OUTSTANDING_ALIAS)
+                TextColumn::make(ChargeBalance::OUTSTANDING_ALIAS)
                     ->label(__('enrollment.outstanding'))
                     ->visible(fn (): bool => auth()->user()?->can('view_any_charge') ?? false)
                     ->formatStateUsing(fn (string $state): string => __('enrollment.money_lyd', ['amount' => $state]))
@@ -279,6 +292,15 @@ class EnrollmentsRelationManager extends RelationManager
             ->icon(Heroicon::OutlinedUserPlus)
             ->modalHeading(__('enrollment.enroll_student'))
             ->authorize(fn (): bool => Gate::allows('create', Enrollment::class))
+            // A completed or cancelled batch takes no enrolments, so the button
+            // would only ever be refused. EnrollStudentAction still refuses it
+            // server-side; this is the batch's own predicate, as ViewBatch uses.
+            ->visible(function (): bool {
+                /** @var Batch $batch */
+                $batch = $this->getOwnerRecord();
+
+                return $batch->acceptsEnrollments();
+            })
             ->schema([
                 Select::make('student_id')
                     ->label(__('enrollment.student'))
@@ -336,11 +358,15 @@ class EnrollmentsRelationManager extends RelationManager
                         return;
                     }
 
+                self::succeed(__('enrollment.student_enrolled'));
+
                 /*
                  * Over-capacity WARNS and never blocks — spec line 217. The
                  * enrolment has already committed; this tells the reader the batch
                  * is now over its stated ceiling so they can act on it, rather than
-                 * refusing a decision the centre is entitled to make.
+                 * refusing a decision the centre is entitled to make. It comes
+                 * AFTER the success toast, so the reader reads that the student
+                 * was enrolled and then what it did to the batch.
                  */
                 if ($batch->fresh()?->isOverCapacity()) {
                     Notification::make()
@@ -353,10 +379,16 @@ class EnrollmentsRelationManager extends RelationManager
     }
 
     /**
-     * Hidden on a row that is already withdrawn: the Action is idempotent, so
-     * pressing it would silently do nothing, and a button that does nothing is
-     * worse than one that is not there. A completed row keeps the button and gets
-     * the typed refusal, because that refusal is worth stating.
+     * Offered on an ACTIVE enrolment only.
+     *
+     * WithdrawEnrollmentAction refuses every other status: a completed row gets
+     * the typed refusal, and a withdrawn row is a silent no-op because the
+     * Action is idempotent. This used to hide the button only on a withdrawn row
+     * and let a completed one keep it for the sake of that refusal, but a button
+     * that can only ever be refused is a trap, and the reason is already stated
+     * by the row's own status badge. The Action keeps refusing server-side, so a
+     * row that stops being active between the visibility check and the write
+     * still gets the refusal rather than a change.
      */
     private function withdrawAction(): Action
     {
@@ -366,7 +398,8 @@ class EnrollmentsRelationManager extends RelationManager
             ->color('danger')
             ->requiresConfirmation()
             ->modalHeading(__('enrollment.withdraw'))
-            ->hidden(fn (Enrollment $record): bool => $record->status === EnrollmentStatus::Withdrawn)
+            // The row's status. WHO may withdraw is authorize() below.
+            ->visible(fn (Enrollment $record): bool => $record->status === EnrollmentStatus::Active)
             // authorize() rather than visible(): visible() is a UX affordance a
             // crafted Livewire mount ignores, whereas authorize() is checked on
             // the server. The Action re-authorizes under lock regardless, which
@@ -380,7 +413,11 @@ class EnrollmentsRelationManager extends RelationManager
                     app(WithdrawEnrollmentAction::class)->execute($actor, $record);
                 } catch (EnrollmentNotWithdrawableException|AuthorizationException $exception) {
                     self::refuse($exception);
+
+                    return;
                 }
+
+                self::succeed(__('enrollment.student_withdrawn'));
             });
     }
 
@@ -420,7 +457,11 @@ class EnrollmentsRelationManager extends RelationManager
                      * being true.
                      */
                     self::refuse($exception);
+
+                    return;
                 }
+
+                self::succeed(__('enrollment.enrollment_deleted'));
             });
     }
 
@@ -509,6 +550,24 @@ class EnrollmentsRelationManager extends RelationManager
                 ['completed' => $successCount, 'selected' => $totalCount],
             ))
             ->deselectRecordsAfterCompletion();
+    }
+
+    /**
+     * Tell the reader a write went through.
+     *
+     * SENT BY HAND, NOT THROUGH successNotificationTitle(). Filament sends that
+     * one after the handler returns unless the handler halted or marked a
+     * failure, so a handler that simply returns after a refusal would send the
+     * refusal AND a success toast. Each caller reaches this only after the
+     * Action has returned without throwing. It also keeps the order the
+     * over-capacity warning needs: Filament's would arrive after it.
+     */
+    private static function succeed(string $title): void
+    {
+        Notification::make()
+            ->title($title)
+            ->success()
+            ->send();
     }
 
     /**

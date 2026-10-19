@@ -18,6 +18,7 @@ use App\Domain\Finance\Models\Payment;
 use App\Domain\Finance\Models\PaymentAllocation;
 use App\Domain\Finance\Models\PaymentTender;
 use App\Domain\Finance\Services\StudentBalanceQuery;
+use App\Domain\Finance\Support\ChargeBalance;
 use App\Domain\Finance\Support\Money;
 use App\Domain\Staff\Actions\SystemRoleWriter;
 use App\Models\User;
@@ -88,21 +89,25 @@ it('loads student balances in bounded statements at two multi-row sizes', functi
     $batch = $roster ? Batch::factory()->active()->create() : null;
     $counts = [];
     $expected = [];
+    // `balance` is the student's whole balance, which the register shows. `own` is
+    // the roster enrolment's bill alone, which the batch roster shows: the price less
+    // the one live 50.003 payment, the reversed 4.005 dropping out. The student's
+    // other 200.002 is a written-off bill on a different enrolment.
     $fixtures = [
-        ['price' => '100.001', 'balance' => '250.000'],
-        ['price' => '100.002', 'balance' => '250.001'],
-        ['price' => '101.003', 'balance' => '251.002'],
-        ['price' => '102.004', 'balance' => '252.003'],
-        ['price' => '103.005', 'balance' => '253.004'],
-        ['price' => '104.006', 'balance' => '254.005'],
-        ['price' => '105.007', 'balance' => '255.006'],
-        ['price' => '106.008', 'balance' => '256.007'],
+        ['price' => '100.001', 'balance' => '250.000', 'own' => '49.998'],
+        ['price' => '100.002', 'balance' => '250.001', 'own' => '49.999'],
+        ['price' => '101.003', 'balance' => '251.002', 'own' => '51.000'],
+        ['price' => '102.004', 'balance' => '252.003', 'own' => '52.001'],
+        ['price' => '103.005', 'balance' => '253.004', 'own' => '53.002'],
+        ['price' => '104.006', 'balance' => '254.005', 'own' => '54.003'],
+        ['price' => '105.007', 'balance' => '255.006', 'own' => '55.004'],
+        ['price' => '106.008', 'balance' => '256.007', 'own' => '56.005'],
     ];
 
     foreach ([2, 8] as $size) {
         foreach (range(count($expected), $size - 1) as $index) {
             $student = listStudentWithBalance($this->admin, $batch, $fixtures[$index]['price']);
-            $expected[$student->getKey()] = $fixtures[$index]['balance'];
+            $expected[$student->getKey()] = $fixtures[$index][$roster ? 'own' : 'balance'];
             expect(app(StudentBalanceQuery::class)->forStudent((int) $student->getKey())->total->toDecimal())
                 ->toBe($fixtures[$index]['balance']);
         }
@@ -119,8 +124,11 @@ it('loads student balances in bounded statements at two multi-row sizes', functi
             $actual = [];
             foreach ($records as $record) {
                 $student = $roster ? $record->student : $record;
-                expect(array_key_exists(StudentBalanceQuery::OUTSTANDING_ALIAS, $student->getAttributes()))->toBeTrue();
-                $actual[$student->getKey()] = Money::fromDecimal($student->{StudentBalanceQuery::OUTSTANDING_ALIAS})->toDecimal();
+                // The roster's figure is the enrolment's own; the register's is the student's.
+                $owner = $roster ? $record : $student;
+                $alias = $roster ? ChargeBalance::OUTSTANDING_ALIAS : StudentBalanceQuery::OUTSTANDING_ALIAS;
+                expect(array_key_exists($alias, $owner->getAttributes()))->toBeTrue();
+                $actual[$student->getKey()] = Money::fromDecimal($owner->{$alias})->toDecimal();
             }
             ksort($actual);
             ksort($expected);
@@ -219,8 +227,8 @@ it('keeps zero balances and pagination on student lists', function (bool $roster
     expect($secondPage->count())->toBe(5)->and($secondPage->total())->toBe(12)
         ->and($firstPage->pluck('id')->intersect($secondPage->pluck('id'))->all())->toBe([]);
     foreach ($secondPage as $record) {
-        $student = $roster ? $record->student : $record;
-        expect($student->{StudentBalanceQuery::OUTSTANDING_ALIAS})->toBe('0.000');
+        $alias = $roster ? ChargeBalance::OUTSTANDING_ALIAS : StudentBalanceQuery::OUTSTANDING_ALIAS;
+        expect($record->{$alias})->toBe('0.000');
     }
 })->with(['student register' => false, 'batch roster' => true]);
 
@@ -247,8 +255,8 @@ it('loads balances only with charge-list read permission', function (bool $roste
     $records = $component->instance()->getTableRecords();
     expect($records->count())->toBe(2);
     foreach ($records as $record) {
-        $student = $roster ? $record->student : $record;
-        expect(array_key_exists(StudentBalanceQuery::OUTSTANDING_ALIAS, $student->getAttributes()))->toBe($mayReadCharges);
+        $alias = $roster ? ChargeBalance::OUTSTANDING_ALIAS : StudentBalanceQuery::OUTSTANDING_ALIAS;
+        expect(array_key_exists($alias, $record->getAttributes()))->toBe($mayReadCharges);
     }
     $chargeReads = collect($statements)->filter(fn (array $statement): bool => str_starts_with($statement['sql'], 'select')
         && preg_match('/\bfrom `?charges`?\b/', $statement['sql']) === 1

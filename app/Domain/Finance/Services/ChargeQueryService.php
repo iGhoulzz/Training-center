@@ -6,6 +6,8 @@ namespace App\Domain\Finance\Services;
 
 use App\Domain\Finance\Support\ChargeBalance;
 use App\Domain\Finance\Support\Money;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -122,5 +124,40 @@ final class ChargeQueryService
         return $chargeId === null
             ? null
             : ChargeBalance::outstandingFor((int) $chargeId);
+    }
+
+    /**
+     * Select each enrolment's OWN outstanding onto a query over enrolments, as
+     * ChargeBalance::OUTSTANDING_ALIAS.
+     *
+     * ONE CORRELATED SUBSELECT, NOT ONE QUERY PER ROW. The bill is found by
+     * `charges.enrollment_id = enrollments.id` — a unique index, so at most one
+     * row — and its outstanding is ChargeBalance::outstandingSql(), the string
+     * every other balance surface runs, so a reversed payment drops out and a
+     * written-off bill still counts exactly as StudentBalanceQuery counts them
+     * and the per-enrolment figures add up to the student's.
+     *
+     * COALESCE to zero, because an enrolment with no bill owes nothing and
+     * StudentBalanceQuery::forStudent() says the same; a NULL here would print
+     * as a blank cell beside rows that print 0.000.
+     *
+     * The caller's query is returned, so it chains. The enrolment table is only
+     * ever named through the builder's own qualifyColumn(), and never queried.
+     *
+     * @template TModel of Model
+     *
+     * @param  Builder<TModel>  $enrollments
+     * @return Builder<TModel>
+     */
+    public function withEnrollmentOutstanding(Builder $enrollments): Builder
+    {
+        $bill = DB::table('charges')
+            ->selectRaw(ChargeBalance::outstandingSql())
+            ->whereColumn('charges.enrollment_id', $enrollments->qualifyColumn('id'));
+
+        $outstanding = DB::query()->selectRaw('COALESCE(('.$bill->toSql().'), 0)', $bill->getBindings());
+
+        return $enrollments->addSelect([ChargeBalance::OUTSTANDING_ALIAS => $outstanding])
+            ->withCasts([ChargeBalance::OUTSTANDING_ALIAS => 'decimal:3']);
     }
 }
