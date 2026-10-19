@@ -190,4 +190,15 @@ return [
         'view_staff_certificate' => 'Open a staff certificate',
         'write_off_charge' => 'Write off a charge',
     ],
+
+    /*
+     * Account rules (P4-T33).
+     *
+     * Nobody deactivates their own account: a lone administrator could lock
+     * themselves out mid-task, and the last-super-admin invariant only catches the
+     * case where nobody else is left. The sentence is the refusal's whole message,
+     * shown as a toast title and as the exception text.
+     */
+    'cannot_deactivate_self' => 'You cannot deactivate your own account. Ask another administrator to do it.',
+    'is_active_own_account_hint' => 'You cannot deactivate your own account.',
 ];

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Staff\Actions;
 
+use App\Domain\Staff\Exceptions\SelfDeactivationException;
 use App\Domain\Staff\Services\SuperAdminInvariantService;
 use App\Models\Role;
 use App\Models\User;
@@ -18,6 +19,12 @@ use Illuminate\Support\Facades\Gate;
  * the target is a super admin, routes the write through
  * SuperAdminInvariantService so deactivating the last active super admin is
  * refused atomically (guard 3, 422).
+ *
+ * Nobody deactivates their own account (P4-T33, owner decision of 2026-10-17):
+ * the actor being the target is refused with SelfDeactivationException, a typed
+ * refusal like the last-super-admin one. The invariant only catches the case
+ * where nobody else is left, so without this rule a sole administrator could
+ * still lock themselves out of a working install while a second one exists.
  */
 final class DeactivateUserAction
 {
@@ -45,6 +52,14 @@ final class DeactivateUserAction
             $lockedUser = User::query()->lockForUpdate()->findOrFail($target->getKey());
 
             Gate::forUser($actor)->authorize('update', $lockedUser);
+
+            // AFTER the gate, so an actor with no business here is told so rather
+            // than shown a rule about their own account. Before the no-op check
+            // and before the invariant: the invariant is about the population,
+            // this is about who is asking.
+            if ($actor->is($lockedUser)) {
+                throw new SelfDeactivationException((int) $lockedUser->getKey());
+            }
 
             // The idempotent no-op is decided under the lock too. Read from the
             // caller's instance, it could skip a deactivation that a concurrent

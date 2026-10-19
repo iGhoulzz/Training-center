@@ -15,6 +15,7 @@ use App\Models\User;
  *   1. An admin cannot create, edit, or delete a super admin.
  *   2. No user can modify their own roles or permissions.
  *   4. A role or permission write requires the assign_role ability.
+ *      The student role is never assignable through the staff screens.
  *
  * The request-path Actions (SyncUserRolesAction, DeleteUserAction,
  * DeactivateUserAction) authorize through these methods via
@@ -56,6 +57,9 @@ use App\Models\User;
  */
 class UserPolicy
 {
+    /** The role every portal account holds. Issued by IssuePortalCredentialAction, never assigned here. */
+    private const PORTAL_ROLE = 'student';
+
     public function viewAny(User $actor): bool
     {
         return $actor->can('view_any_user');
@@ -108,10 +112,26 @@ class UserPolicy
 
     /**
      * Guard 1: only a super admin may grant the super_admin role.
+     *
+     * The student role is not assignable at all (P4-T33, security finding): it
+     * means "has a portal account", and the only thing that issues a portal
+     * account is IssuePortalCredentialAction, which writes the role itself. Through
+     * this ability - which SyncUserRolesAction asks for
+     * every role it adds AND every role it removes - the role could be attached to
+     * a staff account, or stripped from a portal one, by a crafted payload. The
+     * refusal is for every rank, super admin included: it is not about who is
+     * asking. The role picker asks this same ability, so it never offers student.
      */
     public function assignRole(User $actor, Role $role): bool
     {
         if (! $actor->can('assign_role')) {
+            return false;
+        }
+
+        // The resolved row's canonical name, not a submitted spelling: callers
+        // resolve names to rows before asking (RoleSet::resolve), so the database's
+        // case-insensitive match cannot be used to slip past this comparison.
+        if ($role->name === self::PORTAL_ROLE) {
             return false;
         }
 

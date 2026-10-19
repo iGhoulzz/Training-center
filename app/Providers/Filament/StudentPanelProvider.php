@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace App\Providers\Filament;
 
+use App\Filament\Pages\Auth\Login;
 use App\Filament\Pages\PasswordChange;
 use App\Http\Middleware\ForcePasswordChange;
+use App\Http\Middleware\LogOutInactiveUser;
 use App\Http\Middleware\SetLocale;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
@@ -75,7 +77,10 @@ class StudentPanelProvider extends PanelProvider
             ->id('student')
             ->path('portal')
             ->authGuard('student')
-            ->login()
+            // The same sign-in page as the admin panel (P4-T33): the wrong-door message
+            // matters most here, where a staff member who types their password gets
+            // told it is wrong, and the reason an open session ended is shown on it.
+            ->login(Login::class)
             // A closure, not a bare __() call: the panel is registered at boot,
             // before SetLocale has read the actor's locale, so resolving the
             // string eagerly would pin it to the fallback for every request.
@@ -124,8 +129,13 @@ class StudentPanelProvider extends PanelProvider
              * read before that, and before ForcePasswordChange so a user being
              * forced to change their password still sees that page in their own
              * language.
+             *
+             * LogOutInactiveUser goes first, for the admin panel's reason (P4-T33): a
+             * deactivated student is signed out and sent to /portal/login with the
+             * reason, instead of meeting Authenticate's 403.
              */
             ->authMiddleware([
+                LogOutInactiveUser::class,
                 Authenticate::class,
                 SetLocale::class,
                 ForcePasswordChange::class,
@@ -164,8 +174,13 @@ class StudentPanelProvider extends PanelProvider
              *
              * They cannot prove this particular declaration is load-bearing while
              * the admin panel names the same classes.
+             *
+             * LogOutInactiveUser is listed on the same terms (P4-T33): a deactivated
+             * student with a portal page open is signed out on the next Livewire
+             * request, not left driving the page until a full reload.
              */
             ->persistentMiddleware([
+                LogOutInactiveUser::class,
                 SetLocale::class,
                 AuthenticateSession::class,
                 ForcePasswordChange::class,

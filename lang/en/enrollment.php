@@ -188,6 +188,10 @@ return [
     'over_capacity_warning' => 'This batch is now over capacity.',
     'duplicate_enrollment' => 'This student is already enrolled in this batch.',
     'student_not_enrollable' => 'This student record has been deleted and cannot take new enrolments.',
+    // Deleting a student is refused while the record still matters to the centre's books:
+    // an enrolment that is running, or money still owed (P4-T33).
+    'student_delete_has_active_enrollment' => 'This student has an active enrolment. Withdraw or complete it before deleting the student.',
+    'student_delete_owes_balance' => 'This student has an outstanding balance. Settle it before deleting the student.',
     // Two operations, not all of them. Spec section 6 gates new enrolments and
     // instructor changes on a completed or cancelled batch; the batch's own
     // details stay editable, and saying otherwise sends a user looking for a

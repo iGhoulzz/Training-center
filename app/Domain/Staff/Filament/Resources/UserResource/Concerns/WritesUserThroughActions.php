@@ -8,6 +8,7 @@ use App\Domain\Staff\Actions\ActivateUserAction;
 use App\Domain\Staff\Actions\DeactivateUserAction;
 use App\Domain\Staff\Actions\SyncUserRolesAction;
 use App\Domain\Staff\Exceptions\LastSuperAdminException;
+use App\Domain\Staff\Exceptions\SelfDeactivationException;
 use App\Models\User;
 use Filament\Notifications\Notification;
 use Filament\Support\Exceptions\Halt;
@@ -34,9 +35,16 @@ use Illuminate\Auth\Access\AuthorizationException;
  * tells Filament's catch block to roll the whole save back, so a rejected role or
  * activation change undoes the attribute write with it.
  *
- * Only the two domain refusals are caught — an authorization denial and the
- * last-super-admin business rule. Anything else propagates; a genuine fault must
- * not be dressed up as a polite notification.
+ * Only the three domain refusals are caught — an authorization denial, the
+ * last-super-admin business rule, and the no-self-deactivation rule. Each is
+ * caught by its own type. Anything else propagates: a genuine fault must not be
+ * dressed up as a polite notification, and a ValidationException from anywhere
+ * in the save stays the field error it was raised as.
+ *
+ * The self-deactivation refusal belongs here for a reason beyond tidiness: the
+ * toggle is disabled on one's own record, but a forged Livewire payload can still
+ * set its state. Caught here, that forged change gets the same persistent toast
+ * and the same full rollback as every other refusal.
  */
 trait WritesUserThroughActions
 {
@@ -52,6 +60,8 @@ trait WritesUserThroughActions
             $this->refuseSave(__('staff.save_refused_unauthorized'));
         } catch (LastSuperAdminException) {
             $this->refuseSave(__('staff.save_refused_last_super_admin'));
+        } catch (SelfDeactivationException $refusal) {
+            $this->refuseSave($refusal->getMessage());
         }
     }
 

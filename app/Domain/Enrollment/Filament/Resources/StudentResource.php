@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace App\Domain\Enrollment\Filament\Resources;
 
+use App\Domain\Enrollment\Actions\DeleteStudentAction;
 use App\Domain\Enrollment\Enums\EnrollmentStatus;
 use App\Domain\Enrollment\Enums\StudentStatus;
+use App\Domain\Enrollment\Exceptions\StudentNotDeletableException;
 use App\Domain\Enrollment\Filament\Resources\StudentResource\Pages\CreateStudent;
 use App\Domain\Enrollment\Filament\Resources\StudentResource\Pages\EditStudent;
 use App\Domain\Enrollment\Filament\Resources\StudentResource\Pages\ListStudents;
@@ -299,12 +301,52 @@ class StudentResource extends Resource
             // authorize() rather than visible(): visible() is a UX affordance
             // that a crafted Livewire mount ignores, whereas authorize() runs
             // StudentPolicy::delete() against this record on the server.
+            //
+            // using() hands the delete to DeleteStudentAction (P4-T33), which
+            // refuses a student with an active enrolment or an outstanding balance.
             ->recordActions([
                 ActionGroup::make([
                     ...self::portalActions(),
-                    DeleteAction::make()->authorize('delete'),
+                    DeleteAction::make()
+                        ->authorize('delete')
+                        ->using(fn (Student $record): bool => self::deleteThroughAction($record)),
                 ])->iconButton()->dropdownTeleport(),
             ]);
+    }
+
+    /**
+     * Delete a student through DeleteStudentAction, for both delete buttons (the
+     * row action here and the edit page's header action).
+     *
+     * A refusal is shown as a persistent danger toast, as UserResource shows its
+     * own, and answers false: DeleteAction then reports no success, the student is
+     * untouched, and the edit page stays where it is instead of redirecting to the
+     * list. Persistent because the sentence says what to do next - withdraw an
+     * enrolment, settle a balance - and an auto-dismissing toast would be gone
+     * before it was read.
+     *
+     * Only the rule's own refusal is caught. An authorization failure is not
+     * dressed up as one: both buttons authorize before they get here, so one
+     * arriving is a permission revoked mid-request and surfaces as such.
+     */
+    public static function deleteThroughAction(Student $record): bool
+    {
+        /** @var User $actor */
+        $actor = auth()->user();
+
+        try {
+            app(DeleteStudentAction::class)->execute($actor, $record);
+        } catch (StudentNotDeletableException $refusal) {
+            Notification::make()
+                ->title($refusal->getMessage())
+                ->danger()
+                ->persistent()
+                ->send();
+
+            return false;
+        }
+
+        return true;
     }
 
     /** @return array<Action> */

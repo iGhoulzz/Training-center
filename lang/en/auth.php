@@ -32,4 +32,20 @@ return [
      * a flagged account would have no way off the page but closing the browser.
      */
     'log_out' => 'Log out',
+
+    /*
+     * Account rules (P4-T33).
+     *
+     * `panel_access_denied` replaces Filament's "These credentials do not match our
+     * records" only when the password was RIGHT and the account is not allowed in
+     * this panel (no access permission, a student account at /admin, a staff
+     * account at /portal, a deactivated account). A wrong password keeps the
+     * framework's message, so the page still tells a stranger nothing about which
+     * emails exist.
+     *
+     * `session_ended_inactive` is shown on the login page after an open session of
+     * an account that was deactivated meanwhile has been ended.
+     */
+    'panel_access_denied' => "This account can't sign in here. Check that you are on the right sign-in page, or ask an administrator.",
+    'session_ended_inactive' => 'Your account has been deactivated, so you have been signed out.',
 ];

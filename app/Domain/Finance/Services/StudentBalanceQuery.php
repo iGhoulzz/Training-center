@@ -201,6 +201,64 @@ final class StudentBalanceQuery
     }
 
     /**
+     * What a student owes in total, read so that a concurrent change is seen:
+     * the figure an Action acts on, where forStudent() is the figure a screen
+     * shows.
+     *
+     * WHY forStudent() IS NOT ENOUGH FOR A DECISION. It is an ordinary read, so
+     * inside a transaction it is answered from the snapshot taken at the
+     * transaction's first consistent read (docs/ENGINEERING.md, "A locking read
+     * is the only read that is current inside a transaction"). A charge raised by
+     * one thousandth, or a payment reversed, by an Action that committed after
+     * that snapshot is invisible to it - and holding the student row does not
+     * help, because neither AdjustChargeAction nor ReversePaymentAction takes
+     * the student row. DeleteStudentAction decided on exactly that stale zero.
+     *
+     * WHAT IS LOCKED, IN THIS ORDER, so a caller can state its own lock order:
+     *   1. the student's enrolments and their charges, in one locking read that
+     *      drives from `enrollments` by the student index (a RIGHT JOIN, as
+     *      forStudent() does, so an unbilled enrolment is simply a NULL charge
+     *      and no charge scan is ever the driving side - a FOR UPDATE scan of
+     *      `charges` would lock the table), then
+     *   2. per charge, ChargeBalance::outstandingForUpdate(): the charge row
+     *      again (already held) and then the allocations with the payments they
+     *      join, which is what a reversal and a payment both write.
+     * The caller must already hold the student row and call this inside the
+     * transaction that acts on the answer: the locks go when it commits.
+     *
+     * NOT A SECOND FORMULA. The per-charge figure is ChargeBalance's own locking
+     * form, whose pieces are the ones outstandingSql() is assembled from; the
+     * total is the same fold over the same rows as forStudent(), and
+     * DeleteStudentRuleTest pins the two equal, and equal to a hand-worked
+     * figure, across paid, part-paid, adjusted, reversed and written-off charges.
+     */
+    public function totalForUpdate(int $studentId): Money
+    {
+        $chargeIds = $this->enrollments->scopeToStudent(
+            DB::table('charges'),
+            'charges.enrollment_id',
+            $studentId,
+        )
+            ->select('charges.id as charge_id')
+            ->orderBy('enrollments.id')
+            ->lockForUpdate()
+            ->pluck('charge_id');
+
+        $total = Money::zero();
+
+        foreach ($chargeIds as $chargeId) {
+            // NULL: the RIGHT JOIN's unbilled enrolment, which owes nothing yet.
+            if ($chargeId === null) {
+                continue;
+            }
+
+            $total = $total->add(ChargeBalance::outstandingForUpdate((int) $chargeId));
+        }
+
+        return $total;
+    }
+
+    /**
      * Hydrate a DECIMAL the driver handed back, refusing anything the money
      * parser cannot read exactly.
      *

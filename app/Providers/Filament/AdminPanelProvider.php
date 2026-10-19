@@ -15,8 +15,10 @@ use App\Domain\Finance\Filament\Resources\PaymentResource;
 use App\Domain\Finance\Filament\Resources\PayrollRunResource;
 use App\Domain\Staff\Filament\Resources\ActivityResource;
 use App\Domain\Staff\Filament\Resources\UserResource;
+use App\Filament\Pages\Auth\Login;
 use App\Filament\Pages\Dashboard;
 use App\Http\Middleware\ForcePasswordChange;
+use App\Http\Middleware\LogOutInactiveUser;
 use App\Http\Middleware\SetLocale;
 use BezhanSalleh\FilamentShield\FilamentShieldPlugin;
 use Filament\Facades\Filament;
@@ -81,7 +83,10 @@ class AdminPanelProvider extends PanelProvider
             ->default()
             ->id('admin')
             ->path('admin')
-            ->login()
+            // Our own sign-in page (P4-T33): a correct password at the wrong door is
+            // told so instead of "credentials do not match", and the reason an open
+            // session was ended is shown here. See the class.
+            ->login(Login::class)
             ->darkMode(isForced: true)
             ->themeSwitcher(false)
             ->font('Instrument Sans', provider: LocalFontProvider::class)
@@ -264,8 +269,15 @@ class AdminPanelProvider extends PanelProvider
              * user to read before that. BEFORE ForcePasswordChange, so that a
              * user who is being forced to change their password still sees that
              * page in their own language.
+             *
+             * LogOutInactiveUser goes BEFORE Authenticate (P4-T33). Authenticate
+             * answers a deactivated account with abort(403), a bare error page for
+             * someone who was working a moment ago; this signs them out and sends
+             * them to the login with the reason instead. After Authenticate it would
+             * never run, because the 403 comes first.
              */
             ->authMiddleware([
+                LogOutInactiveUser::class,
                 Authenticate::class,
                 SetLocale::class,
                 ForcePasswordChange::class,
@@ -294,8 +306,14 @@ class AdminPanelProvider extends PanelProvider
              * AuthenticateSession: Filament does not persist this one either
              * (see FilamentServiceProvider::boot), so the session was not being
              * invalidated by the password-hash change it exists to detect.
+             *
+             * LogOutInactiveUser (P4-T33): an administrator deactivates an account
+             * that has a panel page open. Without it here the next filter or save
+             * on that page would be answered with Authenticate's 403 as an error
+             * modal; with it, the person is signed out and taken to the login.
              */
             ->persistentMiddleware([
+                LogOutInactiveUser::class,
                 SetLocale::class,
                 AuthenticateSession::class,
                 ForcePasswordChange::class,

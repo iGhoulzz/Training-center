@@ -273,6 +273,10 @@ it('does not delete or deactivate users outside the sanctioned Actions', functio
             'DeactivateUserAction',
             // Courses: refuses while batches reference the course.
             'DeleteCourseAction',
+            // Students (P4-T33): the soft delete, behind the refusal while the
+            // student has an active enrolment or owes money. Both student delete
+            // buttons call it; the policy check is inside the Action.
+            'DeleteStudentAction',
             // Batches (P1-T11): refuses while enrolments or instructor
             // allocations remain, and owns the 1451 conversion.
             'DeleteBatchAction',

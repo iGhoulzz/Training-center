@@ -190,6 +190,14 @@ it('bounds staff owner pickers and resolves values within each picker eligibilit
     });
     $eligibleCompensationOwner = $profiles[29]->user;
 
+    // The profile picker offers only accounts WITHOUT a profile (P4-T33, P3-5:
+    // staff_profiles.user_id is unique, so offering an owner only led to a refusal
+    // on save). Its half of this test therefore needs its own population: 30
+    // accounts that have no profile yet, among the 2,000 that do.
+    User::factory()->count(30)->sequence(fn ($sequence): array => [
+        'name' => 'Needle Candidate '.str_pad((string) $sequence->index, 2, '0', STR_PAD_LEFT),
+    ])->create();
+
     $profilePage = Livewire::actingAs($actor)->test(CreateStaffProfile::class);
     $profileField = $profilePage->instance()->getSchema('form')?->getComponent('user_id');
     $compensationPage = Livewire::actingAs($actor)->test(CreateStaffCompensation::class);
@@ -204,8 +212,9 @@ it('bounds staff owner pickers and resolves values within each picker eligibilit
     expectBoundedPayrollOptionQuery($profileInitialStatements, 'users', ['id', 'name']);
 
     $profileSearchStatements = captureStatements();
-    $profileResults = $profileField->getSearchResults('Needle Employee');
+    $profileResults = $profileField->getSearchResults('Needle Candidate');
     expectBoundedPayrollOptionQuery($profileSearchStatements, 'users', ['id', 'name']);
+    $profileOwnerResults = $profileField->getSearchResults('Needle Employee');
     /** @var Select $compensationField */
     $compensationInitialStatements = captureStatements();
     $compensationInitialOptions = $compensationField->getOptions();
@@ -218,7 +227,8 @@ it('bounds staff owner pickers and resolves values within each picker eligibilit
 
     expect($profileInitialOptions)->toHaveCount(25)
         ->and($profileResults)->toHaveCount(25)
-        ->and(array_values($profileResults))->toContain('Needle Employee 00')
+        ->and(array_values($profileResults))->toContain('Needle Candidate 00')
+        ->and($profileOwnerResults)->toBe([])
         ->and($compensationInitialOptions)->toHaveCount(25)
         ->and($compensationResults)->toHaveCount(25)
         ->and(array_values($compensationResults))->toContain('Needle Employee 00')
