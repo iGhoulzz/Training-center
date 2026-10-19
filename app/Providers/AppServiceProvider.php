@@ -32,6 +32,8 @@ use App\Domain\Staff\Support\ActivityEvent;
 use App\Domain\Staff\Support\BackupConfiguration;
 use App\Domain\Staff\Support\SuperAdminRoleId;
 use App\Models\User;
+use App\Support\CentreCalendar;
+use Filament\Support\Facades\FilamentTimezone;
 use Illuminate\Auth\Events\Failed;
 use Illuminate\Auth\Events\Login;
 use Illuminate\Auth\Events\Logout;
@@ -152,6 +154,41 @@ class AppServiceProvider extends ServiceProvider
          * the environment check to make a failing test pass.
          */
         Model::preventLazyLoading(! $this->app->isProduction());
+
+        /*
+         * EVERY ADMIN DATE-TIME IS SHOWN ON THE CENTRE'S CLOCK; STORAGE STAYS UTC
+         * (P4-T34, QA P3-2).
+         *
+         * `config('app.timezone')` is UTC and stays UTC. It is the zone every
+         * timestamp column is written and read in, and the zone the reports,
+         * the activity log and every `ReportPeriod` do their arithmetic in:
+         * changing it would move what is stored, not just what is printed.
+         * This call changes only the zone Filament DISPLAYS in. A payment
+         * taken at 00:30 on 1 April in Tripoli is still the row
+         * `2026-03-31 22:30:00`, and now reads as 1 April 00:30 everywhere
+         * instead of 31 March 22:30, which is the date the daily tender report
+         * already gave it.
+         *
+         * WHAT IT REACHES, read in vendor/filament rather than assumed:
+         * `TextColumn` and `TextEntry` call FilamentTimezone::get() from
+         * getTimezone() only when `dateTime()`, `isoDateTime()` or `since()` made
+         * them a date-time, and a `DateTimePicker` with a time does the same. A
+         * TimezoneManager is a container singleton rather than panel state, so
+         * the staff dashboard and the student portal both read it.
+         *
+         * WHAT IT DOES NOT, and must not:
+         *  - a plain `->date()` falls back to `config('app.timezone')`. That is
+         *    right for a DATE column (a due date is a calendar day, not an
+         *    instant) and WRONG for a TIMESTAMP column, which therefore names
+         *    its zone itself: `->date(timezone: CentreCalendar::TIMEZONE)`,
+         *    as CertificateIssuanceQueue does;
+         *  - a `DatePicker` without a time keeps `config('app.timezone')` too,
+         *    so the day somebody picks reaches a filter unshifted, and the
+         *    filter is the one to read that day as the centre's;
+         *  - an explicit `timezone:` argument still wins, so ExportHistory and
+         *    CertificateIssuanceQueue are unchanged and not converted twice.
+         */
+        FilamentTimezone::set(CentreCalendar::TIMEZONE);
 
         /*
          * The transient half of that guard, on the commands themselves.

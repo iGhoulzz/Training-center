@@ -216,7 +216,8 @@ it('shows the signed amount, reason, author and time of every adjustment under i
         ->assertSee('SENTINEL-BONUS-REASON')
         ->assertSee('SENTINEL-DEDUCTION-REASON')
         ->assertSee('Sentinel Adjustment Author')
-        ->assertSee('May 4, 2026 10:30:15');
+        // Stored 10:30:15 UTC; the page reads on the centre's clock, two hours ahead (P4-T34).
+        ->assertSee('May 4, 2026 12:30:15');
 });
 
 it('totals each line after its adjustments in exact decimal arithmetic', function () {

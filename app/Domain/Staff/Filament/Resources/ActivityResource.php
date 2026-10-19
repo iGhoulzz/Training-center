@@ -7,6 +7,7 @@ namespace App\Domain\Staff\Filament\Resources;
 use App\Domain\Staff\Filament\Resources\ActivityResource\Pages\ListActivities;
 use App\Domain\Staff\Filament\Resources\ActivityResource\Pages\ViewActivity;
 use App\Models\User;
+use App\Support\CentreCalendar;
 use BackedEnum;
 use Carbon\Carbon;
 use Filament\Forms\Components\DatePicker;
@@ -235,8 +236,24 @@ class ActivityResource extends Resource
                      * whereDate() wraps the column in DATE(), which makes the
                      * comparison non-sargable: MySQL cannot use the created_at
                      * index and scans the table instead — on the one table here
-                     * that only ever grows. startOfDay/endOfDay keep the same
-                     * inclusive meaning while leaving the column bare.
+                     * that only ever grows. A range on the bare column keeps the
+                     * index usable.
+                     *
+                     * THE DAY PICKED IS THE CENTRE'S DAY, NOT THE UTC DAY (P4-T34).
+                     * A DatePicker without a time hands over the string it was
+                     * given, unshifted, and the log displays created_at on the
+                     * centre's clock. So "1 April" has to mean what the screen
+                     * calls 1 April: from 00:00 in Africa/Tripoli, which is 22:00
+                     * UTC on 31 March, up to but not including the next local
+                     * midnight. Reading it as the UTC day instead hid the first
+                     * two hours of the day and showed the first two hours of the
+                     * next one. Created in the centre's zone and then converted
+                     * with utc(), because a bound DateTimeInterface is formatted
+                     * in its own zone and the column holds UTC.
+                     *
+                     * HALF-OPEN ON THE UPPER SIDE, as ReportPeriod::applyTo() is:
+                     * `until` is inclusive as the user states it, so the bound is
+                     * the start of the day AFTER it, compared with `<`.
                      */
                     ->query(fn (Builder $query, array $data): Builder => $query
                         ->when(
@@ -244,15 +261,15 @@ class ActivityResource extends Resource
                             fn (Builder $q, string $date): Builder => $q->where(
                                 'created_at',
                                 '>=',
-                                Carbon::parse($date)->startOfDay(),
+                                Carbon::parse($date, CentreCalendar::TIMEZONE)->startOfDay()->utc(),
                             ),
                         )
                         ->when(
                             $data['until'] ?? null,
                             fn (Builder $q, string $date): Builder => $q->where(
                                 'created_at',
-                                '<=',
-                                Carbon::parse($date)->endOfDay(),
+                                '<',
+                                Carbon::parse($date, CentreCalendar::TIMEZONE)->addDay()->startOfDay()->utc(),
                             ),
                         )),
             ])

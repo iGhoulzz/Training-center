@@ -27,6 +27,7 @@ use App\Domain\Finance\Exceptions\ChargeAlreadyCommittedException;
 use App\Domain\Finance\Filament\Resources\ChargeResource;
 use App\Domain\Finance\Services\StudentBalanceQuery;
 use App\Models\User;
+use App\Support\CentreCalendar;
 use Filament\Actions\Action;
 use Filament\Actions\BulkAction;
 use Filament\Forms\Components\Select;
@@ -201,9 +202,11 @@ class EnrollmentsRelationManager extends RelationManager
                         EnrollmentStatus::Withdrawn => 'danger',
                     }),
 
+                // A bare date() is not reached by the global display zone (AppServiceProvider), so a
+                // timestamp column shown as a day names the centre's zone itself (P4-T34).
                 TextColumn::make('enrolled_at')
                     ->label(__('enrollment.enrolled_at'))
-                    ->date()
+                    ->date(timezone: CentreCalendar::TIMEZONE)
                     ->sortable(),
 
                 TextColumn::make('student.'.StudentBalanceQuery::OUTSTANDING_ALIAS)
