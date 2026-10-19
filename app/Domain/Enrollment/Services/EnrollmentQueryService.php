@@ -48,6 +48,33 @@ use RuntimeException;
 final class EnrollmentQueryService
 {
     /**
+     * A bounded batch-card projection: only active enrolments hold seats.
+     * Missing keys have zero active seats; no enrolment rows are hydrated.
+     *
+     * @param  array<int, int>  $batchIds
+     * @return array<int, int>
+     */
+    public function activeSeatCountsForBatches(array $batchIds): array
+    {
+        if ($batchIds === []) {
+            return [];
+        }
+
+        $counts = Enrollment::query()->active()
+            ->whereIn('batch_id', $batchIds)
+            ->selectRaw('batch_id, COUNT(*) AS seat_count')
+            ->groupBy('batch_id')
+            ->pluck('seat_count', 'batch_id');
+
+        $result = [];
+        foreach ($counts as $batchId => $count) {
+            $result[(int) $batchId] = (int) $count;
+        }
+
+        return $result;
+    }
+
+    /**
      * The student who owns a charge's enrolment.
      *
      * TASK 4 READS THIS, AND NOTHING ELSE.

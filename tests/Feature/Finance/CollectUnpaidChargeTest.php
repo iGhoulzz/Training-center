@@ -247,6 +247,27 @@ it('reads the same number of tables whether the list shows one bill or five, the
 |--------------------------------------------------------------------------
 */
 
+it('shows a bill opened by link on the Collect stage, with the earlier stages closed', function () {
+    // P4-T29's step cards: the panel is the Collect stage, so the cards must say
+    // so, and the selection stages stay closed while this bill is open.
+    $charge = Charge::factory()->create(['list_price' => '100.125']);
+
+    $page = Livewire::actingAs($this->collector)
+        ->withQueryParams(['charge' => $charge->getKey()])
+        ->test(EnrollAndCollect::class)
+        ->assertSet('collectionChargeId', $charge->getKey())
+        ->assertSet('flowStep', 4);
+
+    $document = new DOMDocument;
+    $document->loadHTML('<?xml encoding="UTF-8">'.$page->html(), LIBXML_NOERROR | LIBXML_NOWARNING);
+    $current = (new DOMXPath($document))->query('//nav[@aria-label="'.__('collect.enrolment_steps').'"]//button[@aria-current="step"]');
+    expect($current)->toHaveCount(1)
+        ->and($current->item(0)->textContent)->toContain(__('collect.step_collect'));
+
+    $page->call('goToStep', 1)->assertSet('flowStep', 4)
+        ->call('advance')->assertSet('flowStep', 4);
+});
+
 it('opens the collection panel for that bill and records exactly one payment, allocation and tender with the exact amounts', function () {
     $charge = Charge::factory()->create(['list_price' => '100.125']);
     Charge::factory()->create(['list_price' => '999.000']);

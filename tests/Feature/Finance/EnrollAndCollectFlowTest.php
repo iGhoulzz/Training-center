@@ -7,6 +7,7 @@ use App\Domain\Enrollment\Enums\StudentStatus;
 use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Enrollment;
 use App\Domain\Enrollment\Models\Student;
+use App\Domain\Enrollment\Services\EnrollmentQueryService;
 use App\Domain\Finance\Enums\TenderMethod;
 use App\Domain\Finance\Exceptions\DiscountNotApplicableException;
 use App\Domain\Finance\Filament\Pages\EnrollAndCollect;
@@ -25,7 +26,9 @@ use Database\Seeders\RolePermissionSeeder;
 use Filament\Notifications\Notification as FilamentNotification;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Lang;
+use Livewire\Features\SupportLockedProperties\CannotUpdateLockedPropertyException;
 use Livewire\Livewire;
 use Spatie\Permission\PermissionRegistrar;
 
@@ -83,6 +86,288 @@ beforeEach(function () {
     $role = Role::findOrCreate('front_desk_without_enroll', 'web');
     $this->system->syncRolePermissions($role, ['access_admin_panel']);
     $this->noAbility = ($this->actorWith)('front_desk_without_enroll');
+});
+
+it('searches and selects students inline before advancing the numbered flow', function () {
+    $student = Student::factory()->create(['first_name' => 'Amira', 'last_name' => 'Walkin', 'phone' => '0912345678']);
+    $other = Student::factory()->create(['first_name' => 'Unrelated', 'last_name' => 'Person']);
+
+    $page = Livewire::actingAs($this->admin)->test(EnrollAndCollect::class)
+        ->assertSet('flowStep', 1)
+        ->call('advance')->assertHasErrors(['data.student_id'])
+        ->set('studentSearch', 'Amira');
+    $document = new DOMDocument;
+    $document->loadHTML('<?xml encoding="UTF-8">'.$page->html(), LIBXML_NOERROR | LIBXML_NOWARNING);
+    $xpath = new DOMXPath($document);
+    $results = $xpath->query('//*[@aria-label="Student results"]');
+    expect($results)->toHaveCount(1)
+        ->and($results->item(0)->textContent)->toContain($student->full_name, $student->student_code, '0912345678')
+        ->not->toContain($other->full_name);
+
+    $page->set('data.student_id', $student->id)->call('advance')->assertSet('flowStep', 2)
+        ->call('goToStep', 4)->assertSet('flowStep', 2)
+        ->call('advance')->assertHasErrors(['data.batch_id'])
+        ->call('back')->assertSet('flowStep', 1)->assertSet('data.student_id', $student->id);
+    expect(Enrollment::query()->count())->toBe(0)->and(Charge::query()->count())->toBe(0);
+});
+
+it('keeps student cards empty until a search is entered without an authorized hint', function (bool $canView) {
+    $student = Student::factory()->create(['first_name' => 'UnpromptedSecret', 'last_name' => 'Student', 'phone' => '0911111222']);
+    $role = Role::findOrCreate('picker-enroller', 'web');
+    $this->system->syncRolePermissions($role, ['access_admin_panel', 'create_enrollment', ...($canView ? ['view_student'] : [])]);
+    $actor = ($this->actorWith)('picker-enroller');
+
+    $page = Livewire::actingAs($actor)->withQueryParams($canView ? [] : ['student' => $student->id])
+        ->test(EnrollAndCollect::class)
+        ->assertDontSee($student->first_name)->assertDontSee($student->student_code)->assertDontSee($student->phone);
+
+    expect($page->instance()->studentMatches)->toBeEmpty();
+    $page->set('studentSearch', '   ');
+    expect($page->instance()->studentMatches)->toBeEmpty();
+
+    $page->set('studentSearch', 'UnpromptedSecret');
+    $document = new DOMDocument;
+    $document->loadHTML('<?xml encoding="UTF-8">'.$page->html(), LIBXML_NOERROR | LIBXML_NOWARNING);
+    $results = (new DOMXPath($document))->query('//*[@aria-label="Student results"]');
+    expect($results)->toHaveCount(1)
+        ->and($results->item(0)->textContent)->toContain($student->full_name, $student->student_code);
+    if ($canView) {
+        expect($results->item(0)->textContent)->toContain($student->phone, $student->status->label());
+    } else {
+        $page->assertDontSee($student->phone);
+        expect($results->item(0)->textContent)->not->toContain($student->status->label());
+    }
+})->with(['student reader' => true, 'enroller without student read' => false]);
+
+it('keeps only the authorized student hint visible before search and retains it beyond the search limit', function () {
+    Student::factory()->count(25)->create(['first_name' => 'Matching', 'last_name' => 'Earlier']);
+    $student = Student::factory()->create(['first_name' => 'Matching', 'last_name' => 'ZzzHint']);
+    $other = Student::factory()->create(['first_name' => 'Other', 'last_name' => 'Unrelated']);
+    $page = Livewire::actingAs($this->admin)->withQueryParams(['student' => $student->id])
+        ->test(EnrollAndCollect::class)->assertSet('flowStep', 1)->assertSet('data.student_id', $student->id);
+
+    expect($page->instance()->studentMatches->modelKeys())->toBe([$student->id]);
+    $page->set('studentSearch', 'Matching');
+    expect($page->instance()->studentMatches)->toHaveCount(26);
+    $document = new DOMDocument;
+    $document->loadHTML('<?xml encoding="UTF-8">'.$page->html(), LIBXML_NOERROR | LIBXML_NOWARNING);
+    $card = (new DOMXPath($document))->query('//label[input[@name="student_id" and @value="'.$student->id.'"]]');
+    expect($card)->toHaveCount(1)->and($card->item(0)->textContent)->toContain($student->full_name, $student->student_code);
+
+    $page->set('studentSearch', 'Unrelated');
+    expect($page->instance()->studentMatches->modelKeys())->toEqualCanonicalizing([$student->id, $other->id]);
+    $page->set('studentSearch', '')->set('data.student_id', $other->id);
+    expect($page->instance()->studentMatches->modelKeys())->toBe([$student->id]);
+    $page->call('finishCollection');
+    expect($page->instance()->studentMatches)->toBeEmpty();
+});
+
+it('does not treat editable student state as an authorized preselection', function () {
+    $student = Student::factory()->create();
+    $page = Livewire::actingAs($this->admin)->test(EnrollAndCollect::class)
+        ->set('data.student_id', $student->id);
+
+    expect($page->instance()->studentMatches)->toBeEmpty();
+});
+
+it('refuses client changes to authorized picker hint provenance', function (string $property) {
+    $student = Student::factory()->create();
+    $batch = Batch::factory()->active()->create();
+    $page = Livewire::actingAs($this->admin)->test(EnrollAndCollect::class);
+
+    $page->set($property, $property === 'preselectedBatchId' ? $batch->id : $student->id);
+})->with(['preselectedStudentId', 'preselectedBatchId', 'createdStudentId'])->throws(CannotUpdateLockedPropertyException::class);
+
+it('prompts for a search instead of reporting no matches before anything is typed', function () {
+    Student::factory()->create(['first_name' => 'Amira', 'last_name' => 'Walkin']);
+    $page = Livewire::actingAs($this->admin)->test(EnrollAndCollect::class);
+
+    $page->assertSee(__('collect.search_students_prompt'))
+        ->assertDontSee(__('collect.no_students'))
+        ->assertDontSee(trans_choice('collect.matches', 0, ['count' => 0]));
+
+    $page->set('studentSearch', 'no-such-student')
+        ->assertSee(__('collect.no_students'))
+        ->assertSee(trans_choice('collect.matches', 0, ['count' => 0]))
+        ->assertDontSee(__('collect.search_students_prompt'));
+});
+
+it('keeps an authorized open batch hint visible beyond the search limit and outside search matches', function () {
+    $student = Student::factory()->create();
+    $batch = Batch::factory()->active()->create(['code' => 'ZZZ-HINT']);
+    Batch::factory()->count(25)->active()->create(['course_id' => $batch->course_id]);
+    $page = Livewire::actingAs($this->admin)->withQueryParams(['batch' => $batch->id])
+        ->test(EnrollAndCollect::class)->set('data.student_id', $student->id)->call('advance');
+
+    expect($page->instance()->batchChoices)->toHaveCount(26);
+    $page->set('batchSearch', 'no-matching-batch');
+    expect($page->instance()->batchChoices->modelKeys())->toBe([$batch->id]);
+    $document = new DOMDocument;
+    $document->loadHTML('<?xml encoding="UTF-8">'.$page->html(), LIBXML_NOERROR | LIBXML_NOWARNING);
+    $card = (new DOMXPath($document))->query('//label[input[@name="batch_id" and @value="'.$batch->id.'"]]');
+    expect($card)->toHaveCount(1)->and($card->item(0)->textContent)->toContain('ZZZ-HINT');
+
+    $batch->update(['status' => BatchStatus::Completed]);
+    $page->set('batchSearch', 'still-no-match');
+    expect($page->instance()->batchChoices)->toBeEmpty();
+});
+
+it('does not promote forbidden hints or editable batch state into retained cards', function () {
+    $student = Student::factory()->create();
+    $batch = Batch::factory()->active()->create(['code' => 'ZZZ-FORBIDDEN-HINT']);
+    Batch::factory()->count(25)->active()->create(['course_id' => $batch->course_id]);
+    $role = Role::findOrCreate('enroller-without-hint-reads', 'web');
+    $this->system->syncRolePermissions($role, ['access_admin_panel', 'create_enrollment']);
+    $actor = ($this->actorWith)('enroller-without-hint-reads');
+    $page = Livewire::actingAs($actor)->withQueryParams(['student' => $student->id, 'batch' => $batch->id])
+        ->test(EnrollAndCollect::class)->assertSet('data.student_id', null)->assertSet('data.batch_id', null);
+
+    $page->set('studentSearch', 'no-student-match');
+    expect($page->instance()->studentMatches)->toBeEmpty();
+    $page->set('data.student_id', $student->id)->call('advance')->set('data.batch_id', $batch->id);
+    expect($page->instance()->batchChoices->modelKeys())->not->toContain($batch->id);
+    $page->set('batchSearch', 'no-batch-match');
+    expect($page->instance()->batchChoices)->toBeEmpty();
+});
+
+it('offers selectable batch cards with inherited price status and active seat counts', function () {
+    $student = Student::factory()->create();
+    $batch = Batch::factory()->active()->create(['code' => 'INTAKE-CARD', 'price' => null, 'capacity' => 1, 'start_date' => null, 'end_date' => null]);
+    $batch->course->update(['default_price' => '216.350']);
+    Enrollment::factory()->create(['batch_id' => $batch->id]);
+    Enrollment::factory()->withdrawn()->create(['batch_id' => $batch->id]);
+    $closed = Batch::factory()->create(['status' => BatchStatus::Completed]);
+    $page = Livewire::actingAs($this->admin)->test(EnrollAndCollect::class)
+        ->set('data.student_id', $student->id)->call('advance');
+    $document = new DOMDocument;
+    $document->loadHTML('<?xml encoding="UTF-8">'.$page->html(), LIBXML_NOERROR | LIBXML_NOWARNING);
+    $xpath = new DOMXPath($document);
+    $cards = $xpath->query('//*[@aria-label="Batch options"]');
+    expect($cards)->toHaveCount(1)
+        ->and(preg_replace('/\s+/u', ' ', $cards->item(0)->textContent))->toContain('INTAKE-CARD', '216.350 LYD', '1 / 1 seats', $batch->status->label())
+        ->not->toContain($closed->code);
+    $page->set('data.batch_id', $batch->id)->call('advance')->assertSet('flowStep', 3);
+    expect(Enrollment::query()->count())->toBe(2)->and(Charge::query()->count())->toBe(0);
+});
+
+it('projects active seats for only the supplied batches in one aggregate query', function () {
+    $batches = Batch::factory()->count(3)->create();
+    Enrollment::factory()->count(2)->create(['batch_id' => $batches[0]->id]);
+    Enrollment::factory()->withdrawn()->create(['batch_id' => $batches[0]->id]);
+    Enrollment::factory()->create(['batch_id' => $batches[1]->id]);
+    $outside = Enrollment::factory()->create();
+    $service = app(EnrollmentQueryService::class);
+    DB::enableQueryLog();
+    DB::flushQueryLog();
+    try {
+        $counts = $service->activeSeatCountsForBatches($batches->modelKeys());
+        $queries = DB::getQueryLog();
+        DB::flushQueryLog();
+        $empty = $service->activeSeatCountsForBatches([]);
+        $emptyQueries = DB::getQueryLog();
+    } finally {
+        DB::disableQueryLog();
+        DB::flushQueryLog();
+    }
+    expect($counts)->toHaveCount(2)->not->toHaveKey($outside->batch_id)
+        ->and($counts[$batches[0]->id])->toBe(2)
+        ->and($counts[$batches[1]->id])->toBe(1)
+        ->and($queries)->toHaveCount(1)
+        ->and(strtolower($queries[0]['query']))->toContain('count(', 'group by')
+        ->and($empty)->toBe([])->and($emptyQueries)->toBe([]);
+});
+
+it('skips confidential discount choices without the permission and refuses injected choices', function () {
+    $discount = Discount::factory()->create(['name' => 'Confidential award', 'percentage' => '17.00']);
+    $student = Student::factory()->create();
+    $batch = Batch::factory()->active()->create(['price' => '100.125']);
+    $page = Livewire::actingAs($this->staff)->test(EnrollAndCollect::class)
+        ->set('data.student_id', $student->id)->call('advance')
+        ->set('data.batch_id', $batch->id)->call('advance')->assertSet('flowStep', 4)
+        ->call('goToStep', 3)->assertSet('flowStep', 4)
+        ->set('data.discount_id', $discount->id);
+    expect($page->html())->not->toContain('Confidential award', '17.00%');
+    $page->call('confirm')->assertNotified(__('collect.enrollment_denied'));
+    expect(Enrollment::query()->count())->toBe(0)->and(Charge::query()->count())->toBe(0);
+});
+
+it('requires confirmation before collection and resets the next walk-in after skipping payment', function () {
+    $student = Student::factory()->create();
+    $batch = Batch::factory()->active()->create(['price' => '216.350']);
+    $discount = Discount::factory()->create(['percentage' => '1.00']);
+    $page = Livewire::actingAs($this->admin)->test(EnrollAndCollect::class)
+        ->set('studentSearch', 'Walkin')
+        ->set('data.student_id', $student->id)->call('advance')
+        ->set('data.batch_id', $batch->id)->call('advance')
+        ->set('data.discount_id', $discount->id)->call('advance')->assertSet('flowStep', 4)
+        ->assertSee(__('collect.confirm_before_payment'))->assertDontSee(__('collect.collect_action'));
+    expect(Charge::query()->count())->toBe(0)->and($page->instance()->bill['reference'])->toBeNull()
+        ->and($page->instance()->bill['receipt'])->toBeNull();
+    $page->call('confirm')->assertSet('flowStep', 4)->assertSee(__('collect.collect_action'));
+    expect(Charge::query()->sole()->amount)->toBe('214.187');
+    $page->call('back')->assertSet('flowStep', 4)
+        ->call('finishCollection')->assertSet('flowStep', 1)->assertSet('studentSearch', '')
+        ->assertSet('data.student_id', null)->assertSet('data.batch_id', null)
+        ->assertSet('collectionChargeId', null)->assertSet('collectionIdempotencyKey', null);
+    expect(Payment::query()->count())->toBe(0)->and(Enrollment::query()->count())->toBe(1)
+        ->and(Charge::query()->count())->toBe(1);
+});
+
+it('shows a deleted discount refusal on the collect review without issuing a bill', function () {
+    $student = Student::factory()->create();
+    $batch = Batch::factory()->active()->create(['price' => '216.350']);
+    $discount = Discount::factory()->create(['percentage' => '1.00']);
+    $page = Livewire::actingAs($this->admin)->test(EnrollAndCollect::class)
+        ->set('data.student_id', $student->id)->call('advance')
+        ->set('data.batch_id', $batch->id)->call('advance')
+        ->set('data.discount_id', $discount->id)->call('advance')->assertSet('flowStep', 4);
+
+    $discount->delete();
+    $page->call('confirm')->assertHasFormErrors(['discount_id'])->assertSet('flowStep', 4);
+    $message = $page->instance()->getErrorBag()->first('data.discount_id');
+    $document = new DOMDocument;
+    $document->loadHTML('<?xml encoding="UTF-8">'.$page->html(), LIBXML_NOERROR | LIBXML_NOWARNING);
+    $xpath = new DOMXPath($document);
+    $alerts = $xpath->query('//section[@aria-label="Collect"]//*[@role="alert"]');
+    expect($message)->not->toBe('')->and($alerts)->toHaveCount(1)
+        ->and(trim($alerts->item(0)->textContent))->toBe($message)
+        ->and(Enrollment::query()->count())->toBe(0)->and(Charge::query()->count())->toBe(0)
+        ->and(Payment::query()->count())->toBe(0);
+});
+
+it('renders batch dates without language-specific month names', function (string $locale) {
+    $this->admin->update(['locale' => $locale]);
+    app()->setLocale($locale);
+    $student = Student::factory()->create();
+    $batch = Batch::factory()->active()->create(['start_date' => '2026-07-01', 'end_date' => '2026-08-15']);
+    $page = Livewire::actingAs($this->admin)->test(EnrollAndCollect::class)
+        ->set('data.student_id', $student->id)->call('advance');
+    $document = new DOMDocument;
+    $document->loadHTML('<?xml encoding="UTF-8">'.$page->html(), LIBXML_NOERROR | LIBXML_NOWARNING);
+    $xpath = new DOMXPath($document);
+    $card = $xpath->query('//label[input[@name="batch_id" and @value="'.$batch->id.'"]]');
+    expect(app()->getLocale())->toBe($locale)
+        ->and($card)->toHaveCount(1)->and($card->item(0)->textContent)
+        ->toContain('2026-07-01', '2026-08-15')->not->toContain('Jul', 'Aug');
+})->with(['en', 'ar']);
+
+it('keeps the issued bill and retry key after invalid payment then resets after the receipt', function () {
+    $student = Student::factory()->create();
+    $batch = Batch::factory()->active()->create(['price' => '100.125']);
+    $page = Livewire::actingAs($this->admin)->test(EnrollAndCollect::class)
+        ->fillForm(['student_id' => $student->id, 'batch_id' => $batch->id])->call('confirm');
+    $key = $page->get('collectionIdempotencyKey');
+    $chargeId = $page->get('collectionChargeId');
+    $page->fillForm(['amount' => '40.125', 'tenders' => [['method' => 'cash', 'amount' => '40.124']]], 'collectForm')
+        ->call('finalize')->assertHasFormErrors(['amount'], 'collectForm')
+        ->assertSet('collectionIdempotencyKey', $key)->assertSet('collectionChargeId', $chargeId);
+    expect(Charge::query()->count())->toBe(1)->and(Payment::query()->count())->toBe(0)
+        ->and($page->instance()->bill['receipt'])->toBeNull();
+    $page->fillForm(['amount' => '40.125', 'tenders' => [['method' => 'cash', 'amount' => '40.125']]], 'collectForm')
+        ->call('finalize')->assertHasNoFormErrors()->assertSet('collectionIdempotencyKey', $key)
+        ->assertSee(Payment::query()->sole()->reference)
+        ->call('finishCollection')->assertSet('flowStep', 1);
+    expect(Payment::query()->count())->toBe(1)->and(Charge::query()->count())->toBe(1);
 });
 
 /*
@@ -293,18 +578,20 @@ it('never says "allocation" in code or copy a user could see', function () {
         );
     }
 
-    $viewPath = resource_path('views/filament/finance/enroll-and-collect.blade.php');
+    $viewPaths = glob(resource_path('views/filament/finance/enroll-and-collect*.blade.php'));
 
     /*
      * NOT CONDITIONAL. An earlier version wrapped this in is_file(), so
-     * renaming or moving the view silently stopped the assertion running
-     * rather than failing — a guard that disappears when the thing it guards
-     * moves. The view is required for the page to render at all, so its
-     * absence is itself a failure.
+     * moving the views silently stopped the assertion running. Require a
+     * nonempty glob, then scan the page and every picker view it renders.
      */
-    expect(is_file($viewPath))->toBeTrue("The page's view is missing: {$viewPath}");
-
-    expect(mb_stripos((string) file_get_contents($viewPath), 'allocation'))->toBe(false);
+    expect($viewPaths)->not->toBeFalse()->not->toBeEmpty();
+    foreach ($viewPaths as $viewPath) {
+        expect(mb_stripos((string) file_get_contents($viewPath), 'allocation'))->toBe(
+            false,
+            "A page view mentions allocation: {$viewPath}",
+        );
+    }
 
     /*
      * BOTH CATALOGUES. `ar` is empty until phase 4, which makes scanning it
@@ -1157,6 +1444,62 @@ it('lets an enroller without create_student enrol an existing student but not cr
         'A crafted quick-create wrote a student for an actor without create_student.',
     );
 });
+
+it('keeps the quick-create modal inside its Livewire root and selects the created student', function (bool $canViewStudents) {
+    if ($canViewStudents) {
+        $actor = $this->staff;
+    } else {
+        $role = Role::findOrCreate('quick-creator-without-student-read', 'web');
+        $this->system->syncRolePermissions($role, ['access_admin_panel', 'create_enrollment', 'create_student']);
+        $actor = ($this->actorWith)('quick-creator-without-student-read');
+    }
+    expect($actor->can('view_student'))->toBe($canViewStudents);
+    $page = Livewire::actingAs($actor)->test(EnrollAndCollect::class);
+    $initial = $page->html();
+    $dom = new DOMDocument;
+    @$dom->loadHTML($initial);
+    $xpath = new DOMXPath($dom);
+    $root = $xpath->query('//*[@*[name()="wire:id" and .="'.$page->id().'"]]')->item(0);
+
+    // Filament searches only inside this root when applying action-modal partials.
+    expect($root)->toBeInstanceOf(DOMElement::class);
+    expect($xpath->query('.//*[@*[name()="wire:partial" and .="action-modals"]]', $root)->length)->toBe(1);
+
+    $button = $xpath->query('//button[contains(., "'.__('collect.new_student').'")]')->item(0);
+    $handler = $button->getAttribute('wire:click');
+    preg_match("/mountAction\\('([^']+)',.*JSON\\.parse\\('([^']+)'\\)\\)/", $handler, $matches);
+    $context = json_decode(json_decode('"'.$matches[2].'"', flags: JSON_THROW_ON_ERROR), true, flags: JSON_THROW_ON_ERROR);
+    $page->call('mountAction', $matches[1], [], $context)
+        ->assertSet('mountedActions.0.name', 'createOption');
+    expect($page->getMountedActionModalHtml())->toContain('first_name');
+
+    $page->fillForm(['first_name' => 'Modal', 'last_name' => 'Walkin', 'phone' => '0912000111'], 'mountedActionSchema0')
+        ->callMountedAction()
+        ->assertHasNoFormErrors()
+        ->assertSet('flowStep', 1);
+
+    $created = Student::query()->where('first_name', 'Modal')->where('last_name', 'Walkin')->sole();
+    expect((string) $page->get('data.student_id'))->toBe((string) $created->getKey())
+        ->and($created->student_code)->not->toBeEmpty();
+
+    // The new student is the selected card, though the search is still blank.
+    $document = new DOMDocument;
+    $document->loadHTML('<?xml encoding="UTF-8">'.$page->html(), LIBXML_NOERROR | LIBXML_NOWARNING);
+    $card = (new DOMXPath($document))->query('//label[input[@name="student_id" and @value="'.$created->getKey().'"]]');
+    expect($page->get('studentSearch'))->toBe('')
+        ->and($card)->toHaveCount(1)
+        ->and($card->item(0)->textContent)->toContain($created->full_name, $created->student_code, '✓');
+    if ($canViewStudents) {
+        expect($card->item(0)->textContent)->toContain('0912000111', $created->status->label());
+    } else {
+        expect($card->item(0)->textContent)->not->toContain('0912000111')
+            ->not->toContain($created->status->label());
+    }
+
+    // The next walk-in starts from a blank list again.
+    $page->call('finishCollection');
+    expect($page->instance()->studentMatches)->toBeEmpty();
+})->with(['student reader' => true, 'creator without student read' => false]);
 
 it('offers the quick-create form to an actor who does hold create_student', function () {
     /*

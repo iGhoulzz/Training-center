@@ -15,6 +15,7 @@ use Filament\Notifications\Livewire\Notifications;
 use Filament\Notifications\Notification as FilamentNotification;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Queue;
+use Livewire\Features\SupportLockedProperties\CannotUpdateLockedPropertyException;
 use Livewire\Livewire;
 
 /*
@@ -22,10 +23,14 @@ use Livewire\Livewire;
 | Enrol & Collect — what the operator is told and shown (P4-T32)
 |--------------------------------------------------------------------------
 |
-| QA findings P3-1 (a full batch warns), P3-3 (after Confirm the wizard is
-| back on step 1 and a second Confirm does nothing while the payment panel is
-| open), P3-6 (wording of the amount errors) and P3-11 (the wizard header's
-| long step text stays inside its own step).
+| QA findings P3-1 (a full batch warns), P3-3 (after Confirm the form is
+| emptied, the stage moves on, and a second Confirm does nothing while the
+| payment panel is open), P3-6 (wording of the amount errors) and P3-11 (long
+| step text stays inside its own step card).
+|
+| P4-T29 replaced the Wizard with server-owned stages (`flowStep`), so the P3-3
+| and P3-11 cases assert the stage and the step cards rather than Filament's
+| wizard event and header classes. What each case protects is unchanged.
 |
 | EVERY ACTOR HOLDS EXACTLY THE PERMISSIONS NAMED, NEVER A ROLE.
 */
@@ -114,30 +119,30 @@ it('does not warn when the batch still has room, is exactly full, or states no c
 |--------------------------------------------------------------------------
 */
 
-it('returns the wizard to its first step with an empty form after Confirm', function () {
+it('empties the form after Confirm and moves a collector to the Collect stage, not an emptied review', function () {
     $student = Student::factory()->create();
     $batch = Batch::factory()->active()->create();
 
     ($this->confirmed)($this->collector, $student, $batch)
-        ->assertDispatched('go-to-wizard-step', key: 'form.enroll-and-bill-wizard', step: 'form.student-step')
+        ->assertSet('flowStep', 4)
+        ->assertSet('collectionChargeId', Charge::query()->sole()->getKey())
         ->assertSet('data.student_id', null)
-        ->assertSet('data.batch_id', null);
+        ->assertSet('data.batch_id', null)
+        ->assertSee(__('collect.take_payment'))
+        ->assertDontSee(__('collect.review_enrolment'));
 });
 
-it('names, in that event, the Wizard and the step the page actually renders', function () {
-    // The event is compared in the browser against the keys the Wizard rendered
-    // with, so a dispatch naming anything else moves nothing. Both ids are the
-    // components' own absolute keys, written out by hand here.
-    $html = Livewire::actingAs($this->collector)->test(EnrollAndCollect::class)->html();
-
-    expect($html)
-        ->toContain('id="form.enroll-and-bill-wizard"')
-        ->toContain('id="form.student-step"');
-});
+it('keeps the stage on the server, so the browser cannot be left on a stale step', function () {
+    // The Wizard kept its step in Alpine, which a server fill could not reset.
+    // The stage is now a locked server property the browser cannot write.
+    Livewire::actingAs($this->collector)->test(EnrollAndCollect::class)
+        ->set('flowStep', 4);
+})->throws(CannotUpdateLockedPropertyException::class);
 
 it('returns a walk-in desk actor without payment rights to step 1 as well, with no panel to wait on', function () {
     ($this->confirmed)($this->enroller, Student::factory()->create(), Batch::factory()->active()->create())
-        ->assertDispatched('go-to-wizard-step', key: 'form.enroll-and-bill-wizard', step: 'form.student-step')
+        ->assertSet('flowStep', 1)
+        ->assertSet('data.student_id', null)
         ->assertSet('collectionChargeId', null);
 });
 
@@ -146,9 +151,14 @@ it('does not return to step 1 when Confirm is refused, so the operator can corre
     $batch = Batch::factory()->active()->create();
     Enrollment::factory()->for($batch)->for($student)->create();
 
-    ($this->confirmed)($this->enroller, $student, $batch)
-        ->assertNotDispatched('go-to-wizard-step')
-        ->assertSet('data.student_id', $student->getKey());
+    Livewire::actingAs($this->enroller)->test(EnrollAndCollect::class)
+        ->set('data.student_id', $student->getKey())->call('advance')
+        ->set('data.batch_id', $batch->getKey())->call('advance')
+        ->assertSet('flowStep', 4)
+        ->call('confirm')
+        ->assertSet('flowStep', 4)
+        ->assertSet('data.student_id', $student->getKey())
+        ->assertSet('data.batch_id', $batch->getKey());
 
     expect(Enrollment::query()->count())->toBe(1);
 });
@@ -161,7 +171,7 @@ it('does nothing on a second Confirm while the payment panel is open: no second 
     $chargeId = Charge::query()->sole()->getKey();
     $page->assertSet('collectionChargeId', $chargeId);
 
-    // The emptied wizard, then a second Confirm straight after.
+    // The emptied form, then a second Confirm straight after.
     $page->call('confirm')
         ->assertHasNoErrors()
         ->assertSet('collectionChargeId', $chargeId);
@@ -180,30 +190,33 @@ it('does nothing on a second Confirm while the payment panel is open: no second 
         ]);
 });
 
-it('renders Confirm disabled while the payment panel is open, and enabled again once it is closed', function () {
-    $page = Livewire::actingAs($this->collector)->test(EnrollAndCollect::class);
-    // The opening tag of the Confirm button. `wire:loading.attr="aria-disabled"`
-    // is on an enabled button too, so "disabled" is looked for as an attribute
-    // of its own, not as a substring.
-    $confirmTag = fn (string $html): string => preg_match('/<button\b[^>]*>(?=(?:(?!<\/button>).)*?Confirm)/s', $html, $match) === 1
+it('offers no Confirm while the payment panel is open, and offers it again once the panel is closed', function () {
+    $batch = Batch::factory()->active()->create();
+    $toReview = fn ($page, Student $student) => $page
+        ->set('data.student_id', $student->getKey())->call('advance')
+        ->set('data.batch_id', $batch->getKey())->call('advance');
+    // The opening tag of the Confirm button. `wire:loading.attr="disabled"` is
+    // on an enabled button too, so "disabled" is looked for as an attribute of
+    // its own, not as a substring.
+    $confirmTag = fn (string $html): string => preg_match('/<button\b[^>]*wire:click="confirm"[^>]*>/s', $html, $match) === 1
         ? $match[0]
         : '';
     $isDisabled = fn (string $tag): bool => preg_match('/\sdisabled(?:=|\s|>)/', $tag) === 1;
 
+    $page = $toReview(Livewire::actingAs($this->collector)->test(EnrollAndCollect::class), Student::factory()->create());
     $enabledTag = $confirmTag($page->html());
-    expect($enabledTag)->toContain('wire:click="confirm"')
+    expect($enabledTag)->not->toBe('')
         ->and($isDisabled($enabledTag))->toBeFalse();
 
-    $page->fillForm([
-        'student_id' => Student::factory()->create()->getKey(),
-        'batch_id' => Batch::factory()->active()->create()->getKey(),
-    ])->call('confirm');
+    $page->call('confirm');
 
-    expect($isDisabled($confirmTag($page->html())))->toBeTrue();
+    expect($confirmTag($page->html()))->toBe('');
 
-    $page->call('finishCollection');
+    $toReview($page->call('finishCollection'), Student::factory()->create());
 
-    expect($isDisabled($confirmTag($page->html())))->toBeFalse();
+    $reopenedTag = $confirmTag($page->html());
+    expect($reopenedTag)->not->toBe('')
+        ->and($isDisabled($reopenedTag))->toBeFalse();
 });
 
 it('lets the operator enrol the next walk-in once the panel is closed with Done', function () {
@@ -289,20 +302,25 @@ it('words the three "at most three decimal places" messages the same', function 
 | P3-11 — long step text stays inside its own step
 |--------------------------------------------------------------------------
 |
-| A test cannot see a layout. It can see that the page's own classes no longer
-| name flex rules on a grid (`flex-wrap`, `flex-1` do nothing on Filament's
-| wizard header) and do bound the step text. The lead checks the result in a
-| browser at 375, 768 and 1440 px.
+| A test cannot see a layout. It can see that each step card's value sits in a
+| shrinkable box (`min-w-0`) and is clipped to one line (`truncate`), so a long
+| student name cannot push its card wider than its share of the row. The lead
+| checks the result in a browser at 375, 768 and 1440 px.
 */
 
-it('bounds the wizard header so a long step description wraps inside its own step', function () {
-    $html = Livewire::actingAs($this->enroller)->test(EnrollAndCollect::class)->html();
+it('bounds each step card so a long chosen value stays inside its own step', function () {
+    $student = Student::factory()->create(['first_name' => str_repeat('Longname', 8), 'last_name' => 'Walkin']);
+    $html = Livewire::actingAs(($this->actor)(['create_enrollment', 'view_student']))
+        ->withQueryParams(['student' => $student->getKey()])
+        ->test(EnrollAndCollect::class)->html();
+    $document = new DOMDocument;
+    $document->loadHTML('<?xml encoding="UTF-8">'.$html, LIBXML_NOERROR | LIBXML_NOWARNING);
+    $values = (new DOMXPath($document))->query('//nav[@aria-label="'.__('collect.enrolment_steps').'"]//button/span[contains(concat(" ", @class, " "), " min-w-0 ")]/span[contains(concat(" ", @class, " "), " truncate ")]');
 
-    expect($html)
-        ->toContain('[&_.fi-sc-wizard-header]:grid-cols-[repeat(auto-fit,minmax(10rem,1fr))]')
-        ->toContain('md:[&_.fi-sc-wizard-header]:grid-flow-row')
-        ->toContain('[&_.fi-sc-wizard-header-step-text]:min-w-0')
-        ->toContain('[&_.fi-sc-wizard-header-step-description]:line-clamp-2')
-        ->not->toContain('[&_.fi-sc-wizard-header]:flex-wrap')
-        ->not->toContain('[&_.fi-sc-wizard-header-step]:min-w-32.5');
+    expect($values->length)->toBeGreaterThan(0);
+    $texts = [];
+    foreach ($values as $value) {
+        $texts[] = $value->textContent;
+    }
+    expect(implode(' ', $texts))->toContain($student->first_name);
 });
