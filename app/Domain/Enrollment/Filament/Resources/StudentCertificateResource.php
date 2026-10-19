@@ -21,6 +21,7 @@ use App\Domain\Enrollment\Models\Student;
 use App\Domain\Enrollment\Models\StudentCertificate;
 use App\Domain\Finance\Services\ChargeQueryService;
 use App\Models\User;
+use App\Support\CentreCalendar;
 use BackedEnum;
 use Filament\Actions\Action;
 use Filament\Actions\ActionGroup;
@@ -177,9 +178,11 @@ class StudentCertificateResource extends Resource
                         ->url(fn (StudentCertificate $record): ?string => self::canView($record)
                             ? self::getUrl('view', ['record' => $record]) : null),
                     Stack::make([
+                        // A bare date() is not reached by the global display zone (AppServiceProvider), so a
+                        // timestamp column shown as a day names the centre's zone itself (P4-T34).
                         TextColumn::make('issued_at')
                             ->label(__('certificates.issued_at'))
-                            ->date()->color('gray')->extraAttributes(['class' => 'whitespace-nowrap text-[12px]'])
+                            ->date(timezone: CentreCalendar::TIMEZONE)->color('gray')->extraAttributes(['class' => 'whitespace-nowrap text-[12px]'])
                             ->sortable(),
 
                         TextColumn::make('issuedBy.name')
