@@ -615,7 +615,8 @@ Recorded so these do not reappear as assumptions:
   - it is not written off;
   - something is outstanding.
 
-  The rule is one predicate (`ChargeQueryService::awaitingFirstPaymentSql()`), checked when the
+  The rule is one predicate (`ChargeQueryService::awaitingFirstPaymentSql()`, mirrored with locking reads
+  by `RecordPaymentAction::awaitsFirstPaymentUnderLock()` and kept equal by a parity test), checked when the
   panel opens and again when the payment is submitted. A bill that already has a live payment never
   offers it, so a second payment — an installment — still has no screen. The submit-time check
   that cannot be raced is inside `RecordPaymentAction`, under the charge row lock: the panel sets

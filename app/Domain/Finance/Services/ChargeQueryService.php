@@ -63,7 +63,9 @@ final class ChargeQueryService
      * **A bill whose only payment was reversed is awaiting its first payment
      * again.** That is a lead decision, flagged for the owner in the pull request,
      * and this is the one place to change it: both the button and the page read
-     * this string.
+     * this string. RecordPaymentAction::awaitsFirstPaymentUnderLock() asks the same
+     * three questions with locking reads at submit time; change both, and
+     * CollectFirstPaymentOnlyTest's parity dataset will say if they disagree.
      *
      * WHY IT LIVES HERE AND IS A SQL STRING, NOT A PHP FUNCTION OF A CHARGE. The
      * table decides per row, and a PHP check would be a query per row. So the
