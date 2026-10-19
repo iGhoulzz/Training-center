@@ -220,6 +220,7 @@ class InstructorsRelationManager extends RelationManager
                 $this->assign(
                     (int) $data['user_id'],
                     (int) $data['assigned_hours'],
+                    __('enrollment.instructor_assigned'),
                 );
             });
     }
@@ -259,7 +260,11 @@ class InstructorsRelationManager extends RelationManager
                     ->required(),
             ])
             ->action(function (array $data, User $record): void {
-                $this->assign((int) $record->getKey(), (int) $data['assigned_hours']);
+                $this->assign(
+                    (int) $record->getKey(),
+                    (int) $data['assigned_hours'],
+                    __('enrollment.assigned_hours_updated'),
+                );
             });
     }
 
@@ -286,7 +291,11 @@ class InstructorsRelationManager extends RelationManager
                     app(RemoveInstructorAction::class)->execute($actor, $batch, $record);
                 } catch (BatchClosedException|AuthorizationException $exception) {
                     self::refuse($exception);
+
+                    return;
                 }
+
+                self::succeed(__('enrollment.instructor_removed'));
             });
     }
 
@@ -298,8 +307,17 @@ class InstructorsRelationManager extends RelationManager
      * the button is already hidden for an unentitled actor, so reaching here
      * means the grant or the batch's status changed under an open modal, and a
      * notification says so without discarding whatever else is on screen.
+     *
+     * A write that went through says so, with the title the calling action
+     * passes; a refused one sends its refusal and nothing beside it.
+     *
+     * THE SUCCESS TOAST IS SENT HERE, NOT THROUGH successNotificationTitle().
+     * Filament sends that one after the handler returns unless the handler
+     * halted or marked a failure, so a handler that simply returns after a
+     * refusal would send the refusal AND a success toast. Sending it only after
+     * the write has been seen to go through has no such path.
      */
-    private function assign(int $instructorId, int $assignedHours): void
+    private function assign(int $instructorId, int $assignedHours, string $successTitle): void
     {
         /** @var User $actor */
         $actor = auth()->user();
@@ -315,7 +333,20 @@ class InstructorsRelationManager extends RelationManager
             ));
         } catch (BatchClosedException|InstructorNotEligibleException|AuthorizationException $exception) {
             self::refuse($exception);
+
+            return;
         }
+
+        self::succeed($successTitle);
+    }
+
+    /** Tell the reader a write went through. See assign() for why this is not Filament's own. */
+    private static function succeed(string $title): void
+    {
+        Notification::make()
+            ->title($title)
+            ->success()
+            ->send();
     }
 
     /**
