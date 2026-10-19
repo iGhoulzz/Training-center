@@ -23,6 +23,12 @@ use InvalidArgumentException;
  * flow needs no migration, but the phase 2 UI always targets exactly one bill and
  * the operator never sees the word allocation. Modelling more here would be a
  * shape nothing produces.
+ *
+ * `firstPaymentOnly` IS AN OPT-IN RULE THE ACTION ENFORCES, NOT PART OF WHAT WAS PAID.
+ * The first-payment collection panel (design section 12) sets it so the Action refuses,
+ * under the charge row's lock, a bill that already has a live payment. It defaults to off,
+ * so every other caller records against an open bill exactly as before, and it stays out of
+ * `fingerprint()`: it says which door the request came through, not what money moved.
  */
 final readonly class RecordPaymentData
 {
@@ -48,6 +54,7 @@ final readonly class RecordPaymentData
         array $tenders,
         public string $idempotencyKey,
         public ?string $notes = null,
+        public bool $firstPaymentOnly = false,
     ) {
         $this->allocation = Money::fromDecimal($allocation);
 

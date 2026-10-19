@@ -6,13 +6,16 @@ namespace App\Domain\Finance\Actions;
 
 use App\Domain\Enrollment\Services\EnrollmentQueryService;
 use App\Domain\Finance\Data\RecordPaymentData;
+use App\Domain\Finance\Exceptions\ChargeNotAwaitingFirstPaymentException;
 use App\Domain\Finance\Exceptions\IdempotencyConflictException;
 use App\Domain\Finance\Jobs\GenerateReceiptJob;
+use App\Domain\Finance\Models\Charge;
 use App\Domain\Finance\Models\Payment;
 use App\Domain\Finance\Models\PaymentAllocation;
 use App\Domain\Finance\Models\PaymentReceiptSnapshot;
 use App\Domain\Finance\Models\PaymentTender;
 use App\Domain\Finance\Services\PaymentInvariantService;
+use App\Domain\Finance\Support\ChargeBalance;
 use App\Domain\Finance\Support\Reference;
 use App\Models\User;
 use App\Support\CentreCalendar;
@@ -109,6 +112,26 @@ use Spatie\Activitylog\Support\CauserResolver;
  * longer exists. The HTTP path does not nest; `PaymentConcurrencyTest`'s deadlock
  * case therefore races tills that do not open a transaction of their own, and
  * says so where it passes `primeSnapshot: false`.
+ *
+ * "FIRST PAYMENT ONLY" IS ENFORCED HERE, UNDER THE CHARGE LOCK
+ * -------------------------------------------------------------
+ * Design section 12 lets the first payment on a bill be collected through the
+ * interface and no later installment. The collection panel checks that before
+ * it calls this Action, but that check runs before the lock below exists: two
+ * panel sessions, with different idempotency keys, can both pass it against the
+ * same unpaid bill, and this Action would then accept both while their sum
+ * stayed under the outstanding balance. So a `RecordPaymentData` built with
+ * `firstPaymentOnly: true` is also refused HERE, inside the transaction, with
+ * `ChargeNotAwaitingFirstPaymentException`. The panel's pre-check stays as the
+ * courtesy that spares the operator a round trip.
+ *
+ * The check sits after `lockCharge()` and AFTER the insert, so a replay of the
+ * collection's own key leaves through `replayOrConflict()` first and still
+ * returns the original payment: once this collection has paid, the bill no
+ * longer awaits a first payment, and checking before the insert would refuse the
+ * very double-click the key exists to absorb. See `awaitsFirstPaymentUnderLock()`
+ * for how the predicate is evaluated. It is off by default, so every other caller
+ * records against an open bill exactly as before.
  *
  * THE STUDENT IS DERIVED, NEVER SUPPLIED
  * ----------------------------------------
@@ -264,6 +287,15 @@ final class RecordPaymentAction
                 }
 
                 /*
+                 * AFTER THE INSERT, SO A REPLAY HAS ALREADY LEFT — see the class
+                 * docblock. The payment row carries no allocation yet, so it
+                 * cannot make the bill look paid to its own check.
+                 */
+                if ($data->firstPaymentOnly && ! $this->awaitsFirstPaymentUnderLock($charge)) {
+                    throw new ChargeNotAwaitingFirstPaymentException($data->chargeId);
+                }
+
+                /*
                  * AFTER THE INSERT, DELIBERATELY — see the class docblock.
                  * A refusal here rolls this whole transaction back, insert
                  * included, so no partial row survives it.
@@ -318,6 +350,34 @@ final class RecordPaymentAction
                 return $payment;
             });
         }, self::DEADLOCK_ATTEMPTS);
+    }
+
+    /**
+     * Whether the locked bill still awaits its first payment, read so that a
+     * concurrent payment is visible.
+     *
+     * THE SAME RULE AS `ChargeQueryService::awaitingFirstPaymentSql()` — not
+     * written off, no allocation from a payment that is not reversed, something
+     * outstanding — evaluated through `ChargeBalance`'s LOCKING reads instead of
+     * that fragment. The fragment is a correlated subquery, and a correlated
+     * subquery is served from the snapshot this transaction took at its first
+     * read, before a competing till committed: it would answer "still unpaid" for
+     * exactly the bill this check exists to refuse (`ChargeBalance::outstandingForUpdate()`
+     * records the measurement). The reversal rule is still written once, in
+     * `ChargeBalance`; only the three-part conjunction is repeated, and
+     * `CollectFirstPaymentOnlyTest` runs both over every state of a bill so
+     * they cannot drift apart unnoticed.
+     *
+     * `$charge->written_off_at` is fresh because `lockCharge()` is itself a
+     * locking read.
+     */
+    private function awaitsFirstPaymentUnderLock(Charge $charge): bool
+    {
+        $chargeId = (int) $charge->getKey();
+
+        return $charge->written_off_at === null
+            && ChargeBalance::allocatedForUpdate($chargeId)->isZero()
+            && ChargeBalance::outstandingForUpdate($chargeId)->isPositive();
     }
 
     /**

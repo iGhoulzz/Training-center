@@ -21,6 +21,7 @@ use App\Domain\Finance\Data\EnrollAndBillData;
 use App\Domain\Finance\Data\RecordPaymentData;
 use App\Domain\Finance\Data\TenderData;
 use App\Domain\Finance\Enums\TenderMethod;
+use App\Domain\Finance\Exceptions\ChargeNotAwaitingFirstPaymentException;
 use App\Domain\Finance\Exceptions\IdempotencyConflictException;
 use App\Domain\Finance\Exceptions\PaymentExceedsOutstandingException;
 use App\Domain\Finance\Models\Charge;
@@ -1149,11 +1150,11 @@ class EnrollAndCollect extends Page
          * for a double-click and refuses a different second amount with the
          * installment-conflict message, exactly as before.
          *
-         * KNOWN LIMIT, FOR THE OWNER: the check runs before `RecordPaymentAction` takes its
-         * lock on the bill, so two submits landing in the same instant could both pass it.
-         * Closing that fully would make "first payment only" a rule inside the Action, under
-         * its lock; that changes the write boundary and is recorded as a follow-up, not done
-         * here.
+         * THIS CHECK IS THE FAST PATH, NOT THE GUARANTEE. It runs before `RecordPaymentAction`
+         * takes its lock on the bill, so two sessions landing in the same instant could both
+         * pass it. The rule itself is enforced inside the Action, under the charge lock: the
+         * payload below sets `firstPaymentOnly`, and the Action refuses with
+         * `ChargeNotAwaitingFirstPaymentException`, caught further down into this same notice.
          */
         Gate::authorize('create', Payment::class);
 
@@ -1188,6 +1189,7 @@ class EnrollAndCollect extends Page
             allocation: (string) $state['amount'],
             tenders: $tenders,
             idempotencyKey: $this->collectionIdempotencyKey,
+            firstPaymentOnly: true,
         );
 
         /** @var User $actor */
@@ -1195,6 +1197,19 @@ class EnrollAndCollect extends Page
 
         try {
             app(RecordPaymentAction::class)->execute($actor, $payload);
+        } catch (ChargeNotAwaitingFirstPaymentException) {
+            /*
+             * Another session paid, or the bill was written off, between the check
+             * above and the Action's own lock. Same notice as the check: nothing was
+             * recorded, because the Action refuses before it writes an allocation.
+             */
+            Notification::make()
+                ->title(__('collect.charge_not_collectable'))
+                ->danger()
+                ->persistent()
+                ->send();
+
+            return;
         } catch (IdempotencyConflictException) {
             /*
              * A SECOND INSTALLMENT IN THE SAME PANEL SESSION, NOT A REPLAY.
