@@ -6,6 +6,7 @@ use App\Domain\Enrollment\Models\Student;
 use App\Filament\Pages\PasswordChange;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
+use Filament\Facades\Filament;
 use Filament\Livewire\Notifications;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
@@ -397,8 +398,8 @@ it('clears the flag once a new password is set, without signing the session out'
     $payload = ($this->replay)('/admin/password-change', PasswordChange::class);
     $payload['components'][0]['updates'] = [
         'data.current_password' => 'existing-password-1',
-        'data.password' => 'correct-horse-battery',
-        'data.password_confirmation' => 'correct-horse-battery',
+        'data.password' => 'Correct-horse-battery!',
+        'data.password_confirmation' => 'Correct-horse-battery!',
     ];
     $payload['components'][0]['calls'] = [['path' => '', 'method' => 'save', 'params' => []]];
 
@@ -407,28 +408,137 @@ it('clears the flag once a new password is set, without signing the session out'
     $user->refresh();
 
     expect($user->must_change_password)->toBeFalse()
-        ->and(Hash::check('correct-horse-battery', $user->password))->toBeTrue();
+        ->and(Hash::check('Correct-horse-battery!', $user->password))->toBeTrue();
 
     // The redirect save() issues has to land somewhere the user is still allowed
     // to be. Without the session refresh this is a 302 to /admin/login.
     $this->get('/admin')->assertSuccessful();
 });
 
-it('rejects a password shorter than twelve characters', function () {
-    $user = ($this->makeAdmin)(true);
+/*
+|--------------------------------------------------------------------------
+| The password rule (P4-T35)
+|--------------------------------------------------------------------------
+|
+| At least 8 characters, a capital letter and a symbol, for staff and students:
+| both panels render PasswordChange, so each case runs on both. A refusal names
+| only what is missing, so the expected side is the exact list of messages, not
+| "some error". The wording is written out here rather than read from lang/.
+*/
 
-    $this->actingAs($user);
+dataset('password panels', ['admin panel' => 'admin', 'student portal' => 'student']);
 
-    Livewire::test(PasswordChange::class)
+dataset('refused passwords', [
+    'seven characters' => [['Abcde!1', ['The password must be at least 8 characters long.']]],
+    'no capital letter' => [['abcdefg!1', ['The password must contain at least one capital letter.']]],
+    'no symbol, only a digit' => [['Abcdefgh1', ['The password must contain at least one symbol, such as ! or #. Letters, digits and spaces do not count.']]],
+    'a space is not a symbol' => [['Abcdefgh 1', ['The password must contain at least one symbol, such as ! or #. Letters, digits and spaces do not count.']]],
+    'seven characters that are more than seven bytes' => [['Aééééé!', ['The password must be at least 8 characters long.']]],
+    'nothing but lower case letters' => [['abc', [
+        'The password must be at least 8 characters long.',
+        'The password must contain at least one capital letter.',
+        'The password must contain at least one symbol, such as ! or #. Letters, digits and spaces do not count.',
+    ]]],
+]);
+
+dataset('accepted passwords', [
+    'eight characters with a capital and a symbol' => ['Abcdefg!'],
+    'a capital and a symbol, no lower case at all' => ['ABCDEFG!'],
+    'a non-Latin capital and a non-ASCII symbol' => ['Édrisi§9'],
+    'eight characters that are more than eight bytes' => ['Aéééééé!'],
+]);
+
+/**
+ * Opens the page as the given panel's flagged account.
+ *
+ * @return array{0: Testable, 1: User}
+ */
+function openPasswordChangePage(object $test, string $panel): array
+{
+    if ($panel === 'student') {
+        $user = ($test->makeStudent)(true);
+        $test->actingAs($user, 'student');
+        Filament::setCurrentPanel('student');
+    } else {
+        $user = ($test->makeAdmin)(true);
+        $test->actingAs($user);
+    }
+
+    return [Livewire::test(PasswordChange::class), $user];
+}
+
+it('refuses a password for exactly the requirement it misses, on both panels', function (string $panel, array $case) {
+    [$password, $messages] = $case;
+    [$component, $user] = openPasswordChangePage($this, $panel);
+
+    $component
         ->fillForm([
             'current_password' => 'existing-password-1',
-            'password' => 'short',
-            'password_confirmation' => 'short',
+            'password' => $password,
+            'password_confirmation' => $password,
         ])
         ->call('save')
         ->assertHasFormErrors(['password']);
 
-    expect($user->refresh()->must_change_password)->toBeTrue();
+    expect($component->errors()->get('data.password'))->toBe($messages)
+        ->and($user->refresh()->must_change_password)->toBeTrue()
+        ->and(Hash::check('existing-password-1', $user->password))->toBeTrue();
+})->with('password panels')->with('refused passwords');
+
+it('accepts a password that meets all three requirements, on both panels', function (string $panel, string $password) {
+    [$component, $user] = openPasswordChangePage($this, $panel);
+
+    $component
+        ->fillForm([
+            'current_password' => 'existing-password-1',
+            'password' => $password,
+            'password_confirmation' => $password,
+        ])
+        ->call('save')
+        ->assertHasNoFormErrors()
+        ->assertRedirect($panel === 'student' ? '/portal' : '/admin');
+
+    $user->refresh();
+
+    expect($user->must_change_password)->toBeFalse()
+        ->and(Hash::check($password, $user->password))->toBeTrue();
+})->with('password panels')->with('accepted passwords');
+
+it('still requires the new password to be confirmed', function () {
+    [$component] = openPasswordChangePage($this, 'admin');
+
+    $component
+        ->fillForm([
+            'current_password' => 'existing-password-1',
+            'password' => 'Abcdefg!',
+            'password_confirmation' => 'Abcdefg?',
+        ])
+        ->call('save')
+        ->assertHasFormErrors(['password' => 'confirmed']);
+});
+
+it('still requires the current password', function () {
+    [$component, $user] = openPasswordChangePage($this, 'admin');
+
+    $component
+        ->fillForm([
+            'current_password' => 'not-the-password',
+            'password' => 'Abcdefg!',
+            'password_confirmation' => 'Abcdefg!',
+        ])
+        ->call('save')
+        ->assertHasFormErrors(['current_password']);
+
+    expect(Hash::check('existing-password-1', $user->refresh()->password))->toBeTrue();
+});
+
+it('states the rule where the password is chosen', function () {
+    $user = ($this->makeAdmin)(true);
+    $this->actingAs($user);
+
+    $this->get('/admin/password-change')
+        ->assertSuccessful()
+        ->assertSee('at least 8 characters, with at least one capital letter and one symbol');
 });
 
 /*
