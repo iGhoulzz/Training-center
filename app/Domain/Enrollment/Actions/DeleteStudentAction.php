@@ -60,9 +60,8 @@ use Illuminate\Support\Facades\Gate;
  * balance was summed was invisible, and a student who now owed was deleted
  * (docs/ENGINEERING.md, "A locking read is the only read that is current inside a
  * transaction"). A locking read reads the latest committed rows and, when one of
- * those Actions still holds a row, waits for it. The check is
- * DeleteStudentConcurrencyTest, which commits exactly that change between the
- * snapshot and the decision.
+ * those Actions still holds a row, waits for it. DeleteStudentConcurrencyTest
+ * commits exactly such a change between the snapshot and the decision.
  *
  * LOCK ORDER, CHECKED AGAINST EACH WRITER (the order a lock is taken in is the
  * contract; a writer taking any pair of these in the opposite order can deadlock):
@@ -79,17 +78,21 @@ use Illuminate\Support\Facades\Gate;
  *   - ReversePaymentAction: the payment row alone, which step 3 reaches last.
  *   - RecordPaymentAction: the charge, THEN the student, because inserting a
  *     payment takes a shared lock on its student's row for the foreign key. That
- *     is the opposite order to step 1 then step 3, so a payment recorded for this
- *     student while it is being deleted can deadlock with it. InnoDB resolves a
- *     deadlock by rolling one side back: RecordPaymentAction retries itself, and
- *     this Action retries too (DEADLOCK_ATTEMPTS), so neither a payment nor a
- *     delete is lost - and a delete that does retry decides again from the then
- *     current rows. It cannot be removed from this side: the student row must be
- *     held first, since that is what serialises enrolments.
+ *     is the opposite order to step 1 then step 3, so a payment being recorded for
+ *     this student while it is deleted CAN deadlock with it: measured, with a
+ *     payment insert holding the charge, InnoDB raised 1213 in this Action's
+ *     transaction. It cannot be removed from this side, because the student row
+ *     must be held first (that is what serialises enrolments, and locking
+ *     enrolments before it is expected to collide with EnrollStudentAction's
+ *     insert under the student row; reasoned, not measured). So the transaction
+ *     is run again on a deadlock (DEADLOCK_ATTEMPTS), deciding afresh from the
+ *     then current rows. The retry only engages at the outermost transaction, as Laravel's always does, and a
+ *     delete the retries do not save surfaces as the database's error with
+ *     nothing deleted. RecordPaymentAction retries itself the same way.
  *
  * Under the locks the balance is still StudentBalanceQuery's: totalForUpdate() sums
- * ChargeBalance's own locking figure per charge, and DeleteStudentRuleTest pins it equal to
- * forStudent() across paid, part-paid, adjusted, reversed and written-off charges.
+ * ChargeBalance's own locking figure per charge, and DeleteStudentRuleTest pins it
+ * equal to forStudent() across paid, part-paid, adjusted, reversed and written-off charges.
  */
 final class DeleteStudentAction
 {
