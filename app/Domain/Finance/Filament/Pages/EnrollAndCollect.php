@@ -21,12 +21,14 @@ use App\Domain\Finance\Data\EnrollAndBillData;
 use App\Domain\Finance\Data\RecordPaymentData;
 use App\Domain\Finance\Data\TenderData;
 use App\Domain\Finance\Enums\TenderMethod;
+use App\Domain\Finance\Exceptions\ChargeNotAwaitingFirstPaymentException;
 use App\Domain\Finance\Exceptions\IdempotencyConflictException;
 use App\Domain\Finance\Exceptions\PaymentExceedsOutstandingException;
 use App\Domain\Finance\Models\Charge;
 use App\Domain\Finance\Models\Discount;
 use App\Domain\Finance\Models\Payment;
 use App\Domain\Finance\Rules\NotACardNumber;
+use App\Domain\Finance\Services\ChargeQueryService;
 use App\Domain\Finance\Services\PricingService;
 use App\Domain\Finance\Support\ChargeBalance;
 use App\Domain\Finance\Support\Money;
@@ -53,6 +55,7 @@ use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 use Livewire\Attributes\Computed;
+use Livewire\Attributes\Locked;
 
 /**
  * The phase 2 primary surface (design section 2): one guided flow, not a set
@@ -69,25 +72,50 @@ use Livewire\Attributes\Computed;
  * above) on success, so the next walk-in starts from empty fields rather
  * than the last student's.
  *
- * IT DOES NOT RETURN THE WIZARD TO STEP 1, AND AN EARLIER VERSION OF THIS
- * PARAGRAPH SAID IT DID. `$this->form->fill()` resets `$this->data`, not the
- * step: Filament keeps the current step in Alpine, seeded once as
- * `startStep` on a div carrying `wire:ignore.self` (`Wizard::render()`), and
- * `getCurrentStepIndex()` is per-request state no server call persists. The
- * page dispatches neither `go-to-wizard-step` nor `next-wizard-step`, so
- * after Confirm the operator is left on an emptied preview step. The
- * independent pre-PR review found the claim by reading Filament's own
- * source; it is recorded here rather than quietly deleted, because the
- * step-reset is a real gap worth closing and is a UI change that wants a
- * browser to verify, not a docblock edit.
+ * AFTER CONFIRM THE WIZARD IS BACK ON ITS FIRST STEP, AND THAT TAKES TWO
+ * THINGS, NOT ONE. `$this->form->fill()` resets `$this->data`, not the step:
+ * Filament keeps the current step in Alpine, seeded once as `startStep` on a
+ * div carrying `wire:ignore.self` (`Wizard::render()`), and
+ * `getCurrentStepIndex()` is per-request state no server call persists. An
+ * earlier version of this paragraph claimed the fill returned the Wizard to
+ * step 1; it did not, and the operator was left on an emptied preview step
+ * with Confirm still enabled. So `confirm()` also dispatches Filament's own
+ * `go-to-wizard-step` event, through `Wizard::goToStep()`, naming the Wizard
+ * and the student step by the explicit keys WIZARD_KEY and STUDENT_STEP_KEY
+ * below — the generated keys are slugs of a translated label and would
+ * change with the locale. The keys are NOT inheritable: an inherited key
+ * prefixes every field inside, which moves each field's key out from under
+ * the tests and the form lookups that address them.
  *
- * Collection is
- * therefore its own schema, `collectForm()` (statePath `collect`), rendered
- * only once `$collectionChargeId` is set — which `confirm()` does for an
- * actor holding `create_payment`, and never does otherwise. That mirrors
+ * WHILE THE COLLECTION PANEL IS OPEN, CONFIRM DOES NOTHING. The button is
+ * disabled, and `confirm()` returns before it reads the form, so a crafted
+ * second call neither enrols anyone nor reaches the required-field
+ * validation of the emptied Wizard. "Done" (`finishCollection()`) closes the
+ * panel and Confirm works again. The disabled button is the courtesy; the
+ * early return is the guard.
+ *
+ * COLLECTION IS ITS OWN SCHEMA, so it survives that reset: `collectForm()`
+ * (statePath `collect`), rendered only once `$collectionChargeId` is set —
+ * which `confirm()` does for an actor holding `create_payment`, and never
+ * does otherwise. That mirrors
  * the discount step's own shape below: hidden as a courtesy, refused for
  * real by `RecordPaymentAction`'s own `Gate::forUser($actor)->authorize()`
  * if a crafted submission reaches `finalize()` regardless.
+ *
+ * THE PANEL CAN ALSO BE OPENED FROM A LINK (`?charge=`), FOR A BILL AWAITING
+ * ITS FIRST PAYMENT
+ * -----------------------------------------------------------------------
+ * A bill whose page was closed after Confirm could otherwise never be
+ * collected. The Charges table offers "Collect payment" on a bill awaiting
+ * its first payment, linking here with the bill's id. `mount()` does NOT
+ * trust the URL: it authorizes `create_payment`, loads the bill through
+ * `ChargeQueryService::awaitingFirstPaymentSql()` — the one place that
+ * condition is written — and, only if both hold, opens the panel for THAT bill
+ * through the same `beginCollection()` the Confirm path uses, so the collect
+ * form, its validation, its idempotency key and the `RecordPaymentAction` call
+ * are the same code. Anything else — a paid or written-off bill, one with
+ * nothing outstanding, an unknown id, an actor without `create_payment` —
+ * opens nothing and shows one refusal.
  *
  * `finalize()` AND `finishCollection()` ARE BARE LIVEWIRE METHODS, LIKE
  * confirm() — NOT MODAL ACTIONS
@@ -216,6 +244,31 @@ class EnrollAndCollect extends Page
      */
     private const SEARCH_RESULT_LIMIT = 25;
 
+    /**
+     * The Wizard's and its first step's own keys.
+     *
+     * Explicit, because `confirm()` names them in the `go-to-wizard-step` event
+     * that returns the operator to step 1. Filament's generated keys are slugs of
+     * the translated label (`Step::setUp()`), so a generated one would silently
+     * stop matching in another locale.
+     */
+    private const WIZARD_KEY = 'enroll-and-bill-wizard';
+
+    private const STUDENT_STEP_KEY = 'student-step';
+
+    /**
+     * What a typed amount may look like before it is judged: up to nine whole
+     * digits, at most three decimals, and an optional minus sign.
+     *
+     * THE SIGN IS ADMITTED ON PURPOSE. This is the shape rule, and it used to
+     * refuse "-5" as malformed, so a negative amount was told to use "at most
+     * three decimal places" — true, and no help. Letting the sign through the
+     * shape rule hands it to `positiveMoney()`, which refuses it as what it is:
+     * not more than nothing. Same pairing as RecordExpenseAction's regex and
+     * not_regex, with the second half asked of `Money`.
+     */
+    private const TYPED_AMOUNT_PATTERN = '/^-?\d{1,9}(\.\d{1,3})?$/';
+
     /** @var array<string, mixed> */
     public array $data = [];
 
@@ -232,19 +285,26 @@ class EnrollAndCollect extends Page
      * The just-billed charge collection targets, or null before `confirm()`
      * has raised one, or once `finishCollection()` has closed the panel.
      *
-     * THIS IS THE COURTESY VISIBILITY GUARD, NOT THE SECURITY BOUNDARY —
-     * see the class docblock. `RecordPaymentAction`'s own
-     * `Gate::forUser($actor)->authorize('create', Payment::class)` is what
-     * actually refuses an actor without `create_payment`; this property
-     * only decides whether the panel offering that button exists at all.
+     * SERVER-OWNED (#[Locked], P4-T32 review). Only `confirm()` (the bill it
+     * just raised) and `openRequestedCollection()` (a `?charge=` link, after
+     * `Gate::allows('view', $charge)`) set it, so a bill reaches this panel only
+     * through one of those two provenances. The browser cannot rewrite it: a
+     * forged id would otherwise show another bill's student, batch and amount
+     * to an actor without `view_charge`, and reach the payment Action with it.
+     * `RecordPaymentAction`'s own `authorize('create', Payment::class)` is still
+     * what refuses an actor without `create_payment`.
      */
+    #[Locked]
     public ?int $collectionChargeId = null;
 
     /**
      * The idempotency key for the payment this panel would record, minted
      * once by `beginCollection()` and never regenerated — see the class
-     * docblock's note on why `finalize()` must not mint its own.
+     * docblock's note on why `finalize()` must not mint its own. Server-owned
+     * like the bill id: a key copied from another panel would replay that
+     * panel's receipt here.
      */
+    #[Locked]
     public ?string $collectionIdempotencyKey = null;
 
     /**
@@ -354,6 +414,97 @@ class EnrollAndCollect extends Page
             $state['batch_id'] = $batchId;
         }
         $this->form->fill($state);
+
+        $this->openRequestedCollection();
+    }
+
+    /**
+     * Send the operator's browser back to the Wizard's first step.
+     *
+     * Asks the Wizard itself, through `Wizard::goToStep()`, which dispatches the
+     * `go-to-wizard-step` event with the Wizard's and the step's ABSOLUTE keys —
+     * `form.enroll-and-bill-wizard` and `form.student-step`, the container's key
+     * prefixed to the ones set below — which are the strings the Alpine component
+     * compares the event against. Dispatching the event by hand with the keys as
+     * they were set would name a Wizard that does not exist in the browser, and
+     * nothing would move: the dispatch would be there, and the step would not.
+     */
+    private function returnToFirstStep(): void
+    {
+        $wizard = $this->form->getComponent(self::WIZARD_KEY);
+        $firstStep = $this->form->getComponent(self::STUDENT_STEP_KEY);
+
+        if ($wizard instanceof Wizard && $firstStep instanceof Step) {
+            $wizard->goToStep((string) $firstStep->getKey());
+        }
+    }
+
+    /**
+     * Open the collection panel for the bill named by `?charge=`, if there is one
+     * and it is allowed — otherwise open nothing and say so.
+     *
+     * THE URL IS A REQUEST, NOT A FACT. The id is parsed as a positive integer,
+     * the actor must hold `create_payment`, and the bill is loaded through
+     * `ChargeQueryService::awaitingFirstPaymentSql()`, so a paid, written-off or
+     * nothing-outstanding bill, and an id that names no bill, all come back as
+     * the same "no bill". An unauthorized actor gets that same refusal rather
+     * than a different one that would confirm a bill exists. The button on the
+     * Charges table is only a courtesy that hides itself; this is the check.
+     */
+    private function openRequestedCollection(): void
+    {
+        $requested = request()->query('charge');
+
+        if ($requested === null) {
+            return;
+        }
+
+        $chargeId = filter_var($requested, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+
+        $charge = $chargeId !== false && Gate::allows('create', Payment::class)
+            ? Charge::query()
+                ->whereKey($chargeId)
+                ->whereRaw(app(ChargeQueryService::class)->awaitingFirstPaymentSql())
+                ->first()
+            : null;
+
+        // The panel names the bill's student, batch, amount and reference, so opening it
+        // by id needs the right to see that bill too (P4-T32 review).
+        if ($charge !== null && ! Gate::allows('view', $charge)) {
+            $charge = null;
+        }
+
+        if ($charge === null) {
+            Notification::make()
+                ->title(__('collect.charge_not_collectable'))
+                ->danger()
+                ->persistent()
+                ->send();
+
+            return;
+        }
+
+        $this->beginCollection($charge);
+    }
+
+    /**
+     * Whether the open panel's bill may still take the payment about to be submitted.
+     *
+     * True when this panel's own payment already exists (the Action replays it, or
+     * refuses a different second amount), or when the bill still awaits its first
+     * payment by `ChargeQueryService::awaitingFirstPaymentSql()`, the same predicate
+     * that offered it. See `finalize()` for why this runs at submit as well as at open.
+     */
+    private function collectionStillAwaitsThisPayment(): bool
+    {
+        if (Payment::query()->where('idempotency_key', $this->collectionIdempotencyKey)->exists()) {
+            return true;
+        }
+
+        return Charge::query()
+            ->whereKey($this->collectionChargeId)
+            ->whereRaw(app(ChargeQueryService::class)->awaitingFirstPaymentSql())
+            ->exists();
     }
 
     public function form(Schema $schema): Schema
@@ -366,7 +517,8 @@ class EnrollAndCollect extends Page
                     $this->discountStep(),
                     $this->previewStep(),
                 ])->contained(false)
-                    ->extraAttributes(['class' => '[&_.fi-sc-wizard-header]:gap-2 [&_.fi-sc-wizard-header]:flex-wrap [&_.fi-sc-wizard-header]:border-0 [&_.fi-sc-wizard-header-step]:min-w-32.5 [&_.fi-sc-wizard-header-step]:flex-1 [&_.fi-sc-wizard-header-step]:rounded-[11px] [&_.fi-sc-wizard-header-step]:border [&_.fi-sc-wizard-header-step]:border-hairline-faint [&_.fi-sc-wizard-header-step]:bg-white/3 [&_.fi-sc-wizard-header-step.fi-active]:border-primary-500/45 [&_.fi-sc-wizard-header-step.fi-active]:bg-primary-500/12 [&_.fi-sc-wizard-header-step-btn]:px-3.25 [&_.fi-sc-wizard-header-step-btn]:py-2.75 [&_.fi-sc-wizard-header-step-separator]:hidden [&_.fi-sc-wizard-header-step-icon-ctn]:size-6 [&_.fi-sc-wizard-header-step-label]:text-[12.5px] [&_.fi-sc-wizard-header-step-description]:text-[11px] [&_.fi-sc-wizard-step]:mt-4 [&_.fi-sc-wizard-step]:min-h-82.5 [&_.fi-sc-wizard-step]:rounded-[14px] [&_.fi-sc-wizard-step]:bg-gray-900 [&_.fi-sc-wizard-step]:p-5 [&_.fi-sc-wizard-step]:ring-1 [&_.fi-sc-wizard-step]:ring-hairline'])
+                    ->key(self::WIZARD_KEY, isInheritable: false)
+                    ->extraAttributes(['class' => '[&_.fi-sc-wizard-header]:gap-2 [&_.fi-sc-wizard-header]:grid-cols-[repeat(auto-fit,minmax(10rem,1fr))] md:[&_.fi-sc-wizard-header]:grid-flow-row [&_.fi-sc-wizard-header]:border-0 [&_.fi-sc-wizard-header-step]:min-w-0 [&_.fi-sc-wizard-header-step-btn]:min-w-0 [&_.fi-sc-wizard-header-step-btn]:flex-1 [&_.fi-sc-wizard-header-step-btn]:gap-x-2.5 [&_.fi-sc-wizard-header-step-text]:min-w-0 [&_.fi-sc-wizard-header-step-text]:flex-1 [&_.fi-sc-wizard-header-step-label]:max-w-full [&_.fi-sc-wizard-header-step-label]:truncate [&_.fi-sc-wizard-header-step-description]:max-w-full [&_.fi-sc-wizard-header-step-description]:line-clamp-2 [&_.fi-sc-wizard-header-step-description]:[overflow-wrap:anywhere] [&_.fi-sc-wizard-header-step]:rounded-[11px] [&_.fi-sc-wizard-header-step]:border [&_.fi-sc-wizard-header-step]:border-hairline-faint [&_.fi-sc-wizard-header-step]:bg-white/3 [&_.fi-sc-wizard-header-step.fi-active]:border-primary-500/45 [&_.fi-sc-wizard-header-step.fi-active]:bg-primary-500/12 [&_.fi-sc-wizard-header-step-btn]:px-3.25 [&_.fi-sc-wizard-header-step-btn]:py-2.75 [&_.fi-sc-wizard-header-step-separator]:hidden [&_.fi-sc-wizard-header-step-icon-ctn]:size-6 [&_.fi-sc-wizard-header-step-label]:text-[12.5px] [&_.fi-sc-wizard-header-step-description]:text-[11px] [&_.fi-sc-wizard-step]:mt-4 [&_.fi-sc-wizard-step]:min-h-82.5 [&_.fi-sc-wizard-step]:rounded-[14px] [&_.fi-sc-wizard-step]:bg-gray-900 [&_.fi-sc-wizard-step]:p-5 [&_.fi-sc-wizard-step]:ring-1 [&_.fi-sc-wizard-step]:ring-hairline'])
                     ->submitAction($this->confirmAction()),
             ])
             ->statePath('data');
@@ -395,6 +547,7 @@ class EnrollAndCollect extends Page
     private function studentStep(): Step
     {
         return Step::make(__('collect.step_student'))
+            ->key(self::STUDENT_STEP_KEY, isInheritable: false)
             ->description(fn (): string => $this->bill['student'])
             ->schema([
                 Select::make('student_id')
@@ -594,6 +747,7 @@ class EnrollAndCollect extends Page
     {
         return Action::make('confirm')
             ->label(__('collect.confirm'))
+            ->disabled(fn (): bool => $this->collectionChargeId !== null)
             ->action('confirm');
     }
 
@@ -639,6 +793,18 @@ class EnrollAndCollect extends Page
      */
     public function confirm(): void
     {
+        /*
+         * NOTHING WHILE THE COLLECTION PANEL IS OPEN. The button is disabled
+         * then, but a disabled button is a courtesy and a crafted call is not
+         * stopped by one. The Wizard was just emptied, so reading it would raise
+         * "field is required" errors instead of a refusal, and a full one would
+         * enrol the next walk-in while the last bill is still open for payment.
+         * Return before reading anything: "Done" closes the panel.
+         */
+        if ($this->collectionChargeId !== null) {
+            return;
+        }
+
         $state = $this->form->getState();
 
         $rawDiscountId = $this->data['discount_id'] ?? null;
@@ -686,16 +852,43 @@ class EnrollAndCollect extends Page
             ->success()
             ->send();
 
+        /*
+         * Over-capacity WARNS and never blocks — spec line 217, and the same
+         * warning, from the same key, the batch screen sends
+         * (EnrollmentsRelationManager). The enrolment has already committed;
+         * this tells the operator the batch is now over its stated ceiling. The
+         * batch is read afresh, because the one the Wizard held predates the
+         * enrolment.
+         */
+        if (Batch::query()->find((int) $state['batch_id'])?->isOverCapacity()) {
+            Notification::make()
+                ->title(__('enrollment.over_capacity_warning'))
+                ->warning()
+                ->persistent()
+                ->send();
+        }
+
         $this->form->fill();
 
-        $this->beginCollection($enrollment);
+        // Back to step 1: the fill above empties the fields, not the step.
+        $this->returnToFirstStep();
+
+        $this->beginCollection(
+            Charge::query()->where('enrollment_id', $enrollment->getKey())->firstOrFail(),
+        );
     }
 
     /**
-     * Step 6's own opening: reveal the collection panel and mint the one
-     * idempotency key its whole session of `finalize()` calls will share —
-     * see the class docblock on why that minting happens here and nowhere
-     * else.
+     * Step 6's own opening: reveal the collection panel for ONE bill and mint
+     * the one idempotency key its whole session of `finalize()` calls will
+     * share — see the class docblock on why that minting happens here and
+     * nowhere else.
+     *
+     * TAKES THE BILL, NOT THE ENROLMENT, BECAUSE TWO DOORS LEAD HERE: `confirm()`
+     * with the bill it just raised, and `openRequestedCollection()` with a bill
+     * the Charges table linked to. Whichever opened it, this is the same panel,
+     * form and key. It does not decide whether the bill is collectable — the
+     * caller has — only whether this actor may take money at all.
      *
      * NEVER OPENED FOR AN ACTOR WITHOUT create_payment
      * -----------------------------------------------------
@@ -717,7 +910,7 @@ class EnrollAndCollect extends Page
      * through the charge's frozen `amount` column is what keeps this page
      * from becoming a second place that could one day disagree with it.
      */
-    private function beginCollection(Enrollment $enrollment): void
+    private function beginCollection(Charge $charge): void
     {
         if (! auth()->user()?->can('create_payment')) {
             $this->collectionChargeId = null;
@@ -725,10 +918,6 @@ class EnrollAndCollect extends Page
 
             return;
         }
-
-        $charge = Charge::query()
-            ->where('enrollment_id', $enrollment->getKey())
-            ->firstOrFail();
 
         $this->collectionChargeId = (int) $charge->getKey();
         $this->collectionIdempotencyKey = Str::uuid()->toString();
@@ -814,7 +1003,7 @@ class EnrollAndCollect extends Page
                     ->inputMode('decimal')
                     ->suffix(__('payroll.currency'))
                     ->live(onBlur: true)
-                    ->rule('regex:/^\d{1,9}(\.\d{1,3})?$/')
+                    ->rule('regex:'.self::TYPED_AMOUNT_PATTERN)
                     ->rule(static fn (): Closure => self::positiveMoney())
                     ->rule(fn (Get $get): Closure => self::tenderTotalMatchesAmountRule($get))
                     ->validationMessages([
@@ -835,7 +1024,7 @@ class EnrollAndCollect extends Page
                             ->required()
                             ->inputMode('decimal')
                             ->live(onBlur: true)
-                            ->rule('regex:/^\d{1,9}(\.\d{1,3})?$/')
+                            ->rule('regex:'.self::TYPED_AMOUNT_PATTERN)
                             ->rule(static fn (): Closure => self::positiveMoney())
                             ->validationMessages([
                                 'regex' => __('collect.amount_format_error'),
@@ -949,7 +1138,46 @@ class EnrollAndCollect extends Page
             return;
         }
 
+        /*
+         * THE BILL IS RE-CHECKED HERE, NOT ONLY WHEN THE PANEL OPENED (P4-T32 review).
+         *
+         * `collectionChargeId` is server-owned (see its docblock), but the bill itself can
+         * change between opening the panel and pressing the button. A second tab on the same "Collect payment" link may pay it first, or it
+         * may be written off. So every collection is checked against the same predicate
+         * that offered it, and a bill no longer awaiting its first payment is refused
+         * before anything is written.
+         *
+         * Authorization stays first and unchanged, so an actor without `create_payment`
+         * still gets the 403 that `RecordPaymentAction` has always given. Form validation
+         * comes next, so malformed input still gets its own message.
+         *
+         * THE ONE EXCEPTION IS THIS PANEL'S OWN PAYMENT. When a payment already holds this
+         * panel's idempotency key, the bill is no longer "awaiting" precisely because this
+         * panel paid it. The call goes on to the Action, which replays the original receipt
+         * for a double-click and refuses a different second amount with the
+         * installment-conflict message, exactly as before.
+         *
+         * THIS CHECK IS THE FAST PATH, NOT THE GUARANTEE. It runs before `RecordPaymentAction`
+         * takes its lock on the bill, so two sessions landing in the same instant could both
+         * pass it. The rule itself is enforced inside the Action, under the charge lock: the
+         * payload below sets `firstPaymentOnly`, and the Action refuses with
+         * `ChargeNotAwaitingFirstPaymentException`, caught further down into this same notice.
+         */
+        Gate::authorize('create', Payment::class);
+
+        // Malformed input gets its own message first; the bill is checked last, as close
+        // to the write as this page can put it.
         $state = $this->collectForm->getState();
+
+        if (! $this->collectionStillAwaitsThisPayment()) {
+            Notification::make()
+                ->title(__('collect.charge_not_collectable'))
+                ->danger()
+                ->persistent()
+                ->send();
+
+            return;
+        }
 
         /** @var array<int, array{method: string, amount: string, external_reference: ?string}> $tenderStates */
         $tenderStates = $state['tenders'];
@@ -968,6 +1196,7 @@ class EnrollAndCollect extends Page
             allocation: (string) $state['amount'],
             tenders: $tenders,
             idempotencyKey: $this->collectionIdempotencyKey,
+            firstPaymentOnly: true,
         );
 
         /** @var User $actor */
@@ -975,6 +1204,19 @@ class EnrollAndCollect extends Page
 
         try {
             app(RecordPaymentAction::class)->execute($actor, $payload);
+        } catch (ChargeNotAwaitingFirstPaymentException) {
+            /*
+             * Another session paid, or the bill was written off, between the check
+             * above and the Action's own lock. Same notice as the check: nothing was
+             * recorded, because the Action refuses before it writes an allocation.
+             */
+            Notification::make()
+                ->title(__('collect.charge_not_collectable'))
+                ->danger()
+                ->persistent()
+                ->send();
+
+            return;
         } catch (IdempotencyConflictException) {
             /*
              * A SECOND INSTALLMENT IN THE SAME PANEL SESSION, NOT A REPLAY.
@@ -1375,6 +1617,13 @@ class EnrollAndCollect extends Page
      * Positivity is asked of `Money` rather than re-expressed as a regex or a
      * numeric comparison, so the panel and the `CHECK (amount > 0)` on
      * `payment_tenders` cannot disagree about what "nothing" means.
+     *
+     * A NEGATIVE AMOUNT REACHES THIS RULE, BECAUSE TYPED_AMOUNT_PATTERN ADMITS
+     * THE SIGN. `Money::fromDecimal()` reads "-5" as minus five dirham, which is
+     * not positive, so the operator is told to enter more than zero rather than
+     * that the figure was malformed. Narrow the shape rule back to digits only
+     * and "-5" is told to mind its decimal places instead, which is the defect
+     * this closes.
      */
     private static function positiveMoney(): Closure
     {

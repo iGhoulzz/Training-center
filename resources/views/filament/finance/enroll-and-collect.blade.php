@@ -22,11 +22,11 @@
             <dl class="flex flex-col gap-2.75 px-4.5 py-4 text-[12.5px]">
                 <div class="flex items-baseline justify-between gap-3">
                     <dt class="text-gray-400">{{ __('collect.student') }}</dt>
-                    <dd class="min-w-0 text-end font-medium">{{ $bill['student'] }}</dd>
+                    <dd class="min-w-0 text-end font-medium wrap-anywhere">{{ $bill['student'] }}</dd>
                 </div>
                 <div class="flex items-baseline justify-between gap-3">
                     <dt class="text-gray-400">{{ __('collect.batch') }}</dt>
-                    <dd class="min-w-0 text-end font-medium">{{ $bill['batch'] }}</dd>
+                    <dd class="min-w-0 text-end font-medium wrap-anywhere">{{ $bill['batch'] }}</dd>
                 </div>
                 <div class="flex items-baseline justify-between gap-3">
                     <dt class="text-gray-400">{{ __('collect.preview_list_price') }}</dt>

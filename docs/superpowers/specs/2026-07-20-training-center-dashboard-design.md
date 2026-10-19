@@ -604,8 +604,25 @@ Recorded so these do not reappear as assumptions:
   over several payments and always has — that is what the allocation table in section 6 is for,
   and `RecordPaymentAction` will record a second payment against an open charge. What does not
   exist is a screen to start one: the enrol-and-collect flow takes the payment offered at the
-  desk during enrolment, and there is no other entry point. A student returning a week later to
-  pay the rest cannot be served by the software.
+  desk during enrolment. A student returning a week later to pay the rest cannot be served by
+  the software.
+
+  **One later entry point exists, for the FIRST payment only (owner, 2026-10-17, P4-T32).** A bill
+  whose page was closed after Confirm could otherwise never be collected at all. The Charges list
+  therefore offers "Collect payment" on a bill awaiting its first payment, and Enrol & Collect
+  opens the same collection panel for it. A bill awaits its first payment when:
+  - no payment that has not been reversed is allocated to it;
+  - it is not written off;
+  - something is outstanding.
+
+  The rule is one predicate (`ChargeQueryService::awaitingFirstPaymentSql()`, mirrored with locking reads
+  by `RecordPaymentAction::awaitsFirstPaymentUnderLock()` and kept equal by a parity test), checked when the
+  panel opens and again when the payment is submitted. A bill that already has a live payment never
+  offers it, so a second payment — an installment — still has no screen. The submit-time check
+  that cannot be raced is inside `RecordPaymentAction`, under the charge row lock: the panel sets
+  `RecordPaymentData::$firstPaymentOnly`, and the Action refuses with
+  `ChargeNotAwaitingFirstPaymentException` once the bill has a live payment, so two sessions with
+  different idempotency keys cannot both land. The panel's own check is only the fast path.
 
   Scrapped deliberately, not overlooked. Recorded here because it was raised twice in review of
   P2-T09 as a missing requirement, on the reading that section 6's mention of "four

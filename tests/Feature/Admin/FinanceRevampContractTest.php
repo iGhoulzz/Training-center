@@ -34,6 +34,7 @@ use Filament\Facades\Filament;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
+use Livewire\Features\SupportLockedProperties\CannotUpdateLockedPropertyException;
 use Livewire\Livewire;
 use Spatie\Activitylog\Models\Activity;
 
@@ -101,10 +102,10 @@ it('records the first partial collection and refuses a second installment with t
     ], 'collectForm')->call('finalize')->assertNotified(__('collect.installment_conflict'));
     expect(Payment::query()->count())->toBe(1);
     $blocked = ($this->collection)(($this->actor)(['create_enrollment']))->assertSet('collectionChargeId', null);
-    $blocked->set('collectionChargeId', Charge::query()->latest('id')->value('id'))
-        ->set('collectionIdempotencyKey', (string) str()->uuid())
-        ->fillForm(['amount' => '20.000', 'tenders' => [['method' => 'cash', 'amount' => '20.000']]], 'collectForm')
-        ->call('finalize')->assertForbidden();
+    // The bill id is server-owned since the P4-T32 review: the browser cannot point
+    // the panel at a bill, so this actor never gets as far as the payment Action.
+    expect(fn () => $blocked->set('collectionChargeId', Charge::query()->latest('id')->value('id')))
+        ->toThrow(CannotUpdateLockedPropertyException::class);
     expect(Payment::query()->count())->toBe(1);
 });
 
