@@ -2080,6 +2080,106 @@ three-decimal LYD amounts).
 
 **Arabic:** T17 translates the three new `receipt.*` keys and `payments.print_receipt`.
 
+### Task 35 — Report charts, the password rule, and the receipt after Collect
+**Owner: Claude · `p4/t35-desk-and-report-fixes` · from main · requested by the owner on 2026-10-20**
+
+**Why.**
+- The profit chart drew one vertical bar for the whole period, nearly
+  transparent on the dark theme, so it read as an empty box and said nothing
+  the period-total card did not. The design asks for horizontal bars. The owner
+  chose a breakdown (revenue, wage cost, expenses, then the result) and asked
+  for one chart piece shared by every report, naming the selected period.
+- The password rule (12 characters, nothing else) is replaced by the owner's:
+  at least 8 characters, a capital letter and a symbol, for staff and students.
+- After Collect payment, staff had to leave Enrol & Collect, find the payment
+  in Payments and print from there while the student waited.
+
+**File scope**
+- Charts:
+  - `resources/views/components/admin/report-bars.blade.php` (new)
+  - `app/Domain/Finance/Filament/Widgets/ReportBarsWidget.php` (new, abstract)
+    and its view `resources/views/filament/finance/widgets/report-bars.blade.php`
+    (new)
+  - `ProfitChart.php`, `RevenueChart.php`, `WageCostChart.php`,
+    `PaymentMethodChart.php` in `app/Domain/Finance/Filament/Widgets/`
+  - `tests/Feature/Finance/Charts/*`,
+    `tests/Feature/Admin/ReportsRevampContractTest.php`: the chart assertions
+- Password:
+  - `app/Filament/Pages/PasswordChange.php`
+  - `lang/en/auth.php`, `lang/en/navigation.php`: appended, plus the description
+    reworded
+  - `tests/Feature/Auth/ForcePasswordChangeTest.php`
+  - any doc that states the old minimum
+- Receipt:
+  - `app/Domain/Finance/Filament/Pages/EnrollAndCollect.php` and its view
+  - `tests/Feature/Finance/EnrollAndCollectReceiptTest.php` (new)
+- `lang/en/reports.php`, `lang/en/collect.php`: appended
+- this plan: this entry
+
+**Decisions**
+- **The charts are HTML, not Chart.js.** `x-admin.report-bars` draws each row
+  as a label, a bar and its value, with the bar an SVG like `x-admin.meter`'s:
+  - no inline style, and RTL by the same `rtl:-scale-x-100`;
+  - the length is an integer ratio of dirham, so no float touches money;
+  - the value is written out as text, so it is readable and testable without a
+    canvas.
+
+  Bars run largest first. Every bar is scaled to the largest absolute value in
+  its chart.
+- **One base widget.** `ReportBarsWidget` keeps the existing
+  `#[Reactive] $reportFilters`, `canView()` and the data from
+  `ReportDataBuilder`, so each chart redraws when the filters are applied and
+  cannot disagree with the table under it. Each chart supplies only its rows.
+- **The period is written on every chart**, as dates: "1 Oct 2026 – 31 Oct 2026".
+  It comes from the same `ReportPeriod` or `MonthRange` the data used. A
+  monthly filter shows the first day of its first month to the last day of its
+  last month.
+- **Profit is a breakdown:**
+  - collected revenue, shown in green;
+  - wage cost and expenses, in red, signed minus;
+  - the result, set apart, green for a profit and red for a loss.
+
+  It uses the existing `ProfitReport` totals and computes nothing new.
+- **The password rule:**
+  - at least 8 characters;
+  - at least one capital letter (`\p{Lu}`);
+  - at least one symbol, meaning any character that is not a letter, a digit or
+    whitespace.
+
+  Each failure has its own message naming what is missing. The rule applies
+  wherever a password is chosen, which is `PasswordChange` in both panels.
+  Existing passwords and the generated temporary ones are untouched.
+- **The receipt after Collect.**
+  - Once `finalize()` has recorded this panel's payment, the panel shows
+    "Payment recorded": the receipt reference, the amount and each tender.
+  - A **Print receipt** button opens the existing `finance.receipts.print` page in
+    a new tab, where the print dialog opens at once.
+  - **Finish enrolment** (`finishCollection()`) clears the page for the next
+    student.
+  - Printing is one click, never automatic, because browsers block a print window
+    a page opens by itself. The button shows only when the receipt snapshot
+    exists and the actor may view the payment. The route's own gate is
+    unchanged.
+  - The form is no longer offered once the payment is recorded. The idempotency
+    key keeps a double-click a replay, as before.
+
+**Contract rules asserted:**
+- each chart names its period and draws its rows' values, largest first, from
+  the same dataset as the table;
+- profit's four bars carry the right signs and tones for a profit and for a
+  loss;
+- a filter change redraws the chart;
+- passwords of 7 characters, or without a capital, or without a symbol, are each
+  refused with their own message, in both panels; an 8-character password with
+  both is accepted;
+- after Collect, the receipt reference, the amount and the tenders show, and
+  Print points at the payment's print route in a new tab;
+- Print is hidden from an actor who may collect but not view payments;
+- Finish clears the page.
+
+**Arabic:** the Arabic admin catalogues stay empty until T17, which translates
+the new `reports.*`, `auth.*`, `navigation.*` and `collect.*` keys.
+
 ---
 
 ## What this plan does not cover
