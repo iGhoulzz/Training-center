@@ -3,6 +3,8 @@
 declare(strict_types=1);
 
 use App\Domain\Staff\Actions\UpdateOwnLocaleAction;
+use App\Http\Middleware\AuthenticateAccountSession;
+use App\Http\Middleware\ForcePasswordChange;
 use App\Http\Middleware\SetLocale;
 use App\Models\User;
 use App\Providers\Filament\AdminPanelProvider;
@@ -13,6 +15,8 @@ use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Blade;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Route;
 use Livewire\Livewire;
 use Spatie\Activitylog\Models\Activity;
 
@@ -564,6 +568,94 @@ describe('the admin switch', function () {
         $this->actingAs($actor)->withSession(['_token' => $token])->post(route('account.locale.update'), ['locale' => 'ar', '_token' => $token])->assertRedirect();
 
         expect($actor->refresh()->locale)->toBe('ar');
+    });
+
+    /*
+    |----------------------------------------------------------------------
+    | The panel's own protections (P4-T18a, review round)
+    |----------------------------------------------------------------------
+    |
+    | The route is a plain web route, so the middleware the panel puts around its
+    | pages does not run for it unless the route says so. Each case below is one
+    | the panel refuses, with the panel as the control: a test that only showed
+    | the route refusing could not tell a real refusal from a request that never
+    | reached it.
+    */
+
+    it('refuses a session opened before the password changed, as the panel does, and writes nothing', function () {
+        $actor = localeSwitchStaff();
+        $bystander = localeSwitchStaff();
+
+        // The FIRST request on a session stores its password hash, and later ones are
+        // measured against it (PrivateFileAccessTest explains). The panel is that first
+        // request here.
+        $this->actingAs($actor)->get('/admin')->assertSuccessful();
+        $actor->forceFill(['password' => Hash::make('reset-by-an-admin-2')])->save();
+
+        $this->post(route('account.locale.update'), ['locale' => 'ar'])->assertRedirect('/admin/login');
+
+        expect($actor->refresh()->locale)->toBe('en')
+            ->and(auth()->check())->toBeFalse('The session survived the password change.');
+
+        // The control: the panel refuses the same sequence the same way.
+        $this->actingAs($bystander)->get('/admin')->assertSuccessful();
+        $bystander->forceFill(['password' => Hash::make('reset-by-an-admin-3')])->save();
+
+        $this->get('/admin')->assertRedirect('/admin/login');
+    });
+
+    it('holds a user who must change their password on the password form, as the panel does, and writes nothing', function () {
+        $actor = localeSwitchStaff(['must_change_password' => true]);
+
+        $this->actingAs($actor)->post(route('account.locale.update'), ['locale' => 'ar'])
+            ->assertRedirect('/admin/password-change');
+
+        expect($actor->refresh()->locale)->toBe('en');
+
+        // The control.
+        $this->actingAs($actor)->get('/admin')->assertRedirect('/admin/password-change');
+    });
+
+    it('refuses an active user who cannot access the admin panel, as the panel does, and writes nothing', function () {
+        $actor = User::factory()->create(['is_active' => true, 'locale' => 'en']);
+
+        $this->actingAs($actor)->post(route('account.locale.update'), ['locale' => 'ar'])->assertForbidden();
+
+        expect($actor->refresh()->locale)->toBe('en')
+            ->and(Activity::query()->where('subject_type', User::class)->where('event', 'updated')->count())->toBe(0);
+
+        // The control.
+        $this->actingAs($actor)->get('/admin')->assertForbidden();
+    });
+
+    it('allows ten changes a minute and refuses the eleventh before it writes a row', function () {
+        $actor = localeSwitchStaff();
+        $this->actingAs($actor);
+
+        // Every toggle that changes the language appends a row to an append-only log, so
+        // the rate is the bound on how fast it can grow. Alternating, so each one changes.
+        foreach (range(1, 10) as $attempt) {
+            $this->post(route('account.locale.update'), ['locale' => $attempt % 2 === 1 ? 'ar' : 'en'])->assertRedirect();
+        }
+
+        $rows = fn (): int => Activity::query()->where('subject_type', User::class)->where('subject_id', $actor->getKey())->where('event', 'updated')->count();
+
+        expect($rows())->toBe(10);
+
+        $this->post(route('account.locale.update'), ['locale' => 'ar'])->assertStatus(429);
+
+        expect($rows())->toBe(10)
+            ->and($actor->refresh()->locale)->toBe('en');
+    });
+
+    it('carries the panel\'s session check, its password hold and a throttle on the route itself', function () {
+        $middleware = Route::getRoutes()->getByName('account.locale.update')->gatherMiddleware();
+
+        // in_array, not expect()->toContain(): that helper is variadic, so a message would be
+        // read as a second expected value.
+        foreach ([AuthenticateAccountSession::class, ForcePasswordChange::class, 'throttle:10,1'] as $expected) {
+            expect(in_array($expected, $middleware, true))->toBeTrue("account.locale.update does not carry {$expected}.");
+        }
     });
 });
 

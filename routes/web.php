@@ -12,7 +12,9 @@ use App\Http\Controllers\Staff\StaffCertificateDownloadController;
 use App\Http\Controllers\Staff\StaffProfilePhotoController;
 use App\Http\Controllers\Staff\UpdateOwnLocaleController;
 use App\Http\Controllers\VerifyCertificateController;
+use App\Http\Middleware\AuthenticateAccountSession;
 use App\Http\Middleware\AuthenticatePrivateFileSession;
+use App\Http\Middleware\ForcePasswordChange;
 use App\Http\Middleware\SetPublicLocale;
 use App\Http\Middleware\VerificationResponseHeaders;
 use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
@@ -252,10 +254,30 @@ Route::middleware([VerificationResponseHeaders::class, 'throttle:certificate-ver
 | (components/locale-switch.blade.php), rendered by AdminPanelProvider's render hook
 | only while the flag `public_site.admin_locale_switch` is on.
 |
-| It takes the `web` group as it comes, so the session and the CSRF check are on:
-| a POST without a token is refused. A guest is refused by the controller with a 403
-| and nothing is written. It is not in the private-file groups above, which no
-| phase 4 task touches, and it streams nothing.
+| A PLAIN WEB ROUTE GETS NONE OF THE PANEL'S PROTECTIONS, so it is given them (review
+| round): the panel wraps its pages in a session-integrity check, the forced password
+| change and an access check, and this route is not one of its pages. Without them a
+| session that an administrator had invalidated by resetting the password could still
+| write, a user held on the password form could write, and a user the panel refuses
+| could write, each appending to the append-only audit log. The same defect P1-T15
+| found in the private-file routes.
+|
+| - AuthenticateAccountSession: a session opened before a password change is sent to
+|   the panel login. Its own class, because PrivateFileAccessTest pins exactly the
+|   groups that declare AuthenticatePrivateFileSession.
+| - ForcePasswordChange: the panel's own hold, so a user who must change their
+|   password is sent to that form and nothing is written.
+| - throttle:10,1: every toggle that changes the language appends a row, so the rate
+|   is the bound on how fast the log can grow.
+| - The panel-access check is the controller's, with is_active, because it needs the
+|   user: it answers a guest, a student and a user without access with a 403.
+|
+| It keeps the `web` group, so the session and the CSRF check are on: a POST without a
+| token is refused. It is a group of its own and not a route in the private-file
+| groups above, which no phase 4 task touches, and it streams nothing.
 */
-Route::post('account/locale', UpdateOwnLocaleController::class)
-    ->name('account.locale.update');
+Route::middleware([AuthenticateAccountSession::class, ForcePasswordChange::class, 'throttle:10,1'])
+    ->group(function (): void {
+        Route::post('account/locale', UpdateOwnLocaleController::class)
+            ->name('account.locale.update');
+    });
