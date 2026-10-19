@@ -111,6 +111,9 @@ final class DiscountResource extends Resource
                     ->requiresConfirmation()
                     ->authorize('deactivate')
                     ->visible(fn (Discount $record): bool => $record->is_active)
+                    // The handler has no refusal branch: a Gate refusal throws past
+                    // the notification, so Filament's own success toast is safe here.
+                    ->successNotificationTitle(__('pricing.discount_deactivated'))
                     ->action(function (Discount $record): void {
                         app(DeactivateDiscountAction::class)->execute(self::actor(), $record);
                     }),
