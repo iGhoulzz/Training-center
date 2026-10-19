@@ -55,6 +55,7 @@ use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 use Livewire\Attributes\Computed;
+use Livewire\Attributes\Locked;
 
 /**
  * The phase 2 primary surface (design section 2): one guided flow, not a set
@@ -284,19 +285,26 @@ class EnrollAndCollect extends Page
      * The just-billed charge collection targets, or null before `confirm()`
      * has raised one, or once `finishCollection()` has closed the panel.
      *
-     * THIS IS THE COURTESY VISIBILITY GUARD, NOT THE SECURITY BOUNDARY —
-     * see the class docblock. `RecordPaymentAction`'s own
-     * `Gate::forUser($actor)->authorize('create', Payment::class)` is what
-     * actually refuses an actor without `create_payment`; this property
-     * only decides whether the panel offering that button exists at all.
+     * SERVER-OWNED (#[Locked], P4-T32 review). Only `confirm()` (the bill it
+     * just raised) and `openRequestedCollection()` (a `?charge=` link, after
+     * `Gate::allows('view', $charge)`) set it, so a bill reaches this panel only
+     * through one of those two provenances. The browser cannot rewrite it: a
+     * forged id would otherwise show another bill's student, batch and amount
+     * to an actor without `view_charge`, and reach the payment Action with it.
+     * `RecordPaymentAction`'s own `authorize('create', Payment::class)` is still
+     * what refuses an actor without `create_payment`.
      */
+    #[Locked]
     public ?int $collectionChargeId = null;
 
     /**
      * The idempotency key for the payment this panel would record, minted
      * once by `beginCollection()` and never regenerated — see the class
-     * docblock's note on why `finalize()` must not mint its own.
+     * docblock's note on why `finalize()` must not mint its own. Server-owned
+     * like the bill id: a key copied from another panel would replay that
+     * panel's receipt here.
      */
+    #[Locked]
     public ?string $collectionIdempotencyKey = null;
 
     /**
@@ -1133,9 +1141,8 @@ class EnrollAndCollect extends Page
         /*
          * THE BILL IS RE-CHECKED HERE, NOT ONLY WHEN THE PANEL OPENED (P4-T32 review).
          *
-         * `collectionChargeId` is a courtesy guard that the client can rewrite (see its
-         * docblock), and the bill can change between opening the panel and pressing the
-         * button. A second tab on the same "Collect payment" link may pay it first, or it
+         * `collectionChargeId` is server-owned (see its docblock), but the bill itself can
+         * change between opening the panel and pressing the button. A second tab on the same "Collect payment" link may pay it first, or it
          * may be written off. So every collection is checked against the same predicate
          * that offered it, and a bill no longer awaiting its first payment is refused
          * before anything is written.

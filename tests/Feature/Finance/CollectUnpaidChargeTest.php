@@ -16,6 +16,7 @@ use Filament\Notifications\Livewire\Notifications;
 use Filament\Notifications\Notification as FilamentNotification;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Queue;
+use Livewire\Features\SupportLockedProperties\CannotUpdateLockedPropertyException;
 use Livewire\Livewire;
 
 /*
@@ -439,7 +440,7 @@ it('refuses to collect a bill that was written off after its panel opened', func
         ]);
 });
 
-it('refuses a panel whose bill id was rewritten to a bill that cannot take a first payment', function (Closure $makeTarget) {
+it('refuses a browser rewrite of the bill id, so the panel never reaches another bill', function (Closure $makeTarget) {
     $opened = Charge::factory()->create(['list_price' => '100.000']);
     $target = $makeTarget($this);
     $before = PaymentAllocation::query()->where('charge_id', $target->getKey())->count();
@@ -449,15 +450,13 @@ it('refuses a panel whose bill id was rewritten to a bill that cannot take a fir
         ->test(EnrollAndCollect::class);
     collectUnpaidSentNotifications();
 
-    $page->set('collectionChargeId', $target->getKey())
-        ->fillForm(['amount' => '10.000', 'tenders' => [['method' => 'cash', 'amount' => '10.000', 'external_reference' => null]]], 'collectForm')
-        ->call('finalize');
+    // Server-owned since the P4-T32 review (#[Locked]): the rewrite itself is refused.
+    expect(fn () => $page->set('collectionChargeId', $target->getKey()))
+        ->toThrow(CannotUpdateLockedPropertyException::class);
+    $page->assertSet('collectionChargeId', $opened->getKey());
 
     expect(PaymentAllocation::query()->where('charge_id', $target->getKey())->count())->toBe($before)
-        ->and(PaymentAllocation::query()->where('charge_id', $opened->getKey())->count())->toBe(0)
-        ->and(collectUnpaidSentNotifications())->toBe([
-            ['title' => __('collect.charge_not_collectable'), 'status' => 'danger'],
-        ]);
+        ->and(PaymentAllocation::query()->where('charge_id', $opened->getKey())->count())->toBe(0);
 })->with([
     'a bill with a live partial payment' => [function ($test): Charge {
         $charge = Charge::factory()->create(['list_price' => '100.000']);
@@ -500,21 +499,44 @@ it('refuses a link from an actor who may not view that bill, and hides the butto
         ->assertActionVisible(($this->collectPaymentAction)($charge));
 });
 
-it('answers an actor without create_payment with a 403 even when the rewritten bill could not be collected anyway', function () {
-    // finalize() authorizes before it checks the bill. Checking the bill first would
-    // tell this actor whether a bill still awaits its first payment.
+it('gives an actor without create_payment no way to plant a bill in the panel', function () {
+    // Was "a 403 even when the rewritten bill could not be collected": finalize()
+    // authorizes before it checks the bill. The bill id is server-owned now, so the
+    // rewrite itself is refused and the panel never holds a bill to check.
     $partPaid = Charge::factory()->create(['list_price' => '100.000']);
     ($this->payTowards)($partPaid, '30.000');
     $withoutPayment = ($this->actor)(array_values(array_diff($this->collectorPermissions, ['create_payment'])));
 
-    Livewire::actingAs($withoutPayment)
-        ->test(EnrollAndCollect::class)
-        ->set('collectionChargeId', $partPaid->getKey())
-        ->set('collectionIdempotencyKey', (string) str()->uuid())
-        ->fillForm(['amount' => '10.000', 'tenders' => [['method' => 'cash', 'amount' => '10.000', 'external_reference' => null]]], 'collectForm')
-        ->call('finalize')
-        ->assertForbidden();
+    $page = Livewire::actingAs($withoutPayment)->test(EnrollAndCollect::class);
+
+    expect(fn () => $page->set('collectionChargeId', $partPaid->getKey()))
+        ->toThrow(CannotUpdateLockedPropertyException::class);
+    $page->assertSet('collectionChargeId', null);
 
     expect(PaymentAllocation::query()->where('charge_id', $partPaid->getKey())->count())->toBe(1)
         ->and(Payment::query()->count())->toBe(1);
+});
+
+it('keeps a valid unpaid bill out of reach of an actor who may collect but not view charges', function () {
+    // Codex review of P4-T32: an actor with create_enrollment and create_payment but
+    // not view_charge opens the page with no bill, then tries to plant the id of a
+    // bill that is perfectly collectable. The id is server-owned, so neither the
+    // bill's details nor its payment are reachable.
+    $unpaid = Charge::factory()->create(['list_price' => '100.000']);
+    $unpaid->enrollment->student->forceFill(['first_name' => 'SENTINEL-HIDDEN', 'last_name' => 'BILL'])->save();
+    $withoutView = ($this->actor)(array_values(array_diff($this->collectorPermissions, ['view_charge', 'view_any_charge'])));
+
+    $page = Livewire::actingAs($withoutView)->test(EnrollAndCollect::class)
+        ->assertSet('collectionChargeId', null);
+
+    expect(fn () => $page->set('collectionChargeId', $unpaid->getKey()))
+        ->toThrow(CannotUpdateLockedPropertyException::class);
+    expect(fn () => $page->set('collectionIdempotencyKey', (string) str()->uuid()))
+        ->toThrow(CannotUpdateLockedPropertyException::class);
+
+    $page->assertSet('collectionChargeId', null)
+        ->assertDontSee('SENTINEL-HIDDEN');
+
+    expect(Payment::query()->count())->toBe(0)
+        ->and(PaymentAllocation::query()->where('charge_id', $unpaid->getKey())->count())->toBe(0);
 });
