@@ -12,6 +12,7 @@ use App\Domain\Enrollment\Models\Student;
 use App\Domain\Finance\Models\Charge;
 use App\Domain\Finance\Models\Payment;
 use App\Domain\Finance\Models\PaymentAllocation;
+use App\Domain\Finance\Services\StudentBalanceQuery;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Filament\Notifications\Notification;
@@ -251,3 +252,70 @@ it('deletes from the edit page when nothing is owed and nothing is active', func
 
     expect($student->fresh()->trashed())->toBeTrue();
 });
+
+/*
+|--------------------------------------------------------------------------
+| The locked figure is the published one
+|--------------------------------------------------------------------------
+|
+| The delete decides from StudentBalanceQuery::totalForUpdate(), the locking form
+| of forStudent()'s total. They are two reads of one definition, and this pins
+| them equal - and equal to a figure worked out by hand - on every state a bill
+| can be in, so a change to what counts as owed cannot move one without the other.
+*/
+
+it('reads the same total under lock as the published balance, on every state a bill can be in', function (
+    string $expected,
+    Closure $arrange,
+) {
+    $student = Student::factory()->create();
+    $arrange($student);
+    $query = app(StudentBalanceQuery::class);
+
+    expect($query->totalForUpdate($student->getKey())->toDecimal())->toBe($expected)
+        ->and($query->forStudent($student->getKey())->total->toDecimal())->toBe($expected);
+})->with([
+    'no enrolment' => ['0.000', static function (Student $student): void {}],
+    'unbilled enrolment' => ['0.000', static function (Student $student): void {
+        Enrollment::factory()->for($student)->create();
+    }],
+    'unpaid' => ['1000.000', static function (Student $student): void {
+        Charge::factory()->for(Enrollment::factory()->for($student))->create(['list_price' => '1000.000', 'amount' => '1000.000']);
+    }],
+    'part paid' => ['600.250', static function (Student $student): void {
+        $charge = Charge::factory()->for(Enrollment::factory()->for($student))->create(['list_price' => '1000.000', 'amount' => '1000.000']);
+        PaymentAllocation::factory()->create(['payment_id' => Payment::factory()->create(), 'charge_id' => $charge, 'amount' => '399.750']);
+    }],
+    'paid in full' => ['0.000', static function (Student $student): void {
+        $charge = Charge::factory()->for(Enrollment::factory()->for($student))->create(['list_price' => '1000.000', 'amount' => '1000.000']);
+        PaymentAllocation::factory()->create(['payment_id' => Payment::factory()->create(), 'charge_id' => $charge, 'amount' => '1000.000']);
+    }],
+    'adjusted up after being paid in full' => ['0.001', static function (Student $student): void {
+        $charge = Charge::factory()->for(Enrollment::factory()->for($student))->create(['list_price' => '1000.000', 'amount' => '1000.001']);
+        PaymentAllocation::factory()->create(['payment_id' => Payment::factory()->create(), 'charge_id' => $charge, 'amount' => '1000.000']);
+    }],
+    'adjusted down' => ['250.500', static function (Student $student): void {
+        Charge::factory()->for(Enrollment::factory()->for($student))->create(['list_price' => '1000.000', 'amount' => '250.500']);
+    }],
+    'payment reversed' => ['1000.000', static function (Student $student): void {
+        $charge = Charge::factory()->for(Enrollment::factory()->for($student))->create(['list_price' => '1000.000', 'amount' => '1000.000']);
+        PaymentAllocation::factory()->create(['payment_id' => Payment::factory()->reversed(), 'charge_id' => $charge, 'amount' => '1000.000']);
+    }],
+    'one payment reversed, one standing' => ['400.000', static function (Student $student): void {
+        $charge = Charge::factory()->for(Enrollment::factory()->for($student))->create(['list_price' => '1000.000', 'amount' => '1000.000']);
+        PaymentAllocation::factory()->create(['payment_id' => Payment::factory()->reversed(), 'charge_id' => $charge, 'amount' => '300.000']);
+        PaymentAllocation::factory()->create(['payment_id' => Payment::factory()->create(), 'charge_id' => $charge, 'amount' => '600.000']);
+    }],
+    'written off, which is still owed' => ['750.000', static function (Student $student): void {
+        Charge::factory()->writtenOff()->for(Enrollment::factory()->for($student))->create(['list_price' => '750.000', 'amount' => '750.000']);
+    }],
+    'several enrolments in different states, and another student\'s bill beside them' => ['1000.751', static function (Student $student): void {
+        Charge::factory()->for(Enrollment::factory()->for($student))->create(['list_price' => '1000.000', 'amount' => '1000.000']);
+        $paid = Charge::factory()->for(Enrollment::factory()->for($student)->state(['status' => EnrollmentStatus::Completed]))->create(['list_price' => '500.000', 'amount' => '500.000']);
+        PaymentAllocation::factory()->create(['payment_id' => Payment::factory()->create(), 'charge_id' => $paid, 'amount' => '500.000']);
+        $adjusted = Charge::factory()->for(Enrollment::factory()->for($student)->state(['status' => EnrollmentStatus::Withdrawn]))->create(['list_price' => '200.000', 'amount' => '200.751']);
+        PaymentAllocation::factory()->create(['payment_id' => Payment::factory()->create(), 'charge_id' => $adjusted, 'amount' => '200.000']);
+        Enrollment::factory()->for($student)->create();
+        Charge::factory()->create(['list_price' => '9999.000', 'amount' => '9999.000']);
+    }],
+]);
