@@ -1875,8 +1875,10 @@ answer with the refusal. It now shows only on an active enrolment, because
   - something outstanding.
 
   The rule is one predicate, used by the button and re-checked by the page
-  server-side. `RecordPaymentAction` and `PaymentInvariantService` are unchanged,
-  and later installments stay out (§12).
+  server-side, and enforced under the charge lock by `RecordPaymentAction`'s opt-in
+  `firstPaymentOnly` mode (Codex review: two sessions could otherwise both pay).
+  The panel's bill id is server-owned (`#[Locked]`). `PaymentInvariantService` is
+  unchanged, and later installments stay out (§12).
 - **For the owner to confirm:** a bill whose only payment was reversed counts as
   awaiting its first payment again.
 

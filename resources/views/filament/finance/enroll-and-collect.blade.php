@@ -49,8 +49,8 @@
         <aside aria-label="{{ __('collect.bill') }}" class="min-w-0 flex-[1_1_300px] overflow-hidden rounded-[14px] bg-gray-900 ring-1 ring-hairline lg:sticky lg:top-24 lg:max-w-90">
             <h2 class="border-b border-hairline-faint px-4.5 py-4 text-sm font-semibold">{{ __('collect.bill') }}</h2>
             <dl class="flex flex-col gap-2.75 px-4.5 py-4 text-[12.5px]" aria-live="polite">
-                <div class="flex items-baseline justify-between gap-3"><dt class="text-gray-400">{{ __('collect.student') }}</dt><dd class="min-w-0 text-end font-medium">{{ $bill['student'] }}</dd></div>
-                <div class="flex items-baseline justify-between gap-3"><dt class="text-gray-400">{{ __('collect.batch') }}</dt><dd class="min-w-0 text-end font-medium">{{ $bill['batch'] }}</dd></div>
+                <div class="flex items-baseline justify-between gap-3"><dt class="text-gray-400">{{ __('collect.student') }}</dt><dd class="min-w-0 text-end font-medium wrap-anywhere">{{ $bill['student'] }}</dd></div>
+                <div class="flex items-baseline justify-between gap-3"><dt class="text-gray-400">{{ __('collect.batch') }}</dt><dd class="min-w-0 text-end font-medium wrap-anywhere">{{ $bill['batch'] }}</dd></div>
                 <div class="flex items-baseline justify-between gap-3"><dt class="text-gray-400">{{ __('collect.preview_list_price') }}</dt><dd class="text-[13px] font-medium">@if ($bill['list'] !== null)<x-admin.money :amount="$bill['list']" />@else{{ __('collect.preview_pending') }}@endif</dd></div>
                 @if (auth()->user()?->can('apply_discount'))<div class="flex items-baseline justify-between gap-3"><dt class="text-gray-400">{{ __('collect.discount') }}</dt><dd class="text-end text-[13px] font-medium text-success-400">{{ $bill['discount'] }}</dd></div>@endif
             </dl>

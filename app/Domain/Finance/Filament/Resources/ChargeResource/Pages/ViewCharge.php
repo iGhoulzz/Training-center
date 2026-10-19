@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Domain\Finance\Filament\Resources\ChargeResource\Pages;
 
+use App\Domain\Enrollment\Filament\Resources\StudentResource;
+use App\Domain\Enrollment\Services\EnrollmentQueryService;
 use App\Domain\Finance\Filament\Resources\ChargeResource;
 use App\Domain\Finance\Models\Charge;
 use App\Domain\Finance\Support\ChargeBalance;
@@ -31,6 +33,20 @@ use Filament\Schemas\Schema;
  * `ChargeBalance::outstandingFor()` / `allocatedFor()` run the identical SQL
  * string under the hood (see that class's own docblock) — the two answers
  * cannot disagree with what `ChargeResource::table()` shows for the same row.
+ *
+ * THE STUDENT LINE IS THE LIST'S, PLUS THE CODE (P4-T32, QA P3-16)
+ * -----------------------------------------------------------------
+ * The page named the enrolment, batch and course and never the person who owes
+ * the bill. The record arrives through `ChargeResource::getEloquentQuery()`, so
+ * it already carries the student attributes that query joined in; the line's
+ * link is gated on them exactly as the list column's is, and a student who has
+ * been soft-deleted still shows their name and code, with no link.
+ *
+ * The joined attributes carry the name but not the student's code, so the code
+ * comes from `EnrollmentQueryService::receiptContextFor()` — the sanctioned way
+ * to read it, and one bounded query for the page, not one per anything. Adding
+ * the code to the join itself would remove even that one, and belongs with
+ * `joinEnrollmentStudentLabelsTo()`.
  */
 class ViewCharge extends ViewRecord
 {
@@ -48,6 +64,16 @@ class ViewCharge extends ViewRecord
     {
         return $schema->components([
             Section::make(__('charges.bill_details'))->columns(2)->schema([
+                TextEntry::make('student_identity')
+                    ->label(__('charges.student'))
+                    ->state(fn (Charge $record): string => __('charges.student_label', [
+                        'code' => app(EnrollmentQueryService::class)->receiptContextFor((int) $record->enrollment_id)['student_code'],
+                        'name' => trim($record->getAttribute(EnrollmentQueryService::ENROLLMENT_STUDENT_FIRST_NAME).' '.$record->getAttribute(EnrollmentQueryService::ENROLLMENT_STUDENT_LAST_NAME)),
+                    ]))
+                    ->url(fn (Charge $record): ?string => auth()->user()?->can('view_student') && auth()->user()->can('view_any_student')
+                        && (bool) $record->getAttribute(EnrollmentQueryService::ENROLLMENT_STUDENT_AVAILABLE)
+                        ? StudentResource::getUrl('index', ['student' => $record->getAttribute(EnrollmentQueryService::ENROLLMENT_STUDENT_ID)]) : null),
+
                 TextEntry::make('reference')
                     ->label(__('charges.reference')),
 

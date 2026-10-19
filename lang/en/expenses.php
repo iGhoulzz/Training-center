@@ -68,7 +68,7 @@ return [
 
     // Refusals.
     'category_unavailable' => 'Choose an active expense category.',
-    'amount_invalid' => 'Enter an amount in dinars with at most three decimal places, for example 125.500.',
+    'amount_invalid' => 'Enter an amount with at most three decimal places, for example 125.500.',
     'amount_must_be_positive' => 'The amount must be more than zero.',
     'refused_unauthorized' => 'You are not allowed to do that.',
     'refused_invalid' => 'That could not be saved. Check the details and try again.',

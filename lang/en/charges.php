@@ -77,7 +77,7 @@ return [
     'new_amount' => 'New amount',
     'new_amount_hint' => 'For data-entry errors only — never for applying a late discount.',
     'reason' => 'Reason',
-    'amount_format_error' => 'Enter an amount with at most three decimal places.',
+    'amount_format_error' => 'Enter an amount with at most three decimal places, for example 125.500.',
     'adjusted_successfully' => 'Charge adjusted.',
     'amount_below_allocated_detail' => 'Attempted :attempted, already allocated :allocated.',
 
@@ -88,7 +88,7 @@ return [
     'written_off_successfully' => 'Charge written off.',
     'student' => 'Student',
     'bill_details' => 'Bill details',
-    'billed_lyd' => 'billed LYD',
+    'billed' => 'billed',
     'paid_amount' => ':amount paid',
     'payment_state' => 'Payment state',
     'settled' => 'Settled',
@@ -101,4 +101,8 @@ return [
     'age_61_90' => '61–90 days',
     'age_91_plus' => '91+ days',
     'view_payments' => 'Outstanding → payments',
+
+    // P4-T32: the "Collect payment" row action, and the student line on a bill.
+    'collect_payment' => 'Collect payment',
+    'student_label' => ':code — :name',
 ];
