@@ -54,40 +54,76 @@ jobs:
       HORIZON_ALERT_EMAIL: ci@example.com
       MAIL_FROM_ADDRESS: ci@example.com
 
-    # SERVICE IMAGES COME FROM AWS'S PUBLIC MIRROR OF DOCKER'S OFFICIAL IMAGES,
-    # NOT DOCKER HUB (2026-10-09). Docker Hub caps anonymous pulls per IP, and
-    # GitHub's hosted runners share their IPs, so other people's jobs spent the
-    # quota and every run here failed with `toomanyrequests` before a single
-    # test ran: five runs across two PRs on 2026-10-09. These are the same
-    # images: the content digests of mysql:8.4 and redis:8-alpine were
-    # identical on Docker Hub, public.ecr.aws and mirror.gcr.io when this
-    # changed. If this mirror ever fails, mirror.gcr.io/library/<name>:<tag>
-    # carries the same digests.
-    services:
-      mysql:
-        image: public.ecr.aws/docker/library/mysql:8.4
-        env:
-          MYSQL_ROOT_PASSWORD: root
-          MYSQL_DATABASE: training_center_ci
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=10
-      redis:
-        image: public.ecr.aws/docker/library/redis:8-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd="redis-cli ping"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=10
-
     steps:
       - uses: actions/checkout@v4
+
+      # MYSQL AND REDIS ARE STARTED HERE, NOT AS `services:`, SO THEIR PULL CAN
+      # FALL BACK (2026-10-19).
+      #
+      # - Every anonymous registry caps what one IP may pull, and GitHub's
+      #   hosted runners share their IPs, so other people's jobs spend the
+      #   quota and a run fails with `toomanyrequests` before a test runs.
+      # - That happened on Docker Hub first: five runs on 2026-10-09, after which
+      #   CI moved to AWS's public mirror. Then it happened there ("Data limit
+      #   exceeded"): main and three PRs between 2026-10-13 and 2026-10-19.
+      # - A `services:` image comes from one registry with no fallback, so this
+      #   step pulls each image from three registries with separate limits:
+      #   AWS's mirror, Google's mirror, then Docker Hub. It retries the whole
+      #   list with growing waits before failing.
+      # - They are the same images: the content digests of mysql:8.4 and
+      #   redis:8-alpine were identical on all three when this was written.
+      # - The containers, ports, credentials and health checks are the ones the
+      #   services block had, and the step waits until both report healthy.
+      - name: Start MySQL and Redis (pulled with registry fallback)
+        run: |
+          pull() {
+            local image="$1"
+            for attempt in 1 2 3 4; do
+              for registry in public.ecr.aws/docker/library mirror.gcr.io/library docker.io/library; do
+                if docker pull --quiet "$registry/$image" > /dev/null 2>&1; then
+                  docker tag "$registry/$image" "ci-$image"
+                  echo "Pulled $image from $registry"
+                  return 0
+                fi
+                echo "::warning::Could not pull $image from $registry (attempt $attempt)"
+              done
+              sleep $((attempt * 15))
+            done
+            echo "::error::Could not pull $image from any registry"
+            return 1
+          }
+
+          healthy() {
+            local name="$1"
+            for second in $(seq 1 90); do
+              if [ "$(docker inspect --format '{{.State.Health.Status}}' "$name")" = "healthy" ]; then
+                echo "$name is healthy"
+                return 0
+              fi
+              sleep 2
+            done
+            docker logs "$name" | tail -n 40
+            echo "::error::$name did not become healthy"
+            return 1
+          }
+
+          pull mysql:8.4
+          pull redis:8-alpine
+
+          docker run --detach --name mysql \
+            --env MYSQL_ROOT_PASSWORD=root --env MYSQL_DATABASE=training_center_ci \
+            --publish 3306:3306 \
+            --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot" \
+            --health-interval=5s --health-timeout=5s --health-retries=30 \
+            ci-mysql:8.4
+          docker run --detach --name redis \
+            --publish 6379:6379 \
+            --health-cmd="redis-cli ping" \
+            --health-interval=5s --health-timeout=5s --health-retries=30 \
+            ci-redis:8-alpine
+
+          healthy mysql
+          healthy redis
 
       # AN EMPTY .env, PURELY SO ONE EXISTS.
       #
