@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Console\Commands;
 
 use App\Domain\Staff\Actions\SystemRoleWriter;
-use App\Domain\Staff\Support\ChosenPasswordPolicy;
+use App\Domain\Staff\Support\ChosenPasswordRule;
 use App\Models\Role;
 use App\Models\User;
 use Illuminate\Console\Command;
@@ -64,7 +64,7 @@ final class BootstrapProductionOwnerCommand extends Command
             $validator = Validator::make(['owners' => $owners], [
                 'owners.*.name' => ['required', 'string', 'max:255'],
                 'owners.*.email' => ['required', 'string', 'email', 'max:255', 'distinct:ignore_case'],
-                'owners.*.password' => ['required', 'string', new ChosenPasswordPolicy, 'confirmed'],
+                'owners.*.password' => ['required', 'string', new ChosenPasswordRule, 'confirmed'],
             ], attributes: $attributes);
 
             if ($validator->fails()) {

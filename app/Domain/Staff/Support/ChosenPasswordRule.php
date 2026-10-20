@@ -11,7 +11,7 @@ use Illuminate\Contracts\Validation\ValidationRule;
  * Chosen credentials only; existing and issued temporary passwords are exempt.
  * Capitals are Unicode Lu; letters, numbers and whitespace are not symbols.
  */
-final class ChosenPasswordPolicy implements ValidationRule
+final class ChosenPasswordRule implements ValidationRule
 {
     public const int MINIMUM_LENGTH = 8;
 

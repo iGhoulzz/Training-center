@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Filament\Pages;
 
 use App\Domain\Staff\Support\ActivityEvent;
-use App\Domain\Staff\Support\ChosenPasswordPolicy;
+use App\Domain\Staff\Support\ChosenPasswordRule;
 use App\Models\User;
 use Filament\Facades\Filament;
 use Filament\Forms\Components\TextInput;
@@ -59,7 +59,7 @@ class PasswordChange extends Page
 
     public function getSubheading(): string
     {
-        return __('navigation.password_change_description', ['minimum' => ChosenPasswordPolicy::MINIMUM_LENGTH]);
+        return __('navigation.password_change_description', ['minimum' => ChosenPasswordRule::MINIMUM_LENGTH]);
     }
 
     /**
@@ -134,7 +134,7 @@ class PasswordChange extends Page
                     ->label(__('auth.new_password'))
                     ->password()
                     ->required()
-                    ->rules([new ChosenPasswordPolicy])
+                    ->rules([new ChosenPasswordRule])
                     ->confirmed(),
                 TextInput::make('password_confirmation')
                     ->label(__('auth.confirm_password'))
