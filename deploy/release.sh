@@ -300,8 +300,10 @@ done
 step=post-switch-dependencies
 smoke
 step=post-switch-http
-# Hit this host's TLS Nginx, checking its real certificate; DNS cutover is not
-# needed for first install. No --insecure and no external load balancer cache.
+# Hit this host's TLS Nginx with its real certificate. --resolve bypasses DNS
+# resolution for this probe only; first-install HTTP-01 certificate bootstrap
+# still requires early public DNS pointing at this host's maintenance/ACME site.
+# No --insecure and no external load balancer cache.
 for path in /up / /admin/login /portal/login; do
     curl --fail --silent --show-error --max-time 15 --resolve "$host:443:127.0.0.1" "https://$host$path" -o /dev/null >> "$log" 2>&1
 done
