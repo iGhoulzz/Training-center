@@ -23,8 +23,9 @@ set -euo pipefail
 [[ "${TEST_RUNTIME_USER:-}" == www-data ]] || exit 95
 printf '%s|%s\n' "$PWD" "$*" >> "$TEST_SANDBOX/commands"
 [[ "${1:-}" != --version ]] || { echo 'PHP fixture'; exit 0; }
-if [[ "${1:-}" == artisan ]]; then
+if [[ "${1:-}" == artisan || "${1:-}" == "$TRAINING_CENTER_ROOT/current/artisan" ]]; then
     case "$2" in
+        schedule:run) echo 'scheduler stdout'; echo 'scheduler stderr' >&2 ;;
         backup:run) [[ "${FAIL_STAGE:-}" != backup ]] || exit 1; touch "$TEST_SANDBOX/backup-ok" ;;
         migrate) [[ -f "$TEST_SANDBOX/backup-ok" || ! -L "$TRAINING_CENTER_ROOT/current" ]] || exit 91 ;;
         horizon:terminate|pulse:restart)
@@ -125,10 +126,11 @@ fixture() {
     export TRAINING_CENTER_ROOT="$case_root/training-center"
     release_script="$case_root/release.sh"
     mkdir -p "$case_root"
-    # Production accepts no path override. Exercise identical code in isolation
-    # by substituting only its fixed host root in this disposable copy.
+    # Production paths are fixed. Bind only the host root and PHP executable to
+    # their disposable counterparts; all release logic stays identical.
     [[ "$(grep -c '^root=/srv/training-center$' "$original_script")" == 1 ]]
-    sed "s|^root=/srv/training-center$|root=$TRAINING_CENTER_ROOT|" "$original_script" > "$release_script"
+    [[ "$(grep -c '^php_binary=/usr/bin/php$' "$original_script")" == 1 ]]
+    sed -e "s|^root=/srv/training-center$|root=$TRAINING_CENTER_ROOT|" -e "s|^php_binary=/usr/bin/php$|php_binary=$sandbox/bin/php|" "$original_script" > "$release_script"
     rm -f "$TEST_SANDBOX/backup-ok"
     mkdir -p "$TRAINING_CENTER_ROOT/shared/storage" "$TRAINING_CENTER_ROOT/shared/migration-approvals" "$TRAINING_CENTER_ROOT/releases/$old" "$case_root/artifact/bootstrap/cache" "$case_root/artifact/vendor" "$case_root/artifact/public/build" "$case_root/artifact/public/js/filament" "$case_root/artifact/public/css/filament" "$case_root/artifact/public/fonts/filament"
     printf 'fixture only\n' > "$TRAINING_CENTER_ROOT/shared/.env"
@@ -145,6 +147,27 @@ reject() {
     unchanged "$2"
     echo "PASS: rejected $2"
 }
+fixture scheduler-retention
+logs="$TRAINING_CENTER_ROOT/shared/storage/logs"
+mkdir -p "$logs"
+printf 'expired\n' > "$logs/scheduler-2000-01-01.log"
+printf 'unrelated\n' > "$logs/laravel-2000-01-01.log"
+printf 'recent\n' > "$logs/scheduler-2000-01-02.log"
+touch -d '16 days ago' "$logs/scheduler-2000-01-01.log" "$logs/laravel-2000-01-01.log"
+cron_entry=$(grep '^\* \* \* \* \* www-data ' "$script_dir/../cron/training-center.cron")
+[[ "$(printf '%s\n' "$cron_entry" | wc -l)" == 1 ]]
+cron_without_escaped_percent=${cron_entry//\\%/}
+[[ "$cron_without_escaped_percent" != *%* ]] || { echo 'FAIL: unescaped cron percent'; exit 1; }
+cron_command=${cron_entry#\* \* \* \* \* www-data }
+cron_command=${cron_command//\/srv\/training-center/$TRAINING_CENTER_ROOT}
+cron_command=${cron_command//\/usr\/bin\/php/$sandbox/bin/php}
+TEST_RUNTIME_USER=www-data sh -c "$cron_command"
+daily_log="$logs/scheduler-$(date -u +%F).log"
+[[ -f "$daily_log" && ! -e "$logs/scheduler-2000-01-01.log" && -f "$logs/scheduler-2000-01-02.log" && -f "$logs/laravel-2000-01-01.log" ]] || { echo 'FAIL: scheduler log retention'; exit 1; }
+grep -q 'scheduler stdout' "$daily_log"
+grep -q 'scheduler stderr' "$daily_log"
+[[ "$(grep -c 'artisan schedule:run' "$TEST_SANDBOX/commands")" == 1 ]]
+echo 'PASS: bounded scheduler log retention and one-minute command'
 for failure in invalid-sha manifest missing-env vite filament-js filament-css filament-fonts redis eviction backup-config mysql mail pre-smoke extensions fpm-extensions backup backup-lock migration-approval archive-link archive-traversal cached-config shared-link current-outside runtime-privileges; do
     fixture "$failure"
     export FAIL_STAGE="$failure"

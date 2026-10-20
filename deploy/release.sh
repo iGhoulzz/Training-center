@@ -70,7 +70,8 @@ log="$root/shared/deploy-logs/$sha-$(date -u +%Y%m%dT%H%M%SZ)-$$.log"
 exec 8>"$log"
 printf 'Deployment %s; prior %s\n' "$sha" "${previous:-first-install}" >&8
 step=privilege-preflight
-php_binary=$(command -v php)
+# Match systemd/cron exactly: PATH may contain another PHP with a different ini.
+php_binary=/usr/bin/php
 systemctl_binary=$(command -v systemctl)
 runtime_php() { sudo -n -u www-data "$php_binary" "$@"; }
 runtime_php --version >> "$log" 2>&1
@@ -151,6 +152,27 @@ try {
     require getcwd().'/vendor/autoload.php';
     $app = require getcwd().'/bootstrap/app.php';
     $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+    // TC_DEPLOY_WORKER_MEMORY_BEGIN
+    // Horizon children start fresh PHP without the master's systemd -d flag.
+    // Use the runtime user's default CLI ini and the measured 24 MiB render gap.
+    $rawLimit = trim((string) ini_get('memory_limit'));
+    if (! preg_match('/^([1-9][0-9]*)([KMG]?)$/iD', $rawLimit, $quantity)) {
+        throw new RuntimeException('Default CLI memory_limit must be finite and positive; configure the runtime PHP ini (not only the systemd master).');
+    }
+    $unit = match (strtoupper($quantity[2])) { 'K' => 1024, 'M' => 1048576, 'G' => 1073741824, default => 1 };
+    $amount = filter_var($quantity[1], FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => intdiv(PHP_INT_MAX, $unit)]]);
+    if ($amount === false) { throw new RuntimeException('Default CLI memory_limit is invalid.'); }
+    $limitBytes = $amount * $unit;
+    $production = config('horizon.environments.production', []);
+    if (! is_array($production) || $production === []) { throw new RuntimeException('Production Horizon supervisors are missing.'); }
+    foreach ($production as $name => $overrides) {
+        $options = array_replace(config('horizon.defaults.'.$name, []), $overrides);
+        $ceiling = filter_var($options['memory'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => intdiv(PHP_INT_MAX, 1048576)]]);
+        if ($ceiling === false || $limitBytes - $ceiling * 1048576 < 24 * 1048576) {
+            throw new RuntimeException('Default CLI memory_limit '.$rawLimit.' must leave at least 24 MiB above each production Horizon worker memory ceiling. Configure the runtime PHP ini before deployment.');
+        }
+    }
+    // TC_DEPLOY_WORKER_MEMORY_END
     $required = ['app.env' => 'production', 'app.debug' => false, 'database.default' => 'mysql', 'queue.default' => 'redis', 'cache.limiter' => 'redis', 'cache.default' => 'database', 'session.driver' => 'database'];
     foreach ($required as $key => $value) { if (config($key) !== $value) { throw new RuntimeException(); } }
     if (! config('app.key') || parse_url(config('app.url'), PHP_URL_SCHEME) !== 'https') { throw new RuntimeException(); }
@@ -189,6 +211,8 @@ try {
     $transport->stop();
     echo $host;
 } catch (Throwable $exception) {
+    // Memory-limit refusals contain only operator configuration, never secrets.
+    if (str_starts_with($exception->getMessage(), 'Default CLI memory_limit')) { fwrite(STDERR, $exception->getMessage()."\n"); }
     fwrite(STDERR, "Production dependency/configuration preflight failed.\n");
     exit(1);
 }
