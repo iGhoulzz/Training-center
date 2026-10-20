@@ -2109,7 +2109,12 @@ three-decimal LYD amounts).
   - `lang/en/auth.php`, `lang/en/navigation.php`: appended, plus the description
     reworded
   - `tests/Feature/Auth/ForcePasswordChangeTest.php`
-  - any doc that states the old minimum
+  - the passwords only, in `tests/Feature/Admin/ThemeShellTest.php` (whose
+    boundary moves to 8), `tests/Feature/Portal/PortalPasswordChangeTest.php`,
+    `tests/Feature/Staff/ActivityAuthEventsTest.php` and
+    `tests/Feature/Staff/SecurityReviewRegressionTest.php` (scope widened by
+    the lead: they chose passwords the new rule refuses)
+  - any doc that states the old minimum (none did)
 - Receipt:
   - `app/Domain/Finance/Filament/Pages/EnrollAndCollect.php` and its view
   - `tests/Feature/Finance/EnrollAndCollectReceiptTest.php` (new)
