@@ -157,14 +157,15 @@ it('interpolates the password minimum into the translated instructions', functio
 
     $response = $this->actingAs($actor)->get('/admin/password-change')->assertSuccessful();
 
-    expect(renderedWithoutLivewireState($response))->toContain('Minimum sentinel 12 characters');
+    expect(renderedWithoutLivewireState($response))->toContain('Minimum sentinel 8 characters');
 });
 
-it('enforces the displayed twelve-character password boundary', function (int $length, bool $rejected) {
+it('enforces the displayed eight-character password boundary', function (int $length, bool $rejected) {
     $actor = User::factory()->create(['is_active' => true, 'must_change_password' => true]);
     $actor->givePermissionTo('access_admin_panel');
     $this->actingAs($actor);
-    $password = str_repeat('a', $length);
+    // A capital and a symbol at either end, so only the length decides.
+    $password = 'A'.str_repeat('a', $length - 2).'!';
 
     $component = Livewire::test(PasswordChange::class)
         ->fillForm([
@@ -175,15 +176,16 @@ it('enforces the displayed twelve-character password boundary', function (int $l
         ->call('save');
 
     if ($rejected) {
-        $component->assertHasFormErrors(['password' => 'min']);
+        $component->assertHasFormErrors(['password']);
+        expect($component->errors()->get('data.password'))->toBe(['The password must be at least 8 characters long.']);
         expect(Hash::check('password', $actor->refresh()->password))->toBeTrue();
     } else {
         $component->assertHasNoFormErrors();
         expect(Hash::check($password, $actor->refresh()->password))->toBeTrue();
     }
 })->with([
-    'eleven characters refused' => [11, true],
-    'twelve characters accepted' => [12, false],
+    'seven characters refused' => [7, true],
+    'eight characters accepted' => [8, false],
 ]);
 
 it('renders the front desk at the existing dashboard route', function () {

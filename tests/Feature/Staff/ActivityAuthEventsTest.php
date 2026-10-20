@@ -136,8 +136,8 @@ it('records somebody changing their own password', function () {
     Livewire::test(PasswordChange::class)
         ->fillForm([
             'current_password' => 'existing-password-1',
-            'password' => 'a-fresh-secret-1',
-            'password_confirmation' => 'a-fresh-secret-1',
+            'password' => 'A-fresh-secret-1',
+            'password_confirmation' => 'A-fresh-secret-1',
         ])
         ->call('save')
         // Without this, a validation failure produces no log entry and the
@@ -149,7 +149,7 @@ it('records somebody changing their own password', function () {
     expect($entry)->not->toBeNull()
         ->and((int) $entry->causer_id)->toBe((int) $user->getKey());
 
-    expect(json_encode(Activity::query()->get()->toArray()))->not->toContain('a-fresh-secret-1');
+    expect(json_encode(Activity::query()->get()->toArray()))->not->toContain('A-fresh-secret-1');
 });
 
 /*

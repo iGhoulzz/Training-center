@@ -346,8 +346,8 @@ it('still lets the password-change component itself submit', function () {
         ->test(PasswordChange::class)
         ->fillForm([
             'current_password' => 'existing-password-1',
-            'password' => 'a-new-password-2',
-            'password_confirmation' => 'a-new-password-2',
+            'password' => 'A-new-password-2',
+            'password_confirmation' => 'A-new-password-2',
         ])
         ->call('save')
         ->assertHasNoFormErrors();
@@ -401,11 +401,11 @@ it('accepts a password change with the correct current password', function () {
         ->test(PasswordChange::class)
         ->fillForm([
             'current_password' => 'existing-password-1',
-            'password' => 'a-new-password-2',
-            'password_confirmation' => 'a-new-password-2',
+            'password' => 'A-new-password-2',
+            'password_confirmation' => 'A-new-password-2',
         ])
         ->call('save')
         ->assertHasNoFormErrors();
 
-    expect(Hash::check('a-new-password-2', $user->fresh()->password))->toBeTrue();
+    expect(Hash::check('A-new-password-2', $user->fresh()->password))->toBeTrue();
 });
