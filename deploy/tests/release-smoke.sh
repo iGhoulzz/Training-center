@@ -116,6 +116,13 @@ cat > "$sandbox/bin/sleep" <<'STUB'
 #!/usr/bin/env bash
 exit 0
 STUB
+real_find=$(command -v find)
+export REAL_FIND="$real_find"
+cat > "$sandbox/bin/find" <<'STUB'
+#!/usr/bin/env bash
+if [[ "${FAIL_SCHEDULER_FIND:-}" == 1 ]]; then echo 'simulated find failure' >&2; exit 1; fi
+exec "$REAL_FIND" "$@"
+STUB
 chmod +x "$sandbox/bin/"*
 export TEST_UNITS="$script_dir/../systemd"
 old=1111111111111111111111111111111111111111
@@ -161,6 +168,7 @@ cron_without_escaped_percent=${cron_entry//\\%/}
 cron_command=${cron_entry#\* \* \* \* \* www-data }
 cron_command=${cron_command//\/srv\/training-center/$TRAINING_CENTER_ROOT}
 cron_command=${cron_command//\/usr\/bin\/php/$sandbox/bin/php}
+cron_command=${cron_command//\/usr\/bin\/find/$sandbox/bin/find}
 TEST_RUNTIME_USER=www-data sh -c "$cron_command"
 daily_log="$logs/scheduler-$(date -u +%F).log"
 [[ -f "$daily_log" && ! -e "$logs/scheduler-2000-01-01.log" && -f "$logs/scheduler-2000-01-02.log" && -f "$logs/laravel-2000-01-01.log" ]] || { echo 'FAIL: scheduler log retention'; exit 1; }
@@ -168,6 +176,11 @@ grep -q 'scheduler stdout' "$daily_log"
 grep -q 'scheduler stderr' "$daily_log"
 [[ "$(grep -c 'artisan schedule:run' "$TEST_SANDBOX/commands")" == 1 ]]
 echo 'PASS: bounded scheduler log retention and one-minute command'
+if ! FAIL_SCHEDULER_FIND=1 TEST_RUNTIME_USER=www-data sh -c "$cron_command"; then echo 'FAIL: scheduler suppressed by cleanup failure'; exit 1; fi
+[[ "$(grep -c 'artisan schedule:run' "$TEST_SANDBOX/commands")" == 2 ]]
+grep -q 'simulated find failure' "$daily_log"
+grep -q 'Scheduler log cleanup failed' "$daily_log"
+echo 'PASS: scheduler continues after visible cleanup failure'
 for failure in invalid-sha manifest missing-env vite filament-js filament-css filament-fonts redis eviction backup-config mysql mail pre-smoke extensions fpm-extensions backup backup-lock migration-approval archive-link archive-traversal cached-config shared-link current-outside runtime-privileges; do
     fixture "$failure"
     export FAIL_STAGE="$failure"

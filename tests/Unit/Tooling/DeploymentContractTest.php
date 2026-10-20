@@ -70,3 +70,40 @@ it('keeps host templates on public roots and persistent supervised processes', f
     expect(file_get_contents($root.'/deploy/redis/training-center.conf.example'))->toContain('bind 127.0.0.1 ::1', 'maxmemory-policy noeviction', 'appendonly yes', 'appendfsync everysec', 'include /etc/redis/training-center-secret.conf');
     expect(file_get_contents($root.'/deploy/cron/training-center.cron'))->toContain('* * * * * www-data', 'current/artisan schedule:run');
 });
+
+it('serves ACME challenges independently of redirects and TLS dotfile rules', function (): void {
+    $nginx = file_get_contents(dirname(__DIR__, 3).'/deploy/nginx/training-center.conf.example');
+    preg_match_all('/^server \{.*?^\}/ms', $nginx, $servers);
+    expect($servers[0])->toHaveCount(2);
+
+    foreach ($servers[0] as $server) {
+        preg_match('/location \^~ \/\.well-known\/acme-challenge\/ \{([^{}]*)\}/s', $server, $challenge);
+        expect($challenge)->not->toBeEmpty();
+        expect($challenge[1])->toContain('root /var/www/letsencrypt;', 'default_type text/plain;', 'try_files $uri =404;');
+    }
+
+    $http = $servers[0][0];
+    $withoutLocations = preg_replace('/location[^{}]*\{[^{}]*\}/s', '', $http);
+    expect($withoutLocations)->not->toMatch('/\breturn\s+301\b/');
+    expect($http)->toMatch('/location \/ \{\s*return 301 https:\/\/center\.example\$request_uri;\s*\}/s');
+});
+
+it('applies browser security headers on HTTPS responses without HSTS on HTTP', function (): void {
+    $nginx = file_get_contents(dirname(__DIR__, 3).'/deploy/nginx/training-center.conf.example');
+    preg_match_all('/^server \{.*?^\}/ms', $nginx, $servers);
+    expect($servers[0][0])->not->toContain('Strict-Transport-Security');
+    expect($servers[0][1])->toContain(
+        'add_header Strict-Transport-Security "max-age=31536000" always;',
+        'add_header X-Frame-Options SAMEORIGIN always;',
+        'add_header Referrer-Policy strict-origin-when-cross-origin always;',
+    );
+});
+
+it('returns maintenance before the first current entrypoint exists instead of passing it to FPM', function (): void {
+    $nginx = file_get_contents(dirname(__DIR__, 3).'/deploy/nginx/training-center.conf.example');
+    preg_match('/location = \/index\.php \{([^{}]*)\}/s', $nginx, $entrypoint);
+
+    expect($entrypoint)->not->toBeEmpty();
+    expect($entrypoint[1])->toMatch('/try_files \$uri =503;.*fastcgi_pass/s');
+    expect($nginx)->toContain('root /srv/training-center/current/public;', 'location / { try_files $uri $uri/ /index.php?$query_string; }');
+});

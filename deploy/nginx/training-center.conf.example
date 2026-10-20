@@ -5,7 +5,12 @@ server {
     listen 80;
     listen [::]:80;
     server_name center.example;
-    return 301 https://center.example$request_uri;
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/letsencrypt;
+        default_type text/plain;
+        try_files $uri =404;
+    }
+    location / { return 301 https://center.example$request_uri; }
 }
 
 server {
@@ -20,7 +25,15 @@ server {
     charset utf-8;
     client_max_body_size 20m;
     add_header X-Content-Type-Options nosniff always;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Frame-Options SAMEORIGIN always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
 
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/letsencrypt;
+        default_type text/plain;
+        try_files $uri =404;
+    }
     location / { try_files $uri $uri/ /index.php?$query_string; }
     location ~ /\. { deny all; }
     location ~* ^/(?:storage/app|vendor|bootstrap|config|database|deploy|docs|routes|tests)(?:/|$) { return 404; }
@@ -29,6 +42,8 @@ server {
     location = /package.json { return 404; }
 
     location = /index.php {
+        # First install: serve Nginx's 503 until the atomic current switch.
+        try_files $uri =503;
         # Do not include fastcgi.conf or snippets/fastcgi-php.conf here: their
         # SCRIPT_FILENAME may shadow the resolved release. Parameters are explicit.
         fastcgi_pass unix:/run/php/php8.4-fpm.sock;

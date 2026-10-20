@@ -4,4 +4,5 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # UTC daily scheduler logs; delete only scheduler-YYYY-MM-DD.log files whose
 # last write is at least 14 days old. Laravel daily logs are separate/untouched.
 # Cron requires the percent escape below even inside shell quotes.
-* * * * * www-data cd /srv/training-center/current && /usr/bin/find /srv/training-center/shared/storage/logs -maxdepth 1 -type f -name 'scheduler-????-??-??.log' -mtime +13 -delete && /usr/bin/php /srv/training-center/current/artisan schedule:run >> "/srv/training-center/shared/storage/logs/scheduler-$(date -u +\%F).log" 2>&1
+# Cleanup errors remain in today's log and must not suppress scheduled work.
+* * * * * www-data cd /srv/training-center/current && { /usr/bin/find /srv/training-center/shared/storage/logs -maxdepth 1 -type f -name 'scheduler-????-??-??.log' -mtime +13 -delete || echo 'Scheduler log cleanup failed; schedule:run continues.' >&2; /usr/bin/php /srv/training-center/current/artisan schedule:run; } >> "/srv/training-center/shared/storage/logs/scheduler-$(date -u +\%F).log" 2>&1
