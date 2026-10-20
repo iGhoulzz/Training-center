@@ -30,10 +30,10 @@ it('keeps host templates on public roots and persistent supervised processes', f
             'ExecStart' => '/usr/bin/php -d memory_limit=128M /srv/training-center/current/artisan '.$command,
             'Restart' => 'always',
             'RestartSec' => '5s',
-            'User' => 'training-center',
+            'User' => 'www-data',
         ]);
     }
 
     expect(file_get_contents($root.'/deploy/redis/training-center.conf.example'))->toContain('bind 127.0.0.1 ::1', 'maxmemory-policy noeviction', 'appendonly yes', 'appendfsync everysec', 'include /etc/redis/training-center-secret.conf');
-    expect(file_get_contents($root.'/deploy/cron/training-center.cron'))->toContain('* * * * * training-center', 'current/artisan schedule:run');
+    expect(file_get_contents($root.'/deploy/cron/training-center.cron'))->toContain('* * * * * www-data', 'current/artisan schedule:run');
 });

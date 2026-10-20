@@ -20,7 +20,9 @@ export MSYS_NO_PATHCONV=1
 cat > "$sandbox/bin/php" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
+[[ "${TEST_RUNTIME_USER:-}" == www-data ]] || exit 95
 printf '%s|%s\n' "$PWD" "$*" >> "$TEST_SANDBOX/commands"
+[[ "${1:-}" != --version ]] || { echo 'PHP fixture'; exit 0; }
 if [[ "${1:-}" == artisan ]]; then
     case "$2" in
         backup:run) [[ "${FAIL_STAGE:-}" != backup ]] || exit 1; touch "$TEST_SANDBOX/backup-ok" ;;
@@ -38,6 +40,11 @@ if [[ "${1:-}" == artisan ]]; then
 fi
 source_code=$(cat)
 case "$source_code" in
+    *TC_DEPLOY_PROCESS*) [[ "$(readlink "$TRAINING_CENTER_ROOT/current")" == "$3" ]] ;;
+    *TC_DEPLOY_STORAGE*)
+        [[ -z "$(find "$2" -type l -print -quit)" ]] || exit 1
+        for path in app/secure app/public framework/cache/data framework/sessions framework/views logs; do mkdir -p "$2/$path"; done
+        ;;
     *TC_DEPLOY_BACKUP*)
         [[ "${FAIL_STAGE:-}" != backup && "${FAIL_STAGE:-}" != backup-lock ]] || exit 1
         touch "$TEST_SANDBOX/backup-ok"
@@ -82,7 +89,10 @@ STUB
 cat > "$sandbox/bin/sudo" <<'STUB'
 #!/usr/bin/env bash
 [[ "$1" == -n ]] || exit 90
+[[ "${FAIL_STAGE:-}" != runtime-privileges ]] || exit 1
 shift
+if [[ "$1" == -l ]]; then exit 0; fi
+if [[ "$1" == -u ]]; then [[ "$2" == www-data ]] || exit 90; export TEST_RUNTIME_USER=www-data; shift 2; fi
 exec "$@"
 STUB
 real_readlink=$(command -v readlink)
@@ -135,7 +145,7 @@ reject() {
     unchanged "$2"
     echo "PASS: rejected $2"
 }
-for failure in invalid-sha manifest missing-env vite filament-js filament-css filament-fonts redis eviction backup-config mysql mail pre-smoke extensions fpm-extensions backup backup-lock migration-approval archive-link archive-traversal cached-config shared-link current-outside; do
+for failure in invalid-sha manifest missing-env vite filament-js filament-css filament-fonts redis eviction backup-config mysql mail pre-smoke extensions fpm-extensions backup backup-lock migration-approval archive-link archive-traversal cached-config shared-link current-outside runtime-privileges; do
     fixture "$failure"
     export FAIL_STAGE="$failure"
     sha="$new"

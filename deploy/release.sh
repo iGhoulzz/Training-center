@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 umask 0027
-# Host prerequisites: dedicated training-center account, www-data shared group,
-# php-fpm8.4 CLI, GNU tar/coreutils/flock, curl, and narrowly scoped passwordless
-# sudo for systemctl reload php8.4-fpm.service / start the two application units.
+# Host prerequisites: training-center owns releases and belongs to www-data.
+# FPM pool, Horizon, Pulse, cron and all Artisan commands run as www-data.
+# shared/storage is provisioned www-data:www-data; shared/.env is deploy-owned
+# and runtime-readable. Runtime cannot modify release source. Install GNU tools,
+# php-fpm8.4, curl and narrowly scoped passwordless sudo for PHP as www-data and
+# root systemctl reload php8.4-fpm.service / start the two application units.
 # The caller supplies an approved exact-main SHA artifact; Task 3 proves its CI.
 # REVISION is a root-level regular text file containing that lowercase SHA only.
 # Host-only approval files contain the same SHA, never packaged in the archive:
@@ -66,6 +69,13 @@ mkdir -p -- "$root/shared/deploy-logs"
 log="$root/shared/deploy-logs/$sha-$(date -u +%Y%m%dT%H%M%SZ)-$$.log"
 exec 8>"$log"
 printf 'Deployment %s; prior %s\n' "$sha" "${previous:-first-install}" >&8
+step=privilege-preflight
+php_binary=$(command -v php)
+systemctl_binary=$(command -v systemctl)
+runtime_php() { sudo -n -u www-data "$php_binary" "$@"; }
+runtime_php --version >> "$log" 2>&1
+sudo -n -l -- "$systemctl_binary" reload php8.4-fpm.service >> "$log" 2>&1
+sudo -n -l -- "$systemctl_binary" start training-center-horizon.service training-center-pulse.service >> "$log" 2>&1
 step=archive-validation
 # Reject traversal, links (including hard links), devices, secrets, persistent
 # state, repository files and runner caches BEFORE extraction. No tar overwrite.
@@ -92,24 +102,35 @@ step=shared-state
 ln -s -- "$root/shared/.env" "$release/.env"
 ln -s -- "$root/shared/storage" "$release/storage"
 mkdir -p -- "$release/bootstrap/cache"
-[[ -z "$(find "$root/shared/storage" -type l -print -quit)" ]] || fail 'shared storage must not contain symlinks'
-for path in app/secure app/public framework/cache/data framework/sessions framework/views logs; do
-    [[ ! -L "$root/shared/storage/$path" ]] || fail 'unsafe shared storage subdirectory'
-    mkdir -p -- "$root/shared/storage/$path"
-    [[ "$(realpath -e -- "$root/shared/storage/$path")" == "$root/shared/storage/$path" ]] || fail 'shared storage resolves outside layout'
-done
 ln -s -- "$root/shared/storage/app/public" "$release/public/storage"
 # Do not chmod/chgrp through archive symlinks; only known shared paths and new code.
-chgrp -R www-data "$release" "$root/shared/storage"
+chgrp -hR www-data "$release"
 find "$release" -type d -exec chmod 2750 {} +
 find "$release" -type f -perm /111 -exec chmod 0750 {} +
 find "$release" -type f ! -perm /111 -exec chmod 0640 {} +
 chmod 2770 "$release/bootstrap/cache"
-find "$root/shared/storage" -type d -exec chmod 2770 {} +
-find "$root/shared/storage" -type f -exec chmod 0660 {} +
 chgrp www-data "$root/shared/.env"
 chmod 0640 "$root/shared/.env"
 cd -- "$release"
+step=runtime-storage
+runtime_php /dev/stdin "$root/shared/storage" <<'PHP' >> "$log" 2>&1
+<?php
+// TC_DEPLOY_STORAGE
+try {
+    $storage = $argv[1];
+    if (is_link($storage) || realpath($storage) !== $storage || ! is_writable($storage)) { throw new RuntimeException(); }
+    $entries = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($storage, FilesystemIterator::SKIP_DOTS));
+    foreach ($entries as $entry) { if ($entry->isLink()) { throw new RuntimeException(); } }
+    foreach (['app/secure', 'app/public', 'framework/cache/data', 'framework/sessions', 'framework/views', 'logs'] as $path) {
+        $directory = $storage;
+        foreach (explode('/', $path) as $component) {
+            $directory .= '/'.$component;
+            if (! file_exists($directory) && ! mkdir($directory, 0770)) { throw new RuntimeException(); }
+            if (is_link($directory) || realpath($directory) !== $directory || ! is_dir($directory) || ! is_writable($directory)) { throw new RuntimeException(); }
+        }
+    }
+} catch (Throwable $exception) { fwrite(STDERR, "Runtime storage is unsafe or unavailable.\n"); exit(1); }
+PHP
 step=php-fpm-extensions
 fpm_binary=$(command -v php-fpm8.4 || printf '/usr/sbin/php-fpm8.4')
 "$fpm_binary" -m > "$root/shared/deploy-logs/$sha-$$.fpm-modules" 2>&1
@@ -119,7 +140,7 @@ done
 step=production-preflight
 # PHP executes from stdin: credentials never enter process arguments. Exceptions
 # are reduced to a generic refusal; protected logs never echo application config.
-host=$(php <<'PHP'
+host=$(runtime_php <<'PHP'
 <?php
 // TC_DEPLOY_PREFLIGHT
 try {
@@ -174,12 +195,12 @@ try {
 PHP
 ) || fail 'production dependency/configuration preflight failed'
 step=cache-rebuild
-for command in config:cache route:cache view:cache event:cache filament:optimize; do php artisan "$command" --no-interaction >> "$log" 2>&1; done
+for command in config:cache route:cache view:cache event:cache filament:optimize; do runtime_php artisan "$command" --no-interaction >> "$log" 2>&1; done
 step=fresh-backup
 if [[ -n "$previous" ]]; then
     # Current code backs up the prior schema and BOTH upload roots. Share the
     # scheduler's exact mutex so a nightly archive cannot race this fresh backup.
-    (cd -- "$previous" && php <<'PHP'
+    (cd -- "$previous" && runtime_php <<'PHP'
 <?php
 // TC_DEPLOY_BACKUP
 try {
@@ -199,9 +220,9 @@ else
     printf 'First installation: no prior production data; backup drill required before cutover.\n' >&8
 fi
 step=migration
-php artisan migrate --force --no-interaction >> "$log" 2>&1
+runtime_php artisan migrate --force --no-interaction >> "$log" 2>&1
 smoke() {
-php <<'PHP' >> "$log" 2>&1
+runtime_php <<'PHP' >> "$log" 2>&1
 <?php
 // TC_DEPLOY_POSTFLIGHT
 try {
@@ -231,16 +252,22 @@ switched=1
 printf 'Switched current to %s; prior retained at %s\n' "$sha" "${previous:-none}" >&8
 step=process-restart
 cd -- "$root/current"
-sudo -n systemctl reload php8.4-fpm.service >> "$log" 2>&1
-php artisan horizon:terminate --no-interaction >> "$log" 2>&1
-php artisan pulse:restart --no-interaction >> "$log" 2>&1
-sudo -n systemctl start training-center-horizon.service training-center-pulse.service >> "$log" 2>&1
+sudo -n "$systemctl_binary" reload php8.4-fpm.service >> "$log" 2>&1
+runtime_php artisan horizon:terminate --no-interaction >> "$log" 2>&1
+runtime_php artisan pulse:restart --no-interaction >> "$log" 2>&1
+sudo -n "$systemctl_binary" start training-center-horizon.service training-center-pulse.service >> "$log" 2>&1
 for service in horizon pulse; do
     ready=0
     for ((attempt=0; attempt<120; attempt++)); do
         if systemctl is-active --quiet "training-center-$service.service"; then
             pid=$(systemctl show --property=MainPID --value "training-center-$service.service")
-            if [[ "$pid" =~ ^[1-9][0-9]*$ && "$(readlink -f -- "/proc/$pid/cwd" 2>/dev/null || true)" == "$release" ]]; then ready=1; break; fi
+            # /proc cwd access is restricted to the process's runtime identity.
+            if [[ "$pid" =~ ^[1-9][0-9]*$ ]] && runtime_php /dev/stdin "$pid" "$release" <<'PHP' >> "$log" 2>&1
+<?php
+// TC_DEPLOY_PROCESS
+exit(realpath('/proc/'.$argv[1].'/cwd') === $argv[2] ? 0 : 1);
+PHP
+            then ready=1; break; fi
         fi
         sleep 1
     done
