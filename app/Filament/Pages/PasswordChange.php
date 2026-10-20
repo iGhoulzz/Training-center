@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace App\Filament\Pages;
 
 use App\Domain\Staff\Support\ActivityEvent;
+use App\Domain\Staff\Support\ChosenPasswordRule;
 use App\Models\User;
-use Closure;
 use Filament\Facades\Filament;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
@@ -25,8 +25,6 @@ use LogicException;
  */
 class PasswordChange extends Page
 {
-    private const MINIMUM_PASSWORD_LENGTH = 8;
-
     protected static bool $shouldRegisterNavigation = false;
 
     protected string $view = 'filament.pages.password-change';
@@ -61,7 +59,7 @@ class PasswordChange extends Page
 
     public function getSubheading(): string
     {
-        return __('navigation.password_change_description', ['minimum' => self::MINIMUM_PASSWORD_LENGTH]);
+        return __('navigation.password_change_description', ['minimum' => ChosenPasswordRule::MINIMUM_LENGTH]);
     }
 
     /**
@@ -136,7 +134,7 @@ class PasswordChange extends Page
                     ->label(__('auth.new_password'))
                     ->password()
                     ->required()
-                    ->rules(self::passwordRules())
+                    ->rules([new ChosenPasswordRule])
                     ->confirmed(),
                 TextInput::make('password_confirmation')
                     ->label(__('auth.confirm_password'))
@@ -144,47 +142,6 @@ class PasswordChange extends Page
                     ->required(),
             ])
             ->statePath('data');
-    }
-
-    /**
-     * THE RULE FOR A CHOSEN PASSWORD, ONE CLOSURE PER REQUIREMENT.
-     *
-     * At least eight characters, one capital letter and one symbol, for staff
-     * and students alike, because both panels render this page. Each requirement
-     * is its own rule so a refusal names exactly what is missing; a single
-     * combined rule could only say "too weak". All three run on every submit,
-     * so a password missing two things hears about both.
-     *
-     * Laravel's `Password::mixedCase()` is deliberately not used: it also
-     * demands a lowercase letter, which the owner's rule does not. A capital is
-     * `\p{Lu}` and a symbol is anything that is not a letter, a digit or
-     * whitespace, both under `/u`, so a non-Latin capital or a non-ASCII symbol
-     * counts. Length is counted in characters (`mb_strlen`), not bytes.
-     *
-     * Only a password somebody is choosing is checked. Existing passwords and
-     * the generated temporary ones are not run through this.
-     *
-     * @return list<Closure>
-     */
-    private static function passwordRules(): array
-    {
-        return [
-            fn (): Closure => function (string $attribute, mixed $value, Closure $fail): void {
-                if (mb_strlen((string) $value) < self::MINIMUM_PASSWORD_LENGTH) {
-                    $fail(__('auth.password_too_short', ['minimum' => self::MINIMUM_PASSWORD_LENGTH]));
-                }
-            },
-            fn (): Closure => function (string $attribute, mixed $value, Closure $fail): void {
-                if (preg_match('/\p{Lu}/u', (string) $value) !== 1) {
-                    $fail(__('auth.password_needs_capital'));
-                }
-            },
-            fn (): Closure => function (string $attribute, mixed $value, Closure $fail): void {
-                if (preg_match('/[^\p{L}\p{N}\s]/u', (string) $value) !== 1) {
-                    $fail(__('auth.password_needs_symbol'));
-                }
-            },
-        ];
     }
 
     public function save(): void

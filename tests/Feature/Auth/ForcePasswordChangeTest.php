@@ -434,6 +434,7 @@ dataset('refused passwords', [
     'no symbol, only a digit' => [['Abcdefgh1', ['The password must contain at least one symbol, such as ! or #. Letters, digits and spaces do not count.']]],
     'a space is not a symbol' => [['Abcdefgh 1', ['The password must contain at least one symbol, such as ! or #. Letters, digits and spaces do not count.']]],
     'seven characters that are more than seven bytes' => [['Aééééé!', ['The password must be at least 8 characters long.']]],
+    'Unicode digits and spaces are not symbols' => [["Abcdef١\u{00A0}", ['The password must contain at least one symbol, such as ! or #. Letters, digits and spaces do not count.']]],
     'nothing but lower case letters' => [['abc', [
         'The password must be at least 8 characters long.',
         'The password must contain at least one capital letter.',
@@ -446,6 +447,7 @@ dataset('accepted passwords', [
     'a capital and a symbol, no lower case at all' => ['ABCDEFG!'],
     'a non-Latin capital and a non-ASCII symbol' => ['Édrisi§9'],
     'eight characters that are more than eight bytes' => ['Aéééééé!'],
+    'Greek capital' => ['Δabcdef!'],
 ]);
 
 /**

@@ -240,10 +240,20 @@ it('does not call the trusted system writer from application code', function () 
     // SystemRoleWriter performs unauthorized writes on purpose. It belongs to
     // seeders, factories and console setup — never to anything serving a
     // request, where an actor exists and the Actions apply.
-    $offenders = filesMatching('/\bSystemRoleWriter\b/', ['SystemRoleWriter']);
+    // Exact paths keep other commands and same-basename files bound by this
+    // rule while admitting the actorless first-owner setup command.
+    $allowedPaths = [
+        'app/Domain/Staff/Actions/SystemRoleWriter.php',
+        'app/Console/Commands/BootstrapProductionOwnerCommand.php',
+    ];
+    $offenders = array_values(array_filter(
+        filesMatching('/\bSystemRoleWriter\b/'),
+        fn (string $path): bool => ! in_array(str_replace('\\', '/', $path), $allowedPaths, true),
+    ));
 
     expect($offenders)->toBeEmpty(
-        'SystemRoleWriter is for seeders/factories/console setup only, never application code: '
+        'SystemRoleWriter is for trusted setup; only app/Console/Commands/BootstrapProductionOwnerCommand.php '
+        .'may call it from application code: '
         .implode(', ', $offenders),
     );
 });
