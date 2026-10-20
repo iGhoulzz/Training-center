@@ -190,3 +190,19 @@ it('clears the page when the operator finishes the enrolment', function () {
         ->and(($this->printLink)($component))->toBeNull()
         ->and($component->html())->not->toContain('Payment recorded');
 });
+
+it('offers Finish enrolment beside Print, wired to the method that clears the page', function () {
+    $component = ($this->collectSplit)($this->nonPrinter);
+
+    $buttons = HTMLDocument::createFromString($component->html(), LIBXML_NOERROR)
+        ->querySelectorAll('[data-payment-recorded] button');
+    $finish = null;
+    foreach ($buttons as $button) {
+        if (trim(preg_replace('/\s+/', ' ', $button->textContent)) === 'Finish enrolment') {
+            $finish = $button;
+        }
+    }
+
+    expect($finish)->not->toBeNull()
+        ->and($finish->getAttribute('wire:click'))->toBe('finishCollection');
+});
