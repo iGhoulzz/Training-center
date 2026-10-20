@@ -53,6 +53,7 @@ final class BootstrapProductionOwnerCommand extends Command
                     'name' => Str::trim((string) $this->ask("Owner {$number} name")),
                     'email' => Str::trim((string) $this->ask("Owner {$number} email")),
                     'password' => $this->secret("Owner {$number} chosen password", fallback: false),
+                    'password_confirmation' => $this->secret("Owner {$number} confirm password", fallback: false),
                 ];
 
                 foreach (['name', 'email', 'password'] as $attribute) {
@@ -63,7 +64,7 @@ final class BootstrapProductionOwnerCommand extends Command
             $validator = Validator::make(['owners' => $owners], [
                 'owners.*.name' => ['required', 'string', 'max:255'],
                 'owners.*.email' => ['required', 'string', 'email', 'max:255', 'distinct:ignore_case'],
-                'owners.*.password' => ['required', 'string', new ChosenPasswordPolicy],
+                'owners.*.password' => ['required', 'string', new ChosenPasswordPolicy, 'confirmed'],
             ], attributes: $attributes);
 
             if ($validator->fails()) {

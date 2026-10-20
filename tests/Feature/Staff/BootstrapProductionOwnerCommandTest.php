@@ -37,12 +37,16 @@ beforeEach(function (): void {
 
         foreach ($owners as $index => $owner) {
             $number = $index + 1;
+            $confirmation = $owner['password_confirmation'] ?? $owner['password'];
             $command->expectsQuestion("Owner {$number} name", $owner['name'])
                 ->expectsQuestion("Owner {$number} email", $owner['email'])
-                ->expectsQuestion("Owner {$number} chosen password", $owner['password']);
+                ->expectsQuestion("Owner {$number} chosen password", $owner['password'])
+                ->expectsQuestion("Owner {$number} confirm password", $confirmation);
 
-            if ($owner['password'] !== '') {
-                $command->doesntExpectOutputToContain($owner['password']);
+            foreach ([$owner['password'], $confirmation] as $secret) {
+                if ($secret !== '') {
+                    $command->doesntExpectOutputToContain($secret);
+                }
             }
         }
 
@@ -156,6 +160,26 @@ it('requires both hidden chosen passwords without creating either account', func
     expect(User::withTrashed()->count())->toBe(0)
         ->and(DB::table('model_has_roles')->count())->toBe(0);
 })->with([0, 1]);
+
+it('rejects a mismatched password confirmation for either owner without changing users pivots or audit rows', function (string $confirmation, int $index): void {
+    $before = [
+        DB::table('users')->get()->toArray(),
+        DB::table('model_has_roles')->get()->toArray(),
+        DB::table('activity_log')->get()->toArray(),
+    ];
+    $number = $index + 1;
+
+    ($this->bootstrap)([$index => ['password_confirmation' => $confirmation]])
+        ->expectsOutput("The Owner {$number} password field confirmation does not match.")
+        ->doesntExpectOutputToContain('Bootstrap failed')
+        ->assertFailed();
+
+    expect([
+        DB::table('users')->get()->toArray(),
+        DB::table('model_has_roles')->get()->toArray(),
+        DB::table('activity_log')->get()->toArray(),
+    ])->toEqual($before);
+})->with(['Different-password#3', ''])->with([0, 1]);
 
 it('trims outer spaces from both owners names and email addresses before storing them', function (): void {
     ($this->bootstrap)([
@@ -289,10 +313,13 @@ it('serializes concurrent first owners even when both transactions already saw a
                     if (! $question->isHidden() || $question->isHiddenFallback()) {
                         throw new RuntimeException('Chosen password must be hidden without fallback.');
                     }
-                    if ($question->getQuestion() === 'Owner 1 chosen password') {
+                    if (in_array($question->getQuestion(), ['Owner 1 chosen password', 'Owner 1 confirm password'], true)) {
                         return 'Abcdefg!';
                     }
-                    if ($question->getQuestion() !== 'Owner 2 chosen password') {
+                    if ($question->getQuestion() === 'Owner 2 chosen password') {
+                        return 'Backup-password#2';
+                    }
+                    if ($question->getQuestion() !== 'Owner 2 confirm password') {
                         throw new RuntimeException('Unexpected bootstrap question.');
                     }
                     file_put_contents($this->ready, 'ready');
