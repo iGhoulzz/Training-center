@@ -22,6 +22,8 @@
         'tone' => $row['tone'] ?? 'primary',
         'emphasis' => (bool) ($row['emphasis'] ?? false),
     ])->values();
+    // A negative value always keeps its minus, signed chart or not: a wage total can
+    // be negative when deductions exceed pay, and the table under the chart says so.
     // Not abs(): it returns a float for PHP_INT_MIN, and no float touches money here.
     $magnitudeOf = static fn (int $dirham): int => $dirham < 0 ? -$dirham : $dirham;
     // Every bar is scaled to the largest absolute value in the chart.
@@ -42,7 +44,7 @@
                 <rect width="100" height="6" class="fill-white/8" />
                 <rect width="{{ $ratio }}" height="6" rx="3" class="fill-current" />
             </svg>
-            <span dir="ltr" class="order-2 whitespace-nowrap text-end text-[12.5px] sm:order-3 {{ $signed ? $tones[$bar['tone']] : 'text-gray-50' }}" data-bar-value>@if ($signed){{ $bar['dirham'] < 0 ? __('reports.charts.sign_negative') : ($bar['dirham'] > 0 ? __('reports.charts.sign_positive') : '') }}@endif<x-admin.money :amount="Money::fromDirham($magnitude)" /></span>
+            <span dir="ltr" class="order-2 whitespace-nowrap text-end text-[12.5px] sm:order-3 {{ $signed ? $tones[$bar['tone']] : 'text-gray-50' }}" data-bar-value>@if ($signed){{ $bar['dirham'] < 0 ? __('reports.charts.sign_negative') : ($bar['dirham'] > 0 ? __('reports.charts.sign_positive') : '') }}@elseif ($bar['dirham'] < 0){{ __('reports.charts.sign_negative') }}@endif<x-admin.money :amount="Money::fromDirham($magnitude)" /></span>
         </li>
     @endforeach
 </ul>

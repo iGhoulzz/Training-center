@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use App\Domain\Finance\Exports\ReportDataBuilder;
+use App\Domain\Finance\Exports\ReportKind;
 use App\Domain\Finance\Filament\Pages\Reports\WageCostReportPage;
 use App\Domain\Finance\Filament\Widgets\WageCostChart;
 use App\Domain\Finance\Models\PayrollLine;
@@ -177,4 +179,20 @@ it('refuses an inactive report permission holder', function () {
 it('refuses an unauthenticated chart request', function () {
     auth()->logout();
     Livewire::test(WageCostChart::class, ['reportFilters' => $this->reportOptions, 'lazy' => false])->assertForbidden();
+});
+
+it('keeps the minus on a negative wage total, as the table under the chart does', function () {
+    // Codex review of #124: an unsigned chart drew -25.001 as 25.001.
+    $staff = User::factory()->create(['name' => 'Dana']);
+    $line = PayrollLine::factory()->create(['user_id' => $staff->getKey(), 'computed_amount' => '100.000']);
+    PayrollLineAdjustment::factory()->create(['payroll_line_id' => $line->getKey(), 'amount' => '-125.001']);
+    $line->forceFill(['finalized_at' => '2026-10-28 10:00:00', 'posting_period_start' => '2026-10-01'])->saveQuietly();
+
+    $html = Livewire::test(WageCostChart::class, ['reportFilters' => $this->reportOptions, 'lazy' => false])->html();
+    // The table renders the ReportDataBuilder dataset, the same rows the chart draws.
+    $cells = array_column(app(ReportDataBuilder::class)->build(ReportKind::WageCost, $this->reportOptions, $this->viewer)->rows, 'cells');
+
+    expect(($this->bars)($html))->toBe([
+        ['label' => 'Dana', 'value' => '−25.001 LYD', 'width' => '100', 'tone' => 'primary', 'set_apart' => false],
+    ])->and(array_column($cells, 'total'))->toBe(['-25.001']);
 });
