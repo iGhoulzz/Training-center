@@ -165,4 +165,11 @@ return [
     // a bill that does not exist, one the actor may not collect on, and one
     // that is already paid all read the same.
     'charge_not_collectable' => 'This bill cannot be collected here. It may already have a payment, be written off or have nothing outstanding, or you may not be allowed to take payments.',
+
+    // P4-T35: what the panel shows once this panel's payment is recorded.
+    'payment_recorded' => 'Payment recorded',
+    'recorded_receipt' => 'Receipt',
+    'recorded_amount' => 'Amount received',
+    'recorded_tenders' => 'Paid by',
+    'recorded_tender_reference' => 'Reference :reference',
 ];

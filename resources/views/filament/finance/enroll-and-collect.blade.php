@@ -36,6 +36,32 @@
                         @if ($this->flowStep > 1)<x-filament::button color="gray" wire:click="back">{{ __('collect.back') }}</x-filament::button>@endif
                         @if ($this->flowStep < 4)<x-filament::button wire:click="advance" wire:loading.attr="disabled">{{ __('collect.continue') }}</x-filament::button>@else<x-filament::button wire:click="confirm" wire:loading.attr="disabled">{{ auth()->user()?->can('create_payment') ? __('collect.confirm_and_continue') : __('collect.confirm_enrolment') }}</x-filament::button>@endif
                     </div>
+                @elseif ($payment = $this->recordedPayment)
+                    <div class="flex min-w-0 flex-col gap-4" data-payment-recorded>
+                        <h2 class="text-[15px] font-semibold text-success-400">{{ __('collect.payment_recorded') }}</h2>
+                        <dl class="flex flex-col gap-2.75 text-[12.5px]">
+                            <div class="flex items-baseline justify-between gap-3"><dt class="text-gray-400">{{ __('collect.recorded_receipt') }}</dt><dd class="min-w-0 text-end font-medium wrap-anywhere">{{ $payment->reference }}</dd></div>
+                            <div class="flex items-baseline justify-between gap-3"><dt class="text-gray-400">{{ __('collect.recorded_amount') }}</dt><dd class="text-[15px] font-semibold text-primary-400"><x-admin.money :amount="$payment->tenders_sum_amount" /></dd></div>
+                        </dl>
+                        <div>
+                            <h3 class="mb-2 text-[12.5px] text-gray-400">{{ __('collect.recorded_tenders') }}</h3>
+                            <ul class="flex flex-col gap-2 text-[12.5px]">
+                                @foreach ($payment->tenders as $tender)
+                                    <li class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 rounded-[11px] bg-fill-subtle px-3 py-2">
+                                        <span class="font-medium">{{ $tender->method->label() }}</span>
+                                        <x-admin.money :amount="$tender->amount" class="font-medium" />
+                                        @if (filled($tender->external_reference))<span class="w-full text-[11.5px] text-gray-400">{{ __('collect.recorded_tender_reference', ['reference' => $tender->external_reference]) }}</span>@endif
+                                    </li>
+                                @endforeach
+                            </ul>
+                        </div>
+                        <div class="mt-auto flex flex-wrap gap-2.25 border-t border-hairline-faint pt-4">
+                            @if ($this->canPrintReceipt())
+                                <x-filament::button tag="a" :href="route('finance.receipts.print', $payment)" target="_blank" rel="noopener noreferrer" icon="heroicon-o-printer" data-print-receipt>{{ __('payments.print_receipt') }}</x-filament::button>
+                            @endif
+                            <x-filament::button color="gray" wire:click="finishCollection">{{ __('collect.done') }}</x-filament::button>
+                        </div>
+                    </div>
                 @else
                     <div class="flex flex-wrap items-center justify-between gap-2">
                         <h2 class="text-[15px] font-semibold">{{ __('collect.take_payment') }}</h2>

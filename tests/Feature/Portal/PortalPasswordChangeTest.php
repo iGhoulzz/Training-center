@@ -84,8 +84,8 @@ it('returns a student to the portal after a successful change', function () {
             // credential ownership (P1-T15, finding 6). 'password' is what
             // UserFactory hashes.
             'current_password' => 'password',
-            'password' => 'a-new-passphrase-9134',
-            'password_confirmation' => 'a-new-passphrase-9134',
+            'password' => 'A-new-passphrase-9134',
+            'password_confirmation' => 'A-new-passphrase-9134',
         ])
         ->call('save')
         ->assertRedirect('/portal');
@@ -111,8 +111,8 @@ it('still returns a staff user to the admin panel after a successful change', fu
             // credential ownership (P1-T15, finding 6). 'password' is what
             // UserFactory hashes.
             'current_password' => 'password',
-            'password' => 'a-new-passphrase-9134',
-            'password_confirmation' => 'a-new-passphrase-9134',
+            'password' => 'A-new-passphrase-9134',
+            'password_confirmation' => 'A-new-passphrase-9134',
         ])
         ->call('save')
         ->assertRedirect('/admin');

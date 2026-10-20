@@ -4,69 +4,29 @@ declare(strict_types=1);
 
 namespace App\Domain\Finance\Filament\Widgets;
 
-use App\Domain\Finance\Exports\ReportDataBuilder;
+use App\Domain\Finance\Exports\ReportDataset;
 use App\Domain\Finance\Exports\ReportKind;
-use App\Domain\Finance\Filament\Pages\Reports\ReportPage;
-use App\Models\User;
-use Filament\Widgets\ChartWidget;
-use Livewire\Attributes\Reactive;
+use App\Domain\Finance\Support\Money;
 
-final class RevenueChart extends ChartWidget
+final class RevenueChart extends ReportBarsWidget
 {
-    protected static bool $isDiscovered = false;
-
-    protected static bool $isLazy = false;
-
-    protected int|string|array $columnSpan = 'full';
-
-    protected ?string $pollingInterval = null;
-
-    protected ?string $maxHeight = '300px';
-
-    /** @var array<string, mixed> */
-    #[Reactive]
-    public array $reportFilters = [];
-
-    public static function canView(): bool
-    {
-        return ReportPage::canAccess();
-    }
-
     public function getHeading(): string
     {
         return __('reports.charts.revenue');
     }
 
-    /** @return array<string, mixed> */
-    protected function getData(): array
+    protected function kind(): ReportKind
     {
-        $user = auth()->user();
-        abort_unless($user instanceof User, 403);
-
-        $dataset = app(ReportDataBuilder::class)->build(ReportKind::Revenue, $this->reportFilters, $user);
-
-        if ($dataset->rows === []) {
-            return [];
-        }
-
-        $cells = array_column($dataset->rows, 'cells');
-
-        return [
-            'labels' => array_column($cells, 'batch_code'),
-            'datasets' => [[
-                'label' => $dataset->columns['batch_total'],
-                'data' => array_column($cells, 'batch_total'),
-            ]],
-        ];
+        return ReportKind::Revenue;
     }
 
-    public function getEmptyStateHeading(): string
+    /** @return list<array{label: string, value: Money, tone: string}> */
+    protected function rows(ReportDataset $dataset): array
     {
-        return __('reports.empty');
-    }
-
-    protected function getType(): string
-    {
-        return 'bar';
+        return $this->largestFirst(array_map(static fn (array $row): array => [
+            'label' => (string) $row['cells']['batch_code'],
+            'value' => Money::fromDecimal($row['cells']['batch_total']),
+            'tone' => 'primary',
+        ], $dataset->rows));
     }
 }

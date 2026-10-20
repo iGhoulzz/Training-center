@@ -23,6 +23,9 @@ return [
     'confirm_password' => 'Confirm password',
     'update_password' => 'Update password',
     'password_updated' => 'Password updated',
+    'password_too_short' => 'The password must be at least :minimum characters long.',
+    'password_needs_capital' => 'The password must contain at least one capital letter.',
+    'password_needs_symbol' => 'The password must contain at least one symbol, such as ! or #. Letters, digits and spaces do not count.',
 
     /*
      * The password-change page's own logout control (G1-U3).
