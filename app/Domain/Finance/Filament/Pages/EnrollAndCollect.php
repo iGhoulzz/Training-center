@@ -99,6 +99,7 @@ use Livewire\Attributes\Locked;
  * @property-read Schema $collectForm
  * @property-read array{student: string, batch: string, list: ?Money, discount: string, amount: ?Money, reference: ?string, receipt: ?string} $bill
  * @property-read bool $tendersBalanced
+ * @property-read ?Payment $recordedPayment
  * @property-read Collection<int, Student> $studentMatches
  * @property-read Collection<int, Batch> $batchChoices
  * @property-read array<int, array{id: int, label: string, savings: ?Money}> $discountChoices
@@ -248,6 +249,52 @@ class EnrollAndCollect extends Page
             'list' => $list, 'discount' => $discount === null ? __('collect.no_discount') : self::discountLabel($discount),
             'amount' => $discount === null ? $list : $list?->afterDiscount($discount->percentage), 'reference' => null, 'receipt' => null,
         ];
+    }
+
+    /**
+     * This panel's own payment, once `finalize()` has recorded it; null before.
+     *
+     * THE SAME LOOKUP `bill()` USES FOR ITS RECEIPT REFERENCE: the payment that
+     * holds this panel's idempotency key. The key is server-owned (#[Locked]), so
+     * the browser cannot point this at another panel's payment, and the panel
+     * itself is only reachable by an actor who may collect. While this is not
+     * null the view shows the receipt and no longer offers the collect form.
+     *
+     * The tender total is a SQL sum, as `PaymentResource` states it: `payments`
+     * carries no amount column, and a derived total is never stored. The
+     * snapshot is a yes-or-no flag, not a loaded relation.
+     */
+    #[Computed]
+    public function recordedPayment(): ?Payment
+    {
+        if ($this->collectionIdempotencyKey === null || ! auth()->user()?->can('create_payment')) {
+            return null;
+        }
+
+        return Payment::query()
+            ->where('idempotency_key', $this->collectionIdempotencyKey)
+            ->with('tenders')
+            ->withSum('tenders', 'amount')
+            ->withExists('receiptSnapshot')
+            ->first();
+    }
+
+    /**
+     * Whether Print receipt is offered for the recorded payment.
+     *
+     * The print page is `finance.receipts.print`, whose controller authorizes
+     * `PaymentPolicy::view()` (`view_payment`), and an actor who may collect need
+     * not hold that. So the button is offered only when the actor may view the
+     * payment AND the immutable receipt snapshot the page renders from exists.
+     * Only what is offered is decided here; the route's own gate is unchanged.
+     */
+    public function canPrintReceipt(): bool
+    {
+        $payment = $this->recordedPayment;
+
+        return $payment !== null
+            && (bool) $payment->getAttribute('receipt_snapshot_exists')
+            && (auth()->user()?->can('view', $payment) ?? false);
     }
 
     #[Computed]
@@ -1085,6 +1132,9 @@ class EnrollAndCollect extends Page
             return;
         }
 
+        // The panel now shows this payment's receipt; drop any copy cached before it existed.
+        unset($this->recordedPayment);
+
         Notification::make()
             ->title(__('collect.collected_successfully'))
             ->success()
@@ -1116,6 +1166,7 @@ class EnrollAndCollect extends Page
     {
         $this->collectionChargeId = null;
         $this->collectionIdempotencyKey = null;
+        unset($this->recordedPayment);
         $this->preselectedStudentId = null;
         $this->preselectedBatchId = null;
         $this->createdStudentId = null;
