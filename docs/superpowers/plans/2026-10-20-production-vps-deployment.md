@@ -1,0 +1,168 @@
+# Production VPS Deployment Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` or `superpowers:executing-plans` to implement this plan task by task. Owner and Claude approved starting Task 1 after the review corrections in this document; this does not authorize provisioning a server, creating live credentials, deploying, or merging.
+
+**Goal:** Release a tested commit of Training Center to the owner's Libyan Spider root Linux VPS, with recoverable data, supervised background processes, and a deliberate update path.
+
+**Architecture:** Use native Nginx, PHP-FPM, MySQL 8, Redis, systemd, and cron; do not introduce Docker for the first production host. GitHub Actions builds a release for the exact green `main` commit, then transfers it only after protected manual approval and a second SHA check. The host keeps versioned releases, a `current` symlink, one persistent `.env`, and persistent uploads. Application secrets never enter the artifact or Git.
+
+**Tech stack:** PHP >=8.4.1, Laravel 13, Filament 5, MySQL 8, Redis/`phpredis`, Horizon, Pulse, Nginx/PHP-FPM, GitHub Actions, Bash/systemd/cron.
+
+**Spec:** `docs/superpowers/specs/2026-07-20-training-center-dashboard-design.md` §§2, 10–11; `docs/ENGINEERING.md`; `docs/WORKFLOW.md`; `docs/RESTORE.md`. The owner's 2026-10-20 direction selects a Libyan Spider VPS, but the application and deployment files must remain provider-neutral.
+
+**Prerequisite:** PR #124's reviewed password change must merge with green CI before Task 1 branches from updated `main`. Task 1 then extracts that exact eight-character/capital/symbol policy into one reusable rule source; it must not copy an unmerged PR implementation into the deployment branch.
+
+## Global constraints
+
+- Keep one `main` branch with source, tests, and development documentation. Exclude unnecessary files from the *release artifact*, not from Git. Do not create a separate `prod` branch.
+- Production has `APP_DEBUG=false`, a persistent `APP_KEY`, HTTPS, MySQL 8, `QUEUE_CONNECTION=redis`, `CACHE_LIMITER=redis`, `SESSION_DRIVER=database`, and `CACHE_STORE=database`. Redis must work on the request path as well as for queues.
+- Redis is bound to loopback, authenticated with a production-only secret, memory-budgeted with `maxmemory-policy noeviction`, and monitored for rejected writes and memory pressure. `noeviction` makes a full Redis fail visibly instead of silently discarding queued work; it does not replace capacity monitoring or persistence planning.
+- The first-launch TLS endpoint is Nginx on the VPS. If an upstream Libyan Spider proxy/CDN terminates HTTPS instead, cutover waits until the actual proxy addresses and forwarded headers are trusted in Laravel and direct origin access is restricted; never trust arbitrary client-supplied forwarding headers.
+- Production application logs rotate through the existing `daily` channel with an explicit retention period; monitor free disk space, including logs, temporary archives, uploads, and Redis persistence.
+- Run Horizon and `pulse:check` as distinct supervised processes with `Restart=always` and `RestartSec=5s`: both graceful restart commands make the old process exit cleanly, so `Restart=on-failure` would leave it down. Preserve the Horizon worker-memory ceiling below the PHP CLI limit; tune worker count only from measurements on the selected VPS.
+- Run the existing Laravel scheduler once per minute. Do not duplicate the schedules already in `routes/console.php`.
+- Back up both MySQL and private/public uploads to a separate failure domain with the existing encrypted backup configuration. A green `/up` alone does **not** prove MySQL, Redis, mail, or backups are healthy.
+- Never run `composer setup`, `db:seed`, `UserSeeder`, or performance seeders against production. The development default owner account must never be created there.
+- Keep production writes inside the existing Action/trusted-system write boundary. Do not put passwords in command arguments, workflow inputs, logs, or the repository.
+- Each task gets its own worktree and branch (`p5/t01-...` through `p5/t04-...`), begins from updated `main` after its dependency merges green, and has Claude/Codex cross-review. The `p5` label denotes this proposed deployment milestone; it does not declare phase 4 complete.
+- Before each PR: run its targeted tests and `composer verify:push`; full `composer verify` runs in PR CI. No bypassed hooks or claims based on tests that did not run.
+
+## Decisions proposed for review
+
+1. **Native VPS, not Docker Compose for first launch.** One host already needs MySQL, Redis, PHP-FPM, two supervised PHP processes, and cron. Native units make those dependencies and failure modes visible without a container orchestration layer. Revisit containers only if operations or scaling demonstrate a need.
+2. **Manual approved deploys, not automatic deploy-on-merge.** A merged commit is eligible only after its `main` CI `verify` run succeeds. The operator starts the workflow, the protected `production` environment approves it, and deploys serialize. The workflow checks the exact SHA again before transfer.
+3. **A separate off-server backup destination.** Prefer an S3-compatible bucket outside the VPS provider's failure domain; the existing rotated-drive option is acceptable only with an actual off-site rotation procedure. The owner supplies the destination and independently stored archive password before activation.
+4. **Backward-compatible migrations for the automated path.** A reviewer must confirm that old web/queue code can tolerate the new schema during the switch. An incompatible migration needs a separately reviewed maintenance-window procedure. A code symlink reversal is not a database rollback.
+5. **No live server access during implementation.** Templates and release mechanics are tested on a disposable Linux target first. Provisioning, secrets, DNS cutover, and first production deployment require a separate owner go-live approval after the plan and PRs are reviewed.
+
+## Release and recovery contract
+
+```text
+green main SHA -> manual protected workflow -> non-production build of SHA-labelled artifact
+  (locked vendor + Vite + published Filament assets; no build-time production boot)
+  -> upload over pinned SSH host key -> stage /srv/training-center/releases/<SHA>
+  -> link /srv/training-center/shared/.env and shared/storage
+  -> production cache rebuild + preflight + fresh off-server backup -> reviewed migration
+  -> atomic current symlink switch -> PHP-FPM reload + horizon:terminate + pulse:restart
+  -> HTTP + dependency smoke checks -> record deployed SHA
+```
+
+Before the switch, any failure leaves `current` untouched. After a switch, an HTTP or process failure stops the release and requires an operator decision: reverse the symlink **only if** the prior code is compatible with the migrated schema; otherwise keep the site in maintenance and follow `docs/RESTORE.md`. Never automatically reverse migrations or restore a database over newer writes. The first install has no prior release to switch back to; it must pass pre-cutover checks before DNS points at it.
+
+## Review focus
+
+| Failure condition | Expected behavior | Owning test/probe |
+|---|---|---|
+| A workflow is run for a SHA without a successful `main` CI run | No production SSH step runs | Task 3 workflow-negative check |
+| Redis is absent, even though `/up` returns 200 | Release does not become live | Task 2 dependency preflight |
+| Backup destination is invalid, mailer is non-delivering, or SMTP is unreachable | Release fails before schema/symlink changes; actual mail authentication/delivery is proved separately at go-live | Task 2 preflight and Task 4 delivery/restore drill |
+| Staging or post-switch smoke check fails | Old release stays active before switch; post-switch response follows the recovery contract above | Task 2 isolated release tests |
+| A second bootstrap attempt or a pre-existing user exists | No role escalation or default account is created | Task 1 command tests |
+| Composer boots Laravel during the artifact build without a production `.env` | Build stays non-production, package discovery succeeds, and published Filament JS/CSS are present in the artifact | Task 3 build contract and artifact probe |
+| An upstream proxy changes scheme or client IP | Signed URLs keep their HTTPS signature and rate limits use the real client IP, but spoofed headers from an untrusted peer are ignored | Task 2 trusted-proxy tests and Task 4 cutover probe |
+| Redis reaches its configured memory ceiling | Writes fail and alert; queued jobs are not silently evicted | Task 2 host configuration probe and Task 4 monitoring drill |
+
+---
+
+### Task 1 — Safe first production owner
+
+**Owner:** Codex; Claude cross-reviews the write boundary. **Wave:** 1. **Branch:** `p5/t01-prod-owner`.
+
+**Files:**
+- Create: `docs/superpowers/plans/2026-10-20-production-vps-deployment.md` (commit this locally reviewed plan as the first commit on the Task 1 branch; it remains part of that PR)
+- Create: `app/Console/Commands/BootstrapProductionOwnerCommand.php` (the existing auto-discovered Artisan command location)
+- Create: `app/Domain/Staff/Support/ChosenPasswordPolicy.php` (one reusable source for the PR #124 requirements and their translated failures)
+- Modify: `app/Filament/Pages/PasswordChange.php` (consume the shared policy instead of private duplicate rules)
+- Create: `tests/Feature/Staff/BootstrapProductionOwnerCommandTest.php`
+- Modify: `tests/Feature/Auth/ForcePasswordChangeTest.php` (prove the existing staff/student form still applies the shared policy)
+- Read, do not modify: `app/Domain/Staff/Actions/SystemRoleWriter.php`, `database/seeders/RolePermissionSeeder.php`, `database/seeders/UserSeeder.php`, `app/Models/User.php`
+
+**Interface:** `php artisan staff:bootstrap-production-owner` is a one-time, interactive, production-only command. It asks for the real owner's email and a hidden chosen password, never accepts a password option, creates only an active account with `must_change_password=false`, and assigns `super_admin` through `SystemRoleWriter`. The owner has just chosen and entered the final password securely, so forcing immediate rotation adds friction without containing an issued temporary credential. It refuses to run if **any** user already exists, if the `super_admin` role is missing, or if the application is not in production. The operator initializes roles/permissions with `RolePermissionSeeder` only, not `DatabaseSeeder`.
+
+- [ ] On `p5/t01-prod-owner`, commit this plan as the first commit before editing product code; do not commit it on `main` or leave a duplicate untracked copy there.
+- [ ] Add the tests first: an empty production database creates exactly one owner with a hashed password, `super_admin`, and no forced rotation; an existing user, invalid email, password under eight characters, missing Unicode capital, missing symbol, or second invocation creates/changes nothing. Check all three distinct validation messages and that command output never contains the password. Drive the real Artisan command with mocked interactive answers. In the existing form tests, prove the same valid and invalid examples produce the same policy decisions for staff and students.
+- [ ] Run `php artisan test --compact tests/Feature/Staff/BootstrapProductionOwnerCommandTest.php tests/Feature/Auth/ForcePasswordChangeTest.php` and observe the pre-implementation failure.
+- [ ] Extract PR #124's exact character-count, capital-letter, and symbol checks into `ChosenPasswordPolicy`, with adapters usable by both Filament validation and the console command; keep requirement text in translation files and prevent either caller from defining its own thresholds. Implement the command with the trusted system writer and transaction. Do not add a public route or use role assignment directly on the model.
+- [ ] Re-run those tests and `composer verify:fast`; run Pint on changed PHP. Commit only the scoped files.
+
+**Done when:** No development credentials can reach the production database through this path, and repeated or partially configured runs fail closed.
+
+### Task 2 — Native host contract and reversible code releases
+
+**Owner:** Codex; Claude cross-reviews path safety, secret handling, and rollback. **Wave:** 2, after Task 1 merges. **Branch:** `p5/t02-prod-host-release`.
+
+**Files:**
+- Create: `deploy/nginx/training-center.conf.example`
+- Create: `deploy/redis/training-center.conf.example` (non-secret bind/eviction/memory settings; actual credential stays on host)
+- Create: `deploy/systemd/training-center-horizon.service`
+- Create: `deploy/systemd/training-center-pulse.service`
+- Create: `deploy/cron/training-center.cron`
+- Create: `deploy/release.sh`
+- Create: `deploy/tests/release-smoke.sh`
+- Create: `config/proxies.php` (environment-configured, explicit proxy CIDRs; empty means direct-to-Nginx)
+- Modify: `bootstrap/app.php` (trust only configured proxies and forwarding headers)
+- Create: `tests/Unit/Tooling/DeploymentContractTest.php`
+- Create: `tests/Feature/Http/TrustedProxyTest.php`
+- Read, do not modify: `.env.example`, `config/horizon.php`, `config/backup.php`, `config/queue.php`, `routes/console.php`
+
+**Interface:** `deploy/release.sh <40-hex-main-sha> <absolute-release-archive>` runs as a dedicated, non-root deploy account. The archive contains an exact-SHA manifest. Host layout is `/srv/training-center/{releases,shared,current}`; `.env` and `storage` live only under `shared`. No command may erase `shared`, the active release, or any path outside this layout. The Nginx root is `current/public`; systemd units use `current` with `Restart=always` and `RestartSec=5s`. The cron entry calls `current/artisan schedule:run` once per minute.
+
+- [ ] Write the contract test and a Linux smoke harness that creates a disposable directory, fake archive, and stubbed `php`, service, and HTTP commands. Assert invalid SHA, archive/SHA mismatch, missing `.env`, missing Filament/Vite assets, unavailable Redis, wrong Redis eviction policy, invalid backup configuration, and failed pre-switch smoke all leave `current` unchanged. Assert a successful run switches once and records the SHA; a failed post-switch smoke check must report that operator-led recovery is required, without automatically reversing database changes. Include a simulated clean `horizon:terminate` exit and verify the `Restart=always` unit returns to active on the new `current` release; likewise verify a `pulse:restart` clean exit restarts `pulse:check`. The harness must never connect to the real production database or contact a live backup destination.
+- [ ] Add trusted-proxy tests for direct HTTPS, one explicitly trusted upstream, and spoofed forwarding headers from an untrusted peer. Assert HTTPS signed URLs remain valid and per-client rate-limit keys remain distinct through the trusted proxy. Run `php artisan test --compact tests/Unit/Tooling/DeploymentContractTest.php tests/Feature/Http/TrustedProxyTest.php` and `bash deploy/tests/release-smoke.sh`; see the expected pre-implementation failures.
+- [ ] Add Nginx, Redis, systemd, and cron templates. Nginx must not expose `.env`, `storage/app/secure`, or repository files. Use `root /srv/training-center/current/public`, but set FastCGI `SCRIPT_FILENAME` to `$realpath_root$fastcgi_script_name` and `DOCUMENT_ROOT` to `$realpath_root` so PHP resolves the new release after the symlink switches; check that included FastCGI parameter files do not override them. Configure TLS on this Nginx host by default. The Redis host template binds loopback only, requires a host-supplied password, sets a RAM-budgeted `maxmemory` with `maxmemory-policy noeviction`, and enables persistence appropriate for queued jobs. The deployed PHP runtime includes `redis`, `pcntl`, `posix`, `pdo_mysql`, `mbstring`, `intl`, `bcmath`, `gd`, and `zip`; verify required extensions rather than assuming the web and CLI SAPIs are identical.
+- [ ] Add Laravel proxy configuration that defaults to no trusted upstream and accepts only operator-supplied proxy IPs/CIDRs and the intended forwarded headers. An upstream TLS terminator requires both this configuration and a firewall/origin rule that rejects direct client traffic; confirm scheme, host, client IP, signed URLs, and rate limits before cutover. Never set a blanket trust-all proxy setting.
+- [ ] Implement staging with a lock, path validation, archive manifest verification, symlinks to shared state, permissions for the deploy user and PHP-FPM user, and a preflight for PHP/config, MySQL, Redis, backup destination, and a real (not `log`/`array`) mail transport. For the first-launch SMTP transport, check DNS/TCP/TLS handshake to the configured host/port without sending a message; credentials and delivery are verified in the Task 4 go-live drill. Do not send a real alert on every deploy. Require a successful fresh backup before a subsequent release migrates. First installation uses a separate no-prior-release path.
+- [ ] Once the host's production `.env` is linked in the staged release, rebuild `config:cache`, `route:cache`, `view:cache`, `event:cache`, and `filament:optimize` there; no runner-generated cache file enters the archive. Run migrations only after the reviewed compatibility gate, switch the `current` symlink atomically, reload PHP-FPM, run `php artisan horizon:terminate` and `php artisan pulse:restart` from `current`, and verify systemd's `Restart=always` starts both processes on the new code after their clean exits. Probe `/up`, a database query, Redis, both service states, and the public/login routes. Preserve logs and the previous release for operator-led recovery. Do not auto-undo schema changes.
+- [ ] Re-run the targeted Pest tests and Linux smoke harness, `bash -n deploy/release.sh deploy/tests/release-smoke.sh`, and `composer verify:fast`. Commit only the scoped files.
+
+**Done when:** The disposable-host harness proves failure containment and a complete second release; the actual VPS has not been touched.
+
+### Task 3 — Green-SHA, approval-gated update workflow
+
+**Owner:** Codex; Claude cross-reviews the GitHub trust boundary. **Wave:** 3, after Task 2 merges. **Branch:** `p5/t03-prod-deploy-workflow`.
+
+**Files:**
+- Create: `.github/workflows/deploy.yml`
+- Create: `tests/Unit/Tooling/DeployWorkflowTest.php`
+- Read, do not modify: `.github/workflows/ci.yml`, `deploy/release.sh`, `docs/WORKFLOW.md`
+
+**Interface:** Manual `workflow_dispatch` on `main` only. The workflow obtains the exact `main` SHA, requires that SHA's `ci.yml` `verify` run to have concluded `success`, builds frontend assets with `npm ci && npm run build`, installs locked production Composer dependencies without dev packages, packages source/vendor/Vite output/published Filament assets and an SHA manifest but no `.env`, tests, docs, `.git`, `node_modules`, or prebuilt Laravel config/cache files. The host regenerates caches only after linking its production `.env`. The deploy job uses GitHub's protected `production` environment. The SSH host key is pinned in a protected environment variable; the private deploy key and host/user are environment secrets. `concurrency` permits one production deploy at a time and does **not** cancel one mid-flight.
+
+- [ ] Write a workflow contract test for `workflow_dispatch`, `main` restriction, exact-SHA green-CI check, a second check that the SHA is still the `main` tip before transfer, protected environment, `cancel-in-progress: false`, SHA manifest, no `pull_request` deployment, and absence of application secrets in the artifact. Add an artifact-content probe for the Vite manifest and the published Filament JavaScript, CSS and fonts. A negative GitHub Actions run or isolated mocked check must prove a missing/failed CI run stops before SSH.
+- [ ] Run `php artisan test --compact tests/Unit/Tooling/DeployWorkflowTest.php` and observe the expected failure.
+- [ ] Implement the workflow on an ephemeral GitHub runner. Before `composer install --no-dev --prefer-dist --no-interaction --classmap-authoritative`, set `APP_ENV=testing`, a generated disposable `APP_KEY`, and a syntactically valid build-only `BACKUP_ALERT_EMAIL`; do not provide production `.env` or secrets. Keep Composer scripts enabled: this repo's `post-autoload-dump` runs package discovery and `filament:upgrade`, which publishes assets. Explicitly run `php artisan filament:assets` as a build assertion/re-publish step and fail if required `public/js/filament`, `public/css/filament`, `public/fonts/filament`, or `public/build/manifest.json` output is absent. Strip build-only cached config/routes/views from the artifact. Use a dedicated, protected non-root SSH deploy key; do not use password SSH, `ssh-keyscan` at deploy time, or a root login. Feed the artifact to Task 2's release interface without rebuilding from whatever `main` has become later.
+- [ ] Run the targeted test, YAML/workflow validation available in CI, and `composer verify:fast`. Commit only the two scoped files. Open the PR and report the full-suite CI result once it finishes.
+
+**Done when:** A green commit can be deployed deliberately, while a red, absent, or superseded commit cannot reach the host. GitHub environment approvals and secrets are configured by the owner during Task 4, not simulated as repository code.
+
+### Task 4 — Go-live runbook and acceptance drill
+
+**Owner:** Codex drafts; owner operates secrets, DNS, and production activation; Claude reviews the runbook. **Wave:** 4, after Task 3 merges. **Branch:** `p5/t04-prod-runbook`.
+
+**Files:**
+- Create: `docs/DEPLOYMENT.md`
+- Modify: `docs/superpowers/specs/2026-07-20-training-center-dashboard-design.md` §2 and §11 (record the Libyan Spider decision and approved release path without making code provider-specific)
+- Modify: `README.md` hosting/docs links, removing the stale “provider not chosen” statement
+- Read, do not modify: `docs/RESTORE.md`, `.env.example`, `docs/LINUX-DEV-TARGET.md`
+
+**Interface:** A human checklist with exact host-only settings and commands, split into (a) provisioning, (b) first install before DNS cutover, (c) each update, (d) failed release/recovery, and (e) recurring operations. It identifies the operator for each step and the evidence to retain; it never embeds a real secret. A generated maintenance bypass URL may be displayed privately to the operator by Artisan, but must not enter CI logs or the runbook. It explicitly says `/up` is a boot check, not a dependency check.
+
+- [ ] Document a root-access preflight on the purchased VPS: OS/package support for PHP >=8.4.1, available RAM/disk, PHP CLI and FPM extension parity, non-root deploy account, and DNS. Harden SSH to key-only authentication, enable automatic OS security updates, and apply a firewall that exposes only 80, 443, and the operator-approved SSH port. MySQL and Redis bind to loopback and are not Internet-facing. State explicitly whether HTTPS ends at VPS Nginx (first-launch default) or at a named upstream proxy/CDN; in the latter case require its actual CIDRs, trusted proxy headers, restricted origin access, and a signed-link/client-IP test before cutover. If the purchased image cannot support the locked PHP requirements, stop before provisioning.
+- [ ] Document creation and off-host custody of the persistent `APP_KEY`, mail credentials, Redis password, backup bucket credentials, and `BACKUP_ARCHIVE_PASSWORD`. Set `APP_ENV=production`, `APP_DEBUG=false`, HTTPS `APP_URL`, the queue/limiter/cache/session values from Global constraints, `REDIS_PASSWORD`, `LOG_CHANNEL=stack`, `LOG_STACK=daily`, `LOG_DAILY_DAYS=14` (or a reviewed retention value), real `HORIZON_ALERT_EMAIL` and `BACKUP_ALERT_EMAIL`, and an off-server `BACKUP_DISK`. Do not change `APP_NAME` or `BACKUP_ARCHIVE_NAME` casually after launch. Record disk-space warning/critical thresholds and who receives alerts.
+- [ ] Document first install: create the empty production DB, install the reviewed host templates and GitHub `production` environment, deploy green `main`, migrate, run only `RolePermissionSeeder`, invoke Task 1's interactive owner bootstrap, and verify login without an unnecessary forced change of the password just chosen. The deploy preflight checks the mail transport connection without sending; the one-time go-live drill sends and receives a real alert email. Run `backup:run` and `backup:monitor`, and restore the encrypted archive to a separate scratch database/upload directory using `docs/RESTORE.md`. No synthetic production seed data.
+- [ ] Document the repeat-deploy approval, migration-compatibility review, exact cache rebuild commands (`config:cache`, `route:cache`, `view:cache`, `event:cache`, `filament:optimize`), post-switch `horizon:terminate` and `pulse:restart` with `Restart=always` service checks, status/health checks, incident contacts, code-only rollback limits, encrypted backup recovery, disk/Redis/queue/Horizon/Pulse/cron monitoring, and a post-launch measurement of PHP-FPM/Horizon memory. Normal compatible releases stay online; use maintenance mode for an incompatible schema/data change or another write-free migration window, with an operator-generated bypass secret (`php artisan down --with-secret`) kept out of CI logs, then `php artisan up` only after checks pass. Set production latency/queue objectives only from a VPS baseline, not from the Docker development benchmark.
+- [ ] Record the scheduler's actual local timetable from `routes/console.php`: `backup:run` at 01:30, `backup:monitor` at 02:30, and `backup:clean` at 03:00 in `Africa/Tripoli` (UTC+02:00). The proposed “midnight UTC / 02:00 Libya” time is not what the code schedules; do not add another cron entry for these commands.
+- [ ] Check links, commands, and statements against the merged implementation; run `composer verify:push` before PR. The owner and Claude review this document and the prior PRs before any live setup or DNS cutover.
+
+**Done when:** An operator other than the author can follow the runbook on a fresh VPS and can explain how to stop, revert code, or restore data without guessing. The **milestone is not complete** until a real off-server backup has been restored on a separate scratch target, mail alerts have actually arrived, the one-minute scheduler and both supervised processes are observed running, and the owner approves DNS cutover.
+
+## Sources and scope notes
+
+- Laravel 13 [deployment](https://laravel.com/docs/13.x/deployment), [scheduler](https://laravel.com/docs/13.x/scheduling), [requests/trusted proxies](https://laravel.com/docs/13.x/requests), [logging](https://laravel.com/docs/13.x/logging), and [Horizon](https://laravel.com/docs/13.x/horizon) guidance informs the public web root, cron, proxy trust, log retention, and worker lifecycle.
+- Redis [security](https://redis.io/docs/latest/operate/oss_and_stack/management/security/) and [key-eviction](https://redis.io/docs/latest/reference/eviction/) guidance informs loopback binding, authentication, and the `noeviction` queue-safety requirement.
+- GitHub [deployment environments](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments) and [deployment controls](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/control-deployments) inform approvals and serial deploys.
+- This plan does **not** purchase a VPS, configure a live provider account, add a `prod` branch, change application money/auth behavior, or make the existing Windows-only role-editor test discrepancy part of deployment. That test issue should be tracked as a separate quality fix; Linux CI remains the release gate under `docs/WORKFLOW.md`.
+
+## Review gate
+
+Owner and Claude reviewed the native-vs-Docker choice, first-owner command, artifact/build boundary, exact-SHA CI check, migration/rollback contract, backup failure domain, and four task scopes. The owner authorized Task 1 after the corrections recorded here; each task still requires its own PR, cross-review, and green CI. No VPS change is authorized by this document.
