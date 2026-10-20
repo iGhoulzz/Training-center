@@ -1,0 +1,261 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 0027
+# Host prerequisites: dedicated training-center account, www-data shared group,
+# php-fpm8.4 CLI, GNU tar/coreutils/flock, curl, and narrowly scoped passwordless
+# sudo for systemctl reload php8.4-fpm.service / start the two application units.
+# The caller supplies an approved exact-main SHA artifact; Task 3 proves its CI.
+# REVISION is a root-level regular text file containing that lowercase SHA only.
+# Host-only approval files contain the same SHA, never packaged in the archive:
+# shared/migration-approvals/<SHA>, plus shared/first-install-approved on install.
+# Approval records and their directory are root-owned and not group/world writable.
+# Approval means old code tolerates the migration; incompatible changes use the
+# separately reviewed maintenance-window procedure, never this online path.
+root=/srv/training-center
+switched=0
+step=arguments
+fail() { printf 'Release refused at %s: %s\n' "$step" "$1" >&2; exit 1; }
+approval_is_safe() {
+    [[ ! -L "$1" && "$(stat -c %u -- "$1")" == 0 ]] || return 1
+    mode=$(stat -c %a -- "$1")
+    (( (8#$mode & 0022) == 0 ))
+}
+on_failure() {
+    code=$?
+    if (( code != 0 )); then
+        printf 'Release failed at %s; logs and staged code retained.\n' "$step" >&2
+        if (( switched )); then
+            printf 'operator-led recovery required: current remains on new code; assess schema compatibility before any code reversal. No database rollback was attempted.\n' >&2
+        fi
+    fi
+}
+trap on_failure EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+[[ $# == 2 && "$1" =~ ^[0-9a-f]{40}$ ]] || fail 'expected <40-hex-main-sha> <absolute-release-archive>'
+sha=$1
+[[ "$(id -u)" != 0 && "$(id -un)" == training-center ]] || fail 'run as the dedicated non-root training-center account'
+[[ "$2" == /* && -f "$2" && ! -L "$2" ]] || fail 'archive must be an absolute regular file'
+archive=$(realpath -e -- "$2")
+[[ -d "$root" && ! -L "$root" && "$(realpath -e -- "$root")" == "$root" ]] || fail 'host root must be a physical directory'
+for path in releases shared shared/storage; do
+    [[ -d "$root/$path" && ! -L "$root/$path" && "$(realpath -e -- "$root/$path")" == "$root/$path" ]] || fail 'unsafe host directory'
+done
+[[ -f "$root/shared/.env" && ! -L "$root/shared/.env" ]] || fail 'shared .env missing or unsafe'
+[[ ! -L "$root/shared/deploy.lock" ]] || fail 'unsafe lock path'
+exec 9>"$root/shared/deploy.lock"
+flock -n 9 || fail 'another release holds the lock'
+step=layout
+previous=
+if [[ -L "$root/current" ]]; then
+    previous=$(realpath -e -- "$root/current")
+    [[ "$previous" =~ ^$root/releases/[0-9a-f]{40}$ && -d "$previous" ]] || fail 'current points outside a release'
+elif [[ -e "$root/current" ]]; then
+    fail 'current must be a symlink'
+else
+    [[ -f "$root/shared/first-install-approved" && "$(cat "$root/shared/first-install-approved")" == "$sha" ]] && approval_is_safe "$root/shared/first-install-approved" || fail 'first installation approval missing or unsafe'
+fi
+[[ -d "$root/shared/migration-approvals" && ! -L "$root/shared/migration-approvals" ]] || fail 'migration approval directory missing'
+approval_is_safe "$root/shared/migration-approvals" || fail 'migration approval directory is unsafe'
+approval="$root/shared/migration-approvals/$sha"
+[[ -f "$approval" && "$(cat "$approval")" == "$sha" ]] && approval_is_safe "$approval" || fail 'reviewed compatibility approval missing or unsafe'
+release="$root/releases/$sha"
+[[ ! -e "$release" && ! -L "$release" ]] || fail 'release already staged; retain it and investigate before retry'
+[[ ! -L "$root/shared/deploy-logs" ]] || fail 'unsafe log path'
+mkdir -p -- "$root/shared/deploy-logs"
+log="$root/shared/deploy-logs/$sha-$(date -u +%Y%m%dT%H%M%SZ)-$$.log"
+exec 8>"$log"
+printf 'Deployment %s; prior %s\n' "$sha" "${previous:-first-install}" >&8
+step=archive-validation
+# Reject traversal, links (including hard links), devices, secrets, persistent
+# state, repository files and runner caches BEFORE extraction. No tar overwrite.
+tar -tf "$archive" > "$root/shared/deploy-logs/$sha-$$.entries"
+while IFS= read -r entry; do
+    entry=${entry#./}
+    [[ -z "$entry" ]] && continue
+    [[ "$entry" != /* && "$entry" != *\\* && ! "$entry" =~ (^|/)\.\.?(/|$) && ! "$entry" =~ [[:cntrl:]] ]] || fail 'unsafe archive path'
+    case "$entry" in .env|.env.*|.env/|.env/*|*/.env|*/.env.*|.git|.git/*|storage|storage/*|node_modules|node_modules/*|tests|tests/*|docs|docs/*|public/storage|public/storage/*) fail 'forbidden artifact member' ;; esac
+    case "$entry" in bootstrap/cache/*) [[ "$entry" == bootstrap/cache/ || "$entry" == bootstrap/cache/.gitignore ]] || fail 'runner-generated Laravel cache is forbidden' ;; esac
+done < "$root/shared/deploy-logs/$sha-$$.entries"
+while IFS= read -r entry; do
+    [[ "${entry:0:1}" == - || "${entry:0:1}" == d ]] || fail 'archive must contain regular files/directories only'
+done < <(tar -tvf "$archive")
+mkdir -- "$release"
+tar --extract --file "$archive" --directory "$release" --no-same-owner --no-same-permissions >> "$log" 2>&1
+[[ -f "$release/REVISION" && "$(cat "$release/REVISION")" == "$sha" ]] || fail 'REVISION manifest/SHA mismatch'
+for file in artisan vendor/autoload.php public/index.php public/build/manifest.json; do [[ -s "$release/$file" ]] || fail 'missing runtime or Vite asset'; done
+for pair in js:js css:css fonts:woff2; do
+    directory=${pair%:*}; extension=${pair#*:}
+    [[ -d "$release/public/$directory/filament" && -n "$(find "$release/public/$directory/filament" -type f -name "*.$extension" -print -quit)" ]] || fail 'missing published Filament assets'
+done
+step=shared-state
+ln -s -- "$root/shared/.env" "$release/.env"
+ln -s -- "$root/shared/storage" "$release/storage"
+mkdir -p -- "$release/bootstrap/cache"
+[[ -z "$(find "$root/shared/storage" -type l -print -quit)" ]] || fail 'shared storage must not contain symlinks'
+for path in app/secure app/public framework/cache/data framework/sessions framework/views logs; do
+    [[ ! -L "$root/shared/storage/$path" ]] || fail 'unsafe shared storage subdirectory'
+    mkdir -p -- "$root/shared/storage/$path"
+    [[ "$(realpath -e -- "$root/shared/storage/$path")" == "$root/shared/storage/$path" ]] || fail 'shared storage resolves outside layout'
+done
+ln -s -- "$root/shared/storage/app/public" "$release/public/storage"
+# Do not chmod/chgrp through archive symlinks; only known shared paths and new code.
+chgrp -R www-data "$release" "$root/shared/storage"
+find "$release" -type d -exec chmod 2750 {} +
+find "$release" -type f -perm /111 -exec chmod 0750 {} +
+find "$release" -type f ! -perm /111 -exec chmod 0640 {} +
+chmod 2770 "$release/bootstrap/cache"
+find "$root/shared/storage" -type d -exec chmod 2770 {} +
+find "$root/shared/storage" -type f -exec chmod 0660 {} +
+chgrp www-data "$root/shared/.env"
+chmod 0640 "$root/shared/.env"
+cd -- "$release"
+step=php-fpm-extensions
+fpm_binary=$(command -v php-fpm8.4 || printf '/usr/sbin/php-fpm8.4')
+"$fpm_binary" -m > "$root/shared/deploy-logs/$sha-$$.fpm-modules" 2>&1
+for extension in redis pcntl posix pdo_mysql mbstring intl bcmath gd zip; do
+    grep -Fxiq "$extension" "$root/shared/deploy-logs/$sha-$$.fpm-modules" || fail 'PHP-FPM extension missing'
+done
+step=production-preflight
+# PHP executes from stdin: credentials never enter process arguments. Exceptions
+# are reduced to a generic refusal; protected logs never echo application config.
+host=$(php <<'PHP'
+<?php
+// TC_DEPLOY_PREFLIGHT
+try {
+    if (PHP_VERSION_ID < 80401) { throw new RuntimeException(); }
+    foreach (['redis', 'pcntl', 'posix', 'pdo_mysql', 'mbstring', 'intl', 'bcmath', 'gd', 'zip'] as $extension) {
+        if (! extension_loaded($extension)) { throw new RuntimeException(); }
+    }
+    require getcwd().'/vendor/autoload.php';
+    $app = require getcwd().'/bootstrap/app.php';
+    $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+    $required = ['app.env' => 'production', 'app.debug' => false, 'database.default' => 'mysql', 'queue.default' => 'redis', 'cache.limiter' => 'redis', 'cache.default' => 'database', 'session.driver' => 'database'];
+    foreach ($required as $key => $value) { if (config($key) !== $value) { throw new RuntimeException(); } }
+    if (! config('app.key') || parse_url(config('app.url'), PHP_URL_SCHEME) !== 'https') { throw new RuntimeException(); }
+    if (config('logging.default') !== 'stack' || ! in_array('daily', config('logging.channels.stack.channels', []), true)
+        || (int) config('logging.channels.daily.days') < 1) { throw new RuntimeException(); }
+    $host = parse_url(config('app.url'), PHP_URL_HOST);
+    if (! is_string($host) || ! preg_match('/^[a-z0-9.-]+$/iD', $host)) { throw new RuntimeException(); }
+    Illuminate\Support\Facades\DB::select('SELECT 1');
+    $version = Illuminate\Support\Facades\DB::selectOne('SELECT VERSION() AS version')->version;
+    if (! preg_match('/^8\./', $version)) { throw new RuntimeException(); }
+    foreach (array_unique(['default', config('queue.connections.redis.connection'), config('cache.stores.redis.connection')]) as $name) {
+        if (! config("database.redis.$name.password")) { throw new RuntimeException(); }
+        $redis = Illuminate\Support\Facades\Redis::connection($name);
+        if (! in_array($redis->ping(), [true, 'PONG', '+PONG'], true)) { throw new RuntimeException(); }
+        $policy = $redis->command('config', ['GET', 'maxmemory-policy']);
+        $memory = $redis->command('config', ['GET', 'maxmemory']);
+        if (($policy['maxmemory-policy'] ?? $policy[1] ?? null) !== 'noeviction' || (int) ($memory['maxmemory'] ?? $memory[1] ?? 0) <= 0) { throw new RuntimeException(); }
+    }
+    App\Domain\Staff\Support\BackupConfiguration::assertReadyForProduction('production');
+    App\Domain\Staff\Support\BackupConfiguration::assertDestinationReady();
+    $disk = Illuminate\Support\Facades\Storage::disk(config('backup.destination_disk'));
+    // Read-only connectivity/credential check; fresh backup later proves writes.
+    iterator_to_array($disk->getDriver()->listContents('', false));
+    $mailer = config('mail.mailers.'.config('mail.default'));
+    // First launch is SMTP. A different delivering transport needs reviewed probes.
+    if (($mailer['transport'] ?? null) !== 'smtp') { throw new RuntimeException(); }
+    $url = isset($mailer['url']) ? parse_url($mailer['url']) : [];
+    $smtpHost = $url['host'] ?? $mailer['host'];
+    $smtpPort = (int) ($url['port'] ?? $mailer['port']);
+    $tls = ($url['scheme'] ?? $mailer['scheme'] ?? null) === 'smtps' || $smtpPort === 465;
+    $transport = new Symfony\Component\Mailer\Transport\Smtp\EsmtpTransport($smtpHost, $smtpPort, $tls);
+    $transport->setRequireTls(true);
+    $transport->getStream()->setTimeout(10);
+    // Deliberately no username/password: DNS/TCP/EHLO/TLS only, no AUTH or mail.
+    $transport->start();
+    $transport->stop();
+    echo $host;
+} catch (Throwable $exception) {
+    fwrite(STDERR, "Production dependency/configuration preflight failed.\n");
+    exit(1);
+}
+PHP
+) || fail 'production dependency/configuration preflight failed'
+step=cache-rebuild
+for command in config:cache route:cache view:cache event:cache filament:optimize; do php artisan "$command" --no-interaction >> "$log" 2>&1; done
+step=fresh-backup
+if [[ -n "$previous" ]]; then
+    # Current code backs up the prior schema and BOTH upload roots. Share the
+    # scheduler's exact mutex so a nightly archive cannot race this fresh backup.
+    (cd -- "$previous" && php <<'PHP'
+<?php
+// TC_DEPLOY_BACKUP
+try {
+    require getcwd().'/vendor/autoload.php';
+    $app = require getcwd().'/bootstrap/app.php';
+    $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+    $lock = Illuminate\Support\Facades\Cache::lock('framework/schedule-backup-pipeline', 10800);
+    if (! $lock->get()) { throw new RuntimeException(); }
+    try {
+        $status = Illuminate\Support\Facades\Artisan::call('backup:run', ['--disable-notifications' => true, '--no-interaction' => true]);
+        if ($status !== 0) { throw new RuntimeException(); }
+    } finally { $lock->release(); }
+} catch (Throwable $exception) { fwrite(STDERR, "Fresh backup failed or pipeline is occupied.\n"); exit(1); }
+PHP
+    ) >> "$log" 2>&1
+else
+    printf 'First installation: no prior production data; backup drill required before cutover.\n' >&8
+fi
+step=migration
+php artisan migrate --force --no-interaction >> "$log" 2>&1
+smoke() {
+php <<'PHP' >> "$log" 2>&1
+<?php
+// TC_DEPLOY_POSTFLIGHT
+try {
+    require getcwd().'/vendor/autoload.php';
+    $app = require getcwd().'/bootstrap/app.php';
+    $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+    Illuminate\Support\Facades\DB::select('SELECT 1');
+    Illuminate\Support\Facades\Redis::connection()->ping();
+    $kernel = $app->make(Illuminate\Contracts\Http\Kernel::class);
+    foreach (['/up', '/', '/admin/login', '/portal/login'] as $path) {
+        $request = Illuminate\Http\Request::create(rtrim(config('app.url'), '/').$path);
+        $response = $kernel->handle($request);
+        if ($response->getStatusCode() !== 200) { throw new RuntimeException(); }
+        $kernel->terminate($request, $response);
+    }
+} catch (Throwable $exception) { fwrite(STDERR, "Dependency/route smoke failed.\n"); exit(1); }
+PHP
+}
+step=pre-switch-smoke
+smoke
+step=atomic-switch
+next="$root/current-$sha"
+[[ ! -e "$next" && ! -L "$next" ]] || fail 'temporary switch path exists'
+ln -s -- "$release" "$next"
+mv -Tf -- "$next" "$root/current"
+switched=1
+printf 'Switched current to %s; prior retained at %s\n' "$sha" "${previous:-none}" >&8
+step=process-restart
+cd -- "$root/current"
+sudo -n systemctl reload php8.4-fpm.service >> "$log" 2>&1
+php artisan horizon:terminate --no-interaction >> "$log" 2>&1
+php artisan pulse:restart --no-interaction >> "$log" 2>&1
+sudo -n systemctl start training-center-horizon.service training-center-pulse.service >> "$log" 2>&1
+for service in horizon pulse; do
+    ready=0
+    for ((attempt=0; attempt<120; attempt++)); do
+        if systemctl is-active --quiet "training-center-$service.service"; then
+            pid=$(systemctl show --property=MainPID --value "training-center-$service.service")
+            if [[ "$pid" =~ ^[1-9][0-9]*$ && "$(readlink -f -- "/proc/$pid/cwd" 2>/dev/null || true)" == "$release" ]]; then ready=1; break; fi
+        fi
+        sleep 1
+    done
+    (( ready )) || fail 'supervised process did not restart on new release'
+done
+step=post-switch-dependencies
+smoke
+step=post-switch-http
+# Hit this host's TLS Nginx, checking its real certificate; DNS cutover is not
+# needed for first install. No --insecure and no external load balancer cache.
+for path in /up / /admin/login /portal/login; do
+    curl --fail --silent --show-error --max-time 15 --resolve "$host:443:127.0.0.1" "https://$host$path" -o /dev/null >> "$log" 2>&1
+done
+step=record-sha
+[[ ! -L "$root/shared/deployed-sha" && ! -e "$root/shared/deployed-sha-$sha" ]] || fail 'unsafe SHA receipt path'
+printf '%s\n' "$sha" > "$root/shared/deployed-sha-$sha"
+mv -Tf -- "$root/shared/deployed-sha-$sha" "$root/shared/deployed-sha"
+printf 'Release %s succeeded. Previous code and logs retained.\n' "$sha"

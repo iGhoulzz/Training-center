@@ -1,0 +1,4 @@
+# Install as /etc/cron.d/training-center (root-owned, 0644).
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+* * * * * training-center cd /srv/training-center/current && /usr/bin/php /srv/training-center/current/artisan schedule:run >> /srv/training-center/shared/storage/logs/scheduler.log 2>&1
