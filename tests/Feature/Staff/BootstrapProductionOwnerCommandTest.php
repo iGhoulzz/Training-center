@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
+use Illuminate\Testing\PendingCommand;
 use Spatie\Activitylog\Models\Activity;
 use Symfony\Component\Process\Process;
 
@@ -25,35 +26,58 @@ afterAll(function (): void {
 beforeEach(function (): void {
     $this->seed(RolePermissionSeeder::class);
     app()->instance('env', 'production');
+
+    $this->owners = [
+        ['name' => 'Real Owner', 'email' => 'real-owner@example.test', 'password' => 'Abcdefg!'],
+        ['name' => 'Recovery Administrator', 'email' => 'recovery@example.test', 'password' => 'Backup-password#2'],
+    ];
+    $this->bootstrap = function (array $overrides = []): PendingCommand {
+        $owners = array_replace_recursive($this->owners, $overrides);
+        $command = $this->artisan('staff:bootstrap-production-owner');
+
+        foreach ($owners as $index => $owner) {
+            $number = $index + 1;
+            $command->expectsQuestion("Owner {$number} name", $owner['name'])
+                ->expectsQuestion("Owner {$number} email", $owner['email'])
+                ->expectsQuestion("Owner {$number} chosen password", $owner['password']);
+
+            if ($owner['password'] !== '') {
+                $command->doesntExpectOutputToContain($owner['password']);
+            }
+        }
+
+        return $command;
+    };
 });
 
-it('creates only one active owner with the chosen hashed password and a system role audit', function (string $password): void {
-    $this->artisan('staff:bootstrap-production-owner')
-        ->expectsQuestion('Owner email', 'real-owner@example.test')
-        ->expectsQuestion('Chosen password', $password)
-        ->expectsOutput('Production owner created.')
-        ->doesntExpectOutputToContain($password)
+it('creates exactly two named active owners with their own hashed passwords and system role audits', function (string $password, int $index): void {
+    ($this->bootstrap)([$index => ['password' => $password]])
+        ->expectsOutput('Production administrators created.')
         ->assertSuccessful();
 
-    $owner = User::query()->sole();
-    expect($owner->email)->toBe('real-owner@example.test')
-        ->and($owner->is_active)->toBeTrue()
-        ->and($owner->must_change_password)->toBeFalse()
-        ->and($owner->password)->not->toBe($password)
-        ->and(Hash::check($password, $owner->password))->toBeTrue()
-        ->and($owner->isSuperAdmin())->toBeTrue()
-        ->and($owner->roles()->pluck('name')->all())->toBe(['super_admin']);
+    expect(User::withTrashed()->count())->toBe(2)
+        ->and(DB::table('activity_log')->where('event', ActivityEvent::ROLES_CHANGED)->count())->toBe(2);
+    $expected = array_replace_recursive($this->owners, [$index => ['password' => $password]]);
+    foreach ($expected as $credentials) {
+        $owner = User::query()->where('email', $credentials['email'])->sole();
+        expect($owner->name)->toBe($credentials['name'])
+            ->and($owner->is_active)->toBeTrue()
+            ->and($owner->must_change_password)->toBeFalse()
+            ->and($owner->password)->not->toBe($credentials['password'])
+            ->and(Hash::check($credentials['password'], $owner->password))->toBeTrue()
+            ->and($owner->roles()->pluck('name')->all())->toBe(['super_admin']);
 
-    $event = DB::table('activity_log')->where('event', ActivityEvent::ROLES_CHANGED)->sole();
-    expect($event->causer_id)->toBeNull()
-        ->and((string) $event->properties)->not->toContain($password, $owner->password);
+        $event = DB::table('activity_log')->where('event', ActivityEvent::ROLES_CHANGED)->where('subject_id', $owner->getKey())->sole();
+        expect($event->causer_id)->toBeNull()
+            ->and(DB::table('activity_log')->get()->toJson())->not->toContain($credentials['password'], $owner->password);
+    }
 })->with([
     'eight characters' => 'Abcdefg!',
     'no lowercase required' => 'ABCDEFG!',
     'Unicode capital and symbol' => 'Édrisi§9',
     'eight multibyte characters' => 'Aéééééé!',
     'Greek capital' => 'Δabcdef!',
-]);
+])->with([0, 1]);
 
 it('refuses every existing account including inactive and soft deleted accounts without changing it', function (string $state): void {
     $user = User::factory()->create(['is_active' => $state !== 'inactive']);
@@ -73,38 +97,28 @@ it('refuses every existing account including inactive and soft deleted accounts 
         ->and(DB::table('activity_log')->count())->toBe($events);
 })->with(['active', 'inactive', 'deleted']);
 
-it('refuses a second invocation without replacing the owner credential', function (): void {
-    $this->artisan('staff:bootstrap-production-owner')
-        ->expectsQuestion('Owner email', 'real-owner@example.test')
-        ->expectsQuestion('Chosen password', 'Abcdefg!')
-        ->assertSuccessful();
-    $before = User::query()->sole()->getAttributes();
+it('refuses a second invocation without replacing either owner credential', function (): void {
+    ($this->bootstrap)()->assertSuccessful();
+    $before = User::query()->orderBy('id')->get()->map->getAttributes()->all();
     $events = DB::table('activity_log')->count();
 
     $this->artisan('staff:bootstrap-production-owner')
         ->expectsOutput('Bootstrap refused: the users table is not empty.')
         ->assertFailed();
 
-    expect(User::query()->sole()->getAttributes())->toBe($before)
+    expect(User::query()->orderBy('id')->get()->map->getAttributes()->all())->toBe($before)
         ->and(DB::table('activity_log')->count())->toBe($events);
 });
 
-it('refuses malformed owner email without creating an account', function (string $email): void {
-    $this->artisan('staff:bootstrap-production-owner')
-        ->expectsQuestion('Owner email', $email)
-        ->expectsQuestion('Chosen password', 'Abcdefg!')
-        ->doesntExpectOutputToContain('Abcdefg!')
-        ->assertFailed();
+it('refuses malformed email for either owner without creating either account', function (string $email, int $index): void {
+    ($this->bootstrap)([$index => ['email' => $email]])->assertFailed();
 
     expect(User::withTrashed()->count())->toBe(0)
         ->and(DB::table('model_has_roles')->count())->toBe(0);
-})->with(['not-an-email', '', 'owner@', str_repeat('a', 245).'@example.test']);
+})->with(['not-an-email', '', 'owner@', str_repeat('a', 245).'@example.test'])->with([0, 1]);
 
-it('reports every unmet chosen password requirement without leaking the supplied password', function (string $password, array $messages): void {
-    $command = $this->artisan('staff:bootstrap-production-owner')
-        ->expectsQuestion('Owner email', 'real-owner@example.test')
-        ->expectsQuestion('Chosen password', $password)
-        ->doesntExpectOutputToContain($password);
+it('reports every unmet chosen password requirement for either owner without leaking it', function (string $password, array $messages, int $index): void {
+    $command = ($this->bootstrap)([$index => ['password' => $password]]);
 
     foreach ($messages as $message) {
         $command->expectsOutput($message);
@@ -125,7 +139,46 @@ it('reports every unmet chosen password requirement without leaking the supplied
         'The password must contain at least one symbol, such as ! or #. Letters, digits and spaces do not count.',
     ]],
     'Unicode digits and spaces are not symbols' => ["Abcdef١\u{00A0}", ['The password must contain at least one symbol, such as ! or #. Letters, digits and spaces do not count.']],
-]);
+])->with([0, 1]);
+
+it('requires a bounded nonblank name for each owner before creating either account', function (string $name, int $index): void {
+    ($this->bootstrap)([$index => ['name' => $name]])
+        ->doesntExpectOutputToContain('Bootstrap failed')
+        ->assertFailed();
+
+    expect(User::withTrashed()->count())->toBe(0)
+        ->and(DB::table('model_has_roles')->count())->toBe(0);
+})->with(['', '   ', "\u{00A0}\u{2003}", str_repeat('a', 256)])->with([0, 1]);
+
+it('requires both hidden chosen passwords without creating either account', function (int $index): void {
+    ($this->bootstrap)([$index => ['password' => '']])->assertFailed();
+
+    expect(User::withTrashed()->count())->toBe(0)
+        ->and(DB::table('model_has_roles')->count())->toBe(0);
+})->with([0, 1]);
+
+it('trims outer spaces from both owners names and email addresses before storing them', function (): void {
+    ($this->bootstrap)([
+        0 => ['name' => '  Real Owner  ', 'email' => ' real-owner@example.test '],
+        1 => ['name' => ' Recovery Administrator ', 'email' => ' recovery@example.test '],
+    ])->assertSuccessful();
+
+    expect(User::query()->orderBy('id')->get(['name', 'email'])->toArray())->toBe([
+        ['name' => 'Real Owner', 'email' => 'real-owner@example.test'],
+        ['name' => 'Recovery Administrator', 'email' => 'recovery@example.test'],
+    ]);
+});
+
+it('rejects duplicate owner emails case insensitively without creating either account', function (string $email): void {
+    ($this->bootstrap)([1 => ['email' => $email]])
+        ->expectsOutput('The Owner 1 email field has a duplicate value.')
+        ->expectsOutput('The Owner 2 email field has a duplicate value.')
+        ->doesntExpectOutputToContain('Bootstrap failed')
+        ->assertFailed();
+
+    expect(User::withTrashed()->count())->toBe(0)
+        ->and(DB::table('model_has_roles')->count())->toBe(0);
+})->with(['real-owner@example.test', 'REAL-OWNER@example.test', ' REAL-OWNER@example.test ']);
 
 it('refuses a missing staff super admin role instead of creating roles', function (): void {
     Role::query()->where('name', 'super_admin')->delete();
@@ -164,23 +217,26 @@ it('exposes no password option or argument', function (): void {
         ->and($command->getDefinition()->getArguments())->toBe([]);
 });
 
-it('rolls back the owner and role pivot when the trusted writer fails without exposing credentials', function (): void {
-    Activity::creating(function (Activity $activity): void {
-        if ($activity->event === ActivityEvent::ROLES_CHANGED) {
-            throw new RuntimeException('Database failure containing Abcdefg!');
+it('rolls back both owners and role pivots when either trusted role write fails without exposing credentials', function (int $failAt): void {
+    $writes = 0;
+    $observed = null;
+    $eventsBefore = DB::table('activity_log')->count();
+    Activity::creating(function (Activity $activity) use ($failAt, &$writes, &$observed): void {
+        if ($activity->event === ActivityEvent::ROLES_CHANGED && ++$writes === $failAt) {
+            $observed = [User::query()->count(), DB::table('model_has_roles')->count()];
+            throw new RuntimeException('Database failure containing Abcdefg! and Backup-password#2');
         }
     });
 
-    $this->artisan('staff:bootstrap-production-owner')
-        ->expectsQuestion('Owner email', 'real-owner@example.test')
-        ->expectsQuestion('Chosen password', 'Abcdefg!')
-        ->expectsOutput('Bootstrap failed; no owner was created.')
-        ->doesntExpectOutputToContain('Abcdefg!')
+    ($this->bootstrap)()
+        ->expectsOutput('Bootstrap failed; no administrators were created.')
         ->assertFailed();
 
-    expect(User::withTrashed()->count())->toBe(0)
-        ->and(DB::table('model_has_roles')->count())->toBe(0);
-});
+    expect($observed)->toBe([$failAt, $failAt])
+        ->and(User::withTrashed()->count())->toBe(0)
+        ->and(DB::table('model_has_roles')->count())->toBe(0)
+        ->and(DB::table('activity_log')->count())->toBe($eventsBefore);
+})->with([1, 2]);
 
 it('serializes concurrent first owners even when both transactions already saw an empty users table', function (): void {
     $token = (string) Str::uuid();
@@ -221,11 +277,23 @@ it('serializes concurrent first owners even when both transactions already saw a
                 }
                 public function askQuestion(Symfony\Component\Console\Question\Question $question): mixed
                 {
-                    if ($question->getQuestion() === 'Owner email') {
-                        return $this->email;
+                    $answers = [
+                        'Owner 1 name' => 'Concurrent Owner',
+                        'Owner 2 name' => 'Concurrent Recovery Administrator',
+                        'Owner 1 email' => $this->email,
+                        'Owner 2 email' => 'recovery-'.$this->email,
+                    ];
+                    if (isset($answers[$question->getQuestion()])) {
+                        return $answers[$question->getQuestion()];
                     }
                     if (! $question->isHidden() || $question->isHiddenFallback()) {
                         throw new RuntimeException('Chosen password must be hidden without fallback.');
+                    }
+                    if ($question->getQuestion() === 'Owner 1 chosen password') {
+                        return 'Abcdefg!';
+                    }
+                    if ($question->getQuestion() !== 'Owner 2 chosen password') {
+                        throw new RuntimeException('Unexpected bootstrap question.');
                     }
                     file_put_contents($this->ready, 'ready');
                     $deadline = hrtime(true) + 30_000_000_000;
@@ -235,7 +303,7 @@ it('serializes concurrent first owners even when both transactions already saw a
                     if (! file_exists($this->release)) {
                         throw new RuntimeException('Bootstrap worker was not released.');
                     }
-                    return 'Abcdefg!';
+                    return 'Backup-password#2';
                 }
         };
         $status = Illuminate\Support\Facades\DB::transaction(function () use ($command, $input, $style): int {
@@ -270,10 +338,14 @@ it('serializes concurrent first owners even when both transactions already saw a
             $results[] = json_decode($worker->getOutput(), true, flags: JSON_THROW_ON_ERROR);
         }
         expect(collect($results)->pluck('status')->sort()->values()->all())->toBe([0, 1])
-            ->and(collect($results)->pluck('output')->implode(' '))->toContain('Production owner created.', 'Bootstrap refused: the users table is not empty.')
-            ->not->toContain('Abcdefg!')
-            ->and(User::query()->count())->toBe(1)
-            ->and(User::query()->sole()->isSuperAdmin())->toBeTrue();
+            ->and(collect($results)->pluck('output')->implode(' '))->toContain('Production administrators created.', 'Bootstrap refused: the users table is not empty.')
+            ->not->toContain('Abcdefg!', 'Backup-password#2')
+            ->and(User::query()->count())->toBe(2)
+            ->and(User::query()->get()->every(fn (User $owner): bool => $owner->isSuperAdmin()))->toBeTrue()
+            ->and(User::query()->orderBy('email')->pluck('email')->all())->toBeIn([
+                ['owner0@example.test', 'recovery-owner0@example.test'],
+                ['owner1@example.test', 'recovery-owner1@example.test'],
+            ]);
     } finally {
         foreach ($workers as $worker) {
             if ($worker->isRunning()) {
