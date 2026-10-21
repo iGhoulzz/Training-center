@@ -18,7 +18,7 @@ change this document in the same pull request.
 | Decision | Choice | Decided |
 |---|---|---|
 | Host | A Libyan Spider root Linux VPS, Ubuntu 24.04 LTS, 2 vCPU / 4 GB RAM / 40 GB disk | Owner, 2026-10-20 |
-| Stack | Native: Nginx, PHP-FPM 8.4, MySQL 8, Redis, systemd, cron. No Docker, no management panel | Plan, decision 1 |
+| Stack | Native: Nginx, PHP-FPM 8.4, MySQL 8.4 LTS, Redis, systemd, cron. No Docker, no management panel | Plan, decision 1 |
 | Where HTTPS ends | **At the VPS's own Nginx.** No upstream proxy or CDN. `TRUSTED_PROXIES` stays empty | Plan, global constraints |
 | Releases | Manual, approval-gated GitHub workflow, one green `main` SHA at a time | Plan, decision 2 |
 | Mail | Brevo SMTP (`smtp-relay.brevo.com`, port 587, STARTTLS). Credentials are typed on the host only | Owner, 2026-10-20 |
@@ -74,18 +74,32 @@ GitHub should not be the person who dispatched it (section B6 turns that on).
    writes automatically, and nobody should do either without the owner's
    decision (section D).
 
-### Open issues found while writing this runbook
+### Prerequisites and unknowns
 
-These are disagreements between the code on this branch and what a stock Ubuntu
-24.04 host does. They are recorded here so nobody discovers them at 2 a.m. They
-are not fixed by this document, and the first one stops the first release.
+**The first deploy needs PR #129 merged.** It changes `release.sh` to check
+`pcntl` on the CLI only, because Ubuntu's PHP packages compile `pcntl` into the
+CLI and not into PHP-FPM. Install the PHP packages normally (A3); do not work
+around the check.
 
-| # | Issue | Effect | What this runbook does |
-|---|---|---|---|
-| 1 | `release.sh` requires `pcntl` in the **PHP-FPM** extension list (`php-fpm8.4 -m`). On Ubuntu 24.04 with the `ondrej/php` packages, `pcntl` is compiled into the CLI only. It was checked in a throwaway container: all of `redis posix pdo_mysql mbstring intl bcmath gd zip` are present in both SAPIs; `pcntl` is not in FPM. | The release stops at step `php-fpm-extensions` with "PHP-FPM extension missing". `pcntl` is needed by Horizon (CLI), not by web requests. | Step A10 shows how to check. **No package-only workaround exists.** Until `deploy/release.sh` (and its test harness) get a reviewed change, the first release cannot succeed on stock packages. Do not edit the installed copy by hand. |
-| 2 | The backup destination check (`BackupConfiguration::assertDestinationReady`) refuses a `backups_local` path that is on the **same filesystem** as the application, because that is what an unmounted drive looks like. A plain directory on a one-disk VPS therefore fails the release preflight and `backup:run`. | The owner's temporary on-server backup cannot use a plain folder. | Step A12 mounts a dedicated filesystem image at the backup path, which has its own device id and so satisfies the check as written. It is still the same physical disk. See section F. |
-| 3 | `release.sh` requires the default **CLI** `memory_limit` to be finite and at least 24 MiB above the Horizon worker ceiling (96 MiB, so 120 MiB). Ubuntu's CLI `php.ini` ships `memory_limit = -1`. | The release stops at `production-preflight` until the limit is set. | Step A10 sets 128M for the CLI. |
-| 4 | CI and the Docker dev target run MySQL 8.4. Ubuntu 24.04 ships MySQL 8.0. `release.sh` accepts any `8.x`. | The test suite has never run against 8.0. | Recorded as a risk; step A8 records the version. No action is taken here. |
+**Libyan Spider unknowns. The Operator checks these first (A1), before anything
+is installed, and reports the answers to the Owner:**
+
+| Unknown | Why it matters | Check (A1) |
+|---|---|---|
+| Loop devices allowed | The temporary on-server backup volume (A12) is a loop-mounted image | `systemd-detect-virt` is not `openvz`/`lxc`, and `losetup -f` works |
+| IPv6 | Decides whether an AAAA record may be published (B2) | `ip -6 addr show scope global` |
+| Outbound port 587 | Brevo SMTP; the release preflight and all alert mail need it | `timeout 10 bash -c '</dev/tcp/smtp-relay.brevo.com/587' && echo open` |
+
+Two properties of the code the runbook is built around:
+
+- The backup destination check (`BackupConfiguration::assertDestinationReady`)
+  refuses a `backups_local` path on the **same filesystem** as the application,
+  because that is what an unmounted drive looks like. A plain folder on a
+  one-disk VPS fails the release preflight and `backup:run`. A12 therefore mounts
+  a dedicated filesystem image there.
+- `release.sh` requires the default **CLI** `memory_limit` to be finite and at
+  least 24 MiB above the Horizon worker ceiling (96 MiB, so 120 MiB). Ubuntu's
+  CLI `php.ini` ships `memory_limit = -1`; A10 sets 128M.
 
 ---
 
@@ -106,14 +120,20 @@ grep -E '^(PRETTY_NAME|VERSION_ID)=' /etc/os-release
 nproc; free -h; df -h /
 systemd-detect-virt
 ip -br addr
+losetup -f                                    # prints a free loop device (needed by A12)
+ip -6 addr show scope global                  # empty output: no public IPv6
+timeout 10 bash -c '</dev/tcp/smtp-relay.brevo.com/587' && echo "587 open"
 ```
 
 Stop and tell the owner, before installing anything, if:
 
 - it is not Ubuntu 24.04;
 - RAM or disk is below the purchased 4 GB / 40 GB;
-- `systemd-detect-virt` prints `openvz` or `lxc`. A container may not allow the
-  loop mount in A12; ask the provider for an attached volume instead.
+- `systemd-detect-virt` prints `openvz` or `lxc`, or `losetup -f` fails. The loop
+  mount in A12 will not work; ask the provider for an attached volume instead;
+- outbound port 587 is not open (no mail, so no release).
+
+No public IPv6 is fine, but then publish **no** AAAA record in B2.
 
 PHP 8.4.1 or newer must be installable (checked again in A3). If it cannot be,
 **stop**: the locked dependencies require it and nothing else here matters.
@@ -136,12 +156,15 @@ the nightly backup schedule names its own timezone (section E).
 
 **Who:** Operator.
 
-Ubuntu 24.04 ships PHP 8.3, so PHP 8.4 comes from the `ondrej/php` PPA. MySQL
-and Redis come from Ubuntu.
+Ubuntu 24.04 ships PHP 8.3, so PHP 8.4 comes from the `ondrej/php` PPA. Redis
+comes from Ubuntu. MySQL 8.4 LTS comes from MySQL's own repository, installed in
+A8, so production runs the same MySQL series that CI and the Docker dev target
+test. PHP-FPM and the CLI get their extensions from the packages below; install
+them normally (see the PR #129 note in section 0).
 
 ```bash
 apt-get install -y software-properties-common ca-certificates curl ufw \
-    unattended-upgrades nginx mysql-server redis-server certbot
+    unattended-upgrades nginx redis-server certbot gnupg wget lsb-release
 add-apt-repository -y ppa:ondrej/php
 apt-get update
 apt-get install -y php8.4-fpm php8.4-cli php8.4-mysql php8.4-mbstring php8.4-intl \
@@ -158,8 +181,7 @@ update-alternatives --display php | head -3
 
 If it is not 8.4: `update-alternatives --set php /usr/bin/php8.4`.
 
-Evidence: the `php -v` line, `mysql --version`, `redis-server --version`,
-`nginx -v`.
+Evidence: the `php -v` line, `redis-server --version`, `nginx -v`.
 
 ### A3a. Copy and verify the reviewed host files
 
@@ -276,16 +298,51 @@ unattended-upgrade --dry-run --debug 2>&1 | tail -5
 Two limits to know about:
 
 - Unattended upgrades cover Ubuntu's own security pocket. **PHP packages from
-  the `ondrej/php` PPA are not upgraded automatically.** Section E makes that a
+  the `ondrej/php` PPA and MySQL packages from MySQL's repository are not
+  upgraded automatically.** Section E makes that a
   monthly manual task.
 - The host does not reboot by itself. A new kernel waits for a deliberate reboot
   (section E).
 
-### A8. MySQL
+### A8. MySQL 8.4 LTS
 
 **Who:** Operator.
 
-First make a private place for generated secrets. It is deleted at the end of
+**Install it from MySQL's official APT repository, not Ubuntu's `mysql-server`
+(8.0).** CI and the dev target test 8.4; production must match.
+
+1. Open <https://dev.mysql.com/downloads/repo/apt/> and download the current
+   `mysql-apt-config_<version>_all.deb`. Check the checksum the page publishes
+   (`md5sum` the download); the file name carries a version this runbook cannot
+   fix in advance.
+2. Preselect the 8.4 LTS series so the installer does not prompt, install the
+   repository package, and install the server:
+
+   ```bash
+   echo "mysql-apt-config mysql-apt-config/select-server select mysql-8.4-lts" | debconf-set-selections
+   DEBIAN_FRONTEND=noninteractive dpkg -i mysql-apt-config_*_all.deb
+   apt-get update
+   apt-cache policy mysql-server | head -4           # candidate must be 8.4.x from repo.mysql.com
+   DEBIAN_FRONTEND=noninteractive apt-get install -y mysql-server
+   ```
+
+   If the candidate is not 8.4, stop and fix the repository selection
+   (`dpkg-reconfigure mysql-apt-config`) before installing. If the installer
+   asks for a root password, accept the default (socket authentication as OS
+   root); the application never uses root.
+3. Verify the series before creating anything:
+
+   ```bash
+   mysql -N -e 'SELECT VERSION();'        # must start with 8.4.
+   ```
+
+   If it does not start with `8.4.`, stop: the release preflight accepts any
+   `8.x` and would not catch the mismatch.
+
+MySQL's repository is a third-party source like the PPA, and unattended upgrades
+do not cover it (see A7 and section E).
+
+Then make a private place for generated secrets. It is deleted at the end of
 B5, after the secrets are in the password manager and in `.env`.
 
 ```bash
@@ -313,12 +370,12 @@ is scoped to one schema and carries none of the global privileges (such as
 Check it:
 
 ```bash
-mysql --version                                    # 8.0.x; see open issue 4
+mysql --version                                    # 8.4.x
 ss -ltnp | grep -E ':(3306|33060) '                # 127.0.0.1 only
 MYSQL_PWD="$(cat /root/tc-secrets/db_password)" mysql -h 127.0.0.1 -u training_center training_center -e 'SELECT VERSION();'
 ```
 
-Evidence: the version, and the `ss` output showing loopback only. Never paste
+Evidence: `SELECT VERSION();` (starts with `8.4.`), and the `ss` output showing loopback only. Never paste
 the password.
 
 ### A9. Redis
@@ -389,8 +446,8 @@ Why the upload limits: PHP's default `upload_max_filesize` is 2M, which would
 silently refuse the 10 MiB certificate and article uploads that the application
 accepts.
 
-Check the runtime user sees the same limit, and that both SAPIs have the
-extensions `release.sh` demands:
+Check the runtime user sees the same limit, and that the extensions
+`release.sh` demands are present:
 
 ```bash
 sudo -u www-data /usr/bin/php -r 'echo ini_get("memory_limit"), PHP_EOL;'    # 128M
@@ -399,8 +456,9 @@ for e in redis pcntl posix pdo_mysql mbstring intl bcmath gd zip; do
 done
 ```
 
-Every row must read `cli=1 fpm=1`. **`pcntl` will read `fpm=0` on stock packages;
-that is open issue 1.** Do not go on to the first release until it is resolved.
+Every row must read `cli=1`. Every row except `pcntl` must also read `fpm=1`;
+`pcntl` is CLI-only in Ubuntu's PHP packages, so `fpm=0` is expected there. That
+is why the first deploy needs PR #129 (section 0).
 
 Evidence: the table above.
 
@@ -442,22 +500,24 @@ filesystem, and `www-data` must be able to write to it. On a one-disk VPS the wa
 to get a different filesystem is a loop-mounted image:
 
 ```bash
-fallocate -l 6G /var/lib/training-center-backups.img
-chmod 0600 /var/lib/training-center-backups.img
-mkfs.ext4 -q -L tc-backups /var/lib/training-center-backups.img
+fallocate -l 10G /var/lib/training-center-backup.img
+chmod 0600 /var/lib/training-center-backup.img
+mkfs.ext4 -q -L tc-backups /var/lib/training-center-backup.img
 install -d -m 0755 /var/backups/training-center
-echo '/var/lib/training-center-backups.img /var/backups/training-center ext4 loop,nofail,noatime 0 2' >> /etc/fstab
+echo '/var/lib/training-center-backup.img /var/backups/training-center ext4 loop,nofail,noatime 0 2' >> /etc/fstab
 mount /var/backups/training-center
 chown www-data:www-data /var/backups/training-center
 chmod 0750 /var/backups/training-center
 sudo -u www-data touch /var/backups/training-center/.training-center-backup-volume
 ```
 
-`nofail` keeps a failed mount from blocking boot. If the mount is ever missing,
+The image is a fixed-size, fully allocated file (10 GiB by default; the VPS has
+40 GB), and the `/etc/fstab` line remounts it at every boot. `nofail` keeps a
+failed mount from blocking boot. If the mount is ever missing,
 `/var/backups/training-center` becomes an ordinary folder on the root
 filesystem, and the guard refuses to back up into it (exactly the case it was
-written for). 6 GiB is a starting figure for one to two weeks; the archives start
-small. Resize from the real archive size.
+written for). Ten GiB is the default for one to two weeks; the archives start
+small. If `fallocate` is refused, use `dd if=/dev/zero of=... bs=1M count=10240`.
 
 Check that the filesystem really differs, and the marker exists:
 
@@ -467,9 +527,10 @@ findmnt /var/backups/training-center
 ls -la /var/backups/training-center/.training-center-backup-volume
 ```
 
-Evidence: the three outputs, and the date. **The loop image shares the VPS's
-disk. It guards against mistakes and bad releases, not against losing the
-server.**
+Evidence: the three outputs, and the date. **This is the same physical disk as
+the application. It is a temporary exception, accepted by the owner for the
+first one to two weeks after launch, and it guards against mistakes and bad
+releases, not against losing the server.**
 
 ### A13. Install the reviewed host files
 
@@ -827,6 +888,10 @@ Replace the six `<SECRET>` placeholders by editing the file with
 | `MAIL_FROM_ADDRESS` | A sender address Brevo has verified (the domain's SPF/DKIM done in Brevo by the owner) | An unverified sender is rejected by Brevo, which the deploy preflight cannot see (it never authenticates) |
 | `HORIZON_ALERT_EMAIL`, `BACKUP_ALERT_EMAIL` | A mailbox people actually read | Production refuses to boot on an absent or invalid Horizon address |
 | `BACKUP_ARCHIVE_PASSWORD` | A long random password the owner generates **and also stores in a password manager** | Losing it makes every archive unreadable, with no recovery path |
+
+`LOG_LEVEL=info` and `SESSION_SECURE_COOKIE=true` are proposals, not requirements
+of the release script: `info` keeps useful diagnostics without `debug` noise,
+and the site is HTTPS-only. The Owner may change either.
 
 Leave `MAIL_SCHEME` unset. Port 587 negotiates STARTTLS; the release preflight
 requires it.
@@ -1494,7 +1559,8 @@ export REDISCLI_AUTH="$(grep '^REDIS_PASSWORD=' /srv/training-center/shared/.env
 
 **Monthly OS and PHP updates.** Unattended upgrades cover Ubuntu security
 updates only. The `ondrej/php` PHP packages need `apt-get install --only-upgrade
-php8.4-*` by hand, followed by `systemctl restart php8.4-fpm` and the C7 restart
+php8.4-*` by hand, and MySQL needs `apt-get install --only-upgrade mysql-server`
+(read the changelog first; restart it in a quiet hour), followed by `systemctl restart php8.4-fpm` and the C7 restart
 of Horizon and Pulse. A new kernel needs a deliberate reboot in a quiet hour:
 tell the owners first; afterwards check `findmnt /var/backups/training-center`,
 `systemctl is-active` for `nginx php8.4-fpm mysql redis-server
@@ -1584,8 +1650,8 @@ ends at the deadline whether or not anyone remembers it.
 
    ```bash
    umount /var/backups/training-center
-   sed -i '\#/var/lib/training-center-backups.img#d' /etc/fstab
-   rm /var/lib/training-center-backups.img
+   sed -i '\#/var/lib/training-center-backup.img#d' /etc/fstab
+   rm /var/lib/training-center-backup.img
    ```
 
    Keep the local archives until step 5 has passed. The next release's preflight

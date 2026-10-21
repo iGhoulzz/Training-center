@@ -32,7 +32,7 @@ A web-based management system for a single training center. It replaces nothing 
 | Languages | Arabic and English, RTL | Translation structure and logical CSS properties from the first commit; Arabic strings land in phase 4. |
 | Currency | Libyan Dinar (LYD), single currency | Stored as `decimal(12,3)` per ISO 4217 — the dinar subdivides into 1000 dirham. Display precision is a UI setting. Multi-currency is out of scope. |
 | Public registration | Disabled | All accounts are created by an administrator. |
-| Email | None at launch | Notification classes exist; mail driver set to `log`. Enabling email later is a config change. |
+| Email | Brevo SMTP for transactional and alert mail | Chosen by the owner on 2026-10-20 (`smtp-relay.brevo.com`, port 587, STARTTLS; credentials live only in the host's `.env`). Production refuses the non-delivering `log` and `array` mailers. |
 
 ---
 
@@ -540,7 +540,7 @@ Feature tests are the priority, because the risk in this system is in how the pi
 
 ### Service level objectives
 
-**These describe the measured harness, not production, and the distinction is load-bearing.** Every number below comes from the P3.5-T11 baseline in `docs/reviews/2026-09-28-phase-3.5-load-baseline.md`: a Docker development container running PHP's built-in server with eight workers, against the medium fixture at 20 virtual users for five minutes. The hosting provider is undecided (§2), so **there are no production targets yet** — projecting a development container's figures onto an unmeasured VPS would put a number in this section that nobody has ever observed. Production targets are set after a host is chosen and re-measured there, and until then this section states what the repeatable run must reproduce.
+**These describe the measured harness, not production, and the distinction is load-bearing.** Every number below comes from the P3.5-T11 baseline in `docs/reviews/2026-09-28-phase-3.5-load-baseline.md`: a Docker development container running PHP's built-in server with eight workers, against the medium fixture at 20 virtual users for five minutes. The production host is a Libyan Spider VPS (§2) that has not yet been measured, so **there are no production targets yet** — projecting a development container's figures onto an unmeasured VPS would put a number in this section that nobody has ever observed. Production targets are set after launch, from measurements on that VPS, and until then this section states what the repeatable run must reproduce.
 
 | Flow | Measured p95 (T11) | p95 target | Observed by |
 |---|---:|---:|---|
