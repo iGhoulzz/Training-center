@@ -454,7 +454,7 @@ it('stages an explicit allowlist, so dev-only trees, secrets and links cannot be
     foreach (['tests', 'docs', 'node_modules', 'storage', '.github', '.git', '.env', 'deploy', 'scripts', 'docker', 'phpunit.xml', 'package.json'] as $leftOut) {
         expect(explode(' ', $allowlist[1]))->not->toContain($leftOut);
     }
-    expect($script)->toContain('find "$stage" -type l');
+    expect($script)->toContain('if [ -n "$(find "$stage" -type l -print -quit)" ]; then', 'exit 1');
 });
 
 it('packages a tar.gz without links, with no hard links, and records its checksum', function (): void {
@@ -692,6 +692,22 @@ it('verifies the downloaded archive against the checksum the build job reported'
     expect($check['env'])->toBe(['EXPECTED_SHA256' => '${{ needs.build.outputs.archive_sha256 }}']);
     expect($check['run'])->toContain('sha256sum', 'exit 1');
 });
+
+it('stops when the downloaded archive does not match the reported checksum', function (string $expected, bool $accepted): void {
+    $directory = deployTemporaryDirectory();
+    mkdir($directory.'/download');
+    file_put_contents($directory.'/download/release.tar.gz', 'archive-bytes');
+    [$code, $output] = deployRunBash(deployScript('deploy', 'Confirm the archive is the one that was built'), [
+        'RUNNER_TEMP' => deployPosix($directory), 'EXPECTED_SHA256' => $expected,
+    ], $directory);
+
+    expect($code === 0)->toBe($accepted, $output);
+    deployRemoveTree($directory);
+})->with([
+    'the checksum of exactly these bytes' => ['0c982986710a026635603031674053ca851fc0e3ea760094a34f59b84f7f6da6', true],
+    'the checksum of other bytes' => ['1c982986710a026635603031674053ca851fc0e3ea760094a34f59b84f7f6da6', false],
+    'no checksum reported' => ['', false],
+]);
 
 it('confirms main still points at the SHA immediately before the transfer, and stops otherwise', function (string $tip, bool $accepted): void {
     [$code, $output, $directory] = deployRunWithGh(deployScript('deploy', 'Confirm main has not moved'), ['SHA' => DEPLOY_SHA, 'MOCK_TIP' => $tip]);
