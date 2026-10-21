@@ -1,10 +1,11 @@
 # Replace center.example and certificate paths on the host; nginx -t before reload.
+# The certificate must cover both center.example and www.center.example.
 # TLS ends here by default. An upstream requires explicit Laravel proxy CIDRs
 # AND firewall rules allowing only that upstream to reach the origin.
 server {
     listen 80;
     listen [::]:80;
-    server_name center.example;
+    server_name center.example www.center.example;
     location ^~ /.well-known/acme-challenge/ {
         root /var/www/letsencrypt;
         default_type text/plain;
@@ -71,4 +72,15 @@ server {
         fastcgi_hide_header X-Powered-By;
     }
     location ~ \.php$ { return 404; }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name www.center.example;
+    ssl_certificate /etc/letsencrypt/live/center.example/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/center.example/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    return 301 https://center.example$request_uri;
 }

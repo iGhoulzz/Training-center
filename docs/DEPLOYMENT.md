@@ -1007,6 +1007,26 @@ secret *names*, variable name; never values), and the date.
 3. **Switch Nginx to the application's TLS site** (it answers a built-in 503
    until `current` exists):
 
+   Before switching, confirm DNS for **both** `center.example` and
+   `www.center.example` reaches this VPS, for every published address family.
+   Check `certbot certificates` and the certificate's Subject Alternative Names:
+
+   ```bash
+   openssl x509 -in "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" -noout -dates -ext subjectAltName
+   ```
+
+   It must be valid and cover **both** names: TLS is negotiated before a `www`
+   redirect can be returned. If DNS or certificate coverage is missing, stop
+   and finish B2–B4 for `www` before switching. The apex-only commands in those
+   bootstrap sections do not establish this prerequisite by themselves.
+
+   Use the template from the reviewed commit **after it is merged into `main`**.
+   If A3a copied an older template, repeat its transfer and checksum verification
+   from that merged commit first; an old host-side copy will still omit `www`.
+   Keep the new SHA and checksum result in the evidence log. The template accepts
+   both names on HTTP for ACME, serves the application only on the apex over
+   HTTPS, and redirects HTTPS `www` to the apex with its path and query intact.
+
    ```bash
    sed "s/center\.example/$DOMAIN/g" /root/tc-deploy-files/deploy/nginx/training-center.conf.example \
        > /etc/nginx/sites-available/training-center-app.conf
@@ -1017,18 +1037,37 @@ secret *names*, variable name; never values), and the date.
    Keep `training-center-maintenance.conf` in `sites-available`: it is the
    recovery site for B9.
 
-   Verify, from outside, with no `-k`:
+   On the host, create a temporary renewal-path probe:
+
+   ```bash
+   printf 'ok\n' > /var/www/letsencrypt/.well-known/acme-challenge/probe
+   ```
+
+   Verify, from outside, with no `-k` or `-L`. Repeat for every published address
+   family (`curl -4` and, only if published, `curl -6`):
 
    ```bash
    curl -sI https://center.example/ | grep -iE '^(HTTP|strict-transport-security)'    # 503 + HSTS
    curl -s -o /dev/null -w '%{http_code}\n' https://center.example/.env              # 403 or 404, never 200
+   curl -sI 'http://center.example/programmes?probe=1' | grep -iE '^(HTTP|location)'  # 301 to https://center.example/programmes?probe=1
+   curl -sI 'http://www.center.example/programmes?probe=1' | grep -iE '^(HTTP|location)' # same 301 target
+   curl -sI 'https://www.center.example/programmes?probe=1' | grep -iE '^(HTTP|location|strict-transport-security)' # same 301 target + HSTS
+   curl -s -w '\nHTTP %{http_code}\n' http://center.example/.well-known/acme-challenge/probe     # ok, HTTP 200 (no redirect)
+   curl -s -w '\nHTTP %{http_code}\n' http://www.center.example/.well-known/acme-challenge/probe # ok, HTTP 200 (no redirect)
+   ```
+
+   Remove the probe on the host after the checks:
+
+   ```bash
+   rm /var/www/letsencrypt/.well-known/acme-challenge/probe
    ```
 
    The 503 comes from the template's `try_files $uri =503` on `/index.php`: with
    no `current/public/index.php` the request never reaches PHP-FPM.
 
-Evidence: the `ls -l` of the approval files, the approved SHA, and the two curl
-results.
+Evidence: the `ls -l` of the approval files, the approved SHA, the template's
+transfer/checksum result, DNS and certificate coverage for both names, and all
+curl results.
 
 ### B8. Dispatch and approve the first release
 
