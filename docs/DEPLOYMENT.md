@@ -1461,9 +1461,30 @@ retry`). A retry therefore needs exactly the failed staging directory removed an
 nothing else. **Never remove `shared`, the active release, or the last-known-good
 release.**
 
-1. Keep the evidence: the logs stay in `shared/deploy-logs/`. Copy off the host
-   any log you want to keep beyond the next prune.
-2. Verify the directory, and remove it only if every check passes:
+1. **Keep the evidence.** The logs stay in `shared/deploy-logs/`. Copy off the
+   host any log you want to keep beyond the next prune. **Do not remove the failed
+   staging directory yet**: it holds the exact code and migrations that ran, and
+   step 2 may need them.
+2. **If the failure was at `migration` or anywhere after it, settle the schema
+   first, before deleting anything or re-dispatching.** Laravel skips only the
+   migrations it *recorded*. A migration that failed part-way is not recorded, and
+   on retry it runs again against a schema that MySQL may already have partly
+   changed: its first `CREATE` or `ALTER` then fails, or worse, applies twice.
+   - Inspect the deploy logs of **every** attempt of this SHA, `migrate:status`,
+     and the real schema, as in D3 step 2. Read the failed migration in the
+     retained `releases/<sha>/database/migrations/` to see what it would have done.
+   - The Operator and the Owner agree, in writing, how to reach a known schema:
+     usually a reviewed **forward fix**, or a reviewed manual repair of the exact
+     leftover objects. A forward fix is a new commit whose migration copes with the
+     partial state, and it goes through CI and C1–C5 as a new SHA. Restoring the
+     backup (D4) is the last resort.
+   - Go on to step 3 only once the schema is known and that decision is recorded.
+     If the decision is a forward fix, this SHA is not retried at all: keep its
+     directory as evidence until the fix is live, then remove it with step 3.
+
+   A failure **before** `migration` (preflight, cache rebuild, backup) never touched
+   the schema; skip to step 3 once the cause is fixed.
+3. Verify the failed staging directory, and remove it only if every check passes:
 
    ```bash
    sha=<40-hex SHA of the failed staged release>
@@ -1481,32 +1502,18 @@ release.**
    `rm -r` removes symbolic links without following them, so `.env`,
    `storage` and `public/storage` inside the release are unlinked, not their
    targets in `shared`.
-3. **Recheck both approvals** (C3 and the GitHub environment): the host file must
-   still exist for this SHA, and the new workflow run needs the Reviewer's
-   approval again, because approvals belong to one run.
-4. **If the failure was at `migration`, or anywhere after it, do not simply
-   re-dispatch.** Laravel skips only the migrations it *recorded*. A migration
-   that failed part-way is not recorded, and on retry it runs again against a
-   schema that MySQL may already have partly changed. Its first `CREATE` or
-   `ALTER` then fails, or worse, applies twice.
-   - Inspect `migrate:status` and the real schema, as in D3 step 2, across
-     **every** attempt of this SHA.
-   - The Operator and the Owner agree, in writing, how to get to a known schema:
-     usually a reviewed **forward fix** (a new commit whose migration copes with
-     the partial state, which then goes through CI and C1–C5 as a new SHA), or a
-     reviewed manual repair of the exact leftover objects. Restoring the backup
-     (D4) is the last resort.
-   - Retry only once the schema is known. A failure before `migration` (preflight,
-     cache rebuild, backup) never touched the schema; there you may dispatch
-     again (C4) once the cause is fixed.
+4. **Recheck both approvals** (C3 and the GitHub environment). The host file must
+   still exist for this SHA. The new workflow run needs the Reviewer's approval
+   again, because an approval belongs to one run.
+5. Dispatch again (C4).
 
 **First install that failed after the switch.** If the script printed `Switched
 current to ...`, then `current` is a symlink to the failed release and the
-`current` check in step 2 will correctly refuse to delete it. Only after the
+`current` check in step 3 will correctly refuse to delete it. Only after the
 Operator has put HTTPS maintenance up (B9) and the **Owner** has agreed to retry:
 remove the symlink only (`rm -- /srv/training-center/current`; no `-r`), so that
 the script takes its first-install path again, confirm
-`shared/first-install-approved` still holds the same SHA, then follow steps 2 to 4.
+`shared/first-install-approved` still holds the same SHA, then follow steps 2 to 5.
 
 ### D6. Incident contacts
 
