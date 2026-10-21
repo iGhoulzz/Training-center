@@ -1386,13 +1386,22 @@ cause (the log names the step), then retry as in D5. If the failure was at
 1. **Is the site serving?**
    `curl -fsS -o /dev/null -w '%{http_code}\n' https://center.example/up` (remember
    this proves only that the framework boots).
-2. **Did the schema change?** In this deploy's log:
+2. **Did the schema change?** Do not decide this from one log line. MySQL commits
+   every schema statement (`CREATE`, `ALTER`, `DROP`) the moment it runs, and
+   Laravel records a migration only after the *whole* migration finishes. A
+   migration that failed part-way can therefore leave real changes behind with
+   no record of having run, and `Nothing to migrate` in the latest attempt says
+   nothing about an earlier failed attempt of the same SHA. Check all three:
 
    ```bash
-   grep -n 'Nothing to migrate' "$(ls -t /srv/training-center/shared/deploy-logs/*.log | head -1)"
+   grep -n -E 'Migrating|Migrated|FAIL|Nothing to migrate' /srv/training-center/shared/deploy-logs/<sha>-*.log   # every attempt of this SHA
+   cd /srv/training-center/current && sudo -u www-data php artisan migrate:status --no-interaction
    ```
 
-   `Nothing to migrate` means the schema did not change.
+   Then compare the actual tables and columns the failed migration touches with
+   what it would create (`SHOW CREATE TABLE ...` in MySQL). The schema is
+   unchanged only if the migration table **and** the real schema both match the
+   last-known-good release.
 3. **Choose:**
 
    - **Schema unchanged, or changed compatibly (C2 confirmed the old code works
@@ -1475,8 +1484,21 @@ release.**
 3. **Recheck both approvals** (C3 and the GitHub environment): the host file must
    still exist for this SHA, and the new workflow run needs the Reviewer's
    approval again, because approvals belong to one run.
-4. Dispatch again (C4). Retrying a SHA that failed after migrating is safe for the
-   schema: Laravel skips migrations that already ran.
+4. **If the failure was at `migration`, or anywhere after it, do not simply
+   re-dispatch.** Laravel skips only the migrations it *recorded*. A migration
+   that failed part-way is not recorded, and on retry it runs again against a
+   schema that MySQL may already have partly changed. Its first `CREATE` or
+   `ALTER` then fails, or worse, applies twice.
+   - Inspect `migrate:status` and the real schema, as in D3 step 2, across
+     **every** attempt of this SHA.
+   - The Operator and the Owner agree, in writing, how to get to a known schema:
+     usually a reviewed **forward fix** (a new commit whose migration copes with
+     the partial state, which then goes through CI and C1–C5 as a new SHA), or a
+     reviewed manual repair of the exact leftover objects. Restoring the backup
+     (D4) is the last resort.
+   - Retry only once the schema is known. A failure before `migration` (preflight,
+     cache rebuild, backup) never touched the schema; there you may dispatch
+     again (C4) once the cause is fixed.
 
 **First install that failed after the switch.** If the script printed `Switched
 current to ...`, then `current` is a symlink to the failed release and the
