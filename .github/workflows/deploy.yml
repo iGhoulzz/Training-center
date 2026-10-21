@@ -217,7 +217,26 @@ jobs:
         run: |
           tar --hard-dereference --owner=0 --group=0 --numeric-owner --sort=name \
             -czf "$RUNNER_TEMP/release.tar.gz" -C "$RUNNER_TEMP/stage" .
-          echo "sha256=$(sha256sum "$RUNNER_TEMP/release.tar.gz" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          digest=$(sha256sum "$RUNNER_TEMP/release.tar.gz" | cut -d' ' -f1)
+          echo "sha256=$digest" >> "$GITHUB_OUTPUT"
+          # THE OPERATOR'S INPUT TO THE HOST. deploy/receive.sh accepts an
+          # archive only if the root-owned file archive-approvals/<SHA> holds
+          # this digest, so a leaked deploy key cannot push a forged archive
+          # under an approved SHA. The deploy job waits at the production
+          # approval; write the file on the host while it does.
+          echo "Release archive sha256: $digest"
+          {
+            echo "### Release archive digest"
+            echo
+            echo "Commit: \`$SHA\`"
+            echo
+            echo "sha256: \`$digest\`"
+            echo
+            echo "On the host, as root, before approving the deploy:"
+            echo
+            echo "    printf '%s\\n' $digest > /srv/training-center/shared/archive-approvals/$SHA"
+            echo "    chmod 0644 /srv/training-center/shared/archive-approvals/$SHA"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Check the archive against release.sh's rules
         # The same refusals deploy/release.sh makes before it extracts anything,

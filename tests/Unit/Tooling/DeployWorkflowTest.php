@@ -524,6 +524,7 @@ function deployRunPackaging(string $directory, array $steps = ['Stage the releas
         'RUNNER_TEMP' => deployPosix($runner),
         'SHA' => DEPLOY_SHA,
         'GITHUB_OUTPUT' => $runner.'/github-output',
+        'GITHUB_STEP_SUMMARY' => $runner.'/step-summary',
     ], $directory);
 }
 
@@ -566,6 +567,13 @@ it('packages exactly the runtime tree: nothing secret, dev-only, linked or gener
         'vendor/pkg/tests/ATest.php',
     ]);
     expect(file_get_contents($directory.'/runner/github-output'))->toMatch('/^sha256=[0-9a-f]{64}$/m');
+
+    // The same digest the operator must approve on the host is shown in the summary and the log.
+    preg_match('/^sha256=([0-9a-f]{64})$/m', file_get_contents($directory.'/runner/github-output'), $digest);
+    expect(hash_file('sha256', $directory.'/runner/release.tar.gz'))->toBe($digest[1]);
+    $summary = file_get_contents($directory.'/runner/step-summary');
+    expect($summary)->toContain($digest[1], DEPLOY_SHA, '/srv/training-center/shared/archive-approvals/'.DEPLOY_SHA);
+    expect($output)->toContain('Release archive sha256: '.$digest[1]);
     deployRemoveTree($directory);
 });
 
@@ -843,8 +851,20 @@ it('keeps receive.sh a strict, capped, self-cleaning forced command', function (
         'incoming="$root/shared/incoming"',
         '! -L "$incoming"',
         'mktemp -- "$incoming/receive.XXXXXXXXXX"',
-        'head -c "$((max_bytes + 1))"',
+        'timeout --signal=KILL "$timeout_seconds" head -c "$((max_bytes + 1))"',
         '(( size <= max_bytes ))',
+        'timeout_seconds=900',
+        'lock="$incoming/.receive.lock"',
+        '[[ ! -L "$lock" ]]',
+        'exec 7> "$lock"',
+        'flock -n 7',
+        'another upload is in progress',
+        'approvals="$root/shared/archive-approvals"',
+        '[[ ! -L "$1" && "$(stat -c %u -- "$1")" == 0 ]]',
+        '(( (8#$mode & 0022) == 0 ))',
+        '[[ "$digest" =~ ^[0-9a-f]{64}$ ]]',
+        'sha256sum -- "$tempfile"',
+        '[[ "$actual_digest" == "$(approved_digest)" ]]',
         'trap cleanup EXIT',
         'rm -f -- "$tempfile"',
         '"$release_bin" "$sha" "$tempfile"',
@@ -852,6 +872,25 @@ it('keeps receive.sh a strict, capped, self-cleaning forced command', function (
     );
     expect($script)->not->toMatch('/\beval\b|\bsource\b|\bsudo\b|\bsh -c\b|\bbash -c\b/');
     expect($script)->not->toMatch('/mkdir|mv |cp |ln -s|chmod|chown/');
+});
+
+it('takes the lock before writing, then checks the approved digest before the release call', function (): void {
+    $script = file_get_contents(deployRoot().'/deploy/receive.sh');
+    $order = [
+        'approved_digest > /dev/null',
+        'flock -n 7',
+        'tempfile=$(mktemp',
+        'timeout --signal=KILL',
+        'actual_digest=$(sha256sum',
+        '[[ "$actual_digest" == "$(approved_digest)" ]]',
+        '"$release_bin" "$sha" "$tempfile"',
+    ];
+    $positions = array_map(fn (string $needle): int|false => strpos($script, $needle), $order);
+    $sorted = $positions;
+    sort($sorted);
+
+    expect(in_array(false, $positions, true))->toBeFalse();
+    expect($positions)->toBe($sorted);
 });
 
 it('honours the test overrides only outside an ssh session', function (): void {
@@ -862,6 +901,7 @@ it('honours the test overrides only outside an ssh session', function (): void {
         'root=${TC_RECEIVE_ROOT:-$root}',
         'release_bin=${TC_RELEASE_BIN:-$release_bin}',
         'max_bytes=${TC_RECEIVE_MAX_BYTES:-$max_bytes}',
+        'timeout_seconds=${TC_RECEIVE_TIMEOUT_SECONDS:-$timeout_seconds}',
     );
 });
 
@@ -878,6 +918,14 @@ it('refuses, cleans up and propagates exit codes as its disposable-host harness 
         'PASS: failing release propagates its exit code and cleans up',
         'PASS: refused environment overrides under an ssh session',
         'PASS: a hang-up lets the running release finish, then cleans up',
+        'PASS: refused a forged archive under an approved SHA (wrong digest)',
+        'PASS: refused an archive with no digest approval',
+        'PASS: refused a symlinked approval',
+        'PASS: refused an approval with mode 664',
+        'PASS: refused an approval not owned by root',
+        'PASS: the approved digest reaches the release script',
+        'PASS: a second upload during a running release is refused at once, the first is untouched',
+        'PASS: a stalled upload is killed at the deadline and cleaned up; a second one is refused meanwhile',
     );
     expect($process->getOutput())->not->toContain('FAIL');
 });

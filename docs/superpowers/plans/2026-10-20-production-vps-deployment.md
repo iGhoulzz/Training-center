@@ -152,6 +152,13 @@ Before the switch, any failure leaves `current` untouched. After a switch, an HT
   the archive, and the build fails if any other symlink remains.
 - **The workflow streams the archive over that single SSH call**
   (`ssh ... <sha> < archive.tar.gz`). No scp, rsync or second session.
+- **A leaked key cannot choose the bytes, and cannot queue them.** `receive.sh`
+  forwards an archive only when the root-owned, non-link, non-group/world-writable
+  `shared/archive-approvals/<SHA>` holds its sha256; the operator writes that file
+  from the build job's summary while the deploy waits at the `production`
+  approval. A non-blocking lock on `shared/incoming/.receive.lock`, held through
+  the release call, allows one upload at a time, and the read has a 900-second
+  deadline, so stalled sessions cannot park near-cap files.
 
 **Interface:** Manual `workflow_dispatch` on `main` only. The workflow obtains the exact `main` SHA, requires that SHA's `ci.yml` `verify` run to have concluded `success`, builds frontend assets with `npm ci && npm run build`, installs locked production Composer dependencies without dev packages, packages source/vendor/Vite output/published Filament assets and an SHA manifest but no `.env`, tests, docs, `.git`, `node_modules`, or prebuilt Laravel config/cache files. The host regenerates caches only after linking its production `.env`. The deploy job uses GitHub's protected `production` environment. The SSH host key is pinned in a protected environment variable; the private deploy key and host/user are environment secrets. `concurrency` permits one production deploy at a time and does **not** cancel one mid-flight.
 

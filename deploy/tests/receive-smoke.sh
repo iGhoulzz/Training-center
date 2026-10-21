@@ -38,25 +38,54 @@ touch "$TEST_SANDBOX/stub-finished"
 exit "${STUB_EXIT:-0}"
 STUB
 chmod +x "$stub"
+# Approval files must be root-owned. A harness may run as any user, so the owner
+# lookup is stubbed (as release-smoke.sh does): every file is root's unless the
+# test lists it in foreign-owned. Everything else about stat is the real thing.
+mkdir "$sandbox/bin"
+export REAL_STAT
+REAL_STAT=$(command -v stat)
+cat > "$sandbox/bin/stat" <<'STUB'
+#!/usr/bin/env bash
+if [[ "$1" == -c && "$2" == %u ]]; then
+    if grep -qxF -- "$4" "$TEST_SANDBOX/foreign-owned" 2> /dev/null; then echo 1000; else echo 0; fi
+else
+    exec "$REAL_STAT" "$@"
+fi
+STUB
+chmod +x "$sandbox/bin/stat"
+export PATH="$sandbox/bin:$PATH"
 
 fresh() {
-    rm -rf -- "$root" "$sandbox"/stub-* "$sandbox/pwn" "$sandbox/output"
-    mkdir -p "$incoming"
+    rm -rf -- "$root" "$sandbox"/stub-* "$sandbox/pwn" "$sandbox/output" "$sandbox/foreign-owned"
+    mkdir -p "$incoming" "$root/shared/archive-approvals"
+    chmod 755 "$root/shared/archive-approvals"
+    auto_approve=1
 }
-listing() { find "$root" -mindepth 1 | sort; }
+# The one file receive.sh may leave behind: its lock.
+listing() { find "$root" -mindepth 1 ! -name .receive.lock | sort; }
+leftovers() { find "$incoming" -mindepth 1 ! -name .receive.lock 2> /dev/null || true; }
+# approve <archive-file> [sha]: what the operator does on the host from the build summary.
+approve() {
+    local approval="$root/shared/archive-approvals/${2:-$sha}"
+    rm -f -- "$approval"
+    printf '%s\n' "$(sha256sum "$1" | cut -d' ' -f1)" > "$approval"
+    chmod 644 "$approval"
+}
 # run_receive <ssh-original-command> <stdin-file> [extra env assignments...]
+# The archive is approved by its real digest first, unless a test sets auto_approve=0.
 run_receive() {
     local command=$1 input=$2
     shift 2
     rc=0
-    env SSH_ORIGINAL_COMMAND="$command" TC_RECEIVE_ROOT="$root" TC_RELEASE_BIN="$stub" TC_RECEIVE_MAX_BYTES=1024 "$@" \
+    if [[ "$auto_approve" == 1 ]]; then approve "$input"; fi
+    env SSH_ORIGINAL_COMMAND="$command" TC_RECEIVE_ROOT="$root" TC_RELEASE_BIN="$stub" TC_RECEIVE_MAX_BYTES=1024 TC_RECEIVE_TIMEOUT_SECONDS=20 "$@" \
         bash "$receive" < "$input" > "$sandbox/output" 2>&1 || rc=$?
 }
 refused() { # <label>: non-zero, release never called, nothing left behind or created
     [[ "$rc" != 0 ]] || { cat "$sandbox/output"; echo "FAIL: accepted $1"; exit 1; }
     [[ "$rc" == 2 && "$(cat "$sandbox/output")" == Receive\ refused:* ]] || { cat "$sandbox/output"; echo "FAIL: $1 failed for a reason other than the guard"; exit 1; }
     [[ ! -e "$sandbox/stub-started" && ! -e "$sandbox/stub-argc" ]] || { echo "FAIL: release called for $1"; exit 1; }
-    [[ -z "$(find "$incoming" -mindepth 1 -print -quit 2> /dev/null)" ]] || { echo "FAIL: leftover file for $1"; exit 1; }
+    [[ -z "$(leftovers)" ]] || { echo "FAIL: leftover file for $1"; exit 1; }
     [[ ! -e "$sandbox/pwn" ]] || { echo "FAIL: command injection for $1"; exit 1; }
     echo "PASS: refused $1"
 }
@@ -69,6 +98,7 @@ head -c 1000000 /dev/zero > "$sandbox/archive-huge"
 
 # 1. A valid SHA and archive reach the release script, and the temp file is gone.
 fresh
+approve "$sandbox/archive"
 before=$(listing)
 run_receive "$sha" "$sandbox/archive"
 [[ "$rc" == 0 ]] || { cat "$sandbox/output"; echo 'FAIL: valid deploy failed'; exit 1; }
@@ -165,7 +195,7 @@ echo 'PASS: refused a file in place of the incoming directory'
 fresh
 run_receive "$sha" "$sandbox/archive" STUB_EXIT=7
 [[ "$rc" == 7 ]] || { cat "$sandbox/output"; echo "FAIL: exit code $rc instead of 7"; exit 1; }
-[[ -e "$sandbox/stub-finished" && -z "$(ls -A "$incoming")" ]] || { echo 'FAIL: no cleanup after a failing release'; exit 1; }
+[[ -e "$sandbox/stub-finished" && -z "$(leftovers)" ]] || { echo 'FAIL: no cleanup after a failing release'; exit 1; }
 echo 'PASS: failing release propagates its exit code and cleans up'
 
 # 7. A missing release script is refused before any input is read.
@@ -180,6 +210,7 @@ refused 'environment overrides under an ssh session'
 
 # 9. A hang-up from a dropped connection does not abandon a running release.
 fresh
+approve "$sandbox/archive"
 (
     STUB_SLEEP=2 SSH_ORIGINAL_COMMAND="$sha" TC_RECEIVE_ROOT="$root" TC_RELEASE_BIN="$stub" TC_RECEIVE_MAX_BYTES=1024 \
         exec bash "$receive" < "$sandbox/archive" > "$sandbox/output" 2>&1
@@ -190,5 +221,147 @@ for _ in $(seq 1 100); do [[ -e "$sandbox/stub-started" ]] && break; sleep 0.1; 
 kill -HUP "$pid"
 rc=0
 wait "$pid" || rc=$?
-[[ "$rc" == 0 && -e "$sandbox/stub-finished" && -z "$(ls -A "$incoming")" ]] || { cat "$sandbox/output"; echo "FAIL: hang-up abandoned the release (exit $rc)"; exit 1; }
+[[ "$rc" == 0 && -e "$sandbox/stub-finished" && -z "$(leftovers)" ]] || { cat "$sandbox/output"; echo "FAIL: hang-up abandoned the release (exit $rc)"; exit 1; }
 echo 'PASS: a hang-up lets the running release finish, then cleans up'
+
+# 10. The archive must match the digest the operator approved on the host.
+fresh
+head -c 700 /dev/urandom > "$sandbox/forged"
+approve "$sandbox/archive"
+auto_approve=0
+run_receive "$sha" "$sandbox/forged"
+refused 'a forged archive under an approved SHA (wrong digest)'
+fresh
+auto_approve=0
+run_receive "$sha" "$sandbox/archive"
+refused 'an archive with no digest approval'
+fresh
+auto_approve=0
+mv "$root/shared/archive-approvals" "$root/shared/archive-approvals-real"
+run_receive "$sha" "$sandbox/archive"
+refused 'a missing approvals directory'
+fresh
+auto_approve=0
+printf 'not-a-digest\n' > "$root/shared/archive-approvals/$sha"
+chmod 644 "$root/shared/archive-approvals/$sha"
+run_receive "$sha" "$sandbox/archive"
+refused 'a malformed approval'
+fresh
+auto_approve=0
+printf '%s\n' "$(sha256sum "$sandbox/archive" | cut -d' ' -f1 | tr a-f A-F)" > "$root/shared/archive-approvals/$sha"
+chmod 644 "$root/shared/archive-approvals/$sha"
+run_receive "$sha" "$sandbox/archive"
+refused 'an uppercase approval digest'
+fresh
+auto_approve=0
+printf '%s\nextra\n' "$(sha256sum "$sandbox/archive" | cut -d' ' -f1)" > "$root/shared/archive-approvals/$sha"
+chmod 644 "$root/shared/archive-approvals/$sha"
+run_receive "$sha" "$sandbox/archive"
+refused 'an approval with trailing content'
+
+# 11. An approval that anyone but root could have written is not trusted.
+fresh
+approve "$sandbox/archive"
+auto_approve=0
+mv "$root/shared/archive-approvals/$sha" "$root/shared/real-approval"
+ln -s "$root/shared/real-approval" "$root/shared/archive-approvals/$sha"
+run_receive "$sha" "$sandbox/archive"
+refused 'a symlinked approval'
+for mode in 664 646; do
+    fresh
+    approve "$sandbox/archive"
+    auto_approve=0
+    chmod "$mode" "$root/shared/archive-approvals/$sha"
+    run_receive "$sha" "$sandbox/archive"
+    refused "an approval with mode $mode"
+done
+fresh
+approve "$sandbox/archive"
+auto_approve=0
+printf '%s\n' "$root/shared/archive-approvals/$sha" > "$sandbox/foreign-owned"
+run_receive "$sha" "$sandbox/archive"
+refused 'an approval not owned by root'
+fresh
+approve "$sandbox/archive"
+auto_approve=0
+chmod 775 "$root/shared/archive-approvals"
+run_receive "$sha" "$sandbox/archive"
+refused 'a group-writable approvals directory'
+fresh
+approve "$sandbox/archive"
+auto_approve=0
+printf '%s\n' "$root/shared/archive-approvals" > "$sandbox/foreign-owned"
+run_receive "$sha" "$sandbox/archive"
+refused 'an approvals directory not owned by root'
+fresh
+approve "$sandbox/archive"
+auto_approve=0
+mv "$root/shared/archive-approvals" "$root/shared/archive-approvals-real"
+ln -s "$root/shared/archive-approvals-real" "$root/shared/archive-approvals"
+run_receive "$sha" "$sandbox/archive"
+refused 'a symlinked approvals directory'
+
+# 12. The correct digest reaches the release, with or without a trailing newline.
+fresh
+auto_approve=0
+printf '%s' "$(sha256sum "$sandbox/archive" | cut -d' ' -f1)" > "$root/shared/archive-approvals/$sha"
+chmod 644 "$root/shared/archive-approvals/$sha"
+run_receive "$sha" "$sandbox/archive"
+[[ "$rc" == 0 && "$(cat "$sandbox/stub-sha")" == "$sha" ]] || { cat "$sandbox/output"; echo 'FAIL: the approved digest did not reach the release'; exit 1; }
+echo 'PASS: the approved digest reaches the release script'
+
+# 13. One upload at a time, and the lock is held through the release call.
+fresh
+approve "$sandbox/archive"
+(
+    STUB_SLEEP=3 SSH_ORIGINAL_COMMAND="$sha" TC_RECEIVE_ROOT="$root" TC_RELEASE_BIN="$stub" TC_RECEIVE_MAX_BYTES=1024 \
+        exec bash "$receive" < "$sandbox/archive" > "$sandbox/output-first" 2>&1
+) &
+first=$!
+for _ in $(seq 1 100); do [[ -e "$sandbox/stub-started" ]] && break; sleep 0.1; done
+[[ -e "$sandbox/stub-started" ]] || { echo 'FAIL: first release never started'; exit 1; }
+first_file=$(cat "$sandbox/stub-archive")
+started=$SECONDS
+run_receive "$sha" "$sandbox/archive"
+(( SECONDS - started < 3 )) || { echo 'FAIL: the second upload waited instead of refusing at once'; exit 1; }
+[[ "$rc" == 2 && "$(cat "$sandbox/output")" == *'another upload is in progress'* ]] || { cat "$sandbox/output"; echo 'FAIL: second upload not refused for the lock'; exit 1; }
+[[ -f "$first_file" ]] && cmp -s "$first_file" "$sandbox/archive" || { echo 'FAIL: the second upload touched the first upload file'; exit 1; }
+[[ "$(leftovers | wc -l)" == 1 ]] || { echo 'FAIL: a second temp file was created'; exit 1; }
+rc=0
+wait "$first" || rc=$?
+[[ "$rc" == 0 && -z "$(leftovers)" ]] || { cat "$sandbox/output-first"; echo "FAIL: first upload did not complete cleanly (exit $rc)"; exit 1; }
+echo 'PASS: a second upload during a running release is refused at once, the first is untouched'
+fresh
+touch "$sandbox/lock-target"
+ln -s "$sandbox/lock-target" "$incoming/.receive.lock"
+run_receive "$sha" "$sandbox/archive"
+[[ "$rc" == 2 && ! -e "$sandbox/stub-started" && ! -s "$sandbox/lock-target" && -z "$(leftovers)" ]] || { cat "$sandbox/output"; echo 'FAIL: symlinked lock accepted'; exit 1; }
+echo 'PASS: refused a symlinked lock file'
+
+# 14. A stalled upload is killed at the deadline and cleaned up, and nothing else
+#     can upload while it holds the lock.
+fresh
+approve "$sandbox/archive"
+rm -f "$sandbox/fifo"
+mkfifo "$sandbox/fifo"
+(
+    SSH_ORIGINAL_COMMAND="$sha" TC_RECEIVE_ROOT="$root" TC_RELEASE_BIN="$stub" TC_RECEIVE_MAX_BYTES=1024 TC_RECEIVE_TIMEOUT_SECONDS=3 \
+        exec bash "$receive" < "$sandbox/fifo" > "$sandbox/output-first" 2>&1
+) &
+first=$!
+( head -c 100 /dev/urandom; exec sleep 30 ) > "$sandbox/fifo" &
+writer=$!
+for _ in $(seq 1 100); do [[ -n "$(leftovers)" ]] && break; sleep 0.1; done
+[[ -n "$(leftovers)" ]] || { echo 'FAIL: the stalled upload never started'; exit 1; }
+started=$SECONDS
+run_receive "$sha" "$sandbox/archive"
+(( SECONDS - started < 3 )) || { echo 'FAIL: the second upload waited behind a stalled one'; exit 1; }
+[[ "$rc" == 2 && "$(cat "$sandbox/output")" == *'another upload is in progress'* ]] || { cat "$sandbox/output"; echo 'FAIL: second upload not refused during a stalled one'; exit 1; }
+started=$SECONDS
+rc=0
+wait "$first" || rc=$?
+kill "$writer" 2> /dev/null || true
+(( SECONDS - started < 10 )) || { echo 'FAIL: the stalled upload outlived its deadline'; exit 1; }
+[[ "$rc" == 2 && "$(cat "$sandbox/output-first")" == *"Receive refused: upload did not finish before the deadline"* ]] || { cat "$sandbox/output-first"; echo "FAIL: stalled upload not refused (exit $rc)"; exit 1; }
+[[ -z "$(leftovers)" && ! -e "$sandbox/stub-started" ]] || { echo 'FAIL: stalled upload left a file or reached the release'; exit 1; }
+echo 'PASS: a stalled upload is killed at the deadline and cleaned up; a second one is refused meanwhile'
