@@ -121,12 +121,37 @@ Before the switch, any failure leaves `current` untouched. After a switch, an HT
 
 ### Task 3 — Green-SHA, approval-gated update workflow
 
-**Owner:** Codex; Claude cross-reviews the GitHub trust boundary. **Wave:** 3, after Task 2 merges. **Branch:** `p5/t03-prod-deploy-workflow`.
+**Owner:** Claude (reassigned by the owner on 2026-10-21); Codex cross-reviews the GitHub trust boundary. **Wave:** 3, after Task 2 merges. **Branch:** `p5/t03-prod-deploy-workflow`.
 
 **Files:**
 - Create: `.github/workflows/deploy.yml`
+- Create: `deploy/receive.sh` (the SSH forced command, below)
+- Create: `deploy/tests/receive-smoke.sh`
 - Create: `tests/Unit/Tooling/DeployWorkflowTest.php`
 - Read, do not modify: `.github/workflows/ci.yml`, `deploy/release.sh`, `docs/WORKFLOW.md`
+
+**Lead decisions (2026-10-21), added because Task 2 left the host side of the hand-off open:**
+- **The deploy key can do one thing.** Its `authorized_keys` line carries
+  `command="/usr/local/bin/training-center-receive",restrict`, so a leaked
+  GitHub secret yields no shell, no forwarding and no file access.
+  `deploy/receive.sh`, installed root-owned at that path by the operator
+  (Task 4), reads one argument from `SSH_ORIGINAL_COMMAND`: a 40-hex SHA,
+  rejected otherwise. It then:
+  - streams the archive from stdin into a new root-controlled-path temp file
+    under `/srv/training-center/shared/incoming/`, size-capped, with no
+    caller-chosen names;
+  - calls the host's installed release script;
+  - removes the temp archive afterwards.
+- **The release script on the host is the installed copy, never the one inside
+  the artifact being deployed.** The operator installs the reviewed
+  `deploy/release.sh` root-owned at `/usr/local/bin/training-center-release`.
+  Updating it is a deliberate host step, so a commit cannot rewrite the code
+  that validates it.
+- **The archive has no symlinks.** On Linux, Composer's `vendor/bin` entries are
+  symlinks, which `release.sh` correctly refuses. `vendor/bin` is excluded from
+  the archive, and the build fails if any other symlink remains.
+- **The workflow streams the archive over that single SSH call**
+  (`ssh ... <sha> < archive.tar.gz`). No scp, rsync or second session.
 
 **Interface:** Manual `workflow_dispatch` on `main` only. The workflow obtains the exact `main` SHA, requires that SHA's `ci.yml` `verify` run to have concluded `success`, builds frontend assets with `npm ci && npm run build`, installs locked production Composer dependencies without dev packages, packages source/vendor/Vite output/published Filament assets and an SHA manifest but no `.env`, tests, docs, `.git`, `node_modules`, or prebuilt Laravel config/cache files. The host regenerates caches only after linking its production `.env`. The deploy job uses GitHub's protected `production` environment. The SSH host key is pinned in a protected environment variable; the private deploy key and host/user are environment secrets. `concurrency` permits one production deploy at a time and does **not** cancel one mid-flight.
 
