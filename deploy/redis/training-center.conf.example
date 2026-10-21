@@ -1,0 +1,16 @@
+# Merge into the host's Redis configuration; retain distro user/dir settings.
+bind 127.0.0.1 ::1
+protected-mode yes
+port 6379
+# Start at 256 MiB; budget OS, MySQL, PHP-FPM, workers, persistence fork overhead
+# from actual VPS RAM and monitor rejected writes. Never evict queued jobs.
+maxmemory 256mb
+maxmemory-policy noeviction
+appendonly yes
+appendfsync everysec
+save 900 1
+save 300 10
+save 60 10000
+# Required host-only file, owned root:redis mode 0640, containing requirepass.
+# No credential or usable placeholder belongs in this repository.
+include /etc/redis/training-center-secret.conf
