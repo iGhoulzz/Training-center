@@ -5,8 +5,10 @@ batches, enrollments, staff accounts, finances, and a student portal with
 certificates.
 
 Laravel 13 and Filament 5 on PHP 8.4, with MySQL 8.4 and Redis queues. It is
-built for a root Linux VPS; the hosting provider is not chosen yet (system
-design §2). The staff panel is at `/admin` and the student portal at `/portal`.
+built for a root Linux VPS; the chosen host is a Libyan Spider VPS (Ubuntu
+24.04), deployed natively through an approval-gated GitHub workflow (runbook:
+`docs/DEPLOYMENT.md`). The staff panel is at `/admin` and the student portal at
+`/portal`.
 The public site planned for `/` is not built yet: `/` still serves Laravel's
 placeholder page, and certificate verification at `/verify/certificates` is the
 only public feature so far.
@@ -21,6 +23,7 @@ only public feature so far.
 | [`docs/superpowers/plans/`](docs/superpowers/plans/) | One plan per milestone; the newest is the current one |
 | [`docs/CHANGELOG.md`](docs/CHANGELOG.md) | Release notes, in plain language, through phase 3.5 |
 | [`docs/RESTORE.md`](docs/RESTORE.md) | Restoring from a backup |
+| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Production VPS runbook: provisioning, first install, each update, recovery, monitoring |
 | [`CLAUDE.md`](CLAUDE.md), [`AGENTS.md`](AGENTS.md) | Instructions for the two coding agents |
 
 ## Local setup
