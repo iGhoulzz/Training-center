@@ -605,13 +605,14 @@ chmod 0644 /home/training-center/.ssh/authorized_keys
 `restrict` disables port forwarding, agent forwarding, X11 and tty allocation.
 `receive.sh` accepts one thing: a 40-hex SHA as the "command", with the archive
 on standard input. A leaked GitHub secret therefore yields no shell, no
-forwarding and no file access. It still cannot deploy anything: `receive.sh`
-refuses an archive unless the root-owned `shared/archive-approvals/<SHA>`
-holds that archive's exact sha256, which the Operator copies from the GitHub
-run's own build summary (B8, C4). It accepts one upload at a time with a read
-deadline, so parallel or stalled sessions cannot fill the disk. And it cannot
-deploy without passing the
-workflow's gates, because the host has its own approval files (section C).
+forwarding and no file access. `receive.sh` refuses an archive unless the
+root-owned `shared/archive-approvals/<SHA>` holds that archive's exact sha256,
+which the Operator copies from the GitHub run's own build summary (B8, C4).
+It accepts one upload at a time with a read deadline, so parallel or stalled
+sessions cannot fill the disk. The host checks the archive and its host-side
+approvals, **not** whether GitHub approved the `production` environment. Someone
+with the deploy key and the matching host-approved archive could invoke the
+forced command before that GitHub approval while the host approvals remain.
 
 Test from the operator's machine. Both must be **refused by the script**, which
 proves the forced command is in force:
@@ -1217,20 +1218,23 @@ mails, the drill's duration, and the owner's written launch approval.
 
 ## C. Each update
 
-Every update repeats the same gates. **Three independent approvals, on the same
-SHA, are required for every deploy, including a retry:**
+Every update follows **three approval steps, on the same SHA, including a
+retry:**
 
 1. **Host side, migrations:** a root-owned file `shared/migration-approvals/<SHA>`
    containing exactly that SHA, created by the Operator after the Reviewer has
    checked migration compatibility.
 2. **Host side, the archive:** a root-owned file `shared/archive-approvals/<SHA>`
    containing the sha256 of the archive that run built, copied from the run's
-   build summary while the deploy waits. This is what makes a leaked deploy key
-   useless: only the archive GitHub built can match it.
+   build summary while the deploy waits. The receiver rejects different bytes.
 3. **GitHub side:** the Reviewer's approval of the run in the protected
    `production` environment.
 
-None of them creates another. A deploy missing any of them does not happen.
+The receiver enforces the two host-side files; GitHub enforces its environment
+approval for the workflow job. The receiver cannot independently verify that
+GitHub approval. Protect the deploy key and the approved archive, and follow all
+three steps even though a direct forced-command call with both could bypass the
+GitHub step while the host approvals remain.
 
 ### C1. Choose the SHA
 
@@ -1305,8 +1309,9 @@ world-writable, or whose content is not exactly the SHA.
    ```
 
    Copy the digest from the GitHub page itself, never from a message or a chat:
-   the point is that it comes from GitHub's run. Each run builds a new archive
-   with a new digest, so a re-dispatch needs a new file.
+   the point is that it comes from GitHub's run. On a re-dispatch, verify and
+   write the digest from that run's summary again; a byte-identical archive may
+   have the same digest as an earlier run.
 3. The Reviewer checks that the SHA on the approval page equals both host file
    names, then approves. Only one deploy runs at a time; a second dispatch waits.
 
@@ -1530,12 +1535,11 @@ release.**
    `rm -r` removes symbolic links without following them, so `.env`,
    `storage` and `public/storage` inside the release are unlinked, not their
    targets in `shared`.
-4. **Recheck the three approvals.** The migration approval (C3) must still exist
-   for this SHA. The new run builds a new archive with a new digest, so write
-   `archive-approvals/<SHA>` again from **the new run's** summary (C4 step 2); the
-   old digest will not match. The new run also needs the Reviewer's GitHub
-   approval again, because an approval belongs to one run.
-5. Dispatch again (C4).
+4. **Recheck the migration approval** (C3) for this SHA.
+5. **Dispatch again** (C4 step 1). After the build, verify and write
+   `archive-approvals/<SHA>` from **this run's** summary (C4 step 2), even if its
+   digest matches an earlier run. Then obtain the Reviewer's GitHub approval
+   for this run (C4 step 3); an environment approval belongs to one run.
 
 **First install that failed after the switch.** If the script printed `Switched
 current to ...`, then `current` is a symlink to the failed release and the
