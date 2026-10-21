@@ -64,7 +64,10 @@ STUB
 cat > "$sandbox/bin/php-fpm8.4" <<'STUB'
 #!/usr/bin/env bash
 [[ "${FAIL_STAGE:-}" != fpm-extensions ]] || exit 1
-for ext in redis pcntl posix pdo_mysql mbstring intl bcmath gd zip; do echo "$ext"; done
+# What Ubuntu 24.04 + ondrej/php php-fpm8.4 -m lists: no pcntl, which is CLI-only.
+for ext in redis posix pdo_mysql mbstring intl bcmath gd zip; do
+    [[ "${FAIL_STAGE:-}" == fpm-intl && "$ext" == intl ]] || echo "$ext"
+done
 STUB
 cat > "$sandbox/bin/systemctl" <<'STUB'
 #!/usr/bin/env bash
@@ -181,7 +184,7 @@ if ! FAIL_SCHEDULER_FIND=1 TEST_RUNTIME_USER=www-data sh -c "$cron_command"; the
 grep -q 'simulated find failure' "$daily_log"
 grep -q 'Scheduler log cleanup failed' "$daily_log"
 echo 'PASS: scheduler continues after visible cleanup failure'
-for failure in invalid-sha manifest missing-env vite filament-js filament-css filament-fonts redis eviction backup-config mysql mail pre-smoke extensions fpm-extensions backup backup-lock migration-approval archive-link archive-traversal cached-config shared-link current-outside runtime-privileges; do
+for failure in invalid-sha manifest missing-env vite filament-js filament-css filament-fonts redis eviction backup-config mysql mail pre-smoke extensions fpm-extensions fpm-intl backup backup-lock migration-approval archive-link archive-traversal cached-config shared-link current-outside runtime-privileges; do
     fixture "$failure"
     export FAIL_STAGE="$failure"
     sha="$new"

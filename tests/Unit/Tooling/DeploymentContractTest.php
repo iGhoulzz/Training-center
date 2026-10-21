@@ -107,3 +107,14 @@ it('returns maintenance before the first current entrypoint exists instead of pa
     expect($entrypoint[1])->toMatch('/try_files \$uri =503;.*fastcgi_pass/s');
     expect($nginx)->toContain('root /srv/training-center/current/public;', 'location / { try_files $uri $uri/ /index.php?$query_string; }');
 });
+
+it('requires pcntl of the CLI that runs Horizon, not of PHP-FPM, which never loads it', function (): void {
+    // On Debian/Ubuntu PHP builds pcntl is CLI-only, so demanding it of
+    // php-fpm8.4 -m refused every real host at the php-fpm-extensions step.
+    $release = (string) file_get_contents(dirname(__DIR__, 3).'/deploy/release.sh');
+
+    expect($release)
+        ->toContain('for extension in redis posix pdo_mysql mbstring intl bcmath gd zip; do')
+        ->not->toMatch('/for extension in [^\n]*\bpcntl\b/')
+        ->toContain("foreach (['redis', 'pcntl', 'posix', 'pdo_mysql', 'mbstring', 'intl', 'bcmath', 'gd', 'zip'] as \$extension)");
+});
