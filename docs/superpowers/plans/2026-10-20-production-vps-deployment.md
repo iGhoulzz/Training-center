@@ -121,19 +121,51 @@ Before the switch, any failure leaves `current` untouched. After a switch, an HT
 
 ### Task 3 — Green-SHA, approval-gated update workflow
 
-**Owner:** Codex; Claude cross-reviews the GitHub trust boundary. **Wave:** 3, after Task 2 merges. **Branch:** `p5/t03-prod-deploy-workflow`.
+**Owner:** Claude (reassigned by the owner on 2026-10-21); Codex cross-reviews the GitHub trust boundary. **Wave:** 3, after Task 2 merges. **Branch:** `p5/t03-prod-deploy-workflow`.
 
 **Files:**
 - Create: `.github/workflows/deploy.yml`
+- Create: `deploy/receive.sh` (the SSH forced command, below)
+- Create: `deploy/tests/receive-smoke.sh`
 - Create: `tests/Unit/Tooling/DeployWorkflowTest.php`
 - Read, do not modify: `.github/workflows/ci.yml`, `deploy/release.sh`, `docs/WORKFLOW.md`
+
+**Lead decisions (2026-10-21), added because Task 2 left the host side of the hand-off open:**
+- **The deploy key can do one thing.** Its `authorized_keys` line carries
+  `command="/usr/local/bin/training-center-receive",restrict`, so a leaked
+  GitHub secret yields no shell, no forwarding and no file access.
+  `deploy/receive.sh`, installed root-owned at that path by the operator
+  (Task 4), reads one argument from `SSH_ORIGINAL_COMMAND`: a 40-hex SHA,
+  rejected otherwise. It then:
+  - streams the archive from stdin into a new root-controlled-path temp file
+    under `/srv/training-center/shared/incoming/`, size-capped, with no
+    caller-chosen names;
+  - calls the host's installed release script;
+  - removes the temp archive afterwards.
+- **The release script on the host is the installed copy, never the one inside
+  the artifact being deployed.** The operator installs the reviewed
+  `deploy/release.sh` root-owned at `/usr/local/bin/training-center-release`.
+  Updating it is a deliberate host step, so a commit cannot rewrite the code
+  that validates it.
+- **The archive has no symlinks.** On Linux, Composer's `vendor/bin` entries are
+  symlinks, which `release.sh` correctly refuses. `vendor/bin` is excluded from
+  the archive, and the build fails if any other symlink remains.
+- **The workflow streams the archive over that single SSH call**
+  (`ssh ... <sha> < archive.tar.gz`). No scp, rsync or second session.
+- **A leaked key cannot choose the bytes, and cannot queue them.** `receive.sh`
+  forwards an archive only when the root-owned, non-link, non-group/world-writable
+  `shared/archive-approvals/<SHA>` holds its sha256; the operator writes that file
+  from the build job's summary while the deploy waits at the `production`
+  approval. A non-blocking lock on `shared/incoming/.receive.lock`, held through
+  the release call, allows one upload at a time, and the read has a 900-second
+  deadline, so stalled sessions cannot park near-cap files.
 
 **Interface:** Manual `workflow_dispatch` on `main` only. The workflow obtains the exact `main` SHA, requires that SHA's `ci.yml` `verify` run to have concluded `success`, builds frontend assets with `npm ci && npm run build`, installs locked production Composer dependencies without dev packages, packages source/vendor/Vite output/published Filament assets and an SHA manifest but no `.env`, tests, docs, `.git`, `node_modules`, or prebuilt Laravel config/cache files. The host regenerates caches only after linking its production `.env`. The deploy job uses GitHub's protected `production` environment. The SSH host key is pinned in a protected environment variable; the private deploy key and host/user are environment secrets. `concurrency` permits one production deploy at a time and does **not** cancel one mid-flight.
 
 - [ ] Write a workflow contract test for `workflow_dispatch`, `main` restriction, exact-SHA green-CI check, a second check that the SHA is still the `main` tip before transfer, protected environment, `cancel-in-progress: false`, SHA manifest, no `pull_request` deployment, and absence of application secrets in the artifact. Add an artifact-content probe for the Vite manifest and the published Filament JavaScript, CSS and fonts. A negative GitHub Actions run or isolated mocked check must prove a missing/failed CI run stops before SSH.
 - [ ] Run `php artisan test --compact tests/Unit/Tooling/DeployWorkflowTest.php` and observe the expected failure.
 - [ ] Implement the workflow on an ephemeral GitHub runner. Before `composer install --no-dev --prefer-dist --no-interaction --classmap-authoritative`, set `APP_ENV=testing`, a generated disposable `APP_KEY`, and a syntactically valid build-only `BACKUP_ALERT_EMAIL`; do not provide production `.env` or secrets. Keep Composer scripts enabled: this repo's `post-autoload-dump` runs package discovery and `filament:upgrade`, which publishes assets. Explicitly run `php artisan filament:assets` as a build assertion/re-publish step and fail if required `public/js/filament`, `public/css/filament`, `public/fonts/filament`, or `public/build/manifest.json` output is absent. Strip build-only cached config/routes/views from the artifact. Use a dedicated, protected non-root SSH deploy key; do not use password SSH, `ssh-keyscan` at deploy time, or a root login. Feed the artifact to Task 2's release interface without rebuilding from whatever `main` has become later.
-- [ ] Run the targeted test, YAML/workflow validation available in CI, and `composer verify:fast`. Commit only the two scoped files. Open the PR and report the full-suite CI result once it finishes.
+- [ ] Run the targeted test, `bash deploy/tests/receive-smoke.sh`, YAML/workflow validation available in CI, and `composer verify:fast`. Commit only the scoped files. Open the PR and report the full-suite CI result once it finishes.
 
 **Done when:** A green commit can be deployed deliberately, while a red, absent, or superseded commit cannot reach the host. GitHub environment approvals and secrets are configured by the owner during Task 4, not simulated as repository code.
 
