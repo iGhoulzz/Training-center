@@ -929,9 +929,11 @@ GitHub, not in the repository.
 In the repository: *Settings → Environments → New environment*, named exactly
 `production`.
 
-1. **Required reviewers:** add both owners. Turn **Prevent self-review** on, so
-   whoever dispatches a deploy cannot also approve it. (With a single reviewer
-   this would deadlock; keep both owners as reviewers.)
+1. **Required reviewers:** add every GitHub account that may approve a deploy.
+   Turn **Prevent self-review** on **only if at least two people** are reviewers,
+   so whoever dispatches cannot also approve. With a single reviewer it would
+   block every deploy, so leave it off until a second reviewer's GitHub account
+   exists. The approval is still a separate, deliberate click from the dispatch.
 2. **Deployment branches and tags:** *Selected branches and tags* → add the
    rule `main`.
 3. **Environment secrets** (not repository secrets):
