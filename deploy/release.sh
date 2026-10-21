@@ -114,8 +114,7 @@ chgrp www-data "$root/shared/.env"
 chmod 0640 "$root/shared/.env"
 cd -- "$release"
 step=runtime-storage
-runtime_php /dev/stdin "$root/shared/storage" <<'PHP' >> "$log" 2>&1
-<?php
+runtime_php -r "$(cat <<'PHP'
 // TC_DEPLOY_STORAGE
 try {
     $storage = $argv[1];
@@ -132,6 +131,7 @@ try {
     }
 } catch (Throwable $exception) { fwrite(STDERR, "Runtime storage is unsafe or unavailable.\n"); exit(1); }
 PHP
+)" -- "$root/shared/storage" >> "$log" 2>&1
 step=php-fpm-extensions
 fpm_binary=$(command -v php-fpm8.4 || printf '/usr/sbin/php-fpm8.4')
 "$fpm_binary" -m > "$root/shared/deploy-logs/$sha-$$.fpm-modules" 2>&1
@@ -289,11 +289,11 @@ for service in horizon pulse; do
         if systemctl is-active --quiet "training-center-$service.service"; then
             pid=$(systemctl show --property=MainPID --value "training-center-$service.service")
             # /proc cwd access is restricted to the process's runtime identity.
-            if [[ "$pid" =~ ^[1-9][0-9]*$ ]] && runtime_php /dev/stdin "$pid" "$release" <<'PHP' >> "$log" 2>&1
-<?php
+            if [[ "$pid" =~ ^[1-9][0-9]*$ ]] && runtime_php -r "$(cat <<'PHP'
 // TC_DEPLOY_PROCESS
 exit(realpath('/proc/'.$argv[1].'/cwd') === $argv[2] ? 0 : 1);
 PHP
+)" -- "$pid" "$release" >> "$log" 2>&1
             then ready=1; break; fi
         fi
         sleep 1

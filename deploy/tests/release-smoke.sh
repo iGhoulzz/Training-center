@@ -6,12 +6,60 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 # Run the exact harness on the cached Linux target, with no network or services.
 if [[ "$(uname -s)" == MINGW* ]]; then
     export MSYS_NO_PATHCONV=1
-    exec docker run --rm --network none --mount "type=bind,source=$(cygpath -w "$script_dir/.."),target=/contract,readonly" --entrypoint bash training-center-dev-linux:latest /contract/tests/release-smoke.sh
+    exec docker run --rm --network none --mount "type=bind,source=$(cygpath -w "$script_dir/.."),target=/contract,readonly" --entrypoint bash training-center-dev-linux:latest /contract/tests/release-smoke.sh "$@"
 fi
 original_script="$script_dir/../release.sh"
 [[ -f "$original_script" ]] || { echo 'FAIL: release implementation missing' >&2; exit 1; }
 sandbox=$(mktemp -d)
 trap '[[ -d "$sandbox" && "$sandbox" != / ]] && rm -rf -- "$sandbox"' EXIT
+if [[ "${1:-}" == --runtime-helpers ]]; then
+    # Exercise the shipped invocations with inherited stdin owned by another UID.
+    # The ordinary deployment harness below deliberately stubs PHP and sudo.
+    as_root() { if (( EUID == 0 )); then "$@"; else sudo -n "$@"; fi; }
+    trap '[[ -d "$sandbox" && "$sandbox" != / ]] && as_root rm -rf -- "$sandbox"' EXIT
+    real_php=$(command -v php)
+    runtime_php() { as_root runuser -u www-data -- "$real_php" "$@"; }
+    chmod 0755 "$sandbox"
+    root="$sandbox/host with spaces"
+    mkdir -p "$root/shared/storage" "$root/releases/active"
+    chmod 0755 "$root" "$root/shared" "$root/releases" "$root/releases/active"
+    as_root chown www-data:www-data "$root/shared/storage"
+    as_root chmod 0770 "$root/shared/storage"
+    log="$sandbox/runtime.log"
+    storage_check=$(awk '/^step=runtime-storage$/ { capture=1; next } /^step=php-fpm-extensions$/ { capture=0 } capture' "$original_script")
+    process_check=$(awk '/# \/proc cwd access/ { capture=1; next } capture && /then ready=1/ { exit } capture' "$original_script" | sed '1s/^.* \&\& runtime_php/runtime_php/')
+    [[ -n "$storage_check" && -n "$process_check" ]] || { echo 'FAIL: runtime helper extraction'; exit 1; }
+    eval "$storage_check" || { cat "$log"; echo 'FAIL: runtime storage across UID switch'; exit 1; }
+    for directory in app/secure app/public framework/cache/data framework/sessions framework/views logs; do
+        as_root test -d "$root/shared/storage/$directory" || { echo 'FAIL: missing runtime storage directory'; exit 1; }
+    done
+    echo 'PASS: runtime storage across UID switch'
+    as_root ln -s "$sandbox" "$root/shared/storage/escape"
+    if (eval "$storage_check"); then echo 'FAIL: accepted storage symlink'; exit 1; fi
+    as_root rm "$root/shared/storage/escape"
+    as_root chmod 0550 "$root/shared/storage"
+    if (eval "$storage_check"); then echo 'FAIL: accepted unwritable storage'; exit 1; fi
+    as_root chmod 0770 "$root/shared/storage"
+    grep -q 'Runtime storage is unsafe or unavailable' "$log"
+    echo 'PASS: runtime storage rejects symlinks and unwritable directories'
+    release="$root/releases/active"
+    cd -- "$release"
+    runtime_php -r 'echo getmypid(), PHP_EOL; fflush(STDOUT); sleep(30);' > "$sandbox/worker.pid" 2> "$sandbox/worker.stderr" &
+    launcher=$!
+    for ((attempt=0; attempt<100; attempt++)); do
+        [[ -s "$sandbox/worker.pid" ]] && break
+        kill -0 "$launcher" || { cat "$sandbox/worker.stderr"; echo 'FAIL: runtime worker exited'; exit 1; }
+        sleep 0.01
+    done
+    pid=$(cat "$sandbox/worker.pid")
+    [[ "$pid" =~ ^[1-9][0-9]*$ ]] || { echo 'FAIL: runtime worker PID'; exit 1; }
+    trap 'as_root kill "$pid" 2>/dev/null || true; wait "$launcher" 2>/dev/null || true; as_root rm -rf -- "$sandbox"' EXIT
+    eval "$process_check" || { cat "$log"; echo 'FAIL: runtime process cwd across UID switch'; exit 1; }
+    release="$root/releases/wrong"
+    if (eval "$process_check"); then echo 'FAIL: accepted wrong worker cwd'; exit 1; fi
+    echo 'PASS: runtime process cwd across UID switch and mismatch refusal'
+    exit 0
+fi
 export TEST_SANDBOX="$sandbox"
 mkdir "$sandbox/bin"
 export PATH="$sandbox/bin:$PATH"
@@ -39,7 +87,15 @@ if [[ "${1:-}" == artisan || "${1:-}" == "$TRAINING_CENTER_ROOT/current/artisan"
     esac
     exit 0
 fi
-source_code=$(cat)
+if [[ "${1:-}" == -r ]]; then
+    source_code=$2
+    shift 2
+    [[ "${1:-}" == -- ]] || exit 94
+    shift
+    set -- inline "$@"
+else
+    source_code=$(cat)
+fi
 case "$source_code" in
     *TC_DEPLOY_PROCESS*) [[ "$(readlink "$TRAINING_CENTER_ROOT/current")" == "$3" ]] ;;
     *TC_DEPLOY_STORAGE*)

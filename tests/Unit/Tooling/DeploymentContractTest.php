@@ -48,6 +48,21 @@ it('contains failures before cutover and proves both supervised clean restarts',
     expect($process->getOutput())->toContain('PASS: second release', 'PASS: post-switch recovery', 'PASS: clean worker restarts');
 });
 
+it('runs storage and process checks across a real runtime UID switch', function (): void {
+    $root = dirname(__DIR__, 3);
+    $bash = PHP_OS_FAMILY === 'Windows' ? 'C:/Program Files/Git/bin/bash.exe' : 'bash';
+    $process = new Process([$bash, 'deploy/tests/release-smoke.sh', '--runtime-helpers'], $root, ['MSYS_NO_PATHCONV' => '1']);
+    $process->setTimeout(60);
+    $process->run();
+
+    expect($process->isSuccessful())->toBeTrue($process->getOutput().$process->getErrorOutput());
+    expect($process->getOutput())->toContain(
+        'PASS: runtime storage across UID switch',
+        'PASS: runtime storage rejects symlinks and unwritable directories',
+        'PASS: runtime process cwd across UID switch and mismatch refusal',
+    );
+});
+
 it('keeps host templates on public roots and persistent supervised processes', function (): void {
     $root = dirname(__DIR__, 3);
     expect(is_file($root.'/deploy/nginx/training-center.conf.example'))->toBeTrue();
