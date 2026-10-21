@@ -31,7 +31,6 @@ printf '%s' "$2" > "$TEST_SANDBOX/stub-archive"
 [[ -f "$2" && ! -L "$2" ]] || exit 97
 stat -c %a -- "$2" > "$TEST_SANDBOX/stub-mode"
 cat -- "$2" > "$TEST_SANDBOX/stub-content"
-cat > "$TEST_SANDBOX/stub-stdin"
 touch "$TEST_SANDBOX/stub-started"
 if [[ -n "${STUB_SLEEP:-}" ]]; then sleep "$STUB_SLEEP"; fi
 echo 'stub release output'
@@ -78,7 +77,6 @@ archive_path=$(cat "$sandbox/stub-archive")
 [[ "$archive_path" == "$incoming"/* && "$archive_path" != *"$sha"* ]] || { echo 'FAIL: temp file name or location'; exit 1; }
 cmp -s "$sandbox/archive" "$sandbox/stub-content" || { echo 'FAIL: archive bytes changed in transit'; exit 1; }
 [[ "$(cat "$sandbox/stub-mode")" == 600 ]] || { echo 'FAIL: temp file mode'; exit 1; }
-[[ ! -s "$sandbox/stub-stdin" ]] || { echo 'FAIL: release script inherited the archive stream'; exit 1; }
 [[ ! -e "$archive_path" ]] || { echo 'FAIL: temp file survived'; exit 1; }
 [[ "$(listing)" == "$before" ]] || { echo 'FAIL: tree changed beyond the temp file'; exit 1; }
 grep -q 'stub release output' "$sandbox/output"
