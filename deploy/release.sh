@@ -135,7 +135,10 @@ PHP
 step=php-fpm-extensions
 fpm_binary=$(command -v php-fpm8.4 || printf '/usr/sbin/php-fpm8.4')
 "$fpm_binary" -m > "$root/shared/deploy-logs/$sha-$$.fpm-modules" 2>&1
-for extension in redis pcntl posix pdo_mysql mbstring intl bcmath gd zip; do
+# pcntl is a CLI-only extension on Debian/Ubuntu PHP builds (the FPM SAPI never
+# loads it) and only Horizon, a CLI process, needs it. FPM is checked for what
+# web requests use; the CLI preflight below still requires pcntl.
+for extension in redis posix pdo_mysql mbstring intl bcmath gd zip; do
     grep -Fxiq "$extension" "$root/shared/deploy-logs/$sha-$$.fpm-modules" || fail 'PHP-FPM extension missing'
 done
 step=production-preflight
