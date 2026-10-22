@@ -115,8 +115,8 @@ it('renders an append-only timeline with no write actions even for a super admin
     $entry = Activity::query()->latest('id')->firstOrFail();
     $page = Livewire::actingAs($actor)->test(ListActivities::class)->assertCanSeeTableRecords([$entry]);
     expect($page->html())->toContain('fi-ta-stack');
-    expect($page->instance()->getTable()->getActions())->toBe([])
-        ->and($page->instance()->getTable()->getBulkActions())->toBe([]);
+    expect(array_keys($page->instance()->getTable()->getActions()))->toBe([])
+        ->and(array_keys($page->instance()->getTable()->getBulkActions()))->toBe([]);
     Livewire::actingAs($actor)->test(ViewActivity::class, ['record' => $entry->id])
         ->assertActionDoesNotExist('edit')->assertActionDoesNotExist('delete');
     expect(array_keys(ActivityResource::getPages()))->toBe(['index', 'view']);
