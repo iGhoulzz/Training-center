@@ -175,5 +175,9 @@ return [
         'added' => 'المضاف',
         'removed' => 'المزال',
         'assigned_hours' => 'الساعات المسندة',
+        'instructor_id' => 'معرّف المدرب',
+        'instructor_name' => 'اسم المدرب',
+        'previous_hours' => 'الساعات السابقة',
+        'replaced_existing' => 'استبدال صورة سابقة',
     ],
 ];

@@ -228,5 +228,9 @@ return [
         'added' => 'added',
         'removed' => 'removed',
         'assigned_hours' => 'assigned_hours',
+        'instructor_id' => 'instructor_id',
+        'instructor_name' => 'instructor_name',
+        'previous_hours' => 'previous_hours',
+        'replaced_existing' => 'replaced_existing',
     ],
 ];

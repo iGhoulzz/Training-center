@@ -58,3 +58,25 @@ it('keeps an unknown field readable in English as well', function () {
     expect(ActivityResource::describeProperties($entry))->toBe('future_identifier: Value')
         ->and(ActivityResource::describeChanges($entry))->toBe('future_identifier: Value');
 });
+
+it('labels every known explicit activity property in both catalogues', function (string $field) {
+    $english = require lang_path('en/activity.php');
+    $arabic = require lang_path('ar/activity.php');
+
+    expect($english['field'][$field] ?? null)->toBe($field)
+        ->and($arabic['field'][$field] ?? null)->toBeString()->not->toBe($field);
+})->with([
+    'instructor_id', 'instructor_name', 'assigned_hours', 'previous_hours',
+    'replaced_existing', 'staff_profile_id', 'title', 'added', 'removed', 'reason', 'email',
+]);
+
+it('translates explicit activity properties through an Arabic sentinel with unknown-field fallback', function (string $field) {
+    app()->setLocale('ar');
+    Lang::addLines(["activity.field.{$field}" => 'تسمية خاصية تجريبية'], 'ar');
+    $entry = new Activity;
+    $entry->properties = collect([$field => 'Logged value', 'future_property' => 'Future value']);
+
+    expect(ActivityResource::describeProperties($entry))
+        ->toContain('تسمية خاصية تجريبية', 'Logged value', 'future_property', 'Future value')
+        ->not->toContain('activity.field.future_property');
+})->with(['instructor_id', 'instructor_name', 'previous_hours', 'replaced_existing']);

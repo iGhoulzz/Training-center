@@ -53,6 +53,27 @@ it('gates the activity cross-link by its own permission', function () {
         ->assertTableColumnHidden('activity_link');
 });
 
+it('filters the account list by name and email through the visible identity column', function (string $search) {
+    $match = User::factory()->create(['name' => 'Findable account', 'email' => 'unique-address@example.test']);
+    User::factory()->create(['name' => 'Unrelated account', 'email' => 'other@example.test']);
+
+    $page = Livewire::actingAs(($this->actor)(['view_any_user']))->test(ListUsers::class)->searchTable($search);
+
+    expect($page->instance()->getTableRecords()->pluck('id')->all())->toBe([$match->id]);
+})->with(['name' => 'Findable', 'email' => 'unique-address']);
+
+it('sorts the visible account identities by name in both directions', function () {
+    $zulu = User::factory()->create(['name' => 'Zulu account']);
+    $alpha = User::factory()->create(['name' => 'Alpha account']);
+    $actor = ($this->actor)(['view_any_user']);
+    $actor->update(['name' => 'Middle actor']);
+
+    $page = Livewire::actingAs($actor)->test(ListUsers::class)->sortTable('identity', 'desc');
+    expect($page->instance()->getTableRecords()->pluck('id')->all())->toBe([$zulu->id, $actor->id, $alpha->id]);
+    $page->sortTable('identity', 'asc');
+    expect($page->instance()->getTableRecords()->pluck('id')->all())->toBe([$alpha->id, $actor->id, $zulu->id]);
+});
+
 it('gates payroll independently and links activity to the selected account', function () {
     $target = User::factory()->create();
     $page = Livewire::actingAs(($this->actor)(['view_any_user', 'view_any_activity', 'view_any_staff_compensation']))

@@ -221,6 +221,9 @@ class UserResource extends Resource
                 ])->schema([
                     Stack::make([
                         ViewColumn::make('identity')->view('filament.enrollment.columns.person')
+                            ->label(__('staff.name'))
+                            ->searchable(['name', 'email'])
+                            ->sortable(['name'])
                             ->viewData(fn (User $record): array => [
                                 'name' => $record->name, 'identity' => $record->id, 'size' => 'instructor',
                                 'url' => static::canEdit($record) ? static::getUrl('edit', ['record' => $record]) : null,
@@ -228,15 +231,6 @@ class UserResource extends Resource
                                     ? __('staff.profile_summary', ['job' => $record->staffProfile->job_title ?? __('staff.no_job_title'), 'type' => $record->staffProfile->employment_type->label()])
                                     : $record->email,
                             ]),
-                        TextColumn::make('name')
-                            ->label(__('staff.name'))
-                            ->hidden()
-                            ->searchable()
-                            ->sortable(),
-                        TextColumn::make('email')
-                            ->label(__('staff.email'))
-                            ->hidden()
-                            ->searchable(),
                     ])->space(1),
                     TextColumn::make('roles.name')
                         ->label(__('staff.roles'))
