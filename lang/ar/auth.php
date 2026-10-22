@@ -2,24 +2,16 @@
 
 declare(strict_types=1);
 
-/*
-|--------------------------------------------------------------------------
-| Arabic — deliberately empty until phase 4
-|--------------------------------------------------------------------------
-|
-| Every key in lang/en/auth.php resolves through this file to its English
-| value: Laravel's translator tries the active locale, then app.fallback_locale.
-| An empty array is therefore a working state, not a broken one.
-|
-| It is empty ON PURPOSE. Seeding it with the English strings — the obvious
-| shortcut — would make an untranslated panel indistinguishable from a
-| translated one: nothing would render as missing, and no reviewer, screenshot
-| or test could tell which strings a translator had actually reached. Absent
-| means untranslated, and stays visible as such.
-|
-| Phase 4 fills this in. Add keys only with real Arabic; a partially filled file
-| is fine, because the fallback covers whatever is not here yet.
-*/
-
 return [
+    'current_password' => 'كلمة المرور الحالية',
+    'new_password' => 'كلمة المرور الجديدة',
+    'confirm_password' => 'تأكيد كلمة المرور',
+    'update_password' => 'تحديث كلمة المرور',
+    'password_updated' => 'تم تحديث كلمة المرور',
+    'password_too_short' => 'يجب ألا تقل كلمة المرور عن :minimum أحرف.',
+    'password_needs_capital' => 'يجب أن تحتوي كلمة المرور على حرف كبير واحد على الأقل.',
+    'password_needs_symbol' => 'يجب أن تحتوي كلمة المرور على رمز واحد على الأقل، مثل ! أو #. ولا تُعد الحروف والأرقام والمسافات رموزًا.',
+    'log_out' => 'تسجيل الخروج',
+    'panel_access_denied' => 'لا يمكن لهذا الحساب تسجيل الدخول هنا. تأكد من استخدام صفحة الدخول الصحيحة، أو اسأل أحد المسؤولين.',
+    'session_ended_inactive' => 'تم تعطيل حسابك، ولذلك تم تسجيل خروجك.',
 ];

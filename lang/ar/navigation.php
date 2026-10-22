@@ -2,26 +2,18 @@
 
 declare(strict_types=1);
 
-/*
-|--------------------------------------------------------------------------
-| Arabic — deliberately empty until P4-T17, the Arabic catalogues task
-|--------------------------------------------------------------------------
-|
-| Every key in lang/en/navigation.php resolves through this file to its
-| English value: Laravel's translator tries the active locale, then
-| app.fallback_locale. An empty array is therefore a working state, not a
-| broken one.
-|
-| It is empty ON PURPOSE. Seeding it with the English strings — the obvious
-| shortcut — would make an untranslated panel indistinguishable from a
-| translated one: nothing would render as missing, and no reviewer, screenshot
-| or test could tell which strings a translator had actually reached. Absent
-| means untranslated, and stays visible as such. See lang/ar/enrollment.php
-| for the fuller reasoning, which applies unchanged here.
-|
-| T17 fills this in. Add keys only with real Arabic; a partially filled
-| file is fine, because the fallback covers whatever is not here yet.
-*/
-
 return [
+    'front_desk' => 'الاستقبال',
+    'dashboard' => 'لوحة التحكم',
+    'dashboard_context' => ':date · :centre',
+    'dashboard_date_format' => 'dddd, D MMMM YYYY',
+    'enrollment' => 'التسجيل',
+    'finance' => 'المالية',
+    'reports' => 'التقارير',
+    'administration' => 'الإدارة',
+    'users_and_roles' => 'المستخدمون والأدوار',
+    'more' => 'المزيد',
+    'publications' => 'المنشورات',
+    'password_change' => 'تغيير كلمة المرور',
+    'password_change_description' => 'أكد كلمة مرورك الحالية واختر كلمة مرور جديدة لا تقل عن :minimum أحرف، وتحتوي على حرف كبير ورمز واحد على الأقل.',
 ];

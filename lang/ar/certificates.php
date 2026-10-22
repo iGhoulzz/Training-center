@@ -2,26 +2,56 @@
 
 declare(strict_types=1);
 
-/*
-|--------------------------------------------------------------------------
-| Arabic — deliberately empty until phase 4
-|--------------------------------------------------------------------------
-|
-| Every key in lang/en/certificates.php resolves through this file to its
-| English value: Laravel's translator tries the active locale, then
-| app.fallback_locale. An empty array is therefore a working state, not a
-| broken one.
-|
-| It is empty ON PURPOSE. Seeding it with the English strings — the obvious
-| shortcut — would make an untranslated panel indistinguishable from a
-| translated one: nothing would render as missing, and no reviewer, screenshot
-| or test could tell which strings a translator had actually reached. Absent
-| means untranslated, and stays visible as such. See lang/ar/enrollment.php
-| for the fuller reasoning, which applies unchanged here.
-|
-| Phase 4 fills this in. Add keys only with real Arabic; a partially filled
-| file is fine, because the fallback covers whatever is not here yet.
-*/
-
 return [
+    'queue_pending' => 'لا تسجيلات مكتملة تنتظر إصدار شهادة|تسجيل مكتمل واحد ينتظر إصدار شهادة|تسجيلان مكتملان ينتظران إصدار شهادة|:count تسجيلات مكتملة تنتظر إصدار شهادات|:count تسجيلًا مكتملًا ينتظر إصدار شهادة|:count تسجيل مكتمل ينتظر إصدار شهادة',
+    'review_queue' => 'مراجعة قائمة الانتظار',
+    'register' => 'سجل الشهادات',
+    'queue_hint' => 'تسجيلات مكتملة بلا شهادة سارية. الأرصدة المستحقة لا تمنع الإصدار.',
+    'printed_details' => 'بيانات الشهادة المطبوعة',
+    'issuance_record' => 'سجل الإصدار',
+    'certificate_status' => [
+        'valid' => 'صالحة',
+        'revoked' => 'ملغاة',
+        'replaced' => 'مستبدَلة',
+    ],
+    'enrollment_not_completed' => 'لا يمكن إصدار شهادة إلا لتسجيل حُددت حالته كمكتمل.',
+    'certificate_already_issued' => 'توجد شهادة سارية لهذا التسجيل بالفعل.',
+    'certificate_changed' => 'لم تعد هذه الشهادة هي الشهادة الحالية للتسجيل. أعد تحميل القائمة وحاول مجددًا.',
+    'reference_exhausted' => 'تعذر إنشاء مرجع فريد للشهادة. حاول مجددًا.',
+    'no_valid_certificate' => 'لا توجد شهادة سارية لهذا التسجيل لإجراء العملية عليها.',
+    'certificate' => 'الشهادة',
+    'certificates' => 'الشهادات',
+    'reference_number' => 'المرجع',
+    'student' => 'الطالب',
+    'course' => 'الدورة',
+    'completed_on' => 'تاريخ الإتمام',
+    'issued_at' => 'تاريخ الإصدار',
+    'issued_by' => 'أصدره',
+    'status' => 'الحالة',
+    'revoked_at' => 'تاريخ الإلغاء',
+    'revoked_by' => 'ألغاه',
+    'revocation_reason' => 'سبب الإلغاء',
+    'replaces' => 'تحل محل',
+    'reason' => 'السبب',
+    'enrollment_option_label' => ':code — :name — :course',
+    'outstanding_balance_lyd' => ':amount د.ل.',
+    'no_charge' => '—',
+    'issue' => 'إصدار شهادة',
+    'issue_modal_heading' => 'إصدار شهادة جديدة',
+    'enrollment' => 'التسجيل',
+    'outstanding_balance' => 'الرصيد المستحق',
+    'outstanding_balance_hint' => 'للعلم فقط. الرصيد المستحق لا يمنع إصدار الشهادة.',
+    'issued_successfully' => 'تم إصدار الشهادة.',
+    'replace' => 'استبدال',
+    'replace_modal_heading' => 'استبدال هذه الشهادة',
+    'replace_modal_description' => 'ستُحدد الشهادة الحالية كمستبدلة وتصدر شهادة جديدة بدلًا منها، ببيانات الطالب والدورة الحالية.',
+    'replaced_successfully' => 'تم استبدال الشهادة.',
+    'revoke' => 'إلغاء',
+    'revoke_modal_heading' => 'إلغاء هذه الشهادة',
+    'revoke_reason_hint' => 'مطلوب. لا يحذف هذا الشهادة، بل تبقى في السجل بحالة ملغاة.',
+    'revoked_successfully' => 'تم إلغاء الشهادة.',
+    'queue_title' => 'قائمة انتظار إصدار الشهادات',
+    'queue_student_code' => 'رمز الطالب',
+    'queue_batch' => 'الدفعة',
+    'queue_empty' => 'لا تسجيلات تنتظر إصدار شهادات',
 ];

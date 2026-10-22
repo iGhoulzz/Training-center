@@ -25,9 +25,12 @@ use Filament\Infolists\Components\ImageEntry;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
+use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\ImageColumn;
+use Filament\Tables\Columns\Layout\Split;
+use Filament\Tables\Columns\Layout\Stack;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -142,112 +145,122 @@ class StaffProfileResource extends Resource
     {
         return $schema->components([
             TextEntry::make('user.name')
-                ->label(__('staff.user')),
+                ->label(__('staff.user'))->weight('semibold')->size('lg')->columnSpanFull(),
 
-            TextEntry::make('job_title')
-                ->label(__('staff.job_title'))
-                ->placeholder(__('staff.no_job_title')),
+            Section::make(__('staff.profile_details'))->columns(2)->columnSpanFull()->schema([
+                TextEntry::make('job_title')
+                    ->label(__('staff.job_title'))
+                    ->placeholder(__('staff.no_job_title')),
 
-            TextEntry::make('employment_type')
-                ->label(__('staff.employment_type'))
-                ->formatStateUsing(fn (EmploymentType|string|null $state): string => $state instanceof EmploymentType
-                    ? $state->label()
-                    : (string) $state),
+                TextEntry::make('employment_type')
+                    ->label(__('staff.employment_type'))
+                    ->formatStateUsing(fn (EmploymentType|string|null $state): string => $state instanceof EmploymentType
+                        ? $state->label()
+                        : (string) $state),
 
-            TextEntry::make('phone')
-                ->label(__('staff.phone'))
-                ->placeholder(__('enrollment.no_phone')),
+                TextEntry::make('phone')
+                    ->label(__('staff.phone'))
+                    ->placeholder(__('enrollment.no_phone')),
 
-            TextEntry::make('hire_date')
-                ->label(__('staff.hire_date'))
-                ->date()
-                ->placeholder(__('staff.no_hire_date')),
+                TextEntry::make('hire_date')
+                    ->label(__('staff.hire_date'))
+                    ->date()
+                    ->placeholder(__('staff.no_hire_date')),
+            ]),
 
-            TextEntry::make('qualifications')
-                ->label(__('staff.qualifications'))
-                ->placeholder(__('activity.empty_value'))
-                ->columnSpanFull(),
+            Section::make(__('staff.profile_documents'))->columnSpanFull()->schema([
 
-            ImageEntry::make('profile_photo_path')
-                ->label(__('staff.profile_photo'))
-                // The same authorized route the table uses. The private disk has
-                // no URL, so the photo is never addressable except through the
-                // controller that re-authorizes it.
-                // Nullable record type on purpose: Filament evaluates these
-                // outside a row context too — inspecting the schema, for one —
-                // and a non-nullable hint turns that into a TypeError.
-                ->getStateUsing(fn (?StaffProfile $record): ?string => $record?->profile_photo_path === null
-                    ? null
-                    : route('staff.profiles.photo', ['profile' => $record]))
-                ->visible(fn (?StaffProfile $record): bool => $record?->profile_photo_path !== null)
-                ->columnSpanFull(),
+                TextEntry::make('qualifications')
+                    ->label(__('staff.qualifications'))
+                    ->placeholder(__('activity.empty_value'))
+                    ->columnSpanFull(),
+
+                ImageEntry::make('profile_photo_path')
+                    ->label(__('staff.profile_photo'))
+                    // The same authorized route the table uses. The private disk has
+                    // no URL, so the photo is never addressable except through the
+                    // controller that re-authorizes it.
+                    // Nullable record type on purpose: Filament evaluates these
+                    // outside a row context too — inspecting the schema, for one —
+                    // and a non-nullable hint turns that into a TypeError.
+                    ->getStateUsing(fn (?StaffProfile $record): ?string => $record?->profile_photo_path === null
+                        ? null
+                        : route('staff.profiles.photo', ['profile' => $record]))
+                    ->visible(fn (?StaffProfile $record): bool => $record?->profile_photo_path !== null)
+                    ->columnSpanFull(),
+            ]),
         ]);
     }
 
     public static function form(Schema $schema): Schema
     {
         return $schema->components([
-            Select::make('user_id')
-                ->label(__('staff.user'))
-                ->options(fn (): array => self::searchUsers(''))
-                ->searchable()
-                ->getSearchResultsUsing(fn (string $search): array => self::searchUsers($search))
-                ->getOptionLabelUsing(fn (mixed $value, ?StaffProfile $record): ?string => self::userOptionLabel(
-                    $value,
-                    $record?->user_id,
-                ))
-                ->required()
-                /*
+            Section::make(__('staff.profile_details'))->columns(2)->columnSpanFull()->schema([
+                Select::make('user_id')
+                    ->label(__('staff.user'))
+                    ->options(fn (): array => self::searchUsers(''))
+                    ->searchable()
+                    ->getSearchResultsUsing(fn (string $search): array => self::searchUsers($search))
+                    ->getOptionLabelUsing(fn (mixed $value, ?StaffProfile $record): ?string => self::userOptionLabel(
+                        $value,
+                        $record?->user_id,
+                    ))
+                    ->required()
+                    /*
                  * An employment profile owns its photo and credentials. Letting
                  * a generic edit change user_id silently transfers those private
                  * documents to another person. Reassignment, if ever needed,
                  * belongs in an explicit Action that states that consequence.
                  */
-                ->disabled(fn (?StaffProfile $record): bool => $record !== null)
-                ->dehydrated(fn (?StaffProfile $record): bool => $record === null)
-                // One employment record per account, enforced by a unique index.
-                // Without this the form turns a duplicate into a 500.
-                ->unique(ignoreRecord: true),
+                    ->disabled(fn (?StaffProfile $record): bool => $record !== null)
+                    ->dehydrated(fn (?StaffProfile $record): bool => $record === null)
+                    // One employment record per account, enforced by a unique index.
+                    // Without this the form turns a duplicate into a 500.
+                    ->unique(ignoreRecord: true),
 
-            TextInput::make('job_title')
-                ->label(__('staff.job_title'))
-                ->maxLength(120),
+                TextInput::make('job_title')
+                    ->label(__('staff.job_title'))
+                    ->maxLength(120),
 
-            Select::make('employment_type')
-                ->label(__('staff.employment_type'))
-                ->options(fn (): array => collect(EmploymentType::cases())
-                    ->mapWithKeys(fn (EmploymentType $case): array => [$case->value => $case->label()])
-                    ->all())
-                ->default(EmploymentType::Administrative->value)
-                ->required(),
+                Select::make('employment_type')
+                    ->label(__('staff.employment_type'))
+                    ->options(fn (): array => collect(EmploymentType::cases())
+                        ->mapWithKeys(fn (EmploymentType $case): array => [$case->value => $case->label()])
+                        ->all())
+                    ->default(EmploymentType::Administrative->value)
+                    ->required(),
 
-            TextInput::make('phone')
-                ->label(__('staff.phone'))
-                ->tel()
-                ->maxLength(30),
+                TextInput::make('phone')
+                    ->label(__('staff.phone'))
+                    ->tel()
+                    ->maxLength(30),
 
-            DatePicker::make('hire_date')
-                ->label(__('staff.hire_date'))
-                ->maxDate(now()),
+                DatePicker::make('hire_date')
+                    ->label(__('staff.hire_date'))
+                    ->maxDate(now()),
+            ]),
 
-            Textarea::make('qualifications')
-                ->label(__('staff.qualifications'))
-                ->rows(3)
-                ->columnSpanFull(),
+            Section::make(__('staff.profile_documents'))->columnSpanFull()->schema([
 
-            FileUpload::make('profile_photo')
-                ->label(__('staff.profile_photo'))
-                // See the class docblock: neither of these is optional.
-                ->dehydrated(false)
-                ->storeFiles(false)
-                ->image()
-                ->acceptedFileTypes(UpdateStaffPhotoAction::ACCEPTED_MIME_TYPES)
-                ->maxSize(UpdateStaffPhotoAction::MAX_KILOBYTES)
-                // Edit only. UpdateStaffPhotoAction authorizes `update`, which an
-                // actor holding only create_staff_profile does not have.
-                ->visible(fn (?StaffProfile $record): bool => $record instanceof StaffProfile)
-                ->helperText(__('staff.profile_photo_help'))
-                ->columnSpanFull(),
+                Textarea::make('qualifications')
+                    ->label(__('staff.qualifications'))
+                    ->rows(3)
+                    ->columnSpanFull(),
+
+                FileUpload::make('profile_photo')
+                    ->label(__('staff.profile_photo'))
+                    // See the class docblock: neither of these is optional.
+                    ->dehydrated(false)
+                    ->storeFiles(false)
+                    ->image()
+                    ->acceptedFileTypes(UpdateStaffPhotoAction::ACCEPTED_MIME_TYPES)
+                    ->maxSize(UpdateStaffPhotoAction::MAX_KILOBYTES)
+                    // Edit only. UpdateStaffPhotoAction authorizes `update`, which an
+                    // actor holding only create_staff_profile does not have.
+                    ->visible(fn (?StaffProfile $record): bool => $record instanceof StaffProfile)
+                    ->helperText(__('staff.profile_photo_help'))
+                    ->columnSpanFull(),
+            ]),
         ]);
     }
 
@@ -288,52 +301,58 @@ class StaffProfileResource extends Resource
     public static function table(Table $table): Table
     {
         return $table
+            ->extraAttributes(['class' => '[&_.fi-ta-record-content-ctn]:py-0! [&_.fi-ta-record-content]:px-0!'])
             ->columns([
-                /*
+                Split::make([
+                    /*
                  * A real photo is served through a per-request policy check.
                  * The private disk has no URL; feeding its path to ImageColumn
                  * would make Filament fall back to Storage::url(), which is both
                  * wrong and outside the authorization boundary.
                  */
-                ImageColumn::make('profile_photo_path')
-                    ->label(__('staff.profile_photo'))
-                    ->state(fn (StaffProfile $record): ?string => (
-                        is_string($record->profile_photo_path)
-                        && $record->profile_photo_path !== ''
-                        && static::canView($record)
-                    ) ? route('staff.profiles.photo', $record) : null)
-                    ->placeholder(fn (StaffProfile $record): string => $record->initials())
-                    ->alt(fn (StaffProfile $record): string => $record->user->name)
-                    ->circular(),
+                    ImageColumn::make('profile_photo_path')
+                        ->label(__('staff.profile_photo'))
+                        ->state(fn (StaffProfile $record): ?string => (
+                            is_string($record->profile_photo_path)
+                            && $record->profile_photo_path !== ''
+                            && static::canView($record)
+                        ) ? route('staff.profiles.photo', $record) : null)
+                        ->placeholder(fn (StaffProfile $record): string => $record->initials())
+                        ->alt(fn (StaffProfile $record): string => $record->user->name)
+                        ->circular(),
 
-                TextColumn::make('user.name')
-                    ->label(__('staff.name'))
-                    ->searchable()
-                    ->sortable()
-                    // A departed instructor keeps their profile; the relation is
-                    // withTrashed() so the row still says whose it is.
-                    ->placeholder(__('staff.no_account')),
+                    Stack::make([
 
-                TextColumn::make('job_title')
-                    ->label(__('staff.job_title'))
-                    ->searchable()
-                    ->placeholder(__('staff.no_job_title')),
+                        TextColumn::make('user.name')
+                            ->label(__('staff.name'))
+                            ->searchable()
+                            ->sortable()
+                            // A departed instructor keeps their profile; the relation is
+                            // withTrashed() so the row still says whose it is.
+                            ->placeholder(__('staff.no_account'))->weight('semibold'),
 
-                TextColumn::make('employment_type')
-                    ->label(__('staff.employment_type'))
-                    ->badge()
-                    ->formatStateUsing(fn (EmploymentType $state): string => $state->label())
-                    ->sortable(),
+                        TextColumn::make('job_title')
+                            ->label(__('staff.job_title'))
+                            ->searchable()
+                            ->placeholder(__('staff.no_job_title'))->size('xs')->color('gray'),
+                    ])->space(1),
 
-                TextColumn::make('hire_date')
-                    ->label(__('staff.hire_date'))
-                    ->date()
-                    ->placeholder(__('staff.no_hire_date'))
-                    ->sortable(),
+                    TextColumn::make('employment_type')
+                        ->label(__('staff.employment_type'))
+                        ->badge()
+                        ->formatStateUsing(fn (EmploymentType $state): string => $state->label())
+                        ->sortable(),
 
-                TextColumn::make('certificates_count')
-                    ->label(__('staff.certificates'))
-                    ->counts('certificates'),
+                    TextColumn::make('hire_date')
+                        ->label(__('staff.hire_date'))
+                        ->date()
+                        ->placeholder(__('staff.no_hire_date'))
+                        ->sortable(),
+
+                    TextColumn::make('certificates_count')
+                        ->label(__('staff.certificates'))
+                        ->counts('certificates')->badge()->color('gray'),
+                ])->from('md')->extraAttributes(['class' => 'gap-3.5 px-4.5 py-[15px]']),
             ])
             ->defaultSort('id')
             ->recordUrl(fn (StaffProfile $record): string => static::getUrl('view', ['record' => $record]))

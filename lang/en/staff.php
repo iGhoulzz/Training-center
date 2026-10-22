@@ -201,4 +201,17 @@ return [
      */
     'cannot_deactivate_self' => 'You cannot deactivate your own account. Ask another administrator to do it.',
     'is_active_own_account_hint' => 'You cannot deactivate your own account.',
+    'account_details' => 'Account details and access',
+    'users_and_roles' => 'Users & roles',
+    'users_description' => 'Administration · staff accounts and their profiles in one place',
+    'profile_summary' => ':job · :type',
+    'active' => 'Active',
+    'deactivated' => 'Deactivated',
+    'activity_link' => 'Activity',
+    'payroll_link' => 'Payroll',
+    'profile_details' => 'Employment details',
+    'profile_documents' => 'Qualifications and photo',
+    'role_details' => 'Role and permissions',
+    'guard' => 'Authentication guard',
+    'updated_at' => 'Last updated',
 ];

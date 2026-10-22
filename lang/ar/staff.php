@@ -2,24 +2,124 @@
 
 declare(strict_types=1);
 
-/*
-|--------------------------------------------------------------------------
-| Arabic — deliberately empty until phase 4
-|--------------------------------------------------------------------------
-|
-| Every key in lang/en/staff.php resolves through this file to its English
-| value: Laravel's translator tries the active locale, then app.fallback_locale.
-| An empty array is therefore a working state, not a broken one.
-|
-| It is empty ON PURPOSE. Seeding it with the English strings — the obvious
-| shortcut — would make an untranslated panel indistinguishable from a
-| translated one: nothing would render as missing, and no reviewer, screenshot
-| or test could tell which strings a translator had actually reached. Absent
-| means untranslated, and stays visible as such.
-|
-| Phase 4 fills this in. Add keys only with real Arabic; a partially filled file
-| is fine, because the fallback covers whatever is not here yet.
-*/
-
 return [
+    'user' => 'المستخدم',
+    'users' => 'المستخدمون',
+    'staff_profile' => 'الملف الوظيفي',
+    'staff_profiles' => 'الملفات الوظيفية',
+    'certificates' => 'الشهادات',
+    'name' => 'الاسم',
+    'email' => 'البريد الإلكتروني',
+    'phone' => 'الهاتف',
+    'locale' => 'اللغة',
+    'locale_en' => 'الإنجليزية',
+    'locale_ar' => 'العربية',
+    'is_active' => 'نشط',
+    'roles' => 'الأدوار',
+    'last_login' => 'آخر دخول',
+    'job_title' => 'المسمى الوظيفي',
+    'employment_type' => 'نوع الوظيفة',
+    'hire_date' => 'تاريخ التوظيف',
+    'qualifications' => 'المؤهلات',
+    'profile_photo' => 'الصورة',
+    'certificate_title' => 'العنوان',
+    'certificate_file' => 'الملف',
+    'issued_on' => 'تاريخ الإصدار',
+    'expires_on' => 'تاريخ انتهاء الصلاحية',
+    'expired' => 'منتهي الصلاحية',
+    'create_user' => 'مستخدم جديد',
+    'create_staff_profile' => 'ملف وظيفي جديد',
+    'edit_staff_profile' => 'تعديل الملف الوظيفي',
+    'reset_password' => 'إعادة تعيين كلمة المرور',
+    'upload_certificate' => 'رفع شهادة',
+    'download' => 'تنزيل',
+    'delete_photo' => 'إزالة الصورة',
+    'never' => 'لم يسجل دخولًا',
+    'never_expires' => 'لا تنتهي صلاحيته',
+    'no_account' => 'لا يوجد حساب',
+    'no_hire_date' => 'غير مسجل',
+    'no_issue_date' => 'غير مسجل',
+    'no_job_title' => 'لا يوجد مسمى وظيفي',
+    'certificate_file_help' => 'ملف PDF أو صورة. يُحفظ بصورة خاصة ولا يُعرض إلا للموظفين المخولين.',
+    'profile_photo_help' => 'تُفضل صورة مربعة. تُحفظ بصورة خاصة ولا تكون على رابط عام.',
+    'temp_password_generated' => 'تم إنشاء كلمة مرور مؤقتة',
+    'password_reset_refused' => 'ليس لديك إذن لإعادة تعيين كلمة المرور هذه.',
+    'create_refused_no_password_permission' => 'يتطلب إنشاء مستخدم صلاحية إعادة تعيين كلمة المرور، لأن الحساب الجديد يحتاج إلى كلمة مرور مؤقتة.',
+    'save_refused_unauthorized' => 'ليس لديك إذن لإجراء هذا التغيير.',
+    'save_refused_last_super_admin' => 'لا يمكن تعطيل آخر مسؤول أعلى نشط أو إزالة دوره.',
+    'delete_refused_unauthorized' => 'ليس لديك إذن لحذف هذا المستخدم.',
+    'delete_refused_last_super_admin' => 'لا يمكن حذف آخر مسؤول أعلى نشط.',
+    'photo_refused_unauthorized' => 'ليس لديك إذن لتغيير هذه الصورة.',
+    'photo_invalid' => 'تعذر قبول هذه الصورة.',
+    'certificate_delete_refused' => 'ليس لديك إذن لحذف هذه الشهادة.',
+    'profile_delete_refused_certificates' => 'يحتوي هذا الملف الوظيفي على شهادات ليس لديك إذن لحذفها.',
+    'storage_unavailable' => 'تعذر حفظ الملف لأن مساحة الخادم نفدت أو أن التخزين غير متاح. لم يُحفظ شيء. أبلغ مسؤول الخادم ثم حاول مرة أخرى.',
+    'unregistered_activity_event' => 'حدث النشاط :event غير معرّف في ActivityEvent، ولذلك ليس له تسمية وسيظهر للمسؤول كقيمة خام. أضف ثابتًا له.',
+    'activity_log_append_only' => 'سجل النشاط يقبل الإضافة فقط. لا تُحذف إدخالاته ولا تنطبق عليه مدة للاحتفاظ.',
+    'escalation' => [
+        'last_super_admin' => 'لا يمكن إزالة آخر مسؤول أعلى نشط أو تعطيله.',
+        'requires_assign_role' => 'تتطلب إدارة الأدوار والصلاحيات صلاحية إسناد الأدوار.',
+    ],
+    'employment_types' => [
+        'instructor' => 'مدرب',
+        'administrative' => 'إداري',
+        'support' => 'دعم',
+    ],
+    'permissions' => [
+        'access_admin_panel' => 'تسجيل الدخول إلى لوحة الإدارة',
+        'access_student_portal' => 'تسجيل الدخول إلى بوابة الطالب',
+        'adjust_charge' => 'تعديل مبلغ فاتورة',
+        'apply_discount' => 'تطبيق خصم عند تسجيل طالب',
+        'assign_instructor' => 'إسناد المدربين إلى الدفعات',
+        'assign_role' => 'إسناد الأدوار إلى المستخدمين',
+        'complete_assigned_batch_enrollment' => 'إكمال التسجيلات في الدفعات التي يدرّسونها',
+        'complete_enrollment' => 'إكمال أي تسجيل',
+        'create_enrollment' => 'تسجيل الطلاب في الدفعات',
+        'create_staff_certificate' => 'رفع شهادات الموظفين',
+        'delete_enrollment' => 'حذف التسجيلات',
+        'delete_staff_certificate' => 'حذف شهادات الموظفين',
+        'export_financial_report' => 'تصدير التقارير المالية',
+        'finalize_payroll' => 'اعتماد مسير رواتب',
+        'issue_portal_credential' => 'إصدار حساب بوابة لطالب',
+        'issue_student_certificate' => 'إصدار شهادات الطلاب',
+        'manage_pricing' => 'تحديد أسعار الدورات والدفعات والخصومات',
+        'manage_settings' => 'تغيير إعدادات النظام',
+        'publish_article' => 'نشر المقالات',
+        'replace_student_certificate' => 'استبدال شهادات الطلاب',
+        'reset_portal_credential' => 'إعادة تعيين كلمة مرور بوابة طالب',
+        'reset_user_password' => 'إعادة تعيين كلمات مرور الموظفين (مطلوبة أيضًا لإنشاء حسابات المستخدمين)',
+        'reverse_expense' => 'عكس مصروف مسجل',
+        'reverse_payment' => 'عكس دفعة مسجلة',
+        'revoke_student_certificate' => 'إلغاء شهادات الطلاب',
+        'run_payroll' => 'تشغيل مسير الرواتب',
+        'unpublish_article' => 'إلغاء نشر المقالات',
+        'update_assigned_batch_enrollment' => 'تعديل التسجيلات في الدفعات التي يدرّسونها',
+        'update_enrollment' => 'تعديل أي تسجيل',
+        'update_staff_certificate' => 'تعديل شهادات الموظفين',
+        'view_any_enrollment' => 'عرض قائمة التسجيلات',
+        'view_any_staff_certificate' => 'عرض قائمة شهادات الموظفين',
+        'view_enrollment' => 'فتح تسجيل',
+        'view_financial_report' => 'عرض التقارير المالية',
+        'view_own_balance' => 'عرض رصيدهم في البوابة',
+        'view_own_certificate' => 'عرض شهاداتهم في البوابة',
+        'view_own_enrollment' => 'عرض تسجيلاتهم في البوابة',
+        'view_own_student_record' => 'عرض سجلهم الطلابي في البوابة',
+        'view_staff_certificate' => 'فتح شهادة موظف',
+        'write_off_charge' => 'شطب فاتورة',
+    ],
+    'cannot_deactivate_self' => 'لا يمكنك تعطيل حسابك. اطلب ذلك من مسؤول آخر.',
+    'is_active_own_account_hint' => 'لا يمكنك تعطيل حسابك.',
+    'account_details' => 'بيانات الحساب وصلاحيات الدخول',
+    'users_and_roles' => 'المستخدمون والأدوار',
+    'users_description' => 'الإدارة · حسابات الموظفين وملفاتهم الوظيفية في مكان واحد',
+    'profile_summary' => ':job · :type',
+    'active' => 'نشط',
+    'deactivated' => 'معطل',
+    'activity_link' => 'النشاط',
+    'payroll_link' => 'الرواتب',
+    'profile_details' => 'البيانات الوظيفية',
+    'profile_documents' => 'المؤهلات والصورة',
+    'role_details' => 'الدور والصلاحيات',
+    'guard' => 'حارس المصادقة',
+    'updated_at' => 'آخر تحديث',
 ];

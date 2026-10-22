@@ -2,27 +2,46 @@
 
 declare(strict_types=1);
 
-/*
-|--------------------------------------------------------------------------
-| Arabic — deliberately empty until phase 4
-|--------------------------------------------------------------------------
-|
-| Every key in lang/en/payments.php resolves through this file to its
-| English value: Laravel's translator tries the active locale, then
-| app.fallback_locale. An empty array is therefore a working state, not a
-| broken one.
-|
-| It is empty ON PURPOSE. Seeding it with the English strings — the obvious
-| shortcut — would make an untranslated panel indistinguishable from a
-| translated one: nothing would render as missing, and no reviewer,
-| screenshot or test could tell which strings a translator had actually
-| reached. Absent means untranslated, and stays visible as such. See
-| lang/ar/enrollment.php for the fuller reasoning, which applies unchanged
-| here.
-|
-| Phase 4 fills this in. Add keys only with real Arabic; a partially filled
-| file is fine, because the fallback covers whatever is not here yet.
-*/
-
 return [
+    'tender_allocation_mismatch' => 'مجموع المبالغ المدفوعة لا يساوي المبلغ المخصص لهذه الفاتورة.',
+    'exceeds_outstanding' => 'تتجاوز هذه الدفعة المبلغ المتبقي على الفاتورة.',
+    'idempotency_conflict' => 'استُخدم مفتاح الدفع هذا لتسجيل دفعة أخرى.',
+    'already_reversed' => 'سبق عكس هذه الدفعة.',
+    'not_a_card_number' => 'لا يبدو هذا مرجع جهاز دفع، بل رقم بطاقة، وهو ما لا يخزنه هذا النظام مطلقًا. تحقق مما كتبته.',
+    'tender_methods' => [
+        'cash' => 'نقدًا',
+        'bank_transfer' => 'تحويل مصرفي',
+        'card' => 'بطاقة',
+        'other' => 'أخرى',
+    ],
+    'payment' => 'الدفعة المالية',
+    'payments' => 'الدفعات المالية',
+    'reference' => 'مرجع الإيصال',
+    'student' => 'الطالب',
+    'received_at' => 'وقت الاستلام',
+    'total' => 'المبلغ المستلم',
+    'bill' => 'الفاتورة',
+    'recorded_by' => 'سجله',
+    'reversed' => 'معكوس',
+    'reversed_on' => 'تاريخ العكس',
+    'reversed_by' => 'عكسه',
+    'amount_lyd' => ':amount د.ل.',
+    'filter_reversed_true' => 'معكوس',
+    'filter_reversed_false' => 'غير معكوس',
+    'reverse' => 'عكس',
+    'reverse_modal_heading' => 'عكس هذه الدفعة',
+    'reason' => 'السبب',
+    'reverse_reason_hint' => 'استخدم هذا فقط لدفعة لم يكن ينبغي تسجيلها أصلًا: أُدخلت لفاتورة خاطئة، أو تكررت، أو لم تُستلم فعليًا. لا يسجل هذا رد مال للطالب، والمركز لا يصدر مبالغ مستردة.',
+    'reversed_successfully' => 'تم عكس الدفعة.',
+    'download_receipt' => 'تنزيل الإيصال',
+    'tenders' => 'وسائل الدفع',
+    'tender_chip' => ':method :amount',
+    'payment_state' => 'الحالة',
+    'state_recorded' => 'مسجل',
+    'state_reversed' => 'معكوس',
+    'receipt_generating' => 'جارٍ الإنشاء…',
+    'tender_report' => 'تقرير وسائل الدفع اليومي',
+    'register_hint' => 'المالية · تظهر وسائل الدفع في كل صف إيصال. تُطلب صادرات التقارير من صفحة التقرير.',
+    'receipt_details' => 'بيانات الإيصال',
+    'print_receipt' => 'طباعة الإيصال',
 ];

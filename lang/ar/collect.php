@@ -2,25 +2,95 @@
 
 declare(strict_types=1);
 
-/*
-|--------------------------------------------------------------------------
-| Arabic — deliberately empty until phase 4
-|--------------------------------------------------------------------------
-|
-| Every key in lang/en/collect.php resolves through this file to its English
-| value: Laravel's translator tries the active locale, then app.fallback_locale.
-| An empty array is therefore a working state, not a broken one.
-|
-| It is empty ON PURPOSE. Seeding it with the English strings — the obvious
-| shortcut — would make an untranslated panel indistinguishable from a
-| translated one: nothing would render as missing, and no reviewer, screenshot
-| or test could tell which strings a translator had actually reached. Absent
-| means untranslated, and stays visible as such. See lang/ar/enrollment.php
-| for the fuller reasoning, which applies unchanged here.
-|
-| Phase 4 fills this in. Add keys only with real Arabic; a partially filled
-| file is fine, because the fallback covers whatever is not here yet.
-*/
-
 return [
+    'navigation_label' => 'تسجيل وتحصيل',
+    'step_student' => 'الطالب',
+    'step_batch' => 'الدفعة',
+    'student' => 'الطالب',
+    'student_code' => 'رمز الطالب',
+    'first_name' => 'الاسم الأول',
+    'last_name' => 'اسم العائلة',
+    'phone' => 'الهاتف',
+    'student_option_label' => ':code — :name',
+    'batch' => 'الدفعة',
+    'batch_option' => ':code — :course',
+    'step_discount' => 'الخصم',
+    'step_preview' => 'معاينة',
+    'discount' => 'الخصم',
+    'no_discount' => 'بدون خصم',
+    'discount_option' => ':name (:percentage%)',
+    'discount_percentage_value' => ':percentage%',
+    'preview_list_price' => 'السعر الأساسي',
+    'preview_discount' => 'الخصم',
+    'preview_final_amount' => 'المبلغ المطلوب فوترته',
+    'preview_pending' => 'اختر دفعة لعرض السعر',
+    'amount_lyd' => ':amount د.ل.',
+    'confirm' => 'تأكيد',
+    'confirmed' => 'تم تأكيد التسجيل',
+    'collect_amount' => 'المبلغ المطلوب تحصيله',
+    'collect_amount_hint' => 'القيمة الافتراضية هي كامل المستحق. خفّضها لتسجيل قسط.',
+    'tenders' => 'وسائل الدفع',
+    'tender_method' => 'الطريقة',
+    'tender_amount' => 'المبلغ',
+    'tender_reference' => 'مرجع جهاز الدفع',
+    'tender_reference_hint' => 'المرجع المطبوع على قسيمة جهاز الدفع. لا تدخل رقم البطاقة مطلقًا.',
+    'add_tender' => 'إضافة وسيلة دفع أخرى',
+    'amount_format_error' => 'أدخل مبلغًا لا يتجاوز ثلاث خانات عشرية، مثل 125.500.',
+    'tender_total_mismatch' => 'مجموع المبالغ المدخلة لوسائل الدفع لا يساوي المبلغ المطلوب تحصيله.',
+    'collect_action' => 'تحصيل دفعة',
+    'collected_successfully' => 'تم تسجيل الدفعة.',
+    'done' => 'إنهاء التسجيل',
+    'title' => 'تسجيل وتحصيل',
+    'enrollment_denied' => 'ليس لديك إذن لتسجيل هذا الطالب.',
+    'installment_conflict' => 'سُجل هذا التحصيل بالفعل ولم يُخصم أي مبلغ إضافي. تحصيل قسط آخر لهذه الفاتورة غير متاح بعد.',
+    'payment_exceeds_outstanding_detail' => 'المبلغ المطلوب :attempted؛ والمستحق :outstanding.',
+    'amount_must_be_positive' => 'أدخل مبلغًا أكبر من صفر.',
+    'front_desk' => 'الاستقبال',
+    'bill' => 'الفاتورة',
+    'not_chosen' => 'لم يُختر',
+    'take_payment' => 'استلام الدفع',
+    'balanced' => 'متوازن ✓',
+    'unbalanced' => 'تحقق من مجموع وسائل الدفع',
+    'first_collection_hint' => 'يمكن أن يكون التحصيل الأول جزئيًا. تحصيل قسط لاحق لهذه الفاتورة غير متاح.',
+    'step_collect' => 'تحصيل',
+    'enrolment_steps' => 'خطوات التسجيل',
+    'who_enrolling' => 'من الطالب الذي يسجل؟',
+    'which_intake' => 'أي دفعة؟',
+    'any_discount' => 'هل يوجد خصم؟',
+    'search_students' => 'ابحث باسم الطالب أو رمزه',
+    'student_results' => 'نتائج الطلاب',
+    'matches' => 'لا نتائج مطابقة|نتيجة مطابقة واحدة|نتيجتان مطابقتان|:count نتائج مطابقة|:count نتيجة مطابقة|:count نتيجة مطابقة',
+    'student_detail' => ':code · :phone',
+    'no_phone' => 'لا يوجد هاتف مسجل',
+    'new_student' => 'طالب جديد بدلًا من ذلك',
+    'no_students' => 'لا يوجد طلاب مطابقون. جرّب اسمًا أو رمزًا آخر.',
+    'search_students_prompt' => 'اكتب اسم الطالب أو رمزه للبحث عنه.',
+    'search_batches' => 'ابحث برمز الدفعة أو الدورة',
+    'batch_options' => 'خيارات الدفعات',
+    'batch_dates' => ':start – :end',
+    'date_pending' => 'لم يُحدد التاريخ',
+    'seats_used' => 'المقاعد المشغولة',
+    'seats' => ':count / :capacity مقعد',
+    'open_capacity' => ':count مسجل · دون حد للسعة',
+    'over_capacity' => 'تجاوز السعة · لا يزال التسجيل مسموحًا',
+    'no_batches' => 'لا توجد دفعات مفتوحة تطابق بحثك.',
+    'discount_options' => 'خيارات الخصم',
+    'search_discounts' => 'ابحث باسم الخصم',
+    'full_price' => 'السعر الأساسي الكامل',
+    'enrolment_discount' => 'يسري على هذا التسجيل فقط',
+    'discount_savings' => 'قيمة التوفير بالخصم',
+    'discount_savings_amount' => '-:amount د.ل.',
+    'review_enrolment' => 'مراجعة التسجيل',
+    'confirm_before_payment' => 'راجع الفاتورة قبل التأكيد. ينشئ التأكيد التسجيل والفاتورة؛ والدفع الفوري اختياري.',
+    'confirm_and_continue' => 'تأكيد التسجيل والمتابعة',
+    'confirm_enrolment' => 'تأكيد التسجيل',
+    'bill_issued' => 'تم تأكيد التسجيل والفاتورة. حصّل الآن أو أنهِ العملية دون تسجيل دفعة.',
+    'back' => 'رجوع',
+    'continue' => 'متابعة',
+    'charge_not_collectable' => 'لا يمكن تحصيل هذه الفاتورة هنا. ربما سُجلت لها دفعة بالفعل، أو شُطبت، أو لم يبق عليها مستحق، أو لا تملك إذن التحصيل.',
+    'payment_recorded' => 'تم تسجيل الدفع',
+    'recorded_receipt' => 'الإيصال',
+    'recorded_amount' => 'المبلغ المستلم',
+    'recorded_tenders' => 'دُفع بواسطة',
+    'recorded_tender_reference' => 'المرجع :reference',
 ];

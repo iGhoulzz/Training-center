@@ -2,25 +2,58 @@
 
 declare(strict_types=1);
 
-/*
-|--------------------------------------------------------------------------
-| Arabic — deliberately empty until phase 4
-|--------------------------------------------------------------------------
-|
-| Every key in lang/en/charges.php resolves through this file to its English
-| value: Laravel's translator tries the active locale, then app.fallback_locale.
-| An empty array is therefore a working state, not a broken one.
-|
-| It is empty ON PURPOSE. Seeding it with the English strings — the obvious
-| shortcut — would make an untranslated panel indistinguishable from a
-| translated one: nothing would render as missing, and no reviewer, screenshot
-| or test could tell which strings a translator had actually reached. Absent
-| means untranslated, and stays visible as such. See lang/ar/enrollment.php
-| for the fuller reasoning, which applies unchanged here.
-|
-| Phase 4 fills this in. Add keys only with real Arabic; a partially filled
-| file is fine, because the fallback covers whatever is not here yet.
-*/
-
 return [
+    'amount_below_allocated' => 'لا يمكن خفض هذه الفاتورة إلى مبلغ أقل مما خُصص لها من دفعات غير معكوسة.',
+    'already_written_off' => 'سبق شطب هذه الفاتورة ولا يمكن شطبها مجددًا.',
+    'charge' => 'الفاتورة',
+    'charges' => 'الفواتير',
+    'reference' => 'مرجع الفاتورة',
+    'enrollment_reference' => 'مرجع التسجيل',
+    'course' => 'الدورة',
+    'batch' => 'الدفعة',
+    'list_price' => 'السعر الأساسي',
+    'discount' => 'الخصم',
+    'amount' => 'المبلغ المفوتر',
+    'allocated' => 'المدفوع حتى الآن',
+    'outstanding' => 'المبلغ المستحق',
+    'due_date' => 'تاريخ الاستحقاق',
+    'written_off' => 'مشطوب',
+    'written_off_at' => 'تاريخ الشطب',
+    'written_off_by' => 'شطبه',
+    'written_off_reason' => 'سبب الشطب',
+    'amount_lyd' => ':amount د.ل.',
+    'discount_percentage_value' => ':percentage%',
+    'no_discount' => '—',
+    'filter_outstanding' => 'المستحق فقط',
+    'filter_written_off_true' => 'مشطوب',
+    'filter_written_off_false' => 'غير مشطوب',
+    'adjust' => 'تعديل',
+    'adjust_modal_heading' => 'تعديل هذه الفاتورة',
+    'new_amount' => 'المبلغ الجديد',
+    'new_amount_hint' => 'لتصحيح أخطاء الإدخال فقط، وليس لتطبيق خصم لاحق.',
+    'reason' => 'السبب',
+    'amount_format_error' => 'أدخل مبلغًا لا يتجاوز ثلاث خانات عشرية، مثل 125.500.',
+    'adjusted_successfully' => 'تم تعديل الفاتورة.',
+    'amount_below_allocated_detail' => 'المبلغ المطلوب :attempted، والمخصص بالفعل :allocated.',
+    'write_off' => 'شطب',
+    'write_off_modal_heading' => 'شطب هذا الدين',
+    'write_off_reason_hint' => 'لا يمحو هذا الدين. يبقى ظاهرًا في سجل دفعات الطالب ويُستبعد فقط من تقرير أعمار الديون المستحقة.',
+    'written_off_successfully' => 'تم شطب الفاتورة.',
+    'student' => 'الطالب',
+    'bill_details' => 'بيانات الفاتورة',
+    'billed' => 'مفوتر',
+    'paid_amount' => ':amount مدفوع',
+    'payment_state' => 'حالة الدفع',
+    'settled' => 'مسدد',
+    'part_paid' => 'مسدد جزئيًا',
+    'unpaid' => 'غير مسدد',
+    'outstanding_bills' => 'المالية · لا فواتير مستحقة|المالية · فاتورة واحدة مستحقة|المالية · فاتورتان مستحقتان|المالية · :count فواتير مستحقة|المالية · :count فاتورة مستحقة|المالية · :count فاتورة مستحقة',
+    'bill_count' => 'لا فواتير|فاتورة واحدة|فاتورتان|:count فواتير|:count فاتورة|:count فاتورة',
+    'age_current' => 'من 0 إلى 30 يومًا (بما فيها غير المستحقة بعد)',
+    'age_31_60' => 'من 31 إلى 60 يومًا',
+    'age_61_90' => 'من 61 إلى 90 يومًا',
+    'age_91_plus' => '91 يومًا فأكثر',
+    'view_payments' => 'المستحق ← الدفعات',
+    'collect_payment' => 'تحصيل دفعة',
+    'student_label' => ':code — :name',
 ];

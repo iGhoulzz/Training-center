@@ -12,6 +12,16 @@ class ListUsers extends ListRecords
 {
     protected static string $resource = UserResource::class;
 
+    public function getTitle(): string
+    {
+        return __('staff.users_and_roles');
+    }
+
+    public function getSubheading(): ?string
+    {
+        return __('staff.users_description');
+    }
+
     /**
      * A plain link Action, deliberately NOT Filament's CreateAction.
      *

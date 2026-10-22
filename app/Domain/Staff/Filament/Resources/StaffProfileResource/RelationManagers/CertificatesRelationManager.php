@@ -22,6 +22,8 @@ use Filament\Schemas\Schema;
 use Filament\Support\Exceptions\Halt;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\IconColumn;
+use Filament\Tables\Columns\Layout\Split;
+use Filament\Tables\Columns\Layout\Stack;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -107,26 +109,32 @@ class CertificatesRelationManager extends RelationManager
     public function table(Table $table): Table
     {
         return $table
+            ->extraAttributes(['class' => '[&_.fi-ta-record-content-ctn]:py-0! [&_.fi-ta-record-content]:px-0!'])
             ->recordTitleAttribute('title')
             ->columns([
-                TextColumn::make('title')
-                    ->label(__('staff.certificate_title'))
-                    ->searchable(),
+                Split::make([
+                    TextColumn::make('title')
+                        ->label(__('staff.certificate_title'))
+                        ->searchable()->weight('semibold'),
 
-                TextColumn::make('issued_on')
-                    ->label(__('staff.issued_on'))
-                    ->date()
-                    ->placeholder(__('staff.no_issue_date')),
+                    Stack::make([
 
-                TextColumn::make('expires_on')
-                    ->label(__('staff.expires_on'))
-                    ->date()
-                    ->placeholder(__('staff.never_expires')),
+                        TextColumn::make('issued_on')
+                            ->label(__('staff.issued_on'))
+                            ->date()
+                            ->placeholder(__('staff.no_issue_date')),
 
-                IconColumn::make('is_expired')
-                    ->label(__('staff.expired'))
-                    ->state(fn (StaffCertificate $record): bool => $record->isExpired())
-                    ->boolean(),
+                        TextColumn::make('expires_on')
+                            ->label(__('staff.expires_on'))
+                            ->date()
+                            ->placeholder(__('staff.never_expires')),
+                    ])->space(1),
+
+                    IconColumn::make('is_expired')
+                        ->label(__('staff.expired'))
+                        ->state(fn (StaffCertificate $record): bool => $record->isExpired())
+                        ->boolean(),
+                ])->from('md')->extraAttributes(['class' => 'gap-3.5 px-4.5 py-3.5']),
             ])
             ->headerActions([
                 static::uploadAction(),

@@ -14,7 +14,7 @@ uses(RefreshDatabase::class);
 
 /*
 |--------------------------------------------------------------------------
-| The Arabic catalogues have the English catalogues' shape (P4-T17a)
+| The Arabic catalogues have the English catalogues' shape (P4-T17a, P4-T17)
 |--------------------------------------------------------------------------
 |
 | WHY THE FILES ARE READ, NOT THE TRANSLATOR. Laravel's translator falls back to
@@ -43,9 +43,8 @@ uses(RefreshDatabase::class);
 | project's earlier scanners were found out (LocalizationTest and DesignSystemTest
 | do the same).
 |
-| T17 EXTENDS THIS FILE BY REPLACING catalogueParityNames() with a derivation from
-| lang/en, and by adding to CATALOGUE_PARITY_IDENTICAL whatever it must. Nothing
-| below names a catalogue.
+| Catalogue names are derived from lang/en, so future catalogues join these
+| checks automatically.
 */
 
 /**
@@ -88,6 +87,8 @@ const CATALOGUE_PARITY_ARABIC_FORMS = [
  * @var array<string, string> catalogue key => why Arabic readers see it unchanged
  */
 const CATALOGUE_PARITY_IDENTICAL = [
+    'navigation.dashboard_date_format' => 'A Carbon isoFormat pattern; its output is localised by Carbon.',
+    'reports.charts.date_format' => 'A PHP date pattern, localised by Carbon at render time.',
     'public.home.verify_placeholder' => 'A sample reference in the real format, TC, the year and eight characters. It is a code, written the same in every language.',
     'public.programmes.date_format' => 'A PHP date() pattern, not text. The month name it prints is localised by the date library at render time.',
     'publications.public.date_format' => 'The same date() pattern as public.programmes.date_format.',
@@ -95,7 +96,7 @@ const CATALOGUE_PARITY_IDENTICAL = [
 ];
 
 /**
- * The catalogues compared. T17 replaces this with every file in lang/en.
+ * Every catalogue in lang/en.
  *
  * Read from the file system and not through the application: a Pest dataset is
  * resolved while the tests are being collected, before any application exists.
@@ -104,7 +105,9 @@ const CATALOGUE_PARITY_IDENTICAL = [
  */
 function catalogueParityNames(): array
 {
-    return ['public', 'publications', 'verify'];
+    $files = glob(dirname(__DIR__, 3).DIRECTORY_SEPARATOR.'lang'.DIRECTORY_SEPARATOR.'en'.DIRECTORY_SEPARATOR.'*.php') ?: [];
+
+    return array_map(fn (string $file): string => basename($file, '.php'), $files);
 }
 
 /**
@@ -454,6 +457,12 @@ it('finds the pluralised values, so the plural checks have something to check', 
     // hours line from the programme card. A detector gone blind passes every
     // plural test with nothing to look at.
     expect(catalogueParityPluralKeys())->toEqualCanonicalizing([
+        'certificates.queue_pending',
+        'charges.bill_count',
+        'charges.outstanding_bills',
+        'collect.matches',
+        'payroll.line_count',
+        'reports.notifications.xlsx_ready',
         'public.programmes.hours',
         'publications.public.count',
         'publications.public.count_in_topic',
