@@ -298,8 +298,8 @@ it('isolates each reference and amount inside its value cell, never on the cell 
     expect($xpath->query("//*[contains(concat(' ', normalize-space(@class), ' '), ' value ')][@dir or contains(concat(' ', normalize-space(@class), ' '), ' ltr ')]")->length)->toBe(0)
         ->and($isolated($arabic->reference))->toBe(1)
         ->and($isolated('CHG-2026-000042'))->toBe(1)
-        ->and($isolated('832.319 LYD'))->toBe(1)
-        ->and($isolated('201.123 LYD'))->toBe(1);
+        ->and($isolated('832.319 د.ل.'))->toBe(1)
+        ->and($isolated('201.123 د.ل.'))->toBe(1);
 });
 
 it('renders an English snapshot left-to-right', function (): void {
