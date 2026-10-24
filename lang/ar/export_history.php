@@ -2,26 +2,26 @@
 
 declare(strict_types=1);
 
-/*
-|--------------------------------------------------------------------------
-| Arabic — deliberately empty until P4-T17, the Arabic catalogues task
-|--------------------------------------------------------------------------
-|
-| Every key in lang/en/export_history.php resolves through this file to its
-| English value: Laravel's translator tries the active locale, then
-| app.fallback_locale. An empty array is therefore a working state, not a
-| broken one.
-|
-| It is empty ON PURPOSE. Seeding it with the English strings — the obvious
-| shortcut — would make an untranslated panel indistinguishable from a
-| translated one: nothing would render as missing, and no reviewer, screenshot
-| or test could tell which strings a translator had actually reached. Absent
-| means untranslated, and stays visible as such. See lang/ar/enrollment.php
-| for the fuller reasoning, which applies unchanged here.
-|
-| T17 fills this in. Add keys only with real Arabic; a partially filled
-| file is fine, because the fallback covers whatever is not here yet.
-*/
-
 return [
+    'title' => 'سجل التصدير',
+    'navigation_label' => 'سجل التصدير',
+    'subheading' => 'تعرض هذه الصفحة ملفات التقارير الجدولية المصدرة؛ تصل تقارير PDF كإشعارات ولا تُدرج هنا.',
+    'empty' => 'لم تصدر أي تقارير جدولية بعد.',
+    'other_export' => 'تصدير آخر',
+    'columns' => [
+        'report' => 'التقرير',
+        'requested_at' => 'وقت الطلب',
+        'rows' => 'الصفوف',
+        'status' => 'الحالة',
+    ],
+    'statuses' => [
+        'queued' => 'في قائمة الانتظار',
+        'overdue' => 'متأخر',
+        'ready' => 'جاهز',
+        'failed' => 'فشل',
+        'unavailable' => 'لم يعد متاحًا',
+    ],
+    'actions' => [
+        'download' => 'تنزيل',
+    ],
 ];

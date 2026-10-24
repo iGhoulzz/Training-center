@@ -321,6 +321,7 @@ it('keeps an export snapshot unchanged when source rows and worker locale change
 it('queues and generates a native xlsx with formula-like student names neutralized', function () {
     Storage::fake('local');
     $fixture = reportHistoryFixture('=HYPERLINK("https://example.test")', 'Target');
+    $this->admin->update(['locale' => 'ar']);
     $originalLocale = app()->getLocale();
     app()->setLocale('ar');
 
@@ -347,8 +348,8 @@ it('queues and generates a native xlsx with formula-like student names neutraliz
 
     $values = xlsxValues(Storage::disk('local')->path($path));
 
-    expect($values)->toContain('Student payment history')
-        ->toContain('Student')
+    expect($values)->toContain('سجل دفعات الطالب')
+        ->toContain('الطالب')
         ->toContain("'=HYPERLINK(\"https://example.test\") Target")
         ->not->toContain('=HYPERLINK("https://example.test") Target');
 });

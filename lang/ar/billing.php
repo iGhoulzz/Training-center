@@ -2,14 +2,9 @@
 
 declare(strict_types=1);
 
-/*
-|--------------------------------------------------------------------------
-| Billing — Arabic
-|--------------------------------------------------------------------------
-|
-| Deliberately empty until phase 4, per design section 12. Every key falls
-| back to lang/en/billing.php until then, and LocalizationTest asserts this
-| file stays empty so a half-translated catalogue cannot ship by accident.
-*/
-
-return [];
+return [
+    'charge_committed_allocated' => 'لا يمكن حذف هذا التسجيل: سُجلت دفعة على فاتورته بالفعل.',
+    'charge_committed_adjusted' => 'لا يمكن حذف هذا التسجيل: صُححت فاتورته، ويُعد التصحيح جزءًا من السجل.',
+    'charge_committed_written_off' => 'لا يمكن حذف هذا التسجيل: شُطبت فاتورته.',
+    'discount_not_active' => 'تم تعطيل هذا الخصم ولم يعد متاحًا. اختر خصمًا ساريًا، أو سجّل بالسعر الكامل.',
+];

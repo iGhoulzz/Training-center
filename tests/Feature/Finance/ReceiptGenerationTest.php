@@ -14,6 +14,7 @@ use App\Domain\Finance\Models\Discount;
 use App\Domain\Finance\Models\Payment;
 use App\Domain\Finance\Support\ChargeBalance;
 use App\Domain\Finance\Support\ReceiptLocation;
+use App\Domain\Finance\Support\ReceiptViewData;
 use App\Domain\Staff\Actions\SystemRoleWriter;
 use App\Domain\Staff\Jobs\PurgeDeletedFileJob;
 use App\Domain\Staff\Models\PendingFileDeletion;
@@ -971,7 +972,7 @@ it('renders translated student and tender composites with locale-controlled orde
     }
 });
 
-it('renders the Arabic-locale fallback in right-to-left direction and restores English', function (): void {
+it('renders the Arabic receipt in right-to-left direction and restores English', function (): void {
     app()->setLocale('ar');
     $charge = Charge::factory()->create(['amount' => '1000.000']);
     $payment = $this->recordPayment->execute(
@@ -985,8 +986,12 @@ it('renders the Arabic-locale fallback in right-to-left direction and restores E
     expect(app()->getLocale())->toBe('en');
     $pdf = Storage::disk('private')->get('receipts/'.$payment->reference.'.pdf');
 
+    $html = app(ReceiptViewData::class)->render('finance.receipt', $payment);
+
     expect($pdf)->toContain('/Direction /R2L')
-        ->and($pdf)->toContain(mb_convert_encoding('Payment receipt', 'UTF-16BE', 'UTF-8'));
+        ->not->toContain(mb_convert_encoding('Payment receipt', 'UTF-16BE', 'UTF-8'))
+        ->and($html)->toContain('<html dir="rtl" lang="ar">', '<h1>إيصال دفع</h1>')
+        ->and(app()->getLocale())->toBe('en');
 });
 
 it('renders every receipt field into a private PDF and is retry-safe', function (): void {

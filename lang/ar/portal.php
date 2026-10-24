@@ -2,24 +2,30 @@
 
 declare(strict_types=1);
 
-/*
-|--------------------------------------------------------------------------
-| Arabic — deliberately empty until phase 4
-|--------------------------------------------------------------------------
-|
-| Every key in lang/en/portal.php resolves through this file to its English
-| value: Laravel's translator tries the active locale, then app.fallback_locale.
-| An empty array is therefore a working state, not a broken one.
-|
-| It is empty ON PURPOSE. Seeding it with the English strings — the obvious
-| shortcut — would make an untranslated panel indistinguishable from a
-| translated one: nothing would render as missing, and no reviewer, screenshot
-| or test could tell which strings a translator had actually reached. Absent
-| means untranslated, and stays visible as such.
-|
-| Phase 4 fills this in. Add keys only with real Arabic; a partially filled file
-| is fine, because the fallback covers whatever is not here yet.
-*/
-
 return [
+    'brand' => 'بوابة الطالب',
+    'overview_title' => 'نظرة عامة',
+    'overview_navigation_label' => 'نظرة عامة',
+    'overview_name' => 'الاسم',
+    'overview_student_code' => 'رمز الطالب',
+    'overview_status' => 'الحالة',
+    'my_enrollments_title' => 'تسجيلاتي',
+    'my_enrollments_navigation_label' => 'تسجيلاتي',
+    'enrollments_course' => 'الدورة',
+    'enrollments_batch' => 'الدفعة',
+    'enrollments_enrolled_on' => 'تاريخ التسجيل',
+    'enrollments_completed_on' => 'تاريخ الإتمام',
+    'enrollments_status' => 'الحالة',
+    'enrollments_certificate_reference' => 'الرقم المرجعي للشهادة',
+    'enrollments_certificate_status' => 'حالة الشهادة',
+    'no_enrollments' => 'لم تسجل في أي دورة بعد.',
+    'not_completed' => '—',
+    'no_certificate' => '—',
+    'my_balance_title' => 'رصيدي',
+    'my_balance_navigation_label' => 'رصيدي',
+    'balance_enrollment' => 'التسجيل',
+    'balance_outstanding' => 'المبلغ المستحق',
+    'balance_total' => 'الإجمالي',
+    'balance_enrollment_row' => 'التسجيل رقم :id',
+    'amount_lyd' => ':amount د.ل.',
 ];

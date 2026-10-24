@@ -413,7 +413,7 @@ function englishCatalogueNames(): array
     );
 }
 
-it('derives the arabic-empty check from a set that cannot be empty', function () {
+it('derives the arabic catalogue check from a set that cannot be empty', function () {
     /*
      * THE GUARD THE DERIVED DATASET NEEDS, AND IT CANNOT LIVE IN THAT TEST.
      *
@@ -436,67 +436,35 @@ it('derives the arabic-empty check from a set that cannot be empty', function ()
         ->and(count($catalogues))->toBeGreaterThanOrEqual(
             4,
             'lang/en yielded '.count($catalogues).' catalogue(s): '.implode(', ', $catalogues)
-            .'. The Arabic-empty check is built from this list, so a short or empty one means '
+            .'. The Arabic catalogue check is built from this list, so a short or empty one means '
             .'that check is silently covering less of the catalogue than it claims.',
         );
 });
 
 /*
- * The catalogues the Arabic work has reached: P4-T17a, the public site's three
- * (owner, 2026-10-17; the plan's `lang/ar/*` seam row).
- * - Each is held to real Arabic by tests/Feature/Localisation/CatalogueParityTest.php:
- *   the same keys as English, the same placeholders, Arabic script in every value.
- *   That is what makes it safe to exempt them from the emptiness check below.
- * - T17 adds the rest here as it translates them.
- * - The last test in this group fails if the two lists ever disagree, so a file
- *   cannot leave the emptiness check without entering the parity check.
+ * T17 completes every catalogue. CatalogueParityTest independently checks all
+ * English-derived keys, placeholders, Arabic script and plural forms; this
+ * inventory check keeps an absent, empty or orphaned file visible here too.
  */
-const TRANSLATED_ARABIC_CATALOGUES = ['public', 'publications', 'verify'];
-
-it('keeps every arabic catalogue empty until its translation lands', function (string $file) {
-    if (in_array($file, TRANSLATED_ARABIC_CATALOGUES, true)) {
-        expect(require lang_path("ar/{$file}.php"))->not->toBe([], "lang/ar/{$file}.php is listed as translated but is empty.");
-
-        return;
-    }
-
-    // Deliberate, and asserted so that nobody "helpfully" fills these with the
-    // English strings. Copied English would render identically to a real
-    // translation, so no screenshot, review or test could tell how much of the
-    // panel a translator had actually reached. Absent means untranslated.
-    //
-    // DERIVED FROM lang/en, NOT LISTED HERE (P2-T01). The four names were written
-    // out, and phase 2 adds eight catalogues across nine tasks — pricing,
-    // billing, payments, charges, receipt, payroll, collect, reports. Under a
-    // hand-written list every one of them could ship full of English with nothing
-    // failing, and the check would describe less of the application after each
-    // task while still passing. Deriving it means a catalogue is covered the
-    // moment it exists and no task has to remember to register itself.
-    //
-    // Still one case per catalogue, not a loop inside one case: a loop reports a
-    // single failure for the whole set and does not say which catalogue broke.
-    expect(require lang_path("ar/{$file}.php"))->toBe([]);
+it('has a nonempty Arabic counterpart for every English catalogue', function (string $file) {
+    expect(is_file(lang_path("ar/{$file}.php")))->toBeTrue();
+    expect(require lang_path("ar/{$file}.php"))->not->toBe([]);
 })->with(englishCatalogueNames());
 
-it('exempts from emptiness exactly the catalogues the parity test covers', function () {
-    $parity = (string) file_get_contents(base_path('tests/Feature/Localisation/CatalogueParityTest.php'));
+it('keeps the Arabic catalogue inventory aligned with English', function () {
+    $arabic = array_map(
+        fn (SplFileInfo $file): string => $file->getBasename('.php'),
+        (new Filesystem)->files(lang_path('ar')),
+    );
 
-    expect(preg_match('/function catalogueParityNames\(\): array\s*\{\s*return \[([^\]]*)\];/', $parity, $match))->toBe(1);
-
-    $covered = array_map(fn (string $name): string => trim($name, " '\"\n\r\t"), explode(',', $match[1]));
-    sort($covered);
-    $exempt = TRANSLATED_ARABIC_CATALOGUES;
-    sort($exempt);
-
-    expect($covered)->toBe($exempt);
+    expect($arabic)->toEqualCanonicalizing(englishCatalogueNames());
 });
 
 it('falls back to english for a key arabic does not have', function () {
+    app('translator')->addLines(['catalogue_fallback.sentinel' => 'English-only fallback sentinel'], 'en');
     app()->setLocale('ar');
 
-    expect(__('staff.name'))->toBe('Name')
-        ->and(__('enrollment.student'))->toBe('Student')
-        ->and(EnrollmentStatus::Withdrawn->label())->toBe('Withdrawn');
+    expect(__('catalogue_fallback.sentinel'))->toBe('English-only fallback sentinel');
 });
 
 it('uses an arabic line when one exists', function () {

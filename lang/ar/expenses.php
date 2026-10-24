@@ -2,26 +2,49 @@
 
 declare(strict_types=1);
 
-/*
-|--------------------------------------------------------------------------
-| Arabic — deliberately empty until P4-T17, the Arabic catalogues task
-|--------------------------------------------------------------------------
-|
-| Every key in lang/en/expenses.php resolves through this file to its
-| English value: Laravel's translator tries the active locale, then
-| app.fallback_locale. An empty array is therefore a working state, not a
-| broken one.
-|
-| It is empty ON PURPOSE. Seeding it with the English strings — the obvious
-| shortcut — would make an untranslated panel indistinguishable from a
-| translated one: nothing would render as missing, and no reviewer, screenshot
-| or test could tell which strings a translator had actually reached. Absent
-| means untranslated, and stays visible as such. See lang/ar/enrollment.php
-| for the fuller reasoning, which applies unchanged here.
-|
-| T17 fills this in. Add keys only with real Arabic; a partially filled
-| file is fine, because the fallback covers whatever is not here yet.
-*/
-
 return [
+    'expense' => 'المصروف',
+    'expenses' => 'المصروفات',
+    'category' => 'الفئة',
+    'categories' => 'فئات المصروفات',
+    'amount' => 'المبلغ (د.ل.)',
+    'amount_hint' => 'حتى ثلاث خانات عشرية، مثل 125.500.',
+    'amount_lyd' => ':amount د.ل.',
+    'paid_on' => 'تاريخ الدفع',
+    'paid_on_hint' => 'تاريخ خروج المال. يحدد الشهر الذي يُحتسب فيه المصروف، ولا يمكن أن يكون بعد اليوم.',
+    'description' => 'الوصف',
+    'recorded_by' => 'سجله',
+    'record_expense' => 'تسجيل مصروف',
+    'view_expense' => 'عرض المصروف',
+    'reversed' => 'معكوس',
+    'reversed_on' => 'تاريخ العكس',
+    'reversed_by' => 'عكسه',
+    'filter_reversed_true' => 'المصروفات المعكوسة فقط',
+    'filter_reversed_false' => 'المصروفات غير المعكوسة فقط',
+    'reverse' => 'عكس',
+    'reverse_modal_heading' => 'عكس هذا المصروف',
+    'reverse_modal_description' => 'يتوقف احتساب المصروف المعكوس ضمن الربح، بما في ذلك شهر دفعه. يبقى السجل. سجّل المصروف الصحيح بصورة منفصلة.',
+    'reason' => 'السبب',
+    'reverse_reason_hint' => 'سبب عدم أحقية تسجيل هذا المصروف. يُحفظ مع اسمك في سجل النشاط.',
+    'reversed_successfully' => 'تم عكس المصروف.',
+    'already_reversed' => 'سبق عكس هذا المصروف.',
+    'category_name_en' => 'الاسم (بالإنجليزية)',
+    'category_name_ar' => 'الاسم (بالعربية)',
+    'category_is_active' => 'نشط',
+    'category_is_active_hint' => 'عطّل هذا الخيار لإيقاف عرض الفئة للمصروفات الجديدة. تبقى المصروفات المسجلة مرتبطة بها.',
+    'category_active_only' => 'الفئات النشطة فقط',
+    'category_inactive_only' => 'الفئات غير النشطة فقط',
+    'all_categories' => 'جميع الفئات',
+    'not_translated' => 'غير مترجم',
+    'create_category' => 'فئة جديدة',
+    'edit_category' => 'تعديل الفئة',
+    'category_unavailable' => 'اختر فئة مصروف نشطة.',
+    'amount_invalid' => 'أدخل مبلغًا لا يتجاوز ثلاث خانات عشرية، مثل 125.500.',
+    'amount_must_be_positive' => 'يجب أن يكون المبلغ أكبر من صفر.',
+    'refused_unauthorized' => 'ليس لديك إذن للقيام بذلك.',
+    'refused_invalid' => 'تعذر الحفظ. تحقق من البيانات وحاول مجددًا.',
+    'category_details' => 'بيانات الفئة',
+    'category_lifecycle_hint' => 'تُعطل الفئات عند انتفاء الحاجة إليها. يبقى سجل مصروفاتها متاحًا.',
+    'payment_details' => 'بيانات المصروف',
+    'immutable_hint' => 'سجّل مالًا دُفع بالفعل. يتم التصحيح بعكس هذا المصروف وتسجيل مصروف جديد.',
 ];

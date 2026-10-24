@@ -13,6 +13,8 @@ use Carbon\Carbon;
 use Filament\Forms\Components\DatePicker;
 use Filament\Resources\Resource;
 use Filament\Support\Icons\Heroicon;
+use Filament\Tables\Columns\Layout\Split;
+use Filament\Tables\Columns\Layout\Stack;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\SelectFilter;
@@ -93,19 +95,25 @@ class ActivityResource extends Resource
     public static function table(Table $table): Table
     {
         return $table
+            ->extraAttributes(['class' => '[&_.fi-ta-record-content-ctn]:py-0! [&_.fi-ta-record-content]:px-0!'])
             ->defaultSort('id', 'desc')
             ->columns([
-                TextColumn::make('created_at')
-                    ->label(__('activity.when'))
-                    ->dateTime()
-                    ->sortable(),
+                Split::make([
+                    TextColumn::make('created_at')
+                        ->label(__('activity.when'))
+                        ->dateTime()
+                        ->sortable()->size('xs')->color('gray')->grow(false)
+                        ->extraAttributes(['class' => 'md:w-24 whitespace-normal']),
 
-                /*
+                    Stack::make([
+                        Split::make([
+
+                            /*
                  * Null is meaningful and gets a word rather than a blank cell: a
                  * seeder, a scheduled job or a failed sign-in genuinely has no
                  * actor, and "System" says so. An empty cell reads as missing data.
                  */
-                /*
+                            /*
                  * THREE DISTINCT ANSWERS, NOT TWO.
                  *
                  * No causer at all means the SYSTEM acted — a seeder, a console
@@ -117,37 +125,48 @@ class ActivityResource extends Resource
                  * survives both deletion and a later rename: the log says who the
                  * actor was then, not who that row is called now.
                  */
-                TextColumn::make('causer_name')
-                    ->label(__('activity.who'))
-                    ->state(fn (Activity $record): string => self::actorLabel($record))
-                    ->searchable(query: fn (Builder $query, string $search): Builder => $query
-                        ->where('properties->causer_name', 'like', '%'.$search.'%')),
+                            TextColumn::make('causer_name')
+                                ->label(__('activity.who'))
+                                ->weight('semibold')->size('sm')->grow(false)
+                                ->state(fn (Activity $record): string => self::actorLabel($record))
+                                ->searchable(query: fn (Builder $query, string $search): Builder => $query
+                                    ->where('properties->causer_name', 'like', '%'.$search.'%')),
 
-                TextColumn::make('event')
-                    ->label(__('activity.action'))
-                    ->badge()
-                    ->formatStateUsing(fn (?string $state): string => self::eventLabel($state)),
+                            TextColumn::make('event')
+                                ->label(__('activity.action'))
+                                ->badge()
+                                ->grow(false)
+                                ->color(fn (?string $state): string => match ($state) {
+                                    'created', 'logged_in' => 'success',
+                                    'updated', 'roles_changed', 'permissions_changed', 'instructor_hours_changed' => 'warning',
+                                    'deleted', 'login_failed' => 'danger',
+                                    default => 'gray',
+                                })
+                                ->formatStateUsing(fn (?string $state): string => self::eventLabel($state)),
 
-                /*
+                            /*
                  * The TYPE alone cannot identify anything. "Student" tells a
                  * reader nothing about which student, and an audit trail whose
                  * subject is unidentifiable answers half a question.
                  */
-                TextColumn::make('subject_type')
-                    ->label(__('activity.record'))
-                    ->state(fn (Activity $record): string => self::subjectLabel($record)),
+                            TextColumn::make('subject_type')
+                                ->label(__('activity.record'))
+                                ->size('xs')->color('gray')
+                                ->state(fn (Activity $record): string => self::subjectLabel($record)),
+                        ])->extraAttributes(['class' => 'gap-2 flex-wrap items-baseline']),
 
-                /*
+                        /*
                  * One translated line per changed field, not a JSON blob.
                  * wrap() rather than limit(): a truncated audit entry is a reason
                  * to open something else, and there is nothing else to open.
                  */
-                TextColumn::make('attribute_changes')
-                    ->label(__('activity.changes'))
-                    ->state(fn (Activity $record): string => self::describeChanges($record))
-                    ->wrap(),
+                        TextColumn::make('attribute_changes')
+                            ->label(__('activity.changes'))
+                            ->state(fn (Activity $record): string => self::describeChanges($record))
+                            ->wrap()->size('xs')->color('gray')
+                            ->extraAttributes(['class' => 'font-mono whitespace-pre-line break-words']),
 
-                /*
+                        /*
                  * The explicit events carry their substance HERE, not in
                  * attribute_changes: which roles were added or removed, the email
                  * a failed sign-in attempted, the title of a cascaded certificate.
@@ -157,16 +176,19 @@ class ActivityResource extends Resource
                  * ip and causer_name are omitted — they have their own column and
                  * are context rather than detail.
                  */
-                TextColumn::make('properties')
-                    ->label(__('activity.details'))
-                    ->state(fn (Activity $record): string => self::describeProperties($record))
-                    ->wrap()
-                    ->toggleable(),
+                        TextColumn::make('properties')
+                            ->label(__('activity.details'))
+                            ->state(fn (Activity $record): string => self::describeProperties($record))
+                            ->wrap()
+                            ->toggleable()->size('xs')->color('gray')
+                            ->extraAttributes(['class' => 'font-mono whitespace-pre-line break-words']),
 
-                TextColumn::make('properties.ip')
-                    ->label(__('activity.ip'))
-                    ->placeholder(__('activity.no_ip'))
-                    ->toggleable(isToggledHiddenByDefault: true),
+                        TextColumn::make('properties.ip')
+                            ->label(__('activity.ip'))
+                            ->placeholder(__('activity.no_ip'))
+                            ->toggleable()->size('xs')->color('gray'),
+                    ])->space(1)->extraAttributes(['class' => 'min-w-0']),
+                ])->from('md')->extraAttributes(['class' => 'gap-3.5 px-5 py-3']),
             ])
             ->filters([
                 /*
@@ -375,7 +397,7 @@ class ActivityResource extends Resource
                 || $value === ''
                 || (is_array($value) && $value === []))
             ->map(fn (mixed $value, string $key): string => __('activity.property_line', [
-                'key' => $key,
+                'key' => __("activity.field.{$key}") === "activity.field.{$key}" ? $key : __("activity.field.{$key}"),
                 'value' => is_array($value)
                     ? implode(', ', array_map(fn (mixed $item): string => (string) $item, $value))
                     : self::renderValue($value),
@@ -447,13 +469,15 @@ class ActivityResource extends Resource
         return $fields
             ->map(function (string $field) use ($new, $old): string {
                 $to = self::renderValue($new->get($field));
+                $translation = "activity.field.{$field}";
+                $label = __($translation) === $translation ? $field : __($translation);
 
                 if (! $old->has($field)) {
-                    return __('activity.change_added', ['field' => $field, 'to' => $to]);
+                    return __('activity.change_added', ['field' => $label, 'to' => $to]);
                 }
 
                 return __('activity.change_line', [
-                    'field' => $field,
+                    'field' => $label,
                     'from' => self::renderValue($old->get($field)),
                     'to' => $to,
                 ]);

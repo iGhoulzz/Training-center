@@ -16,7 +16,11 @@ use Filament\Actions\Action;
 use Filament\Actions\DeleteAction;
 use Filament\Schemas\Components\Component;
 use Filament\Schemas\Components\Tabs\Tab;
+use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
+use Filament\Tables\Columns\Layout\Split;
+use Filament\Tables\Columns\Layout\Stack;
+use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use Illuminate\Support\Facades\Gate;
 
@@ -48,6 +52,11 @@ use Illuminate\Support\Facades\Gate;
  */
 class RoleResource extends ShieldRoleResource
 {
+    public static function form(Schema $schema): Schema
+    {
+        return parent::form($schema)->extraAttributes(['class' => 'gap-4 [&_.fi-section-content]:p-4.5 [&_.fi-fo-field-label-content]:text-xs']);
+    }
+
     /**
      * Shield's table is inherited except for its write surfaces (P1-T15,
      * security review finding 3).
@@ -78,6 +87,17 @@ class RoleResource extends ShieldRoleResource
     public static function table(Table $table): Table
     {
         return parent::table($table)
+            ->extraAttributes(['class' => '[&_.fi-ta-record-content-ctn]:py-0! [&_.fi-ta-record-content]:px-0!'])
+            ->columns([
+                Split::make([
+                    Stack::make([
+                        TextColumn::make('name')->label(__('staff.roles'))->searchable()->weight('semibold'),
+                        TextColumn::make('guard_name')->label(__('staff.guard'))->size('xs')->color('gray'),
+                    ])->space(1),
+                    TextColumn::make('permissions_count')->label(__('staff.role_details'))->counts('permissions')->badge()->color('info'),
+                    TextColumn::make('updated_at')->label(__('staff.updated_at'))->dateTime()->size('xs')->color('gray'),
+                ])->from('md')->extraAttributes(['class' => 'gap-3.5 px-4.5 py-[15px]']),
+            ])
             ->recordActions([
                 Action::make('edit')
                     ->label(__('filament-actions::edit.single.label'))
