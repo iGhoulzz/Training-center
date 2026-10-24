@@ -111,7 +111,7 @@ it('prints the 80 mm receipt for an active actor holding view_payment', function
         '832.319 LYD',
         '2026-05-10 11:30',
         'Counter Operator',
-        'Arab Specialist Center for Legal Studies and Training',
+        'Arab Advanced Center for Legal Studies and Training',
         'Payment receipt',
     ], fn (string $needle): bool => ! str_contains($html, $needle)));
 
