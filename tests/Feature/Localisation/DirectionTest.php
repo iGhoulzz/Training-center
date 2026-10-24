@@ -118,13 +118,13 @@ it('keeps the language pill left to right on a right-to-left page, so EN stays o
 
 it('sets the Arabic home heading in the Arabic name, with the emphasis phrase from its own key', function () {
     // The Arabic name is built to contain the Arabic phrase (the key's comment says so).
-    config(['public_site.brand.name_ar' => 'المركز العربي التخصصي للدراسات القانونية والتدريب']);
+    config(['public_site.brand.name_ar' => 'المركز العربي المتقدم للدراسات القانونية والتدريب']);
 
     $heading = directionDocument($this->get('/ar')->assertOk())->querySelector('h1');
     $emphasis = $heading->querySelector('span');
 
     // Hand-written: the key's phrase is two words, inside the name, and set apart.
-    expect($heading->textContent)->toBe('المركز العربي التخصصي للدراسات القانونية والتدريب')
+    expect($heading->textContent)->toBe('المركز العربي المتقدم للدراسات القانونية والتدريب')
         ->and($emphasis?->textContent)->toBe('للدراسات القانونية');
 });
 
