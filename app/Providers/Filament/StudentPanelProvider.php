@@ -8,7 +8,9 @@ use App\Filament\Pages\Auth\Login;
 use App\Filament\Pages\PasswordChange;
 use App\Http\Middleware\ForcePasswordChange;
 use App\Http\Middleware\LogOutInactiveUser;
+use App\Http\Middleware\SetGuestPanelLocale;
 use App\Http\Middleware\SetLocale;
+use Filament\FontProviders\LocalFontProvider;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
 use Filament\Http\Middleware\DisableBladeIconComponents;
@@ -16,11 +18,15 @@ use Filament\Http\Middleware\DispatchServingFilamentEvent;
 use Filament\Panel;
 use Filament\PanelProvider;
 use Filament\Support\Colors\Color;
+use Filament\View\PanelsRenderHook;
+use Illuminate\Contracts\Support\Htmlable;
 use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
 use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
 use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Session\Middleware\StartSession;
+use Illuminate\Support\Facades\Vite;
+use Illuminate\Support\HtmlString;
 use Illuminate\View\Middleware\ShareErrorsFromSession;
 
 /**
@@ -81,6 +87,10 @@ class StudentPanelProvider extends PanelProvider
             // matters most here, where a staff member who types their password gets
             // told it is wrong, and the reason an open session ended is shown on it.
             ->login(Login::class)
+            ->font(fn (): ?string => app()->getLocale() === 'ar' ? 'IBM Plex Sans Arabic' : null, provider: LocalFontProvider::class)
+            ->renderHook(PanelsRenderHook::STYLES_AFTER, fn (): Htmlable => app()->getLocale() === 'ar'
+                ? Vite::fonts('ibm-plex-sans-arabic')
+                : new HtmlString(''))
             // A closure, not a bare __() call: the panel is registered at boot,
             // before SetLocale has read the actor's locale, so resolving the
             // string eagerly would pin it to the fallback for every request.
@@ -116,6 +126,8 @@ class StudentPanelProvider extends PanelProvider
                 EncryptCookies::class,
                 AddQueuedCookiesToResponse::class,
                 StartSession::class,
+                // The login has no auth middleware; persist only this addition for its Livewire calls.
+                SetGuestPanelLocale::class,
                 AuthenticateSession::class,
                 ShareErrorsFromSession::class,
                 PreventRequestForgery::class,
@@ -180,6 +192,7 @@ class StudentPanelProvider extends PanelProvider
              * request, not left driving the page until a full reload.
              */
             ->persistentMiddleware([
+                SetGuestPanelLocale::class,
                 LogOutInactiveUser::class,
                 SetLocale::class,
                 AuthenticateSession::class,

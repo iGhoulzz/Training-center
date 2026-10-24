@@ -1185,7 +1185,7 @@ it('puts Publications in the navigation between Programmes and the verifier, and
     // menu's last item is the student portal's sign-in (P4-T15), which the wide row
     // does not repeat.
     $expected = [url('/').'#about', url('/').'#programmes', url('/').'#publications', url('/').'#verify', url('/').'#contact'];
-    $portal = route('filament.student.auth.login');
+    $portal = route('filament.student.auth.login', ['locale' => 'en']);
     $links = array_values(array_filter(
         array_column(libraryAnchors($nav), 'href'),
         fn (string $href): bool => ! in_array($href, ['#public-navigation', '#public-navigation-closed'], true),

@@ -268,7 +268,7 @@ it('links to home sections from the navigation and full pages from the footer', 
     // link appears twice and the order is the list's order. The narrow menu's last
     // item is the student portal's sign-in (P4-T15), which the wide row does not repeat.
     $expected = ['#about', '#programmes', '#publications', '#verify', '#contact'];
-    $portal = route('filament.student.auth.login');
+    $portal = route('filament.student.auth.login', ['locale' => 'en']);
 
     expect(array_values(array_unique($nav)))->toBe([...$expected, $portal])
         ->and($nav)->toHaveCount(count($expected) * 2 + 1)

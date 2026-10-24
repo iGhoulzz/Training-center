@@ -937,7 +937,7 @@ it('gives the top bar real 44px links below 1024px and the design 38px bar from 
 
 it('sizes the portal pill at the design 42px from 1024px and 44px below', function () {
     $document = designSystemDocument((string) $this->get('/about')->assertOk()->getContent());
-    $login = route('filament.student.auth.login');
+    $login = route('filament.student.auth.login', ['locale' => 'en']);
 
     $links = [];
 
@@ -975,7 +975,7 @@ it('gives the navigation row the design line height, and the footer portal link 
     $footer = [];
 
     foreach ($document->querySelectorAll('footer a') as $link) {
-        if ($link->getAttribute('href') === route('filament.student.auth.login')) {
+        if ($link->getAttribute('href') === route('filament.student.auth.login', ['locale' => 'en'])) {
             $footer[] = $link;
         }
     }
