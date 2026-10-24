@@ -134,8 +134,10 @@ it('reports every unmet chosen password requirement for either owner without lea
         ->and(DB::table('model_has_roles')->count())->toBe(0);
 })->with([
     'seven characters, first owner' => ['Abcde!1', ['The password must be at least 8 characters long.'], 0],
+    'seven multibyte characters, second owner' => ['Aééééé!', ['The password must be at least 8 characters long.'], 1],
     'no capital, second owner' => ['abcdefg!1', ['The password must contain at least one capital letter.'], 1],
     'digits are not symbols, first owner' => ['Abcdefgh1', ['The password must contain at least one symbol, such as ! or #. Letters, digits and spaces do not count.'], 0],
+    'Unicode digits and spaces are not symbols, first owner' => ["Abcdef١\u{00A0}", ['The password must contain at least one symbol, such as ! or #. Letters, digits and spaces do not count.'], 0],
     'all requirements missing, second owner' => ['abc', [
         'The password must be at least 8 characters long.',
         'The password must contain at least one capital letter.',
