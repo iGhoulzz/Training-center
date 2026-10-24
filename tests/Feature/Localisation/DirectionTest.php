@@ -350,12 +350,21 @@ it('serves the compiled stylesheet with the Arabic type rules and the view trans
     expect($css)->toContain(':lang(ar)')->toContain('view-transition-name:locale-thumb')->toContain('@view-transition')->toContain('letter-spacing:normal');
 })->skip(fn (): bool => (glob(public_path('build/assets/public-*.css')) ?: []) === [], 'needs a built public stylesheet (npm run build)');
 
-it('loads the self-hosted Arabic face on both Arabic login pages', function (string $panel) {
+it('selects the Arabic face on both Arabic login pages', function (string $panel) {
     $html = (string) $this->get("/{$panel}/login?locale=ar")->assertOk()->getContent();
 
-    expect($html)->toContain("--font-family: 'IBM Plex Sans Arabic'")
-        ->and($html)->toMatch('~href="[^"]*/build/assets/ibm-plex-sans-arabic-[^"]+\.woff2"~');
+    expect($html)->toContain("--font-family: 'IBM Plex Sans Arabic'");
 })->with(['admin', 'portal']);
+
+it('loads the self-hosted Arabic font files on both Arabic login pages when a build exists', function (string $panel) {
+    $html = (string) $this->get("/{$panel}/login?locale=ar")->assertOk()->getContent();
+
+    expect($html)->toMatch('~href="[^"]*/build/assets/ibm-plex-sans-arabic-[^"]+\.woff2"~');
+})->with(['admin', 'portal'])->skip(
+    fn (): bool => ! is_file(public_path('build/fonts-manifest.json'))
+        || (glob(public_path('build/assets/ibm-plex-sans-arabic-*.woff2')) ?: []) === [],
+    'needs built Arabic font assets (npm run build)',
+);
 
 it('removes admin tracking from Arabic and gives Arabic headings and sidebar labels room to join', function () {
     $css = (string) file_get_contents(resource_path('css/filament/admin/theme.css'));
