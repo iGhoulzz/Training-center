@@ -37,10 +37,10 @@ declare(strict_types=1);
 
 return [
     'brand' => [
-        'name' => 'Arab Specialist Center for Legal Studies and Training',
-        'short_name' => 'A.S.C.L.S.T',
+        'name' => 'Arab Advanced Center for Legal Studies and Training',
+        'short_name' => 'A.A.C.L.A.T',
         'tagline' => 'Legal Studies & Training',
-        'name_ar' => 'المركز العربي التخصصي للدراسات القانونية والتدريب',
+        'name_ar' => 'المركز العربي المتقدم للدراسات القانونية والتدريب',
         'logo' => 'images/brand/asclst-logo.jpg',
         // The cut-out seal, a transparent PNG, that turns like a coin in the home
         // page's hero (owner, 2026-10-17). Until the file exists, the hero shows
