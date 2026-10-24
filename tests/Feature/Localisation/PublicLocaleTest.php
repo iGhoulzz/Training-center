@@ -277,7 +277,7 @@ function publicLocaleSiteLinks(HTMLDocument $document): array
 }
 
 it('keeps every link of an Arabic page under /ar, the language switch and the student portal excepted', function () {
-    $portal = parse_url(route('filament.student.auth.login'), PHP_URL_PATH);
+    $portal = parse_url(route('filament.student.auth.login'), PHP_URL_PATH).'?locale=ar';
 
     foreach (publicLocalePages() as $label => $path) {
         $document = publicLocaleDocument($this->get(publicLocaleArabicPath($path))->assertOk());
@@ -322,6 +322,27 @@ it('keeps every link of an English page out of /ar, the language switch excepted
         expect($checked)->toBeGreaterThan(5);
     }
 });
+
+it('carries Arabic into each portal link and explicitly resets English on English pages', function (string $path, string $locale) {
+    $document = publicLocaleDocument($this->get($path)->assertOk());
+    $links = [];
+
+    foreach ($document->querySelectorAll('a[href]') as $link) {
+        if (parse_url($link->getAttribute('href'), PHP_URL_PATH) === '/portal/login') {
+            $links[] = $link->getAttribute('href');
+        }
+    }
+
+    // Desktop header, narrow-screen menu, and footer each use the shared component.
+    expect($links)->toHaveCount(3);
+
+    foreach ($links as $link) {
+        expect($link)->toBe(route('filament.student.auth.login', ['locale' => $locale]));
+    }
+})->with([
+    'Arabic page' => ['/ar/about', 'ar'],
+    'English page' => ['/about', 'en'],
+]);
 
 it('points the home page\'s verifier box at the verifier\'s lookup in its own language', function () {
     $arabic = publicLocaleDocument($this->get('/ar')->assertOk())->querySelector('form');

@@ -318,6 +318,19 @@
         @apply mt-1 text-[12.5px] leading-normal text-gray-400;
     }
 
+    /* Arabic letters join; the Latin prototype's tracking and tight leading do not apply. */
+    *:lang(ar):not(input) {
+        letter-spacing: normal;
+    }
+
+    .fi-header-heading:lang(ar) {
+        line-height: 1.4;
+    }
+
+    .fi-sidebar-group-label:lang(ar) {
+        line-height: 1.5;
+    }
+
     /*
      * THE MAIN COLUMN: 24px between the heading and the page, and at most 1440px wide (the
      * panel puts this class on <main>). Filament centres <main> with auto inline margins; the
