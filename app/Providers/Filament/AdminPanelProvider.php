@@ -19,6 +19,7 @@ use App\Filament\Pages\Auth\Login;
 use App\Filament\Pages\Dashboard;
 use App\Http\Middleware\ForcePasswordChange;
 use App\Http\Middleware\LogOutInactiveUser;
+use App\Http\Middleware\SetGuestPanelLocale;
 use App\Http\Middleware\SetLocale;
 use BezhanSalleh\FilamentShield\FilamentShieldPlugin;
 use Filament\Facades\Filament;
@@ -89,8 +90,8 @@ class AdminPanelProvider extends PanelProvider
             ->login(Login::class)
             ->darkMode(isForced: true)
             ->themeSwitcher(false)
-            ->font('Instrument Sans', provider: LocalFontProvider::class)
-            ->renderHook(PanelsRenderHook::STYLES_AFTER, fn (): Htmlable => Vite::fonts('instrument-sans'))
+            ->font(fn (): string => app()->getLocale() === 'ar' ? 'IBM Plex Sans Arabic' : 'Instrument Sans', provider: LocalFontProvider::class)
+            ->renderHook(PanelsRenderHook::STYLES_AFTER, fn (): Htmlable => Vite::fonts(app()->getLocale() === 'ar' ? 'ibm-plex-sans-arabic' : 'instrument-sans'))
             ->renderHook(PanelsRenderHook::SIDEBAR_NAV_START, fn (): Htmlable => view('filament.admin.sidebar-more-migration'))
             /*
              * THE LANGUAGE SWITCH (P4-T18a), before the user menu in the topbar. Registered
@@ -252,6 +253,8 @@ class AdminPanelProvider extends PanelProvider
                 EncryptCookies::class,
                 AddQueuedCookiesToResponse::class,
                 StartSession::class,
+                // The login has no auth middleware; persist only this addition for its Livewire calls.
+                SetGuestPanelLocale::class,
                 AuthenticateSession::class,
                 ShareErrorsFromSession::class,
                 PreventRequestForgery::class,
@@ -313,6 +316,7 @@ class AdminPanelProvider extends PanelProvider
              * modal; with it, the person is signed out and taken to the login.
              */
             ->persistentMiddleware([
+                SetGuestPanelLocale::class,
                 LogOutInactiveUser::class,
                 SetLocale::class,
                 AuthenticateSession::class,

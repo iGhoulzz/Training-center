@@ -42,7 +42,7 @@ afterEach(function (): void {
 /** The student panel's login URL, from the route's name. */
 function portalEntryLoginUrl(): string
 {
-    return route('filament.student.auth.login');
+    return route('filament.student.auth.login', ['locale' => 'en']);
 }
 
 /**
@@ -157,7 +157,7 @@ it('links each form to the student panel login route, which renders', function (
     $login = portalEntryLoginUrl();
 
     expect(Route::has('filament.student.auth.login'))->toBeTrue()
-        ->and($login)->toBe(url('/portal/login'));
+        ->and($login)->toBe(url('/portal/login?locale=en'));
 
     // The page the link opens is the panel's own sign-in, not a copy of it.
     $this->get($login)->assertOk();

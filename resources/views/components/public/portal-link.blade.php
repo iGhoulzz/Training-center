@@ -7,9 +7,9 @@
     THE ONE PLACE THE PORTAL'S URL IS BUILT. It asks the student panel for its
     login URL, so a change to the panel's path or its login page needs no edit
     here, and the public views never name a route (PublicRouteTest forbids a bare
-    route call in them). When the panel is given an Arabic sign-in (T18), the
-    locale is added here, once, for all three forms. A panel with no login page
-    renders nothing rather than a dead link.
+    route call in them). The page's locale travels here, once, for all three
+    forms (T18). Explicit English resets an earlier Arabic guest choice too.
+    A panel with no login page renders nothing rather than a dead link.
 
     PROPS. `variant` is the form: `pill` (the header's solid button, with the
     seal's graduation cap), `menu` (the same, across the narrow menu's width, as
@@ -19,7 +19,9 @@
 --}}
 @props(['variant' => 'pill'])
 
-@php($href = filament()->getPanel('student')->getLoginUrl())
+@php
+    $href = filament()->getPanel('student')->getLoginUrl(['locale' => app()->getLocale()]);
+@endphp
 
 @if ($href !== null)
     @if ($variant === 'footer')
