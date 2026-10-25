@@ -208,6 +208,11 @@ jobs:
         # Pest as separate steps. Listing them here would create a second
         # definition of the gate, free to drift from the one the agents and the
         # Git hooks use — which is the failure this whole task exists to remove.
+        #
+        # `composer verify` runs the suite in parallel, one process per CPU (four on
+        # this runner), each worker on a database of its own. Serial, this step took
+        # about 34 minutes. The `load-tooling` group is excluded from it and runs
+        # in its own step below, only when the tooling it covers changed.
         run: composer verify
 
       - name: Confirm a checkout resolves and creates its own test database
@@ -224,6 +229,47 @@ jobs:
         # creates that database on CI's own MySQL, and the test then asserts the
         # application really is connected to it and holds its lock.
         run: env -u DB_DATABASE php artisan test tests/Feature/Tooling/TestDatabaseConnectionTest.php
+
+      - name: Detect changes to the load tooling
+        # THE LOAD-TOOLING TESTS ARE OUT OF THE GATE ABOVE, AND RUN HERE INSTEAD.
+        #
+        # SeedPerformanceDatasetCommandTest and LoadTestSessionsCommandTest drop and
+        # rebuild whole schemas and start child processes, which is minutes of the
+        # suite for code that changes rarely. `composer verify` excludes their
+        # `load-tooling` group; this step decides whether the tooling they cover
+        # changed, and the next one runs them if so.
+        #
+        # A pull request is diffed against the base branch it targets. Everything
+        # else — a push to main, a manual run — runs the group unconditionally, so
+        # nothing reaches main without having been through it.
+        id: load_tooling
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "Not a pull request: the load-tooling group always runs."
+            exit 0
+          fi
+
+          git fetch --no-tags --depth=1 origin "$BASE_REF"
+          changed=$(git diff --name-only FETCH_HEAD HEAD)
+          echo "$changed"
+
+          pattern='^(app/Console/Commands/(SeedPerformanceDatasetCommand|MintLoadTestSessionsCommand|RevokeLoadTestSessionsCommand)\.php|app/Support/PerformanceDatabaseGuard\.php|config/performance\.php|database/seeders/.*Performance.*|tests/Feature/Tooling/(SeedPerformanceDatasetCommandTest|LoadTestSessionsCommandTest)\.php)$'
+
+          if echo "$changed" | grep -Eq "$pattern"; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "The load tooling changed: running the load-tooling group."
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "The load tooling is untouched: skipping the load-tooling group."
+          fi
+
+      - name: Run the load-tooling tests
+        if: steps.load_tooling.outputs.run == 'true'
+        run: php artisan test --group=load-tooling
 
       - name: Build frontend assets
         # Always, never conditional on the diff. A detector would have to parse

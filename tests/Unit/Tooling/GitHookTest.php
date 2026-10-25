@@ -230,7 +230,9 @@ it('defines the push gate as validation plus the fast checks, and nothing else',
     $scripts = json_decode((string) file_get_contents(Repo::root().'/composer.json'), true, flags: JSON_THROW_ON_ERROR)['scripts'];
 
     expect($scripts['verify:push'])->toBe(['@composer validate --strict', '@verify:fast'])
-        ->and($scripts['verify'])->toContain('@composer validate --strict', '@verify:fast', '@test:serial');
+        ->and($scripts['verify'])->toContain('@composer validate --strict', '@verify:fast', '@test:parallel')
+        ->and($scripts['test:parallel'])->toContain('@php artisan test --parallel --exclude-group=load-tooling')
+        ->and($scripts['test:serial'])->toBe(['@test']);
 });
 
 it('uses the Windows npm command when pre-push runs under Git for Windows', function () {

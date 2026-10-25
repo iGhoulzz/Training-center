@@ -86,6 +86,48 @@ final class TestDatabase
     }
 
     /**
+     * The database one parallel worker owns: the run's database plus the
+     * worker's token.
+     *
+     * Same shape Laravel's own parallel testing gives a worker
+     * (`{database}_test_{token}`), so a developer who knows that convention finds
+     * the name they expect. It is computed HERE, before Laravel boots, and not
+     * left to Laravel's per-test switch, because that switch only fires for tests
+     * that use a database trait: a test that queries without one would run against
+     * the run's own database, shared by every worker, while the lock covered the
+     * worker's. See tests/bootstrap.php.
+     */
+    public static function workerDatabase(string $database, string $token): string
+    {
+        // Paratest hands out small integers. Anything else would reach a CREATE
+        // DATABASE statement through a lock key, so it is refused rather than escaped.
+        if (preg_match('/^[0-9]{1,6}\z/', $token) !== 1) {
+            throw new RuntimeException("Refusing to use [{$token}] as a parallel worker token.");
+        }
+
+        $name = "{$database}_test_{$token}";
+
+        self::assertSafeIdentifier($name);
+
+        return $name;
+    }
+
+    /**
+     * Whether this entry script is a parallel worker rather than something a worker started.
+     *
+     * Worker status is inherited through the environment, so a child a test spawns
+     * — a nested `pest` run, `php artisan`, a phpunit probe — carries `PARATEST`
+     * and `TEST_TOKEN` too. Judging by those alone would give the child a worker
+     * database derived from its parent's, and a lock on it. The script that was
+     * actually started tells the two apart: only paratest's and Pest's worker
+     * entry points are workers.
+     */
+    public static function isWorkerEntryPoint(string $script): bool
+    {
+        return in_array(basename(str_replace('\\', '/', $script)), ['worker.php', 'phpunit-worker.php'], true);
+    }
+
+    /**
      * A stable key for this worktree: the same run after run, different per worktree.
      */
     public static function worktreeKey(): string

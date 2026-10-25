@@ -61,10 +61,15 @@
         "test": [
             "Composer\\Config::disableProcessTimeout",
             "@php artisan config:clear --ansi @no_additional_args",
-            "@php artisan test"
+            "@php artisan test --exclude-group=load-tooling"
         ],
         "test:serial": [
             "@test"
+        ],
+        "test:parallel": [
+            "Composer\\Config::disableProcessTimeout",
+            "@php artisan config:clear --ansi @no_additional_args",
+            "@php artisan test --parallel --exclude-group=load-tooling"
         ],
         "verify:fast": [
             "@php scripts/bin/verify-fast.php"
@@ -77,7 +82,7 @@
             "Composer\\Config::disableProcessTimeout",
             "@composer validate --strict",
             "@verify:fast",
-            "@test:serial"
+            "@test:parallel"
         ],
         "boost:update": [
             "@php scripts/bin/update-boost.php"

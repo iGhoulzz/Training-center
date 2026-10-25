@@ -6,6 +6,7 @@ use App\Domain\Staff\Exceptions\FileStorageException;
 use App\Domain\Staff\Exceptions\LastSuperAdminException;
 use App\Domain\Staff\Jobs\PurgeDeletedFileJob;
 use App\Domain\Staff\Models\PendingFileDeletion;
+use App\Domain\Staff\Services\FileLifecycleService;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -122,6 +123,20 @@ it('still lets the purge job throw, because throwing is how it retries', functio
     $failing->shouldReceive('delete')->andReturn(false);
     Storage::shouldReceive('disk')->with('private')->andReturn($failing);
 
-    expect(fn () => (new PurgeDeletedFileJob((int) $pending->getKey()))->handle())
-        ->toThrow(FileStorageException::class);
+    try {
+        expect(fn () => (new PurgeDeletedFileJob((int) $pending->getKey()))->handle())
+            ->toThrow(FileStorageException::class);
+    } finally {
+        /*
+         * The job records its failure through the independent compensation
+         * connection, which commits, so RefreshDatabase's rollback cannot take the
+         * receipt back. Left behind, it is residue that the next RefreshDatabase
+         * file in the same process reads as its own data — the sweep tests count
+         * receipts — and the serial order only hid that by rebuilding the schema
+         * between the two files. A parallel worker meets them in other orders.
+         */
+        PendingFileDeletion::on(FileLifecycleService::compensationConnectionName())
+            ->whereKey($pending->getKey())
+            ->delete();
+    }
 })->uses(RefreshDatabase::class);
