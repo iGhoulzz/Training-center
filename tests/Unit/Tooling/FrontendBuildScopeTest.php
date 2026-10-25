@@ -79,7 +79,7 @@ it('names the input that forced the build, so a slow push explains itself', func
         'app/Models/User.php',
         'resources/js/app.js',
         'package.json',
-        'tests/Feature/ExampleTest.php',
+        'tests/Feature/Public/PublicRouteTest.php',
     ];
 
     expect(FrontendBuildScope::buildInputsIn($changed))
