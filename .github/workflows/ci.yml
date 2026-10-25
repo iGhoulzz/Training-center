@@ -212,7 +212,7 @@ jobs:
         # `composer verify` runs the suite in parallel, one process per CPU (four on
         # this runner), each worker on a database of its own. Serial, this step took
         # about 34 minutes. The `load-tooling` group is excluded from it and runs
-        # in its own step below, only when the tooling it covers changed.
+        # in its own step below, on every run.
         run: composer verify
 
       - name: Confirm a checkout resolves and creates its own test database
@@ -230,48 +230,19 @@ jobs:
         # application really is connected to it and holds its lock.
         run: env -u DB_DATABASE php artisan test tests/Feature/Tooling/TestDatabaseConnectionTest.php
 
-      - name: Detect changes to the load tooling
+      - name: Run the load-tooling tests
         # THE LOAD-TOOLING TESTS ARE OUT OF THE GATE ABOVE, AND RUN HERE INSTEAD.
         #
         # SeedPerformanceDatasetCommandTest and LoadTestSessionsCommandTest drop and
-        # rebuild whole schemas and start child processes, which is minutes of the
-        # suite for code that changes rarely. `composer verify` excludes their
-        # `load-tooling` group; this step decides whether the tooling they cover
-        # changed, and the next one runs them if so.
+        # rebuild whole schemas and start child processes, so they run here as one
+        # serial process rather than inside the parallel gate's workers.
         #
-        # A pull request is diffed against the base branch it targets. Everything
-        # else — a push to main, a manual run — runs the group unconditionally, so
-        # nothing reaches main without having been through it.
-        id: load_tooling
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          BASE_REF: ${{ github.base_ref }}
-        run: |
-          if [ "$EVENT_NAME" != "pull_request" ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-            echo "Not a pull request: the load-tooling group always runs."
-            exit 0
-          fi
-
-          git fetch --no-tags --depth=1 origin "$BASE_REF"
-          changed=$(git diff --name-only FETCH_HEAD HEAD)
-          echo "$changed"
-
-          # The seeder writes rows with raw inserts, so the schema it writes into is a
-          # dependency as real as its own source: a migration, or an enum or the
-          # reference format it writes, can break it without touching it.
-          pattern='^(app/Console/Commands/(SeedPerformanceDatasetCommand|MintLoadTestSessionsCommand|RevokeLoadTestSessionsCommand)\.php|app/Support/PerformanceDatabaseGuard\.php|app/Domain/(Enrollment|Finance)/Enums/.*|app/Domain/Finance/Support/Reference\.php|config/performance\.php|database/migrations/.*|database/seeders/.*Performance.*|scripts/Tooling/.*|tests/Feature/Tooling/(SeedPerformanceDatasetCommandTest|LoadTestSessionsCommandTest)\.php)$'
-
-          if echo "$changed" | grep -Eq "$pattern"; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-            echo "The load tooling changed: running the load-tooling group."
-          else
-            echo "run=false" >> "$GITHUB_OUTPUT"
-            echo "The load tooling is untouched: skipping the load-tooling group."
-          fi
-
-      - name: Run the load-tooling tests
-        if: steps.load_tooling.outputs.run == 'true'
+        # On every run, pull request included. An earlier version ran them on a pull
+        # request only when a path filter matched, and the filter could not keep up
+        # with what the seeder reaches: it writes through the schema, the enums, the
+        # reference format and DatabaseSeeder -> UserSeeder's fixed owner account.
+        # A miss left the required check green and broke main after merge. The step
+        # costs about a minute.
         run: php artisan test --group=load-tooling
 
       - name: Build frontend assets

@@ -25,7 +25,7 @@ uses(DatabaseMigrations::class);
 
 /*
  * The `load-tooling` group is left out of the default gate (`composer verify`) and
- * run by CI only when this tooling, or this file, changes. See .github/workflows/ci.yml.
+ * run by CI as its own serial step. See .github/workflows/ci.yml.
  */
 uses()->group('load-tooling');
 

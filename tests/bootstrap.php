@@ -25,6 +25,8 @@ declare(strict_types=1);
  * PARALLEL RUNS (`--parallel`) AND WHICH DATABASE EACH PROCESS LOCKS.
  *
  * Paratest boots this file once in the PARENT process and once in each WORKER.
+ * The parent loads it first from Tests\CreatesApplication, before Laravel's
+ * setup-process callbacks, which can drop worker databases; see that trait.
  * The parent is an ordinary run: it resolves and locks the run's database, which
  * is what makes a second run of the same checkout — serial or parallel — wait
  * until the first has finished, before any worker exists. Each worker then
@@ -44,6 +46,21 @@ declare(strict_types=1);
 use Tooling\Repo;
 use Tooling\SerialLock;
 use Tooling\TestDatabase;
+
+/*
+ * Once per process. The parent of a parallel run requires this file from
+ * Tests\CreatesApplication, before Laravel's setup-process callbacks run, and
+ * ParaTest then loads it as PHPUnit's bootstrap. ParaTest uses `include_once`,
+ * so the same path is already skipped. This guard covers a path spelled
+ * differently, such as a `--bootstrap` argument. Without it, a second pass
+ * would try to take a lock this process already holds, which SerialLock was
+ * never written to support.
+ */
+if (defined('TRAINING_CENTER_TEST_BOOTSTRAPPED')) {
+    return;
+}
+
+define('TRAINING_CENTER_TEST_BOOTSTRAPPED', true);
 
 require __DIR__.'/../vendor/autoload.php';
 

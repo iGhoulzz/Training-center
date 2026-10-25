@@ -174,10 +174,10 @@ afterEach(function () {
     $state = ['processes' => [], 'inputs' => [], 'databases' => [], 'directories' => []];
 });
 
-it('gives a worker a database of its own and locks that one, not the run database', function () {
+it('gives a worker a database of its own and locks that one, not the run database', function (string $entryPoint) {
     $base = parallelProbeDatabase();
 
-    ['process' => $worker] = startBootstrapProbe('worker.php', [
+    ['process' => $worker] = startBootstrapProbe($entryPoint, [
         'DB_DATABASE' => $base,
         'PARATEST' => '1',
         'TEST_TOKEN' => '7',
@@ -191,6 +191,101 @@ it('gives a worker a database of its own and locks that one, not the run databas
         ->and($report['held'])->not->toBe(parallelProbeLock($base))
         // Laravel's own switch is off, or it would derive a second database.
         ->and($report['withoutDatabases'])->toBe('1');
+})->with([
+    'pest, as php artisan test --parallel starts it' => ['worker.php'],
+    'paratest, as vendor/bin/paratest starts it' => ['phpunit-wrapper.php'],
+]);
+
+it('recognises the worker script each installed runner actually launches', function (string $runnerSource) {
+    /*
+     * The names are read from the runners themselves, not written out here, so a
+     * runner that renames its worker script fails this test instead of quietly
+     * turning its workers into parent runs that wait on their own parent's lock.
+     */
+    $source = (string) file_get_contents(Repo::root().'/'.$runnerSource);
+
+    expect(preg_match("/'bin'\\s*\\.\\s*DIRECTORY_SEPARATOR\\s*\\.\\s*'([A-Za-z0-9_.-]+\\.php)'/", $source, $match))->toBe(1);
+
+    $launched = $match[1];
+
+    expect(TestDatabase::isWorkerEntryPoint($launched))->toBeTrue();
+})->with([
+    'pest' => ['vendor/pestphp/pest/src/Plugins/Parallel/Paratest/WrapperRunner.php'],
+    'paratest' => ['vendor/brianium/paratest/src/WrapperRunner/WrapperRunner.php'],
+]);
+
+it('locks the run database before Laravel runs its setup-process callbacks in the parent', function () {
+    /*
+     * Laravel's ParallelRunner builds one application per worker in the parent and
+     * runs the setup-process callbacks on it, including the --recreate-databases
+     * one that drops `{DB_DATABASE}_test_{N}`. ParaTest only loads PHPUnit's
+     * bootstrap after that. So the run's lock must already be held at the point
+     * where those callbacks run, or a second run of the checkout drops a worker
+     * database the first run is still using.
+     *
+     * The child calls Laravel's real forEachProcess(), whose callback is exactly
+     * where execute() runs callSetUpProcessCallbacks(), and reports which lock the
+     * process holds there. Nothing in the child requires the bootstrap itself.
+     */
+    $base = parallelProbeDatabase();
+
+    $directory = sys_get_temp_dir().DIRECTORY_SEPARATOR.'parallel-coordinator-probe-'.bin2hex(random_bytes(6));
+    mkdir($directory);
+    $path = $directory.DIRECTORY_SEPARATOR.'coordinator.php';
+    file_put_contents($path, <<<'PHP'
+        <?php
+
+        require getenv('PROBE_AUTOLOAD');
+
+        $runner = (new ReflectionClass(Illuminate\Testing\ParallelRunner::class))->newInstanceWithoutConstructor();
+        (new ReflectionProperty($runner, 'options'))->setValue($runner, new class
+        {
+            public function processes(): int
+            {
+                return 1;
+            }
+        });
+
+        $held = 'callback never ran';
+        (new ReflectionMethod($runner, 'forEachProcess'))->invoke($runner, function () use (&$held): void {
+            $held = Tooling\SerialLock::heldPath();
+        });
+
+        fwrite(STDOUT, json_encode([
+            'database' => getenv('DB_DATABASE'),
+            'held' => $held,
+            'withoutDatabases' => getenv('LARAVEL_PARALLEL_TESTING_WITHOUT_DATABASES'),
+        ])."\n");
+        fflush(STDOUT);
+
+        fgets(STDIN);
+        PHP);
+
+    $input = new InputStream;
+    $process = new Process([PHP_BINARY, $path], Repo::root(), [
+        'PROBE_AUTOLOAD' => Repo::root().'/vendor/autoload.php',
+        'DB_DATABASE' => $base,
+        'LARAVEL_PARALLEL_TESTING_WITHOUT_DATABASES' => false,
+        'PARATEST' => false,
+        'TEST_TOKEN' => false,
+        'UNIQUE_TEST_TOKEN' => false,
+        'APP_CONFIG_CACHE' => false,
+        'DB_URL' => false,
+    ]);
+    $process->setInput($input);
+    $process->setTimeout(120);
+    $process->start();
+
+    $state = &parallelProbeState();
+    $state['processes'][] = $process;
+    $state['inputs'][] = $input;
+    $state['directories'][] = $directory;
+
+    $report = awaitBootstrapReport($process);
+
+    expect($report)->not->toBeNull($process->getErrorOutput())
+        ->and($report['database'])->toBe($base)
+        ->and($report['held'])->toBe(parallelProbeLock($base));
 });
 
 it('creates the worker database it is going to use', function () {
@@ -364,7 +459,8 @@ it('recognises only the worker entry points as workers', function (string $scrip
     expect(TestDatabase::isWorkerEntryPoint($script))->toBe($expected);
 })->with([
     'pest worker' => ['C:\\repo\\vendor\\pestphp\\pest\\bin\\worker.php', true],
-    'paratest worker' => ['/repo/vendor/brianium/paratest/bin/phpunit-worker.php', true],
+    'paratest worker' => ['/repo/vendor/brianium/paratest/bin/phpunit-wrapper.php', true],
+    'the paratest name this file used to accept' => ['/repo/vendor/brianium/paratest/bin/phpunit-worker.php', false],
     'pest itself' => ['/repo/vendor/bin/pest', false],
     'artisan' => ['artisan', false],
     'a script that merely ends the same way' => ['/repo/not-worker.php', false],

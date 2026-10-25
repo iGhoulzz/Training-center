@@ -120,11 +120,14 @@ final class TestDatabase
      * and `TEST_TOKEN` too. Judging by those alone would give the child a worker
      * database derived from its parent's, and a lock on it. The script that was
      * actually started tells the two apart: only paratest's and Pest's worker
-     * entry points are workers.
+     * entry points are workers. Those are Pest's `bin/worker.php` (what `php
+     * artisan test --parallel` starts) and ParaTest's `bin/phpunit-wrapper.php`
+     * (what `vendor/bin/paratest` starts). ParallelBootstrapTest reads both names
+     * from the installed runners, so an upgrade that renames one fails there.
      */
     public static function isWorkerEntryPoint(string $script): bool
     {
-        return in_array(basename(str_replace('\\', '/', $script)), ['worker.php', 'phpunit-worker.php'], true);
+        return in_array(basename(str_replace('\\', '/', $script)), ['worker.php', 'phpunit-wrapper.php'], true);
     }
 
     /**
