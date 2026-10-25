@@ -6,10 +6,10 @@ use App\Domain\Staff\Exceptions\FileStorageException;
 use App\Domain\Staff\Exceptions\LastSuperAdminException;
 use App\Domain\Staff\Jobs\PurgeDeletedFileJob;
 use App\Domain\Staff\Models\PendingFileDeletion;
-use App\Domain\Staff\Services\FileLifecycleService;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Contracts\Filesystem\Filesystem;
-use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Foundation\Testing\DatabaseTruncation;
+use Illuminate\Foundation\Testing\RefreshDatabaseState;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -23,7 +23,21 @@ use Illuminate\Support\Str;
  *   - a storage failure (P1-T15, domain-integrity finding 3) → 503
  *
  * The mapping lives in bootstrap/app.php.
+ *
+ * DatabaseTruncation FOR THE WHOLE FILE, NOT RefreshDatabase CHAINED ONTO THE LAST
+ * TEST. The purge job records its failure through an independent connection, which
+ * must be able to see the receipt, so the test has to COMMIT its rows, and
+ * RefreshDatabase would hold them in a transaction that connection cannot read.
+ * The chained trait was also never applied, so the test inserted into whatever
+ * schema an earlier file in the same process had left behind: green in the serial
+ * order, a missing table in a process that reached it first.
  */
+uses(DatabaseTruncation::class);
+
+afterAll(function (): void {
+    RefreshDatabaseState::$migrated = false;
+});
+
 it('renders the last-super-admin business rule as HTTP 422', function () {
     Route::get('/__t__/last-super-admin', fn () => throw new LastSuperAdminException);
 
@@ -123,20 +137,6 @@ it('still lets the purge job throw, because throwing is how it retries', functio
     $failing->shouldReceive('delete')->andReturn(false);
     Storage::shouldReceive('disk')->with('private')->andReturn($failing);
 
-    try {
-        expect(fn () => (new PurgeDeletedFileJob((int) $pending->getKey()))->handle())
-            ->toThrow(FileStorageException::class);
-    } finally {
-        /*
-         * The job records its failure through the independent compensation
-         * connection, which commits, so RefreshDatabase's rollback cannot take the
-         * receipt back. Left behind, it is residue that the next RefreshDatabase
-         * file in the same process reads as its own data — the sweep tests count
-         * receipts — and the serial order only hid that by rebuilding the schema
-         * between the two files. A parallel worker meets them in other orders.
-         */
-        PendingFileDeletion::on(FileLifecycleService::compensationConnectionName())
-            ->whereKey($pending->getKey())
-            ->delete();
-    }
-})->uses(RefreshDatabase::class);
+    expect(fn () => (new PurgeDeletedFileJob((int) $pending->getKey()))->handle())
+        ->toThrow(FileStorageException::class);
+});
