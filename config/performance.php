@@ -41,11 +41,18 @@ return [
     | any production-shaped name, or a name a person would pick by hand. Widening
     | it is the same decision as adding a literal above, and wants the same review.
     |
+    | A PARALLEL WORKER'S DATABASE IS THE SECOND SHAPE IT ADMITS. Each worker of a
+    | `--parallel` run connects to `<that run's database>_test_<worker number>`
+    | (tests/bootstrap.php), so the suite's own performance tests, which run inside a
+    | worker, connect to a name with that suffix. Only the three suite databases above
+    | and the generated one may carry it, followed by a worker number of at most six
+    | digits — never a free-form suffix.
+    |
     | The anchor is \z rather than $, because $ also matches before a trailing
     | newline, which would admit "training_center_test_deadbeef\n".
     |
     | Null disables the exception, which is how a test can prove the literal
     | allowlist still refuses on its own.
     */
-    'allowed_database_pattern' => '/^training_center_test_[0-9a-f]{8}\z/',
+    'allowed_database_pattern' => '/^(?:training_center_test_[0-9a-f]{8}|training_center_(?:test|ci|linux))(?:_test_[0-9]{1,6})?\z/',
 ];

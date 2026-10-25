@@ -26,6 +26,12 @@ use Livewire\Mechanisms\HandleRequests\HandleRequests;
 
 uses(RefreshDatabase::class);
 
+/*
+ * The `load-tooling` group is left out of the default gate (`composer verify`) and
+ * run by CI as its own serial step. See .github/workflows/ci.yml.
+ */
+uses()->group('load-tooling');
+
 beforeEach(function (): void {
     $this->seed(RolePermissionSeeder::class);
     config(['session.driver' => 'database', 'session.lifetime' => 480]);

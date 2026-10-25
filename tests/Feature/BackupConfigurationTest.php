@@ -198,8 +198,10 @@ it('does not demand S3 credentials when the drive is the destination', function 
      */
     $mount = sys_get_temp_dir().DIRECTORY_SEPARATOR.'p1t17-mount';
 
-    if (! is_dir($mount)) {
-        mkdir($mount, 0777, true);
+    // Workers of a parallel run share this directory, so a lost race to create it is
+    // not a failure: the directory exists, which is all this needs.
+    if (! is_dir($mount) && ! @mkdir($mount, 0777, true) && ! is_dir($mount)) {
+        throw new RuntimeException("Unable to create {$mount}.");
     }
 
     config([
@@ -222,8 +224,10 @@ it('demands the archive password whichever destination is chosen', function () {
     // drawer is exactly the case where an unencrypted archive matters most.
     $mount = sys_get_temp_dir().DIRECTORY_SEPARATOR.'p1t17-mount';
 
-    if (! is_dir($mount)) {
-        mkdir($mount, 0777, true);
+    // Workers of a parallel run share this directory, so a lost race to create it is
+    // not a failure: the directory exists, which is all this needs.
+    if (! is_dir($mount) && ! @mkdir($mount, 0777, true) && ! is_dir($mount)) {
+        throw new RuntimeException("Unable to create {$mount}.");
     }
 
     config([

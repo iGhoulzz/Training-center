@@ -272,13 +272,15 @@ it('writes the certificate and refuses the delete when they deadlock on the stud
         $delete = deadlockResultOf($deleteWorker, ($this->path)('d-result.json'));
         $issue = deadlockResultOf($issueWorker, ($this->path)('i-result.json'));
 
-        // begins: the cycle formed and the certificate side was its victim, so it
-        // ran twice; the delete, the heavier transaction, ran once. Without a
-        // deadlock both would be 1 and the outcomes alone would still pass.
+        // begins: the cycle formed, InnoDB rolled ONE side back, and that side ran
+        // its transaction again. Without a deadlock both would be 1 and the outcomes
+        // alone would still pass. WHICH side is the victim is not asserted: InnoDB
+        // weighs a transaction by its lock structures, which depend on how the rows
+        // sit on their pages, and that differs between a fresh database and one a
+        // worker of a parallel run has already used. Either victim must end the same.
         expect($issue['outcome'])->toBe('issued', json_encode($issue))
-            ->and($issue['begins'])->toBe(2)
             ->and($delete['outcome'])->toBe('refused', json_encode($delete))
-            ->and($delete['begins'])->toBe(1)
+            ->and($issue['begins'] + $delete['begins'])->toBe(3, json_encode([$issue, $delete]))
             ->and(StudentCertificate::query()->where('enrollment_id', $target->getKey())->count())->toBe($kind === 'replace' ? 2 : 1)
             ->and($student->fresh()->trashed())->toBeFalse();
     } finally {

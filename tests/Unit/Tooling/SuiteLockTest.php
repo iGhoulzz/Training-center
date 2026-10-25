@@ -2,7 +2,6 @@
 
 declare(strict_types=1);
 
-use Tooling\Process;
 use Tooling\Repo;
 use Tooling\SerialLock;
 
@@ -133,16 +132,3 @@ it('returns quietly when the lock is free', function () {
     fclose($handle);
     @unlink($path);
 })->throwsNoExceptions();
-
-it('refuses parallel execution explicitly', function () {
-    $result = Process::capture([
-        PHP_BINARY,
-        Repo::root().'/vendor/bin/pest',
-        '--configuration='.Repo::root().'/phpunit.xml',
-        '--parallel',
-        '--filter=a-test-that-does-not-exist',
-    ], Repo::root());
-
-    expect($result['status'])->not->toBe(0)
-        ->and($result['output'])->toContain('Parallel testing is not supported in this repository.');
-});

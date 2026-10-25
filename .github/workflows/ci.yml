@@ -208,6 +208,11 @@ jobs:
         # Pest as separate steps. Listing them here would create a second
         # definition of the gate, free to drift from the one the agents and the
         # Git hooks use — which is the failure this whole task exists to remove.
+        #
+        # `composer verify` runs the suite in parallel, one process per CPU (four on
+        # this runner), each worker on a database of its own. Serial, this step took
+        # about 34 minutes. The `load-tooling` group is excluded from it and runs
+        # in its own step below, on every run.
         run: composer verify
 
       - name: Confirm a checkout resolves and creates its own test database
@@ -224,6 +229,21 @@ jobs:
         # creates that database on CI's own MySQL, and the test then asserts the
         # application really is connected to it and holds its lock.
         run: env -u DB_DATABASE php artisan test tests/Feature/Tooling/TestDatabaseConnectionTest.php
+
+      - name: Run the load-tooling tests
+        # THE LOAD-TOOLING TESTS ARE OUT OF THE GATE ABOVE, AND RUN HERE INSTEAD.
+        #
+        # SeedPerformanceDatasetCommandTest and LoadTestSessionsCommandTest drop and
+        # rebuild whole schemas and start child processes, so they run here as one
+        # serial process rather than inside the parallel gate's workers.
+        #
+        # On every run, pull request included. An earlier version ran them on a pull
+        # request only when a path filter matched, and the filter could not keep up
+        # with what the seeder reaches: it writes through the schema, the enums, the
+        # reference format and DatabaseSeeder -> UserSeeder's fixed owner account.
+        # A miss left the required check green and broke main after merge. The step
+        # costs about a minute.
+        run: php artisan test --group=load-tooling
 
       - name: Build frontend assets
         # Always, never conditional on the diff. A detector would have to parse

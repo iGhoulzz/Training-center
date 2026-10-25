@@ -22,6 +22,21 @@ declare(strict_types=1);
  * and the database client the same thing, so the lock is released exactly when
  * that process ends — cleanly, on crash, or on a forced kill.
  *
+ * PARALLEL RUNS (`--parallel`) AND WHICH DATABASE EACH PROCESS LOCKS.
+ *
+ * Paratest boots this file once in the PARENT process and once in each WORKER.
+ * The parent loads it first from Tests\CreatesApplication, before Laravel's
+ * setup-process callbacks, which can drop worker databases; see that trait.
+ * The parent is an ordinary run: it resolves and locks the run's database, which
+ * is what makes a second run of the same checkout — serial or parallel — wait
+ * until the first has finished, before any worker exists. Each worker then
+ * resolves a database of its own, `{run database}_test_{TEST_TOKEN}`, and locks
+ * THAT one. Workers of one run therefore never block each other, and a stray
+ * process that reaches a worker's database still has to queue behind its holder.
+ *
+ * The parent holding the run's lock cannot block its own workers: they lock
+ * different files.
+ *
  * Referenced from `phpunit.xml` so it covers every entry point: `php artisan
  * test`, `vendor/bin/pest`, `vendor/bin/phpunit`, a focused `--filter` run, and
  * the `composer test:serial` alias alike. `test:serial` is a convenience name,
@@ -32,42 +47,22 @@ use Tooling\Repo;
 use Tooling\SerialLock;
 use Tooling\TestDatabase;
 
-require __DIR__.'/../vendor/autoload.php';
-
 /*
- * Parallel execution is refused, not silently serialised.
- *
- * Every worker would boot this file and queue behind the same lock, so a
- * `--parallel` run would take longer than a serial one while looking like it was
- * doing the opposite. Refusing is the honest answer: someone reading "parallel"
- * in their command should not get sequential execution with extra steps.
+ * Once per process. The parent of a parallel run requires this file from
+ * Tests\CreatesApplication, before Laravel's setup-process callbacks run, and
+ * ParaTest then loads it as PHPUnit's bootstrap. ParaTest uses `include_once`,
+ * so the same path is already skipped. This guard covers a path spelled
+ * differently, such as a `--bootstrap` argument. Without it, a second pass
+ * would try to take a lock this process already holds, which SerialLock was
+ * never written to support.
  */
-$parallel = false;
-
-foreach ($_SERVER['argv'] ?? [] as $argument) {
-    if ($argument === '--parallel' || str_starts_with((string) $argument, '--parallel=')) {
-        $parallel = true;
-
-        break;
-    }
+if (defined('TRAINING_CENTER_TEST_BOOTSTRAPPED')) {
+    return;
 }
 
-if ($parallel || getenv('LARAVEL_PARALLEL_TESTING') !== false) {
-    fwrite(STDERR, <<<'TXT'
+define('TRAINING_CENTER_TEST_BOOTSTRAPPED', true);
 
-    Parallel testing is not supported in this repository.
-
-    Every worker of one run would resolve the same database and queue behind the
-    same lock, so a --parallel run would be slower than a serial one while
-    appearing to be faster. Separate CHECKOUTS do run in parallel, because each
-    resolves a database of its own.
-
-    Run the suite without --parallel.
-
-    TXT);
-
-    exit(1);
-}
+require __DIR__.'/../vendor/autoload.php';
 
 /*
  * Resolve the database BEFORE the lock, because the lock is keyed on it, and
@@ -153,6 +148,43 @@ if (is_string($url) && $url !== '') {
 
 $database = TestDatabase::resolve($configured, TestDatabase::worktreeKey());
 
+/*
+ * Is this process a parallel worker?
+ *
+ * Judged by the script that was started as well as the environment, because the
+ * environment is inherited: a child a test spawns carries `PARATEST` and
+ * `TEST_TOKEN` too, and must not be mistaken for a worker. See
+ * TestDatabase::isWorkerEntryPoint().
+ */
+$isWorker = getenv('PARATEST') === '1'
+    && TestDatabase::isWorkerEntryPoint((string) ($_SERVER['argv'][0] ?? ''));
+
+if ($isWorker) {
+    $token = getenv('TEST_TOKEN');
+
+    if (! is_string($token) || $token === '') {
+        fwrite(STDERR, "A parallel worker has no TEST_TOKEN, so it has no database of its own.\nDo not pass --no-test-tokens.\n");
+
+        exit(1);
+    }
+
+    $database = TestDatabase::workerDatabase($database, $token);
+
+    /*
+     * Laravel's own parallel-testing database handling is switched off, because
+     * this file has already given the worker its database. Left on, it would
+     * derive `{this name}_test_{token}` and switch to it for every test that uses
+     * a database trait — a second database, created beside this one, that the lock
+     * does not cover — while a test without a trait stayed on this one.
+     *
+     * With it off, every test in the worker uses the one database that is locked.
+     * Laravel's cache-prefix and compiled-view isolation stay on.
+     */
+    $_SERVER['LARAVEL_PARALLEL_TESTING_WITHOUT_DATABASES'] = '1';
+    $_ENV['LARAVEL_PARALLEL_TESTING_WITHOUT_DATABASES'] = '1';
+    putenv('LARAVEL_PARALLEL_TESTING_WITHOUT_DATABASES=1');
+}
+
 if ($database !== $configured) {
     putenv("DB_DATABASE={$database}");
     $_ENV['DB_DATABASE'] = $database;
@@ -162,7 +194,11 @@ if ($database !== $configured) {
 
     // On stderr, not stdout: a machine-readable reporter must not be disturbed,
     // and a run must always be able to say which database it just rebuilt.
-    fwrite(STDERR, "Test database for this checkout: {$database}\n");
+    // A worker stays quiet: there is one per process, and a worker's output is
+    // collected by the parent as unexpected output.
+    if (! $isWorker) {
+        fwrite(STDERR, "Test database for this checkout: {$database}\n");
+    }
 }
 
 SerialLock::acquireForProcess(SerialLock::pathFor(Repo::lockKeyForDatabase($database)));

@@ -23,6 +23,12 @@ use Tooling\SerialLock;
 */
 uses(DatabaseMigrations::class);
 
+/*
+ * The `load-tooling` group is left out of the default gate (`composer verify`) and
+ * run by CI as its own serial step. See .github/workflows/ci.yml.
+ */
+uses()->group('load-tooling');
+
 /** The exact database this test process is connected to. */
 function performanceTestDatabase(): string
 {

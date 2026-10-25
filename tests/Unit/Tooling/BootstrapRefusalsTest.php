@@ -17,7 +17,7 @@ use Tooling\TestDatabase;
 |
 | They can only be observed from outside: by the time any test runs, the
 | bootstrap has already decided. So each case starts a real child run, the way
-| `refuses parallel execution explicitly` does, and asserts the child died with
+| `ParallelBootstrapTest` does for a worker, and asserts the child died with
 | the reason rather than proceeding.
 |
 | The child is given a --filter matching nothing. A refusal must happen before
