@@ -220,7 +220,7 @@ it('does not refuse --parallel, and locks the run database in the parent process
      */
     $base = parallelProbeDatabase();
 
-    ['process' => $parent] = startBootstrapProbe('pest', ['DB_DATABASE' => $base], ['--parallel']);
+    ['process' => $parent] = startBootstrapProbe('coordinator.php', ['DB_DATABASE' => $base], ['--parallel']);
 
     $report = awaitBootstrapReport($parent);
 
