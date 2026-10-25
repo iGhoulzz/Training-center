@@ -257,7 +257,10 @@ jobs:
           changed=$(git diff --name-only FETCH_HEAD HEAD)
           echo "$changed"
 
-          pattern='^(app/Console/Commands/(SeedPerformanceDatasetCommand|MintLoadTestSessionsCommand|RevokeLoadTestSessionsCommand)\.php|app/Support/PerformanceDatabaseGuard\.php|config/performance\.php|database/seeders/.*Performance.*|tests/Feature/Tooling/(SeedPerformanceDatasetCommandTest|LoadTestSessionsCommandTest)\.php)$'
+          # The seeder writes rows with raw inserts, so the schema it writes into is a
+          # dependency as real as its own source: a migration, or an enum or the
+          # reference format it writes, can break it without touching it.
+          pattern='^(app/Console/Commands/(SeedPerformanceDatasetCommand|MintLoadTestSessionsCommand|RevokeLoadTestSessionsCommand)\.php|app/Support/PerformanceDatabaseGuard\.php|app/Domain/(Enrollment|Finance)/Enums/.*|app/Domain/Finance/Support/Reference\.php|config/performance\.php|database/migrations/.*|database/seeders/.*Performance.*|scripts/Tooling/.*|tests/Feature/Tooling/(SeedPerformanceDatasetCommandTest|LoadTestSessionsCommandTest)\.php)$'
 
           if echo "$changed" | grep -Eq "$pattern"; then
             echo "run=true" >> "$GITHUB_OUTPUT"
