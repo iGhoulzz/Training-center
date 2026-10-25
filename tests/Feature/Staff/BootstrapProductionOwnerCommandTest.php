@@ -97,7 +97,7 @@ it('refuses every existing account including inactive and soft deleted accounts 
         ->and(User::withTrashed()->findOrFail($user->getKey())->getAttributes())->toBe($before)
         ->and(DB::table('model_has_roles')->count())->toBe(0)
         ->and(DB::table('activity_log')->count())->toBe($events);
-})->with(['active', 'deleted']);
+})->with(['active', 'inactive', 'deleted']);
 
 it('refuses a second invocation without replacing either owner credential', function (): void {
     ($this->bootstrap)()->assertSuccessful();
@@ -154,6 +154,7 @@ it('requires a bounded nonblank name for each owner before creating either accou
         ->and(DB::table('model_has_roles')->count())->toBe(0);
 })->with([
     'blank, first owner' => ['   ', 0],
+    'Unicode-only whitespace, second owner' => ["\u{00A0}\u{2003}", 1],
     'overlong, second owner' => [str_repeat('a', 256), 1],
 ]);
 
@@ -162,7 +163,7 @@ it('requires both hidden chosen passwords without creating either account', func
 
     expect(User::withTrashed()->count())->toBe(0)
         ->and(DB::table('model_has_roles')->count())->toBe(0);
-})->with([1]);
+})->with([0, 1]);
 
 it('rejects a mismatched password confirmation for either owner without changing users pivots or audit rows', function (string $confirmation, int $index): void {
     $before = [
