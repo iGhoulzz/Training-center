@@ -61,6 +61,45 @@ in `.env`, which `.env.example` allows for development and never for production.
 `composer dev` runs the development server, a queue worker and the log viewer
 together.
 
+### Demo data
+
+To click through every admin screen on your own machine, fill a freshly migrated
+local database with a fictional six-month history:
+
+```bash
+php artisan migrate:fresh --seed
+php artisan demo:seed
+```
+
+It takes about fifteen seconds and prints a summary and the logins. Every row is
+written by the application's own Actions, so the activity log, references,
+receipts and reports are what the app itself produces: 5 courses and 9 batches,
+about 47 students, every state of a bill (paid in one, two or three payments, part
+paid, unpaid, adjusted, written off, a payment reversed) in every ageing bucket,
+six months of expenses, wages and four finalized salary runs, an instructor run, a
+correction, and a draft salary run and a draft instructor run left for you to
+finalize.
+
+- **Logins.** `owner@example.test` (super admin), `admin@example.test`,
+  `frontdesk1@example.test`, `omar@example.test` (an instructor) and the other staff
+  the command lists all use the password `demo-password`. Two students get portal
+  logins with a temporary password, printed once.
+- **Local only.** The command refuses in any environment other than `local` or
+  `testing`, and refuses a database that already holds students, courses, charges,
+  payments or payroll runs. There is no override: start again with
+  `php artisan migrate:fresh --seed`. All people and contacts are invented
+  (`@example.test`, phone numbers `+218 91 000 0xxx`).
+- **Receipts** are generated during the seed, with no worker running. Files it
+  wrote to the `private` disk are not removed by `migrate:fresh`; they are harmless.
+
+**Running queued work locally.** Report exports and report PDFs are queued and need a
+worker; receipts and the rest of the demo do not. An Excel export (Filament's export
+action) and a report PDF (`GenerateReportPdfJob`) are the only queued report
+outputs; the report pages themselves are computed live. Either run Redis and
+`composer dev`, or set `QUEUE_CONNECTION=database` in `.env` and run
+`php artisan queue:work` in a second terminal. Excel exports also use the `exports`
+and `job_batches` tables, which the normal migrations create.
+
 The suite needs a second database, `training_center_test`, reachable by the same
 user. See the gate below.
 
