@@ -234,11 +234,23 @@ it('keeps every non-create policy write closed even if a matching permission is 
 
 it('confines compensation writes in application code to ChangeCompensationAction', function () {
     $allowedWriter = strtolower(str_replace('\\', '/', app_path('Domain/Finance/Actions/ChangeCompensationAction.php')));
+    /*
+     * Files that delete PAYROLL LINES, not rates. They name `staff_compensation_id`
+     * because a line records the rate it was priced with, which is what pulls
+     * them into this scan; only the bare-delete pattern is waived for them, so a
+     * create or an amount/date update of a rate there is still caught.
+     * RecalculateSalaryDraftAction (P4-T38) reads rates with a locking read and
+     * deletes the draft lines whose segment the rates no longer produce.
+     */
+    $payrollLineDeleters = [
+        strtolower(str_replace('\\', '/', app_path('Domain/Finance/Actions/RecalculateSalaryDraftAction.php'))),
+    ];
+    $deletePattern = '/->\s*(?:delete|forceDelete)\s*\(\s*\)/';
     $violations = [];
     $writePatterns = [
         '/\bStaffCompensation::(?:(?:query|newQuery)\(\)->)?(?:create|createQuietly|forceCreate|forceCreateQuietly|insert|upsert|updateOrCreate)\s*\(/',
         '/(?:update|fill|forceFill)\s*\(\s*\[(?:(?!\]\s*\)).)*[\'\"](?:amount|effective_from|effective_to)[\'\"]\s*=>/s',
-        '/->\s*(?:delete|forceDelete)\s*\(\s*\)/',
+        $deletePattern,
     ];
 
     foreach (File::allFiles(app_path()) as $file) {
@@ -255,6 +267,10 @@ it('confines compensation writes in application code to ChangeCompensationAction
         }
 
         foreach ($writePatterns as $pattern) {
+            if ($pattern === $deletePattern && in_array($path, $payrollLineDeleters, true)) {
+                continue;
+            }
+
             if (preg_match($pattern, $source) === 1) {
                 $violations[] = str_replace(app_path().DIRECTORY_SEPARATOR, '', $file->getPathname());
                 break;

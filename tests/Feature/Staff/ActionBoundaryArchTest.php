@@ -313,6 +313,12 @@ it('does not delete or deactivate users outside the sanctioned Actions', functio
             // locks and re-authorizes the run, refuses finalized rows through
             // PayrollRunPolicy, then relies on the two schema cascades.
             'DeletePayrollRunAction',
+            // P4-T38: a salary draft follows the current rates. This Action
+            // authorizes create_payroll_run, locks the run row, does nothing
+            // to a finalized or non-salary run, and deletes only that draft's
+            // lines whose segment the rates no longer produce, after moving
+            // their bonuses and deductions to a surviving line.
+            'RecalculateSalaryDraftAction',
             // Staff files (P1-T06b): each removes a record AND owns the durable
             // commit-first/delete-after file lifecycle. The certificate and
             // profile Actions authorize the actor and write a
