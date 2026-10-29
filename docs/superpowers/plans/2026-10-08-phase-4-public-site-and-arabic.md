@@ -2217,14 +2217,14 @@ through the interface", which the owner has now asked for.
 - **The panel** already started at the current outstanding amount. Its bill aside
   now also shows "Paid so far" and "Remaining", both derived from the live
   allocations on every render. `installment_conflict` and `first_collection_hint`
-  (English and Arabic) now say a further payment is taken by opening the bill
-  again from Charges; `charge_not_collectable` no longer blames an earlier payment.
+  (English and Arabic) now say a further payment is taken by pressing Collect
+  payment on the bill in Charges; `charge_not_collectable` no longer blames an earlier payment.
   The same key still means the same handover, so a different amount typed into
   the same open panel is still refused with the conflict notice.
 - The enrol-and-bill path is unchanged; its new bill is collectable.
-- Docs: §12's later-installment bullet and §6's "not a promise of an interface"
-  sentence in the system design, and the "Later installments" line in the
-  phase-2 financials design.
+- Docs: the later-installment rule moved out of §12 (now a one-line pointer) into
+  §6 under the allocation table, which no longer says "not a promise of an
+  interface", and the "Later installments" line in the phase-2 financials design.
 
 **Contract rules asserted:**
 - 850 bill: 300 collected (receipt remaining 550.000), then 550 from Charges

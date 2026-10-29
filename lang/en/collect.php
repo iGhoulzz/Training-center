@@ -108,7 +108,7 @@ return [
     // A second installment typed into a collection panel that already
     // recorded one: the shared idempotency key makes it a conflict, not a
     // replay. Whole sentence, and it tells the operator what to do next.
-    'installment_conflict' => 'This collection has already been recorded, and nothing further was taken. To take a further payment on this bill, open the bill again from Charges.',
+    'installment_conflict' => 'This collection has already been recorded, and nothing further was taken. To take a further payment on this bill, press Collect payment on the bill in Charges.',
 
     // PaymentExceedsOutstandingException carries both figures, so the
     // operator can correct the attempted collection without another lookup.
@@ -126,7 +126,7 @@ return [
     'take_payment' => 'Take payment',
     'balanced' => 'Balanced ✓',
     'unbalanced' => 'Check tender total',
-    'first_collection_hint' => 'A collection may be partial. A further payment on this bill is taken by opening the bill again from Charges.',
+    'first_collection_hint' => 'A collection may be partial. A further payment on this bill is taken by pressing Collect payment on the bill in Charges.',
     'step_collect' => 'Collect',
     'enrolment_steps' => 'Enrolment steps',
     'who_enrolling' => 'Who is enrolling?',

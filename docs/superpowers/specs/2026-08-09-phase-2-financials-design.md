@@ -53,7 +53,7 @@ The system allocates the payment to that bill. **Staff never see the word "alloc
 
 Later installments: **one bill, many receipts**, all pointing back to the same `CHG-…`. Since 2026-10-29 (owner, P4-T36) there is a screen for it too: the Charges list offers "Collect payment" on any bill that is not written off and still has something outstanding, which opens the same collection panel pre-filled with what is still owed and records a new payment with its own receipt on the same bill.
 
-Earlier revisions of this line said it was a statement about the DATA MODEL, not about a screen, and that system design section 12 kept collecting a later installment through the interface out of scope. That was the position until the owner asked for it; section 12 now says so. It was raised twice in review of P2-T09 and again by the owner, who decided it should exist.
+Earlier revisions of this line said it was a statement about the DATA MODEL, not about a screen, and that system design section 12 kept collecting a later installment through the interface out of scope. That was the position until the owner asked for it; system design section 6 now describes it, and section 12 only points there. It was raised twice in review of P2-T09 and again by the owner, who decided it should exist.
 
 ### The receipt
 

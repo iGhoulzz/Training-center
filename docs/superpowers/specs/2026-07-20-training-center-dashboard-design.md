@@ -345,7 +345,36 @@ The enumeration is exhaustive, and that matters in the other direction too: **wi
 **`payment_allocations`** — which payment settles which charge
 `id, payment_id (FK), charge_id (FK), amount`
 
-The allocation table is load-bearing. A student paying one lump sum covering three courses is normal, and so is paying one course in four installments. **This is first a statement about the data model; since 2026-10-29 the interface offers it too** — a later installment is collected from the bill in Charges through the same collection panel, one receipt per payment, see section 12. Without it, a `paid_amount` column on `charges` inevitably drifts out of sync with the payment records. With it, every balance is derived by summing allocations — one source of truth, permanently reconcilable.
+The allocation table is load-bearing. A student paying one lump sum covering three courses is normal, and so is paying one course in four installments. **This is first a statement about the data model; since 2026-10-29 the interface offers it too** — a later installment is collected from the bill in Charges through the same collection panel, one receipt per payment, see below. Without it, a `paid_amount` column on `charges` inevitably drifts out of sync with the payment records. With it, every balance is derived by summing allocations — one source of truth, permanently reconcilable.
+
+**Collecting a later installment through the interface (owner, 2026-10-29, P4-T36).**
+This reverses an earlier decision that kept it out of scope. A student who pays 300 of an 850 bill and
+returns for the other 550 is served from the bill: Charges, the bill, "Collect payment" opens
+the same collection panel as Enrol & Collect, pre-filled with what is still owed and showing
+what has been paid so far. It records a new payment with its own receipt on the same bill; the
+outstanding amount reaches 0 on its own, because it is always computed from the bill and its
+live allocations (the allocation table above). The entry point first appeared for the FIRST payment only
+(owner, 2026-10-17, P4-T32), for a bill whose page was closed after Confirm. A bill is
+**collectable** when:
+- it is not written off;
+- something is outstanding.
+
+A payment already on the bill, partial or not, does not block it; a reversed payment never
+counted. The rule is one predicate (`ChargeQueryService::collectableSql()`, mirrored with
+locking reads by `RecordPaymentAction::isCollectableUnderLock()` and kept equal by a parity
+test), checked when the panel opens and again when the payment is submitted. The submit-time
+check that cannot be raced is inside `RecordPaymentAction`, under the charge row lock: the panel
+sets `RecordPaymentData::$collectableOnly`, and the Action refuses with
+`ChargeNotCollectableException` once the bill is written off or has nothing outstanding. An
+amount above what is still owed is refused by `PaymentInvariantService::assertRecordable()`
+under the same lock, for every caller, so two sessions whose installments together exceed the
+outstanding amount cannot both land. The panel's own check is only the fast path. No new
+permission: the button and the panel need `create_payment`, view of the charge, and access to
+Enrol & Collect, as before.
+
+There is still no installment schedule: a bill is paid in as many parts as the student likes,
+and nothing plans them (phase-2 financials design, "No installment schedules").
+
 
 **`staff_compensation`** — effective-dated
 `id, user_id (FK), type (salary|hourly|per_student), amount, effective_from, effective_to (nullable)`
@@ -600,33 +629,7 @@ Recorded so these do not reappear as assumptions:
 - A mobile application
 - Public student self-registration
 - Student certificate template design, PDF generation, physical printing, or printer integration
-- **Collecting a later installment through the interface — now allowed (owner, 2026-10-29, P4-T36).**
-  Superseding the earlier decision that kept it out. A student who pays 300 of an 850 bill and
-  returns for the other 550 is served from the bill: Charges, the bill, "Collect payment" opens
-  the same collection panel as Enrol & Collect, pre-filled with what is still owed and showing
-  what has been paid so far. It records a new payment with its own receipt on the same bill; the
-  outstanding amount reaches 0 on its own, because it is always computed from the bill and its
-  live allocations (section 6). The entry point first appeared for the FIRST payment only
-  (owner, 2026-10-17, P4-T32), for a bill whose page was closed after Confirm. A bill is
-  **collectable** when:
-  - it is not written off;
-  - something is outstanding.
-
-  A payment already on the bill, partial or not, does not block it; a reversed payment never
-  counted. The rule is one predicate (`ChargeQueryService::collectableSql()`, mirrored with
-  locking reads by `RecordPaymentAction::isCollectableUnderLock()` and kept equal by a parity
-  test), checked when the panel opens and again when the payment is submitted. The submit-time
-  check that cannot be raced is inside `RecordPaymentAction`, under the charge row lock: the panel
-  sets `RecordPaymentData::$collectableOnly`, and the Action refuses with
-  `ChargeNotCollectableException` once the bill is written off or has nothing outstanding. An
-  amount above what is still owed is refused by `PaymentInvariantService::assertRecordable()`
-  under the same lock, for every caller, so two sessions whose installments together exceed the
-  outstanding amount cannot both land. The panel's own check is only the fast path. No new
-  permission: the button and the panel need `create_payment`, view of the charge, and access to
-  Enrol & Collect, as before.
-
-  There is still no installment schedule: a bill is paid in as many parts as the student likes,
-  and nothing plans them (phase-2 financials design, "No installment schedules").
+- Collecting a later installment through the interface is **in scope since 2026-10-29** (owner, P4-T36); it is described in section 6, under the allocation table.
 
 ---
 

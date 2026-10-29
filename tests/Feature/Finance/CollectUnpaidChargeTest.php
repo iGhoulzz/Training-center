@@ -741,7 +741,7 @@ it('shows the bill total, what is paid so far and what remains on the panel, and
         ->and($partPaid->html())->toContain('850.000');
 });
 
-it('tells the operator a further payment is taken by opening the bill again from Charges', function () {
+it('tells the operator a further payment is taken by pressing Collect payment on the bill in Charges', function () {
     $charge = Charge::factory()->create(['list_price' => '850.000']);
 
     $page = Livewire::actingAs($this->collector)
@@ -754,18 +754,19 @@ it('tells the operator a further payment is taken by opening the bill again from
     // A different amount typed into the same panel is a conflict, not a second installment.
     $page->fillForm(['amount' => '550.000', 'tenders' => [['method' => 'cash', 'amount' => '550.000', 'external_reference' => null]]], 'collectForm')
         ->call('finalize')
-        ->assertNotified('This collection has already been recorded, and nothing further was taken. To take a further payment on this bill, open the bill again from Charges.');
+        ->assertNotified('This collection has already been recorded, and nothing further was taken. To take a further payment on this bill, press Collect payment on the bill in Charges.');
 
     expect(Payment::query()->count())->toBe(1)
-        ->and(__('collect.first_collection_hint'))->toBe('A collection may be partial. A further payment on this bill is taken by opening the bill again from Charges.');
+        ->and(__('collect.first_collection_hint'))->toBe('A collection may be partial. A further payment on this bill is taken by pressing Collect payment on the bill in Charges.');
 });
 
 it('gives a later installment only to an actor holding create_payment, view_charge and create_enrollment', function (string $withheld) {
     $charge = Charge::factory()->create(['list_price' => '850.000']);
     ($this->payTowards)($charge, '300.000');
-    $short = ($this->actor)(array_values(array_diff($this->collectorPermissions, [$withheld, ...($withheld === 'view_charge' ? ['view_any_charge'] : [])])));
+    $short = ($this->actor)(array_values(array_diff($this->collectorPermissions, [$withheld])));
 
-    expect($short->can($withheld))->toBeFalse();
+    expect($short->can($withheld))->toBeFalse()
+        ->and(array_values(array_filter($this->collectorPermissions, fn (string $permission): bool => ! $short->can($permission))))->toBe([$withheld]);
 
     // Short by one permission: no button, and no panel for the part-paid bill.
     if ($withheld !== 'create_enrollment') {
@@ -776,10 +777,9 @@ it('gives a later installment only to an actor holding create_payment, view_char
             ->call('finalize');
     }
 
-    if ($withheld !== 'view_charge') {
-        Livewire::actingAs($short)->test(ListCharges::class)
-            ->assertActionHidden(($this->collectPaymentAction)($charge));
-    }
+    // The actor keeps view_any_charge when only view_charge is withheld, so the row is listed and its button is what hides.
+    Livewire::actingAs($short)->test(ListCharges::class)
+        ->assertActionHidden(($this->collectPaymentAction)($charge));
 
     expect(Payment::query()->count())->toBe(1);
 
@@ -792,3 +792,29 @@ it('gives a later installment only to an actor holding create_payment, view_char
         ->assertSet('collectionChargeId', $charge->getKey())
         ->assertFormSet(['amount' => '550.000'], 'collectForm');
 })->with(['create_payment', 'view_charge', 'create_enrollment']);
+
+it('lets the panel that settled a bill replay its own payment, and still refuses a different amount, though the bill is no longer collectable', function () {
+    $charge = Charge::factory()->create(['list_price' => '100.000']);
+    $page = Livewire::actingAs($this->collector)
+        ->withQueryParams(['charge' => $charge->getKey()])
+        ->test(EnrollAndCollect::class)
+        ->fillForm(['amount' => '100.000', 'tenders' => [['method' => 'cash', 'amount' => '100.000', 'external_reference' => null]]], 'collectForm');
+    collectUnpaidSentNotifications();
+
+    // This panel's own payment settles the bill: nothing is outstanding any more.
+    $page->call('finalize');
+    expect(collectUnpaidSentNotifications())->toBe([['title' => __('collect.collected_successfully'), 'status' => 'success']]);
+
+    // The same input again is a replay: the same notice, still one payment.
+    $page->call('finalize');
+    expect(collectUnpaidSentNotifications())->toBe([['title' => __('collect.collected_successfully'), 'status' => 'success']])
+        ->and(Payment::query()->count())->toBe(1);
+
+    // A different amount under the same key is the installment conflict, with nothing written.
+    $page->fillForm(['amount' => '50.000', 'tenders' => [['method' => 'cash', 'amount' => '50.000', 'external_reference' => null]]], 'collectForm')
+        ->call('finalize');
+    expect(collectUnpaidSentNotifications())->toBe([['title' => __('collect.installment_conflict'), 'status' => 'danger']])
+        ->and(Payment::query()->count())->toBe(1)
+        ->and(PaymentAllocation::query()->sole()->amount)->toBe('100.000')
+        ->and(PaymentTender::query()->count())->toBe(1);
+});
