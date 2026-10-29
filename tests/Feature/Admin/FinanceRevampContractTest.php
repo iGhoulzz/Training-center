@@ -145,7 +145,7 @@ it('searches all active discount choices beyond the first page and recomputes th
     expect(Charge::query()->count())->toBe(0);
 });
 
-it('records the first partial collection and refuses a second installment with the exact notification', function () {
+it('records the first partial collection and refuses a different second amount in the same open panel with the exact notification', function () {
     $actor = ($this->actor)(['create_enrollment', 'create_payment']);
     $page = ($this->collection)($actor)->fillForm([
         'amount' => '40.125', 'tenders' => [['method' => 'cash', 'amount' => '40.125']],

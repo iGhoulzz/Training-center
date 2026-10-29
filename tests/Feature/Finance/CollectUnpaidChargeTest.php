@@ -7,7 +7,9 @@ use App\Domain\Finance\Filament\Resources\ChargeResource\Pages\ListCharges;
 use App\Domain\Finance\Models\Charge;
 use App\Domain\Finance\Models\Payment;
 use App\Domain\Finance\Models\PaymentAllocation;
+use App\Domain\Finance\Models\PaymentReceiptSnapshot;
 use App\Domain\Finance\Models\PaymentTender;
+use App\Domain\Finance\Services\StudentBalanceQuery;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Filament\Actions\Testing\TestAction;
@@ -21,21 +23,20 @@ use Livewire\Livewire;
 
 /*
 |--------------------------------------------------------------------------
-| Collecting the first payment on a bill later (P4-T32, QA Q1)
+| Collecting a payment on a bill later (P4-T32, QA Q1; later installments P4-T36)
 |--------------------------------------------------------------------------
 |
 | The collection panel used to exist only in the page session that pressed
 | Confirm, so a bill whose page was closed could never be collected from the
-| app. The Charges table now offers "Collect payment" on a bill AWAITING ITS
-| FIRST PAYMENT, and the Enrol & Collect page opens the panel for that bill
-| from `?charge=`.
+| app. The Charges table now offers "Collect payment" on any COLLECTABLE bill,
+| and the Enrol & Collect page opens the panel for that bill from `?charge=`.
 |
-| "Awaiting its first payment" is ONE predicate, in ChargeQueryService: no
-| allocation from a payment that is not reversed, not written off, and
-| something outstanding. A bill whose only payment was reversed counts as
-| awaiting again (lead decision, flagged for the owner in the pull request).
-| The button reads that predicate from the table query, and the page re-checks
-| it on the server, so a URL is never trusted.
+| "Collectable" is ONE predicate, in ChargeQueryService: not written off and
+| something outstanding. A payment already on the bill does not block it (owner,
+| 2026-10-29: 300 of 850 today, the remaining 550 later, as a new payment and a
+| new receipt on the same bill); a reversed payment never counted. The button
+| reads that predicate from the table query, and the page re-checks it on the
+| server, so a URL is never trusted.
 |
 | EVERY ACTOR HERE HOLDS EXACTLY THE PERMISSIONS NAMED, NEVER A ROLE. A super
 | admin holds every permission and would pass whatever ability the code checks.
@@ -126,13 +127,14 @@ it('hides Collect payment on a bill that is paid in full', function () {
         ->assertActionHidden(($this->collectPaymentAction)($charge));
 });
 
-it('hides Collect payment on a bill whose payment is live, even a partial one', function () {
+it('offers Collect payment on a bill whose payment is live but partial, for the later installment', function () {
     $charge = Charge::factory()->create(['list_price' => '100.125']);
     ($this->payTowards)($charge, '40.000');
 
     Livewire::actingAs($this->collector)
         ->test(ListCharges::class)
-        ->assertActionHidden(($this->collectPaymentAction)($charge));
+        ->assertActionVisible(($this->collectPaymentAction)($charge))
+        ->assertActionHasUrl(($this->collectPaymentAction)($charge), url('/admin/enroll-and-collect?charge='.$charge->getKey()));
 });
 
 it('hides Collect payment on a bill that is written off', function () {
@@ -153,8 +155,7 @@ it('hides Collect payment on a bill with nothing outstanding even though no paym
 });
 
 it('offers Collect payment again once the only payment on the bill is reversed', function () {
-    // LEAD DECISION, flagged for the owner: a reversed payment is not a
-    // payment for this purpose, so the bill is awaiting its first one again.
+    // A reversed payment never counted toward what was paid, so the bill is still collectable.
     $charge = Charge::factory()->create(['list_price' => '100.125']);
     ($this->payTowards)($charge, '40.000', reversed: true);
 
@@ -163,10 +164,20 @@ it('offers Collect payment again once the only payment on the bill is reversed',
         ->assertActionVisible(($this->collectPaymentAction)($charge));
 });
 
-it('still hides Collect payment when a live payment stands beside a reversed one', function () {
+it('offers Collect payment when a live payment stands beside a reversed one', function () {
     $charge = Charge::factory()->create(['list_price' => '100.125']);
     ($this->payTowards)($charge, '40.000', reversed: true);
     ($this->payTowards)($charge, '25.000');
+
+    Livewire::actingAs($this->collector)
+        ->test(ListCharges::class)
+        ->assertActionVisible(($this->collectPaymentAction)($charge));
+});
+
+it('hides Collect payment once later installments have paid the bill off', function () {
+    $charge = Charge::factory()->create(['list_price' => '100.125']);
+    ($this->payTowards)($charge, '40.000');
+    ($this->payTowards)($charge, '60.125');
 
     Livewire::actingAs($this->collector)
         ->test(ListCharges::class)
@@ -345,13 +356,13 @@ it('refuses a link to a bill that cannot be collected: no panel, nothing written
 
         return $charge;
     }],
-    'part paid with a live payment' => [function ($test) {
-        $charge = Charge::factory()->create(['list_price' => '100.125']);
+    'written off' => [fn ($test) => Charge::factory()->writtenOff($test->collector)->create(['list_price' => '100.125'])],
+    'written off after a part payment' => [function ($test) {
+        $charge = Charge::factory()->writtenOff($test->collector)->create(['list_price' => '100.125']);
         ($test->payTowards)($charge, '40.000');
 
         return $charge;
     }],
-    'written off' => [fn ($test) => Charge::factory()->writtenOff($test->collector)->create(['list_price' => '100.125'])],
     'nothing outstanding' => [fn ($test) => Charge::factory()->create(['list_price' => '0.000'])],
 ]);
 
@@ -376,7 +387,7 @@ it('refuses a link naming a bill that does not exist or is not a number', functi
     'a list' => [['1', '2']],
 ]);
 
-it('refuses an actor without create_payment the same way, even for a bill that is awaiting its first payment', function () {
+it('refuses an actor without create_payment the same way, even for a collectable bill', function () {
     $charge = Charge::factory()->create(['list_price' => '100.125']);
     $withoutPayment = ($this->actor)(array_values(array_diff($this->collectorPermissions, ['create_payment'])));
 
@@ -419,27 +430,44 @@ it('opens no panel and shows no refusal when the page is opened without a charge
 | The bill is re-checked when the payment is submitted (P4-T32 review)
 |--------------------------------------------------------------------------
 |
-| The panel is opened for a bill awaiting its first payment, but the bill can
+| The panel is opened for a collectable bill, but the bill can
 | change before the button is pressed, and the panel's bill id is a client-side
 | property. finalize() therefore checks the same predicate again before writing.
 | Its own payment is the one exception, so a double-click still replays.
 */
 
-it('refuses the second of two tabs opened on the same link once the first has paid', function () {
+it('refuses the second of two tabs opened on the same link once the first has paid the bill in full', function () {
     $charge = Charge::factory()->create(['list_price' => '100.000']);
-    $open = fn () => Livewire::actingAs($this->collector)
+    $open = fn (string $amount) => Livewire::actingAs($this->collector)
         ->withQueryParams(['charge' => $charge->getKey()])
         ->test(EnrollAndCollect::class)
-        ->fillForm(['amount' => '40.000', 'tenders' => [['method' => 'cash', 'amount' => '40.000', 'external_reference' => null]]], 'collectForm');
+        ->fillForm(['amount' => $amount, 'tenders' => [['method' => 'cash', 'amount' => $amount, 'external_reference' => null]]], 'collectForm');
 
-    $first = $open();
-    $second = $open();
+    $first = $open('100.000');
+    $second = $open('40.000');
 
     $first->call('finalize')->assertNotified(__('collect.collected_successfully'));
     $second->call('finalize')->assertNotified(__('collect.charge_not_collectable'));
 
-    expect(PaymentAllocation::query()->where('charge_id', $charge->getKey())->pluck('amount')->all())->toBe(['40.000'])
+    expect(PaymentAllocation::query()->where('charge_id', $charge->getKey())->pluck('amount')->all())->toBe(['100.000'])
         ->and(Payment::query()->count())->toBe(1);
+});
+
+it('lets the second of two tabs record its installment when the first only paid part and the sum fits', function () {
+    $charge = Charge::factory()->create(['list_price' => '100.000']);
+    $open = fn (string $amount) => Livewire::actingAs($this->collector)
+        ->withQueryParams(['charge' => $charge->getKey()])
+        ->test(EnrollAndCollect::class)
+        ->fillForm(['amount' => $amount, 'tenders' => [['method' => 'cash', 'amount' => $amount, 'external_reference' => null]]], 'collectForm');
+
+    $first = $open('40.000');
+    $second = $open('60.000');
+
+    $first->call('finalize')->assertNotified(__('collect.collected_successfully'));
+    $second->call('finalize')->assertNotified(__('collect.collected_successfully'));
+
+    expect(PaymentAllocation::query()->where('charge_id', $charge->getKey())->orderBy('id')->pluck('amount')->all())->toBe(['40.000', '60.000'])
+        ->and(Payment::query()->count())->toBe(2);
 });
 
 it('refuses to collect a bill that was written off after its panel opened', function () {
@@ -479,9 +507,9 @@ it('refuses a browser rewrite of the bill id, so the panel never reaches another
     expect(PaymentAllocation::query()->where('charge_id', $target->getKey())->count())->toBe($before)
         ->and(PaymentAllocation::query()->where('charge_id', $opened->getKey())->count())->toBe(0);
 })->with([
-    'a bill with a live partial payment' => [function ($test): Charge {
+    'a bill paid in full' => [function ($test): Charge {
         $charge = Charge::factory()->create(['list_price' => '100.000']);
-        ($test->payTowards)($charge, '30.000');
+        ($test->payTowards)($charge, '100.000');
 
         return $charge;
     }],
@@ -561,3 +589,206 @@ it('keeps a valid unpaid bill out of reach of an actor who may collect but not v
     expect(Payment::query()->count())->toBe(0)
         ->and(PaymentAllocation::query()->where('charge_id', $unpaid->getKey())->count())->toBe(0);
 });
+
+/*
+|--------------------------------------------------------------------------
+| Later installments (P4-T36, owner request 2026-10-29)
+|--------------------------------------------------------------------------
+|
+| A student pays 300 of an 850 bill today and the remaining 550 later. Staff open
+| the bill from Charges, press "Collect payment", and the same panel opens,
+| pre-filled with what is still owed; the result is a NEW payment and a NEW
+| receipt on the SAME bill. Every figure below is written by hand.
+*/
+
+/** The bill aside's text for one figure, by its data attribute, or null if the row is not there. */
+function billAsideFigure(string $html, string $attribute): ?string
+{
+    $document = new DOMDocument;
+    $document->loadHTML('<?xml encoding="UTF-8">'.$html, LIBXML_NOERROR | LIBXML_NOWARNING);
+    $row = (new DOMXPath($document))->query('//aside//div[@'.$attribute.']//dd');
+
+    return $row->length === 0 ? null : trim(preg_replace('/\s+/u', ' ', $row->item(0)->textContent));
+}
+
+it('collects an 850 bill in two installments from Charges: 300 now and the remaining 550 later, one receipt each', function () {
+    $charge = Charge::factory()->create(['list_price' => '850.000']);
+    $studentId = (int) $charge->enrollment->student_id;
+
+    expect(app(StudentBalanceQuery::class)->forStudent($studentId)->total->toDecimal())->toBe('850.000');
+
+    // Today: 300 of 850.
+    Livewire::actingAs($this->collector)
+        ->withQueryParams(['charge' => $charge->getKey()])
+        ->test(EnrollAndCollect::class)
+        ->assertFormSet(['amount' => '850.000'], 'collectForm')
+        ->fillForm(['amount' => '300.000', 'tenders' => [['method' => 'cash', 'amount' => '300.000', 'external_reference' => null]]], 'collectForm')
+        ->call('finalize')
+        ->assertNotified(__('collect.collected_successfully'));
+
+    $firstReceipt = PaymentReceiptSnapshot::query()->sole();
+    expect($firstReceipt->amount_paid)->toBe('300.000')
+        ->and($firstReceipt->remaining_balance)->toBe('550.000')
+        ->and(app(StudentBalanceQuery::class)->forStudent($studentId)->total->toDecimal())->toBe('550.000');
+
+    // Later: the bill is still on the Charges list with its button, linking to the panel.
+    Livewire::actingAs($this->collector)
+        ->test(ListCharges::class)
+        ->assertActionVisible(($this->collectPaymentAction)($charge))
+        ->assertActionHasUrl(($this->collectPaymentAction)($charge), url('/admin/enroll-and-collect?charge='.$charge->getKey()));
+
+    // The same panel, pre-filled with what is still owed and showing the earlier 300.
+    $page = Livewire::actingAs($this->collector)
+        ->withQueryParams(['charge' => $charge->getKey()])
+        ->test(EnrollAndCollect::class)
+        ->assertSet('collectionChargeId', $charge->getKey())
+        ->assertFormSet(['amount' => '550.000'], 'collectForm');
+
+    // The single cash tender line starts at the same remaining amount.
+    expect(collect($page->get('collect.tenders'))->pluck('amount')->values()->all())->toBe(['550.000'])
+        ->and(billAsideFigure($page->html(), 'data-bill-paid'))->toBe('300.000 LYD')
+        ->and(billAsideFigure($page->html(), 'data-bill-remaining'))->toBe('550.000 LYD');
+
+    $page->call('finalize')->assertNotified(__('collect.collected_successfully'));
+
+    // Two payments and two receipts on one bill; nothing is owed and the button has gone.
+    $snapshots = PaymentReceiptSnapshot::query()->orderBy('payment_id')->get();
+    expect(Payment::query()->count())->toBe(2)
+        ->and($snapshots)->toHaveCount(2)
+        ->and($snapshots->pluck('payment_reference')->unique()->all())->toHaveCount(2)
+        ->and($snapshots->pluck('charge_reference')->unique()->all())->toBe([$charge->reference])
+        ->and($snapshots->pluck('amount_paid')->all())->toBe(['300.000', '550.000'])
+        ->and($snapshots->pluck('remaining_balance')->all())->toBe(['550.000', '0.000'])
+        ->and(PaymentAllocation::query()->where('charge_id', $charge->getKey())->orderBy('id')->pluck('amount')->all())->toBe(['300.000', '550.000'])
+        ->and(PaymentTender::query()->orderBy('id')->pluck('amount')->all())->toBe(['300.000', '550.000'])
+        ->and(app(StudentBalanceQuery::class)->forStudent($studentId)->total->toDecimal())->toBe('0.000');
+
+    Livewire::actingAs($this->collector)
+        ->test(ListCharges::class)
+        ->assertActionHidden(($this->collectPaymentAction)($charge));
+
+    // And the link no longer opens a panel for the settled bill.
+    Livewire::actingAs($this->collector)
+        ->withQueryParams(['charge' => $charge->getKey()])
+        ->test(EnrollAndCollect::class)
+        ->assertSet('collectionChargeId', null);
+});
+
+it('takes a third installment: 300, then 250, then the remaining 300', function () {
+    $charge = Charge::factory()->create(['list_price' => '850.000']);
+
+    foreach ([['300.000', '550.000'], ['250.000', '300.000'], ['300.000', '0.000']] as [$amount, $remaining]) {
+        Livewire::actingAs($this->collector)
+            ->withQueryParams(['charge' => $charge->getKey()])
+            ->test(EnrollAndCollect::class)
+            ->fillForm(['amount' => $amount, 'tenders' => [['method' => 'cash', 'amount' => $amount, 'external_reference' => null]]], 'collectForm')
+            ->call('finalize')
+            ->assertNotified(__('collect.collected_successfully'));
+
+        expect(PaymentReceiptSnapshot::query()->orderByDesc('payment_id')->first()->remaining_balance)->toBe($remaining);
+    }
+
+    expect(Payment::query()->count())->toBe(3)
+        ->and(PaymentReceiptSnapshot::query()->count())->toBe(3)
+        ->and(PaymentAllocation::query()->where('charge_id', $charge->getKey())->orderBy('id')->pluck('amount')->all())->toBe(['300.000', '250.000', '300.000']);
+
+    Livewire::actingAs($this->collector)
+        ->test(ListCharges::class)
+        ->assertActionHidden(($this->collectPaymentAction)($charge));
+});
+
+it('refuses a later installment above what the bill still owes, and writes nothing', function () {
+    $charge = Charge::factory()->create(['list_price' => '850.000']);
+    ($this->payTowards)($charge, '300.000');
+
+    Livewire::actingAs($this->collector)
+        ->withQueryParams(['charge' => $charge->getKey()])
+        ->test(EnrollAndCollect::class)
+        ->fillForm(['amount' => '550.001', 'tenders' => [['method' => 'cash', 'amount' => '550.001', 'external_reference' => null]]], 'collectForm')
+        ->call('finalize')
+        ->assertNotified(__('payments.exceeds_outstanding'));
+
+    expect(Payment::query()->count())->toBe(1)
+        ->and(PaymentAllocation::query()->where('charge_id', $charge->getKey())->pluck('amount')->all())->toBe(['300.000'])
+        ->and(PaymentTender::query()->count())->toBe(0)
+        ->and(PaymentReceiptSnapshot::query()->count())->toBe(0);
+});
+
+it('shows the bill total, what is paid so far and what remains on the panel, and none of it on the enrolment preview', function () {
+    $charge = Charge::factory()->create(['list_price' => '850.000']);
+
+    // First, before any query string is set on this test's Livewire session.
+    $enrolment = Livewire::actingAs($this->collector)->test(EnrollAndCollect::class);
+    expect(billAsideFigure($enrolment->html(), 'data-bill-paid'))->toBeNull()
+        ->and(billAsideFigure($enrolment->html(), 'data-bill-remaining'))->toBeNull();
+
+    $fresh = Livewire::actingAs($this->collector)
+        ->withQueryParams(['charge' => $charge->getKey()])
+        ->test(EnrollAndCollect::class);
+    expect(billAsideFigure($fresh->html(), 'data-bill-paid'))->toBe('0.000 LYD')
+        ->and(billAsideFigure($fresh->html(), 'data-bill-remaining'))->toBe('850.000 LYD');
+
+    ($this->payTowards)($charge, '300.000');
+    ($this->payTowards)($charge, '120.000', reversed: true);
+
+    $partPaid = Livewire::actingAs($this->collector)
+        ->withQueryParams(['charge' => $charge->getKey()])
+        ->test(EnrollAndCollect::class);
+
+    // A reversed payment is not "paid so far".
+    expect(billAsideFigure($partPaid->html(), 'data-bill-paid'))->toBe('300.000 LYD')
+        ->and(billAsideFigure($partPaid->html(), 'data-bill-remaining'))->toBe('550.000 LYD')
+        ->and($partPaid->html())->toContain('850.000');
+});
+
+it('tells the operator a further payment is taken by opening the bill again from Charges', function () {
+    $charge = Charge::factory()->create(['list_price' => '850.000']);
+
+    $page = Livewire::actingAs($this->collector)
+        ->withQueryParams(['charge' => $charge->getKey()])
+        ->test(EnrollAndCollect::class)
+        ->fillForm(['amount' => '300.000', 'tenders' => [['method' => 'cash', 'amount' => '300.000', 'external_reference' => null]]], 'collectForm')
+        ->call('finalize')
+        ->assertNotified(__('collect.collected_successfully'));
+
+    // A different amount typed into the same panel is a conflict, not a second installment.
+    $page->fillForm(['amount' => '550.000', 'tenders' => [['method' => 'cash', 'amount' => '550.000', 'external_reference' => null]]], 'collectForm')
+        ->call('finalize')
+        ->assertNotified('This collection has already been recorded, and nothing further was taken. To take a further payment on this bill, open the bill again from Charges.');
+
+    expect(Payment::query()->count())->toBe(1)
+        ->and(__('collect.first_collection_hint'))->toBe('A collection may be partial. A further payment on this bill is taken by opening the bill again from Charges.');
+});
+
+it('gives a later installment only to an actor holding create_payment, view_charge and create_enrollment', function (string $withheld) {
+    $charge = Charge::factory()->create(['list_price' => '850.000']);
+    ($this->payTowards)($charge, '300.000');
+    $short = ($this->actor)(array_values(array_diff($this->collectorPermissions, [$withheld, ...($withheld === 'view_charge' ? ['view_any_charge'] : [])])));
+
+    expect($short->can($withheld))->toBeFalse();
+
+    // Short by one permission: no button, and no panel for the part-paid bill.
+    if ($withheld !== 'create_enrollment') {
+        Livewire::actingAs($short)
+            ->withQueryParams(['charge' => $charge->getKey()])
+            ->test(EnrollAndCollect::class)
+            ->assertSet('collectionChargeId', null)
+            ->call('finalize');
+    }
+
+    if ($withheld !== 'view_charge') {
+        Livewire::actingAs($short)->test(ListCharges::class)
+            ->assertActionHidden(($this->collectPaymentAction)($charge));
+    }
+
+    expect(Payment::query()->count())->toBe(1);
+
+    // The positive control: the full set sees the button and opens the panel.
+    Livewire::actingAs($this->collector)->test(ListCharges::class)
+        ->assertActionVisible(($this->collectPaymentAction)($charge));
+    Livewire::actingAs($this->collector)
+        ->withQueryParams(['charge' => $charge->getKey()])
+        ->test(EnrollAndCollect::class)
+        ->assertSet('collectionChargeId', $charge->getKey())
+        ->assertFormSet(['amount' => '550.000'], 'collectForm');
+})->with(['create_payment', 'view_charge', 'create_enrollment']);

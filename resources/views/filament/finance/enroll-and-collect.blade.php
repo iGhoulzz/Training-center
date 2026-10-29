@@ -79,6 +79,8 @@
                 <div class="flex items-baseline justify-between gap-3"><dt class="text-gray-400">{{ __('collect.batch') }}</dt><dd class="min-w-0 text-end font-medium wrap-anywhere">{{ $bill['batch'] }}</dd></div>
                 <div class="flex items-baseline justify-between gap-3"><dt class="text-gray-400">{{ __('collect.preview_list_price') }}</dt><dd class="text-[13px] font-medium">@if ($bill['list'] !== null)<x-admin.money :amount="$bill['list']" />@else{{ __('collect.preview_pending') }}@endif</dd></div>
                 @if (auth()->user()?->can('apply_discount'))<div class="flex items-baseline justify-between gap-3"><dt class="text-gray-400">{{ __('collect.discount') }}</dt><dd class="text-end text-[13px] font-medium text-success-400">{{ $bill['discount'] }}</dd></div>@endif
+                @if ($bill['paid'] !== null)<div class="flex items-baseline justify-between gap-3" data-bill-paid><dt class="text-gray-400">{{ __('collect.bill_paid_so_far') }}</dt><dd class="text-[13px] font-medium"><x-admin.money :amount="$bill['paid']" /></dd></div>@endif
+                @if ($bill['remaining'] !== null)<div class="flex items-baseline justify-between gap-3" data-bill-remaining><dt class="text-gray-400">{{ __('collect.bill_remaining') }}</dt><dd class="text-[13px] font-semibold text-primary-400"><x-admin.money :amount="$bill['remaining']" /></dd></div>@endif
             </dl>
             <div class="mx-4.5 flex flex-wrap items-baseline justify-between gap-3 border-t border-hairline-faint pt-3.5 pb-4">
                 <span class="text-[13px] font-semibold">{{ __('collect.preview_final_amount') }}</span>
