@@ -6,7 +6,7 @@
 <div class="grid min-w-0 gap-5 text-[12.5px] leading-relaxed text-gray-300 lg:grid-cols-3">
     <section class="flex min-w-0 flex-col gap-2">
         <h3 class="text-[12px] font-semibold text-gray-50">{{ __('charges.help_cards_title') }}</h3>
-        <p>{{ __('charges.help_cards_total') }}</p>
+        <p>{{ __('charges.help_cards_total', ['unpaid' => __('charges.unpaid'), 'part_paid' => __('charges.part_paid')]) }}</p>
         <p>{{ __('charges.help_cards_sum') }}</p>
         <p>{{ __('charges.help_cards_written_off') }}</p>
     </section>

@@ -110,11 +110,11 @@ return [
     // one-line tooltips on the three row buttons.
     'help_heading' => 'How to read this page',
     'help_cards_title' => 'The four cards at the top',
-    'help_cards_total' => 'Each card is the total still owed on unpaid bills, grouped by how long the bill has been owed. The days are counted from the bill\'s due date, and a bill that is not yet due is in the first card.',
+    'help_cards_total' => 'Each card is the total still owed on bills not yet fully paid (:unpaid and :part_paid), grouped by how long the bill has been owed. The days are counted from the bill\'s due date, and a bill that is not yet due is in the first card.',
     'help_cards_sum' => 'A card adds up every student: two students who each owe 550.000 LYD show 1100.000 LYD together.',
     'help_cards_written_off' => 'Written-off bills are not in the cards.',
     'help_rows_title' => 'Each row',
-    'help_row_billed' => 'Billed is the bill total after any discount.',
+    'help_row_billed' => 'Billed is the bill total after any discount or adjustment.',
     'help_row_paid' => 'Paid, with its percentage, is what has been collected so far.',
     'help_row_owed' => 'The coloured amount is what is still owed.',
     'help_row_badge' => 'The badge says :unpaid, :part_paid, :settled or :written_off.',

@@ -64,28 +64,30 @@ beforeEach(function (): void {
 dataset('runs list sentinels', [
     'English' => ['en', [
         'heading' => 'How to read this page',
-        'what' => 'Each card is one payroll run: a batch of pay worked out and checked here before it is approved',
+        'what' => 'Each card is one payroll run: a set of pay lines worked out and checked here before it is approved',
         'posted' => 'Finalized means posted, not paid. Paying staff happens outside this system',
-        'monthly' => 'A salary is split by calendar month and by rate, so a raise in the middle of the period gives two correctly priced lines',
-        'instructor' => 'Each assignment is paid as one lump, and only once',
+        'monthly' => 'Works out the pay of salaried staff for the period you choose. A salary is split by calendar month and by rate, so a raise in the middle of the period gives two correctly priced lines',
+        'instructor' => 'Works out instructors\' pay for the hours assigned to their batches. Each assignment is counted as one lump, and posted only once',
         'adjustment' => 'Corrects one line of a finalized run, with a signed amount and a reason. The original line never changes',
         'badge' => 'The badge says Draft (still being checked, and it can be deleted) or Finalized (approved and locked)',
         'total' => 'Frozen line total is the sum of the run\'s lines, before bonuses and deductions',
-        'rates' => 'A later raise never changes a finalized run, which keeps the rate that applied at the time',
+        'rates' => 'A later raise never changes a finalized run, which keeps the rate it was worked out with',
+        'salary lines' => 'Salary lines are worked out when the draft is created; a rate entered later is not picked up, so delete the draft and create it again. Instructor lines are a preview until finalizing fixes their rate, hours and amount',
         'reports' => 'A correction counts in the month of the line it corrects',
         'create' => 'Starts a new draft run. Nothing is posted until you finalize it',
         'review' => 'Opens the run so you can check its lines. It changes nothing',
     ]],
     'Arabic' => ['ar', [
         'heading' => 'كيف تقرأ هذه الصفحة',
-        'what' => 'تمثل كل بطاقة مسير رواتب واحدًا: دفعة من الرواتب تُحتسب وتُراجع هنا قبل اعتمادها',
+        'what' => 'تمثل كل بطاقة مسير رواتب واحدًا: مجموعة من بنود الرواتب تُحتسب وتُراجع هنا قبل اعتمادها',
         'posted' => 'معتمد تعني مرحّل إلى الدفاتر وليس مدفوعًا. ويتم دفع الرواتب خارج هذا النظام',
-        'monthly' => 'فإذا حدثت زيادة في منتصف الفترة ظهر بندان بسعر صحيح لكل منهما',
-        'instructor' => 'يُصرف كل إسناد دفعة واحدة، ومرة واحدة فقط',
+        'monthly' => 'يحتسب رواتب الموظفين بالراتب الشهري عن الفترة التي تختارها. يُقسَّم الراتب بحسب الشهر الميلادي وبحسب معدل الأجر، فإذا حدثت زيادة في منتصف الفترة ظهر بندان بسعر صحيح لكل منهما',
+        'instructor' => 'يحتسب أجور المدربين عن الساعات المسندة إليهم في دفعاتهم. يُحتسب كل إسناد مبلغًا واحدًا، ويُعتمد مرة واحدة فقط',
         'adjustment' => 'ولا يتغير البند الأصلي أبدًا',
-        'badge' => 'تبيّن الشارة الحالة: مسودة (ما زالت قيد المراجعة ويمكن حذفها) أو معتمد (تم اعتمادها وأُغلقت)',
+        'badge' => 'تبيّن الشارة الحالة: مسودة (ما زالت قيد المراجعة ويمكن حذفها) أو معتمد (اعتُمد وأُغلق)',
         'total' => 'إجمالي البند المثبت هو مجموع بنود المسير قبل المكافآت والخصومات',
-        'rates' => 'لا تغيّر الزيادة اللاحقة مسيرًا معتمدًا، فهو يحتفظ بالمعدل الذي كان ساريًا وقتها',
+        'rates' => 'لا تغيّر الزيادة اللاحقة مسيرًا معتمدًا، فهو يحتفظ بالمعدل الذي احتُسب به',
+        'salary lines' => 'تُحتسب بنود الرواتب الشهرية عند إنشاء المسودة، ولا يدخل فيها معدل يُسجَّل بعد ذلك؛ احذف المسودة وأنشئها من جديد. أما بنود المدربين فمعاينة إلى أن يثبّت الاعتماد معدلها وساعاتها ومبلغها',
         'reports' => 'ويُحسب التصحيح في شهر البند الذي يصححه',
         'create' => 'يبدأ مسيرًا جديدًا بصفة مسودة. لا يُرحَّل شيء إلى أن تعتمده',
         'review' => 'يفتح المسير لتراجع بنوده. ولا يغيّر شيئًا',
@@ -111,7 +113,7 @@ dataset('review sentinels', [
         'what' => 'This is one payroll run with every line in it. Check the lines here before you finalize',
         'rate' => 'Rate is the monthly salary or the hourly rate that applied. Hours are shown on instructor lines only',
         'amount' => 'Total after bonuses and deductions adds the signed bonuses and deductions on that line',
-        'frozen' => 'Finalizing fixes each line\'s rate, hours and amount for good, so a later raise does not change them',
+        'frozen' => 'Salary lines are worked out when the draft is created; a rate entered later is not picked up, so delete the draft and create it again. Instructor lines are a preview until finalizing fixes their rate, hours and amount',
         'add' => 'Not for correcting a finalized run: use an Adjustment run for that',
         'finalize' => 'Approves the run and posts it to the books. Afterwards nothing on it can be edited, added to or deleted. It does not pay anyone',
         'delete' => 'Deletes this draft run and its lines. A finalized run can never be deleted',
@@ -121,9 +123,9 @@ dataset('review sentinels', [
         'what' => 'هذا مسير رواتب واحد بكل بنوده. راجع البنود هنا قبل الاعتماد',
         'rate' => 'معدل الأجر هو الراتب الشهري أو الأجر بالساعة الساري. وتظهر الساعات في بنود المدربين فقط',
         'amount' => 'فيضيف إليه المكافآت والخصومات الموجبة والسالبة على ذلك البند',
-        'frozen' => 'ويثبّت الاعتماد معدل كل بند وساعاته ومبلغه نهائيًا، فلا تغيّرها زيادة لاحقة',
-        'add' => 'وليست لتصحيح مسير معتمد؛ لذلك استخدم مسير تسوية',
-        'finalize' => 'تعتمد المسير وترحّله إلى الدفاتر. وبعدها لا يمكن تعديل شيء فيه أو الإضافة إليه أو حذفه. وهي لا تدفع لأحد شيئًا',
+        'frozen' => 'تُحتسب بنود الرواتب الشهرية عند إنشاء المسودة، ولا يدخل فيها معدل يُسجَّل بعد ذلك؛ احذف المسودة وأنشئها من جديد. أما بنود المدربين فمعاينة إلى أن يثبّت الاعتماد معدلها وساعاتها ومبلغها',
+        'add' => 'وليس لتصحيح مسير معتمد؛ لذلك استخدم مسير تسوية',
+        'finalize' => 'يعتمد المسير ويرحّله إلى الدفاتر. وبعدها لا يمكن تعديل شيء فيه أو الإضافة إليه أو حذفه. وهو لا يدفع لأحد شيئًا',
         'delete' => 'أما المسير المعتمد فلا يمكن حذفه أبدًا',
     ]],
 ]);
@@ -146,7 +148,7 @@ dataset('compensation list sentinels', [
         'heading' => 'How to read this page',
         'history' => 'This is the history of pay rates: a monthly salary or an hourly rate, each from a date. One person can have both',
         'raise' => 'A raise adds a new rate from a date. It never edits the old one: the old rate ends the day before and stays in the history',
-        'past runs' => 'Past payroll runs keep the rate that applied at the time, so a raise never changes pay already worked out',
+        'past runs' => 'Past payroll runs keep the rate they were worked out with, so a raise never changes a run already made',
         'amount' => 'Amount is the monthly salary, or the rate per hour, depending on the type',
         'dates' => 'Current means it has no end date yet',
         'overlap' => 'Two rates of the same type for one person cannot overlap',
@@ -156,11 +158,11 @@ dataset('compensation list sentinels', [
         'heading' => 'كيف تقرأ هذه الصفحة',
         'history' => 'هذا سجل معدلات الأجر: راتب شهري أو أجر بالساعة، لكل منهما تاريخ سريان. ويمكن أن يكون للشخص الواحد النوعان معًا',
         'raise' => 'تضيف الزيادة معدلًا جديدًا من تاريخ معين، ولا تعدّل المعدل القديم أبدًا: ينتهي المعدل القديم في اليوم السابق ويبقى في السجل',
-        'past runs' => 'تحتفظ مسيرات الرواتب السابقة بالمعدل الذي كان ساريًا وقتها، فلا تغيّر الزيادة رواتب سبق احتسابها',
+        'past runs' => 'تحتفظ مسيرات الرواتب السابقة بالمعدل الذي احتُسبت به، فلا تغيّر الزيادة مسيرًا سبق إنشاؤه',
         'amount' => 'المبلغ هو الراتب الشهري أو الأجر عن الساعة بحسب النوع',
         'dates' => 'وحالي تعني أنه لا تاريخ انتهاء له بعد',
         'overlap' => 'لا يجوز أن يتداخل معدلان من النوع نفسه للشخص الواحد',
-        'button' => 'تضيف معدلًا جديدًا من التاريخ الذي تختاره، لزيادة أو تخفيض أو معدل أول. ولا يمكنها تعديل معدل قائم أو حذفه',
+        'button' => 'يضيف معدلًا جديدًا من التاريخ الذي تختاره، لزيادة أو تخفيض أو معدل أول. ولا يمكنه تعديل معدل قائم أو حذفه',
     ]],
 ]);
 
@@ -180,14 +182,14 @@ dataset('compensation create sentinels', [
     'English' => ['en', [
         'heading' => 'How to read this page',
         'adds' => 'Saving adds a new rate from the effective date. The employee\'s earlier rate of the same type ends the day before',
-        'never edits' => 'It never edits the old rate, and past payroll runs keep the rate that applied at the time',
+        'never edits' => 'It never edits the old rate, and past payroll runs keep the rate they were worked out with',
         'date' => 'The date must come after the start of the rate it replaces. A date that overlaps the existing history is refused',
         'amount' => 'Amount is a monthly salary or an hourly rate, in LYD, depending on the type you choose',
     ]],
     'Arabic' => ['ar', [
         'heading' => 'كيف تقرأ هذه الصفحة',
         'adds' => 'يضيف الحفظ معدلًا جديدًا من تاريخ السريان. وينتهي معدل الموظف السابق من النوع نفسه في اليوم السابق',
-        'never edits' => 'لا يعدّل الحفظ المعدل القديم، وتحتفظ مسيرات الرواتب السابقة بالمعدل الذي كان ساريًا وقتها',
+        'never edits' => 'لا يعدّل الحفظ المعدل القديم، وتحتفظ مسيرات الرواتب السابقة بالمعدل الذي احتُسبت به',
         'date' => 'يجب أن يكون التاريخ بعد بداية المعدل الذي سيحل محله. ويُرفض أي تاريخ يتداخل مع السجل القائم',
         'amount' => 'المبلغ هو راتب شهري أو أجر بالساعة، بالدينار الليبي، بحسب النوع الذي تختاره',
     ]],
@@ -231,29 +233,35 @@ dataset('payroll tooltips', [
         'ابدأ مسيرًا جديدًا بصفة مسودة. لا يُرحَّل شيء إلى أن تعتمده.',
         'افتح هذا المسير لتراجع بنوده. لا يغيّر شيئًا.',
         'أضف مكافأة أو خصمًا إلى بند من هذه المسودة. ليس لتصحيح مسير معتمد.',
-        'اعتمد هذا المسير وارحّله. لا يمكن تغييره بعد ذلك، ولا يدفع لأحد شيئًا.',
+        'اعتمد هذا المسير ورحِّله. لا يمكن تغييره بعد ذلك، ولا يدفع لأحد شيئًا.',
         'احذف هذه المسودة وبنودها. لا يمكن حذف مسير معتمد.',
         'أضف معدلًا جديدًا من تاريخ معين. لا يُعدَّل المعدل القائم أبدًا.',
     ]],
 ]);
 
-it('puts a translated one-line tooltip on every payroll and compensation button in :dataset', function (string $locale, array $tooltips) {
+it('puts the right translated one-line tooltip on each payroll and compensation button in :dataset', function (string $locale, array $tooltips) {
     app()->setLocale($locale);
     [$create, $review, $add, $finalize, $delete, $change] = $tooltips;
     $run = PayrollRun::factory()->create();
     $permissions = ['view_any_payroll_run', 'view_payroll_run', 'run_payroll', 'finalize_payroll', 'delete_payroll_run', 'view_any_staff_compensation', 'create_staff_compensation'];
     $actor = ($this->actor)($permissions);
 
-    $list = ($this->markupOf)(Livewire::actingAs($actor)->test(ListPayrollRuns::class)->html());
-    $reviewPage = ($this->markupOf)(Livewire::actingAs($actor)->test(ReviewPayrollRun::class, ['record' => $run->getKey()])->html());
-    $compensation = ($this->markupOf)(Livewire::actingAs($actor)->test(ListStaffCompensations::class)->html());
+    // Each tooltip is read off ITS OWN action, so a swap between two buttons fails.
+    $list = Livewire::actingAs($actor)->test(ListPayrollRuns::class);
+    $reviewPage = Livewire::actingAs($actor)->test(ReviewPayrollRun::class, ['record' => $run->getKey()]);
+    $compensation = Livewire::actingAs($actor)->test(ListStaffCompensations::class);
 
-    expect($list)->toContain($create)
-        ->and($list)->toContain($review)
-        ->and($reviewPage)->toContain($add)
-        ->and($reviewPage)->toContain($finalize)
-        ->and($reviewPage)->toContain($delete)
-        ->and($compensation)->toContain($change);
+    expect($list->instance()->getAction('create')->getTooltip())->toBe($create)
+        ->and($list->instance()->getTable()->getAction('review')->getTooltip())->toBe($review)
+        ->and($reviewPage->instance()->getAction('add_adjustment')->getTooltip())->toBe($add)
+        ->and($reviewPage->instance()->getAction('finalize')->getTooltip())->toBe($finalize)
+        ->and($reviewPage->instance()->getAction('delete')->getTooltip())->toBe($delete)
+        ->and($compensation->instance()->getAction('create')->getTooltip())->toBe($change);
+
+    // And each one reaches the rendered page.
+    expect(($this->markupOf)($list->html()))->toContain($create)->toContain($review)
+        ->and(($this->markupOf)($reviewPage->html()))->toContain($add)->toContain($finalize)->toContain($delete)
+        ->and(($this->markupOf)($compensation->html()))->toContain($change);
 })->with('payroll tooltips');
 
 it('still lists the runs for an actor who may only read them', function () {

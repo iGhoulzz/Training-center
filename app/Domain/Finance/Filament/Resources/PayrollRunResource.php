@@ -14,6 +14,7 @@ use App\Domain\Finance\Models\PayrollLineAdjustment;
 use App\Domain\Finance\Models\PayrollRun;
 use App\Domain\Finance\Services\PayrollCalculator;
 use App\Domain\Finance\Support\Money;
+use App\Filament\HelpPanel;
 use BackedEnum;
 use Filament\Actions\Action;
 use Filament\Forms\Components\DatePicker;
@@ -25,7 +26,6 @@ use Filament\Infolists\Components\TextEntry;
 use Filament\Resources\Resource;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Utilities\Get;
-use Filament\Schemas\Components\View;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\Layout\Split;
@@ -293,18 +293,11 @@ final class PayrollRunResource extends Resource
     }
 
     /**
-     * @param  string  $id  Stable and unique per page: the browser remembers open or closed under it.
      * @param  list<array{title: string, lines?: list<string>, terms?: array<string, string>}>  $groups
      */
     private static function helpPanel(string $id, array $groups): Section
     {
-        return Section::make(__('payroll.help_heading'))
-            ->id($id)
-            ->icon(Heroicon::OutlinedInformationCircle)
-            ->collapsible()
-            ->persistCollapsed()
-            ->schema([View::make('filament.finance.page-help')->viewData(['groups' => $groups])])
-            ->extraAttributes(['class' => 'rounded-xl! [&_.fi-section-content]:p-3.75!']);
+        return HelpPanel::make($id, __('payroll.help_heading'), 'filament.finance.page-help', ['groups' => $groups]);
     }
 
     /** @return Builder<PayrollRun> */

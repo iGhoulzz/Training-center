@@ -9,6 +9,7 @@ use App\Domain\Finance\Filament\Resources\StaffCompensationResource\Pages\Create
 use App\Domain\Finance\Filament\Resources\StaffCompensationResource\Pages\ListStaffCompensations;
 use App\Domain\Finance\Filament\Resources\StaffCompensationResource\Pages\ViewStaffCompensation;
 use App\Domain\Finance\Models\StaffCompensation;
+use App\Filament\HelpPanel;
 use App\Models\User;
 use BackedEnum;
 use Filament\Forms\Components\DatePicker;
@@ -17,7 +18,6 @@ use Filament\Forms\Components\TextInput;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Resources\Resource;
 use Filament\Schemas\Components\Section;
-use Filament\Schemas\Components\View;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\Layout\Split;
@@ -205,18 +205,11 @@ final class StaffCompensationResource extends Resource
     }
 
     /**
-     * @param  string  $id  Stable and unique per page: the browser remembers open or closed under it.
      * @param  list<array{title: string, lines?: list<string>, terms?: array<string, string>}>  $groups
      */
     private static function helpPanel(string $id, array $groups): Section
     {
-        return Section::make(__('payroll.help_heading'))
-            ->id($id)
-            ->icon(Heroicon::OutlinedInformationCircle)
-            ->collapsible()
-            ->persistCollapsed()
-            ->schema([View::make('filament.finance.page-help')->viewData(['groups' => $groups])])
-            ->extraAttributes(['class' => 'rounded-xl! [&_.fi-section-content]:p-3.75!']);
+        return HelpPanel::make($id, __('payroll.help_heading'), 'filament.finance.page-help', ['groups' => $groups]);
     }
 
     /** @return Builder<StaffCompensation> */

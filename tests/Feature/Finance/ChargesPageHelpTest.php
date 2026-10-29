@@ -68,10 +68,10 @@ beforeEach(function (): void {
 /** @return array<string, array{string, list<string>}> locale => sentinel phrases, one per key group */
 dataset('help sentinels', [
     'English' => ['en', [
-        'cards' => 'Each card is the total still owed on unpaid bills',
+        'cards' => 'Each card is the total still owed on bills not yet fully paid (Unpaid and Part paid)',
         'sum' => 'two students who each owe 550.000 LYD show 1100.000 LYD together',
         'written off cards' => 'Written-off bills are not in the cards',
-        'billed' => 'Billed is the bill total after any discount',
+        'billed' => 'Billed is the bill total after any discount or adjustment',
         'paid' => 'Paid, with its percentage, is what has been collected so far',
         'owed' => 'The coloured amount is what is still owed',
         'badge' => 'The badge says Unpaid, Part paid, Settled or Written off',
@@ -81,15 +81,15 @@ dataset('help sentinels', [
         'reversal' => 'A reversed payment no longer counts as paid, and its amount is owed again',
     ]],
     'Arabic' => ['ar', [
-        'cards' => 'تعرض كل بطاقة إجمالي ما لا يزال مستحقًا على الفواتير غير المسددة',
+        'cards' => 'تعرض كل بطاقة إجمالي ما لا يزال مستحقًا على الفواتير التي لم تُسدَّد بالكامل (غير مسدد ومسدد جزئيًا)',
         'sum' => 'فإذا كان على كل من طالبين 550.000 د.ل. فتظهر البطاقة 1100.000 د.ل.',
         'written off cards' => 'الفواتير المشطوبة لا تدخل في هذه البطاقات',
-        'billed' => 'المبلغ المفوتر هو إجمالي الفاتورة بعد الخصم',
+        'billed' => 'المبلغ المفوتر هو إجمالي الفاتورة بعد الخصم أو التعديل',
         'paid' => 'المبلغ المدفوع ونسبته المئوية هو ما جرى تحصيله حتى الآن',
         'owed' => 'المبلغ الملوّن هو ما لا يزال مستحقًا',
         'badge' => 'الشارة تبيّن الحالة: غير مسدد أو مسدد جزئيًا أو مسدد أو مشطوب',
-        'collect' => 'تسجّل دفعة من المبلغ الذي لا يزال مستحقًا، سواء كانت الأولى أو قسطًا لاحقًا',
-        'adjust' => 'تغيّر مبلغ الفاتورة نفسه مع ذكر السبب',
+        'collect' => 'يسجّل دفعة من المبلغ الذي لا يزال مستحقًا، سواء كانت الأولى أو قسطًا لاحقًا',
+        'adjust' => 'يغيّر مبلغ الفاتورة نفسه مع ذكر السبب',
         'write off' => 'وتبقى الفاتورة المشطوبة محسوبة في رصيد الطالب',
         'reversal' => 'الدفعة المعكوسة لا تُحتسب مدفوعة بعد الآن، ويعود مبلغها مستحقًا',
     ]],

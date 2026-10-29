@@ -7,14 +7,13 @@ namespace App\Domain\Finance\Filament\Resources\ChargeResource\Pages;
 use App\Domain\Finance\Filament\Resources\ChargeResource;
 use App\Domain\Finance\Reports\OutstandingAgedReport;
 use App\Domain\Finance\Support\Money;
+use App\Filament\HelpPanel;
 use App\Support\CentreCalendar;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Resources\Pages\ListRecords;
 use Filament\Schemas\Components\Grid;
 use Filament\Schemas\Components\Section;
-use Filament\Schemas\Components\View;
 use Filament\Schemas\Schema;
-use Filament\Support\Icons\Heroicon;
 use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\HtmlString;
 use Livewire\Attributes\Computed;
@@ -96,19 +95,11 @@ class ListCharges extends ListRecords
      * shows and what each button does, for staff who read "1100.000 LYD" over
      * two part-paid bills and wondered where it came from.
      *
-     * OPEN BY DEFAULT, AND A COLLAPSE IS REMEMBERED PER BROWSER. `persistCollapsed()`
-     * stores the state in the browser (Alpine's `$persist`, keyed on the section
-     * id), so it needs a stable id and no server column. Display only: nothing
-     * here reads or writes a bill.
+     * Open by default, collapse remembered per browser: see `HelpPanel`. Display
+     * only; nothing here reads or writes a bill.
      */
     private function helpPanel(): Section
     {
-        return Section::make(__('charges.help_heading'))
-            ->id('charges-help')
-            ->icon(Heroicon::OutlinedInformationCircle)
-            ->collapsible()
-            ->persistCollapsed()
-            ->schema([View::make('filament.finance.charges-help')])
-            ->extraAttributes(['class' => 'rounded-xl! [&_.fi-section-content]:p-3.75!']);
+        return HelpPanel::make('charges-help', __('charges.help_heading'), 'filament.finance.charges-help');
     }
 }
