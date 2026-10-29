@@ -7,6 +7,7 @@ use App\Domain\Finance\Actions\CreatePayrollRunAction;
 use App\Domain\Finance\Enums\CompensationType;
 use App\Domain\Finance\Enums\PayrollRunType;
 use App\Domain\Finance\Models\PayrollLine;
+use App\Domain\Finance\Models\PayrollLineAdjustment;
 use App\Domain\Finance\Models\PayrollRun;
 use App\Domain\Finance\Models\StaffCompensation;
 use App\Models\User;
@@ -67,13 +68,14 @@ function salaryDraftWorkerEnvironment(): array
 }
 
 /**
- * One process doing one of: 'recalculate' | 'finalize' | 'raise'.
+ * One process doing one of: 'recalculate' | 'finalize' | 'raise' (subject: the person)
+ * | 'adjust' (subject: the line).
  */
 function salaryDraftWorker(
     string $operation,
     int $actorId,
     int $runId,
-    int $userId,
+    int $subjectId,
     string $readyPath,
     string $resultPath,
 ): Process {
@@ -82,9 +84,9 @@ function salaryDraftWorker(
         $app = require 'bootstrap/app.php';
         $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
-        [$script, $operation, $actorId, $runId, $userId, $readyPath, $resultPath] = $_SERVER['argv'];
+        [$script, $operation, $actorId, $runId, $subjectId, $readyPath, $resultPath] = $_SERVER['argv'];
 
-        $work = static function () use ($operation, $actorId, $runId, $userId, $readyPath): string {
+        $work = static function () use ($operation, $actorId, $runId, $subjectId, $readyPath): string {
             $actor = App\Models\User::query()->findOrFail((int) $actorId);
 
             // The snapshot is opened before the queue is joined (not for a rate change,
@@ -109,10 +111,20 @@ function salaryDraftWorker(
 
                     return 'finalized';
                 })(),
-                'raise' => (function () use ($actor, $userId): string {
+                'adjust' => (function () use ($actor, $subjectId): string {
+                    app(App\Domain\Finance\Actions\AddPayrollLineAdjustmentAction::class)->execute(
+                        $actor,
+                        App\Domain\Finance\Models\PayrollLine::query()->findOrFail((int) $subjectId),
+                        '200.000',
+                        'SENTINEL-RACING-BONUS',
+                    );
+
+                    return 'adjusted';
+                })(),
+                'raise' => (function () use ($actor, $subjectId): string {
                     app(App\Domain\Finance\Actions\ChangeCompensationAction::class)->execute(
                         $actor,
-                        (int) $userId,
+                        (int) $subjectId,
                         App\Domain\Finance\Enums\CompensationType::Salary,
                         '3600.000',
                         '2026-04-16',
@@ -138,7 +150,7 @@ function salaryDraftWorker(
         PHP;
 
     return new Process(
-        [PHP_BINARY, '-r', $script, $operation, (string) $actorId, (string) $runId, (string) $userId, $readyPath, $resultPath],
+        [PHP_BINARY, '-r', $script, $operation, (string) $actorId, (string) $runId, (string) $subjectId, $readyPath, $resultPath],
         base_path(),
         salaryDraftWorkerEnvironment(),
     );
@@ -220,7 +232,7 @@ beforeEach(function (): void {
  * @param  list<array{0: string, 1: User, 2: string}>  $steps  operation, actor, file name; started in order
  * @return array<string, string> outcome per file name
  */
-function salaryDraftRace(Closure $lock, array $steps, PayrollRun $run, User $employee, Closure $path): array
+function salaryDraftRace(Closure $lock, array $steps, PayrollRun $run, int $subjectId, Closure $path): array
 {
     $workers = [];
     $paths = [];
@@ -231,7 +243,7 @@ function salaryDraftRace(Closure $lock, array $steps, PayrollRun $run, User $emp
             $operation,
             (int) $actor->getKey(),
             (int) $run->getKey(),
-            (int) $employee->getKey(),
+            $subjectId,
             $paths[$name]['ready'],
             $paths[$name]['result'],
         );
@@ -298,7 +310,7 @@ it('lets two page openings recalculate one stale draft once, with no duplicate l
         fn () => PayrollRun::query()->whereKey($this->run->getKey())->lockForUpdate()->firstOrFail(),
         [['recalculate', $this->creator, 'first'], ['recalculate', $this->creator, 'second']],
         $this->run,
-        $this->employee,
+        (int) $this->employee->getKey(),
         $this->path,
     );
 
@@ -323,7 +335,7 @@ it('picks up a rate change that commits just before a finalize, never half of it
         fn () => User::query()->whereKey($this->employee->getKey())->lockForUpdate()->firstOrFail(),
         [['raise', $this->rateSetter, 'raise'], ['finalize', $this->finalizer, 'finalize']],
         $this->run,
-        $this->employee,
+        (int) $this->employee->getKey(),
         $this->path,
     );
 
@@ -344,7 +356,7 @@ it('does not pick up a rate change that commits just after a finalize', function
         fn () => User::query()->whereKey($this->employee->getKey())->lockForUpdate()->firstOrFail(),
         [['finalize', $this->finalizer, 'finalize'], ['raise', $this->rateSetter, 'raise']],
         $this->run,
-        $this->employee,
+        (int) $this->employee->getKey(),
         $this->path,
     );
 
@@ -356,4 +368,34 @@ it('does not pick up a rate change that commits just after a finalize', function
         ->and($line->computed_amount)->toBe('3000.000')
         ->and($line->finalized_at)->not->toBeNull()
         ->and(StaffCompensation::query()->where('user_id', $this->employee->getKey())->count())->toBe(2);
+});
+
+it('sees a bonus committed while it waited and moves it instead of cascading it away', function () {
+    app(ChangeCompensationAction::class)->execute(
+        $this->rateSetter,
+        (int) $this->employee->getKey(),
+        CompensationType::Salary,
+        '3600.000',
+        '2026-04-16',
+    );
+    $staleLine = $this->run->lines()->sole();
+
+    // The bonus lands on the stale line first; the recalculation queued behind it
+    // opened its snapshot before the bonus committed.
+    $outcomes = salaryDraftRace(
+        fn () => PayrollRun::query()->whereKey($this->run->getKey())->lockForUpdate()->firstOrFail(),
+        [['adjust', $this->creator, 'adjust'], ['recalculate', $this->creator, 'recalculate']],
+        $this->run,
+        (int) $staleLine->getKey(),
+        $this->path,
+    );
+
+    $first = $this->run->lines()->orderBy('segment_start')->firstOrFail();
+    $bonus = PayrollLineAdjustment::query()->sole();
+
+    expect($outcomes)->toBe(['adjust' => 'adjusted', 'recalculate' => 'changed'])
+        ->and($first->segment_end->toDateString())->toBe('2026-04-15')
+        ->and($bonus->payroll_line_id)->toBe($first->getKey())
+        ->and($bonus->amount)->toBe('200.000')
+        ->and($bonus->reason)->toBe('SENTINEL-RACING-BONUS');
 });

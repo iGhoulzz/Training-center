@@ -7,6 +7,7 @@ namespace App\Domain\Finance\Actions;
 use App\Domain\Finance\Enums\PayrollRunType;
 use App\Domain\Finance\Exceptions\SalaryAdjustmentsHaveNoLineException;
 use App\Domain\Finance\Models\PayrollLine;
+use App\Domain\Finance\Models\PayrollLineAdjustment;
 use App\Domain\Finance\Models\PayrollRun;
 use App\Domain\Finance\Services\PayrollCalculator;
 use App\Domain\Staff\Support\ActivityEvent;
@@ -50,7 +51,7 @@ use Spatie\Activitylog\Support\CauserResolver;
  * LOCK ORDER, shared with FinalizePayrollRunAction, ChangeCompensationAction and
  * CompensationPeriodInvariantService:
  *
- *   run row  ->  users rows, ascending id  ->  rate rows  ->  line rows
+ *   run row  ->  users rows, ascending id  ->  rate rows  ->  line rows  ->  adjustments
  *
  * `ChangeCompensationAction` takes the person's users row before it touches a rate,
  * so holding that row while the rates are read (a locking read, to bypass any older
@@ -126,8 +127,20 @@ final class RecalculateSalaryDraftAction
             ->where('payroll_run_id', $lockedRun->getKey())
             ->orderBy('id')
             ->lockForUpdate()
-            ->with('adjustments')
             ->get();
+
+        /*
+         * Locking, like the lines: a bonus committed by another session after this
+         * transaction's snapshot was opened must be seen, or moving "every"
+         * adjustment off a vanished line would miss it and the cascade would
+         * delete it unseen.
+         */
+        $adjustments = PayrollLineAdjustment::query()
+            ->whereIn('payroll_line_id', $stored->modelKeys())
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get()
+            ->groupBy('payroll_line_id');
 
         // Only well-formed salary lines are reconciled; any other shape is left for
         // the finalize shape check to refuse, exactly as before.
@@ -160,7 +173,7 @@ final class RecalculateSalaryDraftAction
         $destinations = [];
 
         foreach ($vanished as $line) {
-            if ($line->adjustments->isEmpty()) {
+            if ($adjustments->get($line->getKey(), collect())->isEmpty()) {
                 continue;
             }
 
@@ -205,7 +218,7 @@ final class RecalculateSalaryDraftAction
         $reattached = 0;
 
         foreach ($vanished as $line) {
-            foreach ($line->adjustments as $adjustment) {
+            foreach ($adjustments->get($line->getKey(), collect()) as $adjustment) {
                 $target = $matched[$destinations[$line->getKey()]] ?? $created[$destinations[$line->getKey()]];
                 // Moved BEFORE the line is deleted: the foreign key cascades.
                 $adjustment->update(['payroll_line_id' => $target->getKey()]);
