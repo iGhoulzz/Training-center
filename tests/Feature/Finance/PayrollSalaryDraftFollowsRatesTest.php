@@ -256,12 +256,32 @@ it('adds a line for a person who received a rate after the draft was opened', fu
         ->and($run->lines()->count())->toBe(2);
 });
 
-it('leaves instructor and adjustment runs alone', function () {
-    $instructorRun = PayrollRun::factory()->instructorBatch()->create();
-    $line = PayrollLine::factory()->instructor()->for($instructorRun, 'run')->create();
+it('leaves instructor and adjustment runs alone', function (string $state) {
+    $run = PayrollRun::factory()->{$state}()->create();
+    $line = $state === 'instructorBatch'
+        ? PayrollLine::factory()->instructor()->for($run, 'run')->create()
+        : PayrollLine::factory()->adjustment()->for($run, 'run')->create();
+    $activityBefore = Activity::query()->count();
 
-    expect(app(RecalculateSalaryDraftAction::class)->execute($this->creator, $instructorRun))->toBeFalse()
-        ->and($instructorRun->lines()->sole()->getKey())->toBe($line->getKey());
+    expect(app(RecalculateSalaryDraftAction::class)->execute($this->creator, $run))->toBeFalse()
+        ->and($run->lines()->sole()->getKey())->toBe($line->getKey())
+        ->and(Activity::query()->count())->toBe($activityBefore);
+})->with(['an instructor run' => ['instructorBatch'], 'an adjustment run' => ['adjustment']]);
+
+it('corrects a tampered figure in place, keeping the line id and its bonus', function () {
+    [$run] = ($this->aprilDraft)();
+    $line = $run->lines()->sole();
+    $line->update(['computed_amount' => '2999.000']);
+    $bonus = PayrollLineAdjustment::factory()->for($line, 'line')->create(['amount' => '40.000', 'reason' => 'SENTINEL-KEPT']);
+
+    expect(app(RecalculateSalaryDraftAction::class)->execute($this->creator, $run))->toBeTrue();
+
+    $after = $run->lines()->sole();
+
+    expect($after->getKey())->toBe($line->getKey())
+        ->and($after->computed_amount)->toBe('3000.000')
+        ->and($bonus->fresh()->payroll_line_id)->toBe($line->getKey())
+        ->and($bonus->fresh()->reason)->toBe('SENTINEL-KEPT');
 });
 
 /*
@@ -421,7 +441,7 @@ it('shows that refusal on the review page as a persistent danger toast and still
     ($this->reviewPage)($viewer, $run)->assertSuccessful();
 
     expect(salaryDraftNotifications())->toBe([[
-        'title' => 'A bonus or deduction on this draft cannot be kept with the current pay rates, because the employee has no other line in that month. Nothing was changed; delete the draft and create it again.',
+        'title' => 'A bonus or deduction on this draft cannot be kept with the current pay rates, because the employee has no line left in that month. Nothing was changed; delete the draft and create it again.',
         'status' => 'danger',
         'duration' => 'persistent',
     ]]);
@@ -446,7 +466,7 @@ it('shows the refusal as a danger toast when finalize is pressed on the page', f
     ($this->reviewPage)($operator, $run)->callAction('finalize');
 
     expect(salaryDraftNotifications())->toBe([[
-        'title' => 'A bonus or deduction on this draft cannot be kept with the current pay rates, because the employee has no other line in that month. Nothing was changed; delete the draft and create it again.',
+        'title' => 'A bonus or deduction on this draft cannot be kept with the current pay rates, because the employee has no line left in that month. Nothing was changed; delete the draft and create it again.',
         'status' => 'danger',
         'duration' => 'persistent',
     ]])

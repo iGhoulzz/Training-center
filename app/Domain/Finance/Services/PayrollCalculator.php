@@ -43,6 +43,11 @@ final class PayrollCalculator
          * before those locks were granted; ChangeCompensationAction holds the
          * same users lock while it writes a rate, so a locking read here sees
          * a rate change either entirely or not at all.
+         *
+         * Cost, stated plainly: the range scan runs on `staff_compensation_type_index`
+         * and next-key-locks every salary rate row (and the gaps between them), so a
+         * compensation insert waits for a recalculation or finalize that is running.
+         * Both are short transactions, so that wait is acceptable.
          */
         return StaffCompensation::query()
             ->when($lockRates, fn ($query) => $query->lockForUpdate())

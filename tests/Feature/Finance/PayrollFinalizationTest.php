@@ -394,8 +394,8 @@ it('uses a locking overlap scan after concurrent finalizers opened stale snapsho
  * Changed in P4-T38. This test used to prove finalize REFUSES two overlapping
  * segments inside one draft. A salary draft now follows the rates on file, so
  * finalize first replaces any such lines with what the rates produce (one
- * non-overlapping segment per rate row and month); the overlap check inside the
- * run remains as a backstop but is no longer reachable from stored lines.
+ * non-overlapping segment per rate row and month). The overlap check inside the
+ * run is reachable only from overlapping rate rows, which the next test covers.
  */
 it('repairs overlapping salary segments inside the same draft run from the rates before finalizing', function () {
     $actor = ($this->finalizationActor)();
@@ -434,6 +434,39 @@ it('repairs overlapping salary segments inside the same draft run from the rates
         ->and($lines[0]->segment_end->toDateString())->toBe('2026-01-31')
         ->and($lines[0]->computed_amount)->toBe('2500.000')
         ->and($lines[0]->finalized_at)->not->toBeNull();
+});
+
+it('still refuses a draft whose rates overlap, and posts nothing', function () {
+    $actor = ($this->finalizationActor)();
+    $employee = User::factory()->create();
+
+    // Two OPEN salary rows for one person, which ChangeCompensationAction would never
+    // write: the recalculation cannot repair what the rates themselves contradict.
+    StaffCompensation::factory()->create([
+        'user_id' => $employee->getKey(),
+        'amount' => '3000.000',
+        'effective_from' => '2026-01-01',
+        'effective_to' => null,
+    ]);
+    StaffCompensation::factory()->create([
+        'user_id' => $employee->getKey(),
+        'amount' => '500.000',
+        'effective_from' => '2026-04-10',
+        'effective_to' => null,
+    ]);
+    $run = app(CreatePayrollRunAction::class)->execute(
+        $actor,
+        PayrollRunType::MonthlySalary,
+        '2026-04-01',
+        '2026-04-30',
+    );
+
+    expect($run->lines()->count())->toBe(2)
+        ->and(fn () => app(FinalizePayrollRunAction::class)->execute($actor, $run))
+        ->toThrow(ValidationException::class);
+
+    expect($run->fresh()?->finalized_at)->toBeNull()
+        ->and($run->lines()->whereNotNull('finalized_at')->count())->toBe(0);
 });
 
 it('authorizes finalization before reloading the run', function () {

@@ -60,6 +60,15 @@ use Spatie\Activitylog\Support\CauserResolver;
  * lines AND of every person whose salary rate intersects the period, because a
  * person who got a rate after the draft was opened has no line yet. Two openings of
  * the same page queue on the run row; the second then finds nothing to change.
+ *
+ * KNOWN, NARROW WINDOW. The people to lock are read plainly, after the run row is
+ * locked and before the rates are read with a lock. A person who is given a first
+ * salary rate in between is not user-locked, so a SECOND rate change for that person
+ * landing in the same instant can meet this transaction on the rate rows in the
+ * opposite order and raise a deadlock (MySQL 1213) that is not retried here. No
+ * money is damaged, since either transaction rolls back whole; the operator retries.
+ * The same stale-read gap is why a person rated after the draft was opened is simply
+ * picked up by the next recalculation or finalize.
  */
 final class RecalculateSalaryDraftAction
 {
