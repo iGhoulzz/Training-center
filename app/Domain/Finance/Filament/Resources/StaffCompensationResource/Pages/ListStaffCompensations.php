@@ -7,6 +7,7 @@ namespace App\Domain\Finance\Filament\Resources\StaffCompensationResource\Pages;
 use App\Domain\Finance\Filament\Resources\StaffCompensationResource;
 use Filament\Actions\Action;
 use Filament\Resources\Pages\ListRecords;
+use Filament\Schemas\Schema;
 
 final class ListStaffCompensations extends ListRecords
 {
@@ -17,8 +18,14 @@ final class ListStaffCompensations extends ListRecords
         return [
             Action::make('create')
                 ->label(__('payroll.change_compensation'))
+                ->tooltip(__('payroll.tooltip_change_compensation'))
                 ->visible(fn (): bool => StaffCompensationResource::canCreate())
                 ->url(fn (): string => StaffCompensationResource::getUrl('create')),
         ];
+    }
+
+    public function content(Schema $schema): Schema
+    {
+        return $schema->components([StaffCompensationResource::listHelpPanel(), ...parent::content($schema)->getComponents()]);
     }
 }

@@ -105,4 +105,25 @@ return [
     // P4-T32: the "Collect payment" row action, and the student line on a bill.
     'collect_payment' => 'Collect payment',
     'student_label' => ':code — :name',
+
+    // P4-T37: the "How to read this page" panel on the Charges list, and the
+    // one-line tooltips on the three row buttons.
+    'help_heading' => 'How to read this page',
+    'help_cards_title' => 'The four cards at the top',
+    'help_cards_total' => 'Each card is the total still owed on bills not yet fully paid (:unpaid and :part_paid), grouped by how long the bill has been owed. The days are counted from the bill\'s due date, and a bill that is not yet due is in the first card.',
+    'help_cards_sum' => 'A card adds up every student: two students who each owe 550.000 LYD show 1100.000 LYD together.',
+    'help_cards_written_off' => 'Written-off bills are not in the cards.',
+    'help_rows_title' => 'Each row',
+    'help_row_billed' => 'Billed is the bill total after any discount or adjustment.',
+    'help_row_paid' => 'Paid, with its percentage, is what has been collected so far.',
+    'help_row_owed' => 'The coloured amount is what is still owed.',
+    'help_row_badge' => 'The badge says :unpaid, :part_paid, :settled or :written_off.',
+    'help_buttons_title' => 'The buttons',
+    'help_collect_payment' => 'Takes a payment towards what is still owed, the first one or a later installment. Each payment gets its own receipt, and the amount owed goes down by itself.',
+    'help_adjust' => 'Changes the bill amount itself, with a reason. Not for recording money received.',
+    'help_write_off' => 'Gives up on collecting the debt, with a reason. Not for recording money received. A written-off bill still counts in the student\'s balance.',
+    'help_reversal' => 'A reversed payment no longer counts as paid, and its amount is owed again.',
+    'tooltip_collect_payment' => 'Take a payment towards what is still owed. Each payment gets its own receipt.',
+    'tooltip_adjust' => 'Change the bill amount itself. Not for recording money received.',
+    'tooltip_write_off' => 'Give up on collecting this debt. Not for recording money received.',
 ];

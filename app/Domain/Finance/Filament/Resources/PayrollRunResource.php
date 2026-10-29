@@ -14,6 +14,7 @@ use App\Domain\Finance\Models\PayrollLineAdjustment;
 use App\Domain\Finance\Models\PayrollRun;
 use App\Domain\Finance\Services\PayrollCalculator;
 use App\Domain\Finance\Support\Money;
+use App\Filament\HelpPanel;
 use BackedEnum;
 use Filament\Actions\Action;
 use Filament\Forms\Components\DatePicker;
@@ -228,11 +229,75 @@ final class PayrollRunResource extends Resource
                 ])->space(3)->extraAttributes(['class' => 'gap-3.25 p-4.25']),
             ])
             ->recordActions([
-                Action::make('review')->label(__('payroll.review_lines'))->authorize('view')
+                Action::make('review')->label(__('payroll.review_lines'))->tooltip(__('payroll.tooltip_review_lines'))->authorize('view')
                     ->url(fn (PayrollRun $record): string => self::getUrl('review', ['record' => $record]))->button()->color('gray'),
             ])
             ->defaultSort('id', 'desc')
             ->recordUrl(fn (PayrollRun $record): string => self::getUrl('review', ['record' => $record]));
+    }
+
+    /**
+     * "How to read this page" for the runs list (P4-T37): what a run is, the three
+     * kinds, what a card shows and what the two buttons do. Display only.
+     */
+    public static function listHelpPanel(): Section
+    {
+        return self::helpPanel('payroll-runs-help', [
+            ['title' => __('payroll.help_what_title'), 'lines' => [
+                __('payroll.help_runs_what_1'),
+                __('payroll.help_runs_what_2'),
+                __('payroll.help_runs_what_3'),
+            ]],
+            ['title' => __('payroll.help_runs_kinds_title'), 'terms' => [
+                PayrollRunType::MonthlySalary->label() => __('payroll.help_runs_kind_monthly_salary'),
+                PayrollRunType::InstructorBatch->label() => __('payroll.help_runs_kind_instructor_batch'),
+                PayrollRunType::Adjustment->label() => __('payroll.help_runs_kind_adjustment'),
+            ]],
+            ['title' => __('payroll.help_runs_card_title'), 'lines' => [
+                __('payroll.help_runs_card_state', ['draft' => __('payroll.draft'), 'finalized' => __('payroll.finalized')]),
+                __('payroll.help_runs_card_period'),
+                __('payroll.help_runs_card_total'),
+                __('payroll.help_runs_card_rates'),
+                __('payroll.help_runs_card_reports'),
+            ]],
+            ['title' => __('payroll.help_buttons_title'), 'terms' => [
+                __('payroll.create_run') => __('payroll.help_runs_create'),
+                __('payroll.review_lines') => __('payroll.help_runs_review'),
+            ]],
+        ]);
+    }
+
+    /**
+     * "How to read this page" for one run (P4-T37): the lines, and what each
+     * button does and must not be used for. Display only.
+     */
+    public static function reviewHelpPanel(): Section
+    {
+        return self::helpPanel('payroll-run-help', [
+            ['title' => __('payroll.help_what_title'), 'lines' => [
+                __('payroll.help_review_what_1'),
+                __('payroll.help_review_what_2'),
+            ]],
+            ['title' => __('payroll.help_review_lines_title'), 'lines' => [
+                __('payroll.help_review_line_rate'),
+                __('payroll.help_review_line_segment'),
+                __('payroll.help_review_line_amount'),
+                __('payroll.help_review_line_frozen'),
+            ]],
+            ['title' => __('payroll.help_buttons_title'), 'terms' => [
+                __('payroll.add_adjustment') => __('payroll.help_review_add_adjustment', ['adjustment' => PayrollRunType::Adjustment->label()]),
+                __('payroll.finalize') => __('payroll.help_review_finalize'),
+                __('payroll.delete_draft') => __('payroll.help_review_delete'),
+            ]],
+        ]);
+    }
+
+    /**
+     * @param  list<array{title: string, lines?: list<string>, terms?: array<string, string>}>  $groups
+     */
+    private static function helpPanel(string $id, array $groups): Section
+    {
+        return HelpPanel::make($id, __('payroll.help_heading'), 'filament.finance.page-help', ['groups' => $groups]);
     }
 
     /** @return Builder<PayrollRun> */
