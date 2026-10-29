@@ -21,6 +21,7 @@ use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\ViewRecord;
+use Filament\Schemas\Schema;
 use Filament\Support\Exceptions\Halt;
 use Filament\Support\Icons\Heroicon;
 use Illuminate\Database\Eloquent\Model;
@@ -78,6 +79,7 @@ final class ReviewPayrollRun extends ViewRecord
         return [
             Action::make('add_adjustment')
                 ->label(__('payroll.add_adjustment'))
+                ->tooltip(__('payroll.tooltip_add_adjustment'))
                 ->icon(Heroicon::OutlinedPlusCircle)
                 ->visible(fn (): bool => ! $this->run()->isFinalized() && PayrollRunResource::canCreate())
                 ->successNotificationTitle(__('payroll.adjustment_added'))
@@ -125,6 +127,7 @@ final class ReviewPayrollRun extends ViewRecord
 
             Action::make('finalize')
                 ->label(__('payroll.finalize'))
+                ->tooltip(__('payroll.tooltip_finalize'))
                 ->icon(Heroicon::OutlinedCheckCircle)
                 ->requiresConfirmation()
                 ->authorize('finalize')
@@ -139,6 +142,7 @@ final class ReviewPayrollRun extends ViewRecord
 
             Action::make('delete')
                 ->label(__('payroll.delete_draft'))
+                ->tooltip(__('payroll.tooltip_delete_draft'))
                 ->icon(Heroicon::OutlinedTrash)
                 ->color('danger')
                 ->requiresConfirmation()
@@ -149,6 +153,11 @@ final class ReviewPayrollRun extends ViewRecord
                     $this->redirect(PayrollRunResource::getUrl('index'));
                 }),
         ];
+    }
+
+    public function content(Schema $schema): Schema
+    {
+        return $schema->components([PayrollRunResource::reviewHelpPanel(), ...parent::content($schema)->getComponents()]);
     }
 
     /**

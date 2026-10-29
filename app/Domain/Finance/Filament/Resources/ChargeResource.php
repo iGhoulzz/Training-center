@@ -436,6 +436,7 @@ class ChargeResource extends Resource
     {
         return Action::make('collectPayment')
             ->label(__('charges.collect_payment'))
+            ->tooltip(__('charges.tooltip_collect_payment'))
             ->icon(Heroicon::OutlinedBanknotes)
             ->color('success')
             ->url(fn (Charge $record): string => EnrollAndCollect::getUrl(['charge' => $record->getKey()]))
@@ -478,6 +479,7 @@ class ChargeResource extends Resource
     {
         return Action::make('adjust')
             ->label(__('charges.adjust'))
+            ->tooltip(__('charges.tooltip_adjust'))
             ->icon(Heroicon::OutlinedPencilSquare)
             ->color('warning')
             ->authorize('adjust')
@@ -592,6 +594,7 @@ class ChargeResource extends Resource
     {
         return Action::make('writeOff')
             ->label(__('charges.write_off'))
+            ->tooltip(__('charges.tooltip_write_off'))
             ->icon(Heroicon::OutlinedNoSymbol)
             ->color('danger')
             ->authorize('writeOff')

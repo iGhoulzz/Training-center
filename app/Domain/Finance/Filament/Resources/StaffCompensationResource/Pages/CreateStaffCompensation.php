@@ -10,6 +10,7 @@ use App\Domain\Finance\Filament\Resources\StaffCompensationResource;
 use App\Models\User;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\CreateRecord;
+use Filament\Schemas\Schema;
 use Filament\Support\Exceptions\Halt;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Validation\ValidationException;
@@ -49,6 +50,11 @@ final class CreateStaffCompensation extends CreateRecord
         } catch (ValidationException $exception) {
             $this->showRefusal($exception);
         }
+    }
+
+    public function content(Schema $schema): Schema
+    {
+        return $schema->components([StaffCompensationResource::createHelpPanel(), ...parent::content($schema)->getComponents()]);
     }
 
     protected function getRedirectUrl(): string

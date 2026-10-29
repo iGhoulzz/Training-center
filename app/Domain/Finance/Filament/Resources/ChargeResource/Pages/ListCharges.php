@@ -7,6 +7,7 @@ namespace App\Domain\Finance\Filament\Resources\ChargeResource\Pages;
 use App\Domain\Finance\Filament\Resources\ChargeResource;
 use App\Domain\Finance\Reports\OutstandingAgedReport;
 use App\Domain\Finance\Support\Money;
+use App\Filament\HelpPanel;
 use App\Support\CentreCalendar;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Resources\Pages\ListRecords;
@@ -85,7 +86,20 @@ class ListCharges extends ListRecords
             ])->extraAttributes(['class' => 'rounded-xl! [&_.fi-section-content]:p-3.75! [&_.fi-sc]:gap-2.25!']);
         }
 
-        return $schema->components([Grid::make(['default' => 1, 'sm' => 2, 'xl' => 4])
+        return $schema->components([$this->helpPanel(), Grid::make(['default' => 1, 'sm' => 2, 'xl' => 4])
             ->extraAttributes(['class' => '[&>.fi-sc]:gap-3.5!'])->schema($cards), ...$content]);
+    }
+
+    /**
+     * "How to read this page" (P4-T37): what the four cards add up, what a row
+     * shows and what each button does, for staff who read "1100.000 LYD" over
+     * two part-paid bills and wondered where it came from.
+     *
+     * Open by default, collapse remembered per browser: see `HelpPanel`. Display
+     * only; nothing here reads or writes a bill.
+     */
+    private function helpPanel(): Section
+    {
+        return HelpPanel::make('charges-help', __('charges.help_heading'), 'filament.finance.charges-help');
     }
 }
