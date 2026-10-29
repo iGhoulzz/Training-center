@@ -22,7 +22,7 @@ use Livewire\Livewire;
 | list, one run's review page, the compensation list and the new-rate form. Each
 | panel states what the page is, what its figures mean and what each button does
 | and must not be used for; the compensation pages say that a raise adds a rate
-| from a date and never edits one, and that past runs keep the rate of the time.
+| from a date and keeps the old rate's amount, and that past runs keep the rate of the time.
 |
 | THE SENTINELS ARE WRITTEN OUT BY HAND, IN EACH LANGUAGE, not read back from the
 | catalogue, so a key that falls back to its own name, or to the English text on
@@ -147,22 +147,22 @@ dataset('compensation list sentinels', [
     'English' => ['en', [
         'heading' => 'How to read this page',
         'history' => 'This is the history of pay rates: a monthly salary or an hourly rate, each from a date. One person can have both',
-        'raise' => 'A raise adds a new rate from a date. It never edits the old one: the old rate ends the day before and stays in the history',
+        'raise' => 'A raise adds a new rate from a date. The old rate keeps its amount and start date; only its end date becomes the day before, and it stays in the history',
         'past runs' => 'Past payroll runs keep the rate they were worked out with, so a raise never changes a run already made',
         'amount' => 'Amount is the monthly salary, or the rate per hour, depending on the type',
         'dates' => 'Current means it has no end date yet',
         'overlap' => 'Two rates of the same type for one person cannot overlap',
-        'button' => 'Adds a new rate from the date you choose, for a raise, a cut or a first rate. It cannot edit or delete an existing rate',
+        'button' => 'Adds a new rate from the date you choose, for a raise, a cut or a first rate. It cannot change an existing rate\'s amount or delete it',
     ]],
     'Arabic' => ['ar', [
         'heading' => 'كيف تقرأ هذه الصفحة',
         'history' => 'هذا سجل معدلات الأجر: راتب شهري أو أجر بالساعة، لكل منهما تاريخ سريان. ويمكن أن يكون للشخص الواحد النوعان معًا',
-        'raise' => 'تضيف الزيادة معدلًا جديدًا من تاريخ معين، ولا تعدّل المعدل القديم أبدًا: ينتهي المعدل القديم في اليوم السابق ويبقى في السجل',
+        'raise' => 'تضيف الزيادة معدلًا جديدًا من تاريخ معين. ويحتفظ المعدل القديم بمبلغه وتاريخ بدايته، ويصبح تاريخ انتهائه اليوم السابق فقط، ويبقى في السجل',
         'past runs' => 'تحتفظ مسيرات الرواتب السابقة بالمعدل الذي احتُسبت به، فلا تغيّر الزيادة مسيرًا سبق إنشاؤه',
         'amount' => 'المبلغ هو الراتب الشهري أو الأجر عن الساعة بحسب النوع',
         'dates' => 'وحالي تعني أنه لا تاريخ انتهاء له بعد',
         'overlap' => 'لا يجوز أن يتداخل معدلان من النوع نفسه للشخص الواحد',
-        'button' => 'يضيف معدلًا جديدًا من التاريخ الذي تختاره، لزيادة أو تخفيض أو معدل أول. ولا يمكنه تعديل معدل قائم أو حذفه',
+        'button' => 'يضيف معدلًا جديدًا من التاريخ الذي تختاره، لزيادة أو تخفيض أو معدل أول. ولا يمكنه تغيير مبلغ معدل قائم أو حذفه',
     ]],
 ]);
 
@@ -182,14 +182,14 @@ dataset('compensation create sentinels', [
     'English' => ['en', [
         'heading' => 'How to read this page',
         'adds' => 'Saving adds a new rate from the effective date. The employee\'s earlier rate of the same type ends the day before',
-        'never edits' => 'It never edits the old rate, and past payroll runs keep the rate they were worked out with',
+        'keeps amount' => 'The earlier rate keeps its amount and start date, and past payroll runs keep the rate they were worked out with',
         'date' => 'The date must come after the start of the rate it replaces. A date that overlaps the existing history is refused',
         'amount' => 'Amount is a monthly salary or an hourly rate, in LYD, depending on the type you choose',
     ]],
     'Arabic' => ['ar', [
         'heading' => 'كيف تقرأ هذه الصفحة',
         'adds' => 'يضيف الحفظ معدلًا جديدًا من تاريخ السريان. وينتهي معدل الموظف السابق من النوع نفسه في اليوم السابق',
-        'never edits' => 'لا يعدّل الحفظ المعدل القديم، وتحتفظ مسيرات الرواتب السابقة بالمعدل الذي احتُسبت به',
+        'keeps amount' => 'يحتفظ المعدل السابق بمبلغه وتاريخ بدايته، وتحتفظ مسيرات الرواتب السابقة بالمعدل الذي احتُسبت به',
         'date' => 'يجب أن يكون التاريخ بعد بداية المعدل الذي سيحل محله. ويُرفض أي تاريخ يتداخل مع السجل القائم',
         'amount' => 'المبلغ هو راتب شهري أو أجر بالساعة، بالدينار الليبي، بحسب النوع الذي تختاره',
     ]],
@@ -227,7 +227,7 @@ dataset('payroll tooltips', [
         'Add a signed bonus or deduction to a line of this draft run. Not for correcting a finalized run.',
         'Approve and post this run. It cannot be changed afterwards, and it does not pay anyone.',
         'Delete this draft run and its lines. A finalized run cannot be deleted.',
-        'Add a new rate from a date. An existing rate is never edited.',
+        'Add a new rate from a date. An existing rate\'s amount never changes.',
     ]],
     'Arabic' => ['ar', [
         'ابدأ مسيرًا جديدًا بصفة مسودة. لا يُرحَّل شيء إلى أن تعتمده.',
@@ -235,7 +235,7 @@ dataset('payroll tooltips', [
         'أضف مكافأة أو خصمًا إلى بند من هذه المسودة. ليس لتصحيح مسير معتمد.',
         'اعتمد هذا المسير ورحِّله. لا يمكن تغييره بعد ذلك، ولا يدفع لأحد شيئًا.',
         'احذف هذه المسودة وبنودها. لا يمكن حذف مسير معتمد.',
-        'أضف معدلًا جديدًا من تاريخ معين. لا يُعدَّل المعدل القائم أبدًا.',
+        'أضف معدلًا جديدًا من تاريخ معين. لا يتغير مبلغ المعدل القائم أبدًا.',
     ]],
 ]);
 
