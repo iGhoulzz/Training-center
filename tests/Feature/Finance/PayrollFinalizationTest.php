@@ -390,7 +390,14 @@ it('uses a locking overlap scan after concurrent finalizers opened stale snapsho
     }
 });
 
-it('refuses overlapping salary segments inside the same draft run', function () {
+/*
+ * Changed in P4-T38. This test used to prove finalize REFUSES two overlapping
+ * segments inside one draft. A salary draft now follows the rates on file, so
+ * finalize first replaces any such lines with what the rates produce (one
+ * non-overlapping segment per rate row and month); the overlap check inside the
+ * run remains as a backstop but is no longer reachable from stored lines.
+ */
+it('repairs overlapping salary segments inside the same draft run from the rates before finalizing', function () {
     $actor = ($this->finalizationActor)();
     $employee = User::factory()->create();
     $rate = StaffCompensation::factory()->create([
@@ -417,10 +424,16 @@ it('refuses overlapping salary segments inside the same draft run', function () 
         ]);
     }
 
-    expect(fn () => app(FinalizePayrollRunAction::class)->execute($actor, $run))
-        ->toThrow(ValidationException::class);
+    app(FinalizePayrollRunAction::class)->execute($actor, $run);
 
-    expect($run->lines()->whereNotNull('finalized_at')->count())->toBe(0);
+    // 2500.000 x 31 / 31, hand-computed: one whole-month segment replaces both.
+    $lines = $run->lines()->get();
+
+    expect($lines)->toHaveCount(1)
+        ->and($lines[0]->segment_start->toDateString())->toBe('2026-01-01')
+        ->and($lines[0]->segment_end->toDateString())->toBe('2026-01-31')
+        ->and($lines[0]->computed_amount)->toBe('2500.000')
+        ->and($lines[0]->finalized_at)->not->toBeNull();
 });
 
 it('authorizes finalization before reloading the run', function () {

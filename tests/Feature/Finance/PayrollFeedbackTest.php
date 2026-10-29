@@ -7,11 +7,13 @@ use App\Domain\Finance\Filament\Resources\PayrollRunResource\Pages\ReviewPayroll
 use App\Domain\Finance\Models\PayrollLine;
 use App\Domain\Finance\Models\PayrollLineAdjustment;
 use App\Domain\Finance\Models\PayrollRun;
+use App\Domain\Finance\Models\StaffCompensation;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Filament\Notifications\Livewire\Notifications;
 use Filament\Notifications\Notification as FilamentNotification;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Livewire\Livewire;
 use Spatie\Permission\Models\Permission;
@@ -69,8 +71,20 @@ beforeEach(function (): void {
         $lines = [];
 
         foreach ($computedAmounts as $index => $amount) {
+            $employee = User::factory()->create(['name' => "Line Employee {$index}"]);
+
+            // A salary draft follows the rates on file (P4-T38) and opening it
+            // recalculates it, so the monthly rate is the amount the whole-month
+            // line is worth; otherwise the page would rewrite the fixture.
+            $rate = StaffCompensation::factory()->create([
+                'user_id' => $employee->getKey(),
+                'amount' => $amount,
+            ]);
+
             $lines[] = PayrollLine::factory()->for($run, 'run')->create([
-                'user_id' => User::factory()->create(['name' => "Line Employee {$index}"])->getKey(),
+                'user_id' => $employee->getKey(),
+                'staff_compensation_id' => $rate->getKey(),
+                'frozen_rate' => $amount,
                 'computed_amount' => $amount,
             ]);
         }
@@ -236,11 +250,13 @@ it('totals each line after its adjustments in exact decimal arithmetic', functio
 
     // The computed amount is printed once on each line, so an unadjusted line
     // prints its figure twice: as computed and as total.
+    // Changed in P4-T38: a fixture line's rate now equals its amount (so the page's
+    // recalculation leaves it alone), which prints the amount once more as the rate.
     expect(substr_count($html, '318.875 LYD'))->toBe(1)
-        ->and(substr_count($html, '309.000 LYD'))->toBe(1)
+        ->and(substr_count($html, '309.000 LYD'))->toBe(2)
         ->and(substr_count($html, '100.300 LYD'))->toBe(1)
-        ->and(substr_count($html, '100.000 LYD'))->toBe(1)
-        ->and(substr_count($html, '75.500 LYD'))->toBe(2)
+        ->and(substr_count($html, '100.000 LYD'))->toBe(2)
+        ->and(substr_count($html, '75.500 LYD'))->toBe(3)
         ->and($html)->not->toContain('100.30000')
         ->and($html)->not->toContain('LYD LYD');
 });
@@ -253,6 +269,10 @@ it('shows no bonus block under a line with no adjustment', function () {
 
 it('reads a fixed number of adjustment and author queries however many lines there are', function () {
     $measure = function (int $lines): int {
+        // A salary draft takes every salary rate in force in its period, so the rates
+        // an earlier measurement left behind are ended or they would add lines here.
+        StaffCompensation::query()->update(['effective_to' => DB::raw('effective_from')]);
+
         [$run, $created] = ($this->draftRun)(array_fill(0, $lines, '50.000'));
 
         foreach ($created as $line) {

@@ -31,9 +31,21 @@ final class PayrollCalculator
      *     computed_amount: string
      * }>
      */
-    public function salarySegments(CarbonImmutable $periodStart, CarbonImmutable $periodEnd): Collection
-    {
+    public function salarySegments(
+        CarbonImmutable $periodStart,
+        CarbonImmutable $periodEnd,
+        bool $lockRates = false,
+    ): Collection {
+        /*
+         * $lockRates makes the rate read a locking one. A draft that is being
+         * recalculated under its users' row locks must read the rates as they
+         * are committed NOW, not through a REPEATABLE READ snapshot opened
+         * before those locks were granted; ChangeCompensationAction holds the
+         * same users lock while it writes a rate, so a locking read here sees
+         * a rate change either entirely or not at all.
+         */
         return StaffCompensation::query()
+            ->when($lockRates, fn ($query) => $query->lockForUpdate())
             ->where('type', CompensationType::Salary->value)
             ->whereDate('effective_from', '<=', $periodEnd->toDateString())
             ->where(function ($query) use ($periodStart): void {

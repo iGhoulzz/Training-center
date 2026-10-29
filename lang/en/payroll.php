@@ -32,6 +32,8 @@ return [
     'finalized_target_required' => 'Only a finalized payroll line can be corrected.',
     'correction_chain_forbidden' => 'A correction must target the original payroll line, not another correction.',
     'draft_line_required' => 'Bonuses and deductions can be added only while the payroll run is draft.',
+    'lines_recalculated' => 'Lines were recalculated from the current pay rates.',
+    'salary_adjustments_have_no_line' => 'A bonus or deduction on this draft cannot be kept with the current pay rates, because the employee has no other line in that month. Nothing was changed; delete the draft and create it again.',
     'payroll_run' => 'Payroll run',
     'payroll_runs' => 'Payroll runs',
     'run_type' => 'Run type',
