@@ -234,8 +234,8 @@ final class RecalculateSalaryDraftAction
                 $reattached++;
             }
 
-            // destroy() deletes through the model, so the removal is audited like any other.
-            PayrollLine::destroy($line->getKey());
+            // Deleted through the locked model instance, so the removal is audited like any other.
+            $line->delete();
         }
 
         activity()
