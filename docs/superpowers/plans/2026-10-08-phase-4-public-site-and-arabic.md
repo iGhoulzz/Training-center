@@ -2244,6 +2244,60 @@ through the interface", which the owner has now asked for.
 owner's translator should review the three reworded sentences and the two new
 labels.
 
+### Task 38 — A salary draft follows the current rates
+**Owner: Claude · `p4/t38-salary-draft-follows-rates` · from main · requested by the owner on 2026-10-29**
+
+**Why.** Found in review and reproduced: rate 3000, an April salary draft with one
+line 1-30 April at 3000.000, a raise to 3600 from 16 April, finalize. One stale line
+was posted, 3000.000, where the rates say 1500.000 + 1800.000 = 3300.000. Lines were
+computed once, when the draft was created, and only `instructor_batch` runs were
+recomputed at finalize.
+
+**The rule.** A salary draft follows the compensation rates currently on file. It is
+recalculated when its review page opens and inside finalize, under its lock. A
+finalized run never changes.
+
+**What changed**
+- `RecalculateSalaryDraftAction`, the one path for both callers. `execute()`
+  authorizes `run_payroll` (the draft-maintenance ability, like creating the draft or
+  adding a bonus); `recalculateLocked()` is what `FinalizePayrollRunAction` calls
+  inside its own transaction, under its own `finalize_payroll` check.
+- Reconcile, never rebuild (lines keep their id when the rates still produce them);
+  idempotent; one activity entry on the run when something changed.
+- Bonuses and deductions: moved to the person's earliest line in the same posting
+  month before a vanished line is deleted (the foreign key cascades, so the order is
+  load-bearing); with no such line the recalculation is refused, writing nothing,
+  with `SalaryAdjustmentsHaveNoLineException`, shown as a persistent danger toast on
+  the page and as finalize's refusal.
+- The review page recalculates on mount for a draft salary run and says so with an
+  info toast (`payroll.lines_recalculated`); a viewer without `run_payroll` still gets
+  the page, with no write and no toast.
+- Lock order: run, users ascending (lines' people and everyone rated in the period),
+  rate rows (a locking read, `PayrollCalculator::salarySegments(lockRates: true)`),
+  lines, adjustments; the users row is the one `ChangeCompensationAction` takes.
+- Docs: the phase-2 financials design (payroll runs) and the main design's payroll data model.
+- The help text for the draft/finalize stages (`payroll.help_*`) is updated by P4-T37.
+
+**Contract rules asserted:** the reproduced scenario with hand-written figures
+(1500.000 + 1800.000 = 3300.000); no change means no write and no activity row; a raise
+after finalize changes nothing; bonuses and deductions survive a split with amount,
+reason and author intact and the per-month total unchanged; the no-line case is refused
+with nothing written; a read-only viewer sees the page; each allowed actor is paired
+with one lacking the ability; under real connections a rate change racing a finalize
+is wholly before or wholly after, two page openings leave no duplicate line, and a
+bonus committed while a recalculation waited is moved, not cascaded away.
+
+**Changed pre-existing tests.** `PayrollFeedbackTest`: its draft fixture now gives each
+line a rate equal to the line's amount (otherwise the page's recalculation rewrites the
+fixture), so three `substr_count` figures in the totals test rose by one, and the
+query-count test ends earlier measurements' rates. `PayrollFinalizationTest`: the test
+that finalize refuses two overlapping segments inside one draft now asserts that
+finalize repairs them from the rates (the in-run overlap check stays as a backstop).
+
+**Arabic:** T38 added `payroll.lines_recalculated` and
+`payroll.salary_adjustments_have_no_line` in English and Arabic; the owner's
+translator should review both.
+
 ---
 
 ## What this plan does not cover

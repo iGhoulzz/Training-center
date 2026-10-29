@@ -383,7 +383,7 @@ Compensation rates are never updated in place. A raise inserts a new row and clo
 
 Staff compensation is per person and may combine types — the center employs both salaried shift staff and hourly instructors, and one person may have both a base salary and an hourly teaching rate.
 
-**`payroll_runs`** and **`payroll_lines`** — a payroll run freezes its computed lines, storing the rate and hours used at the moment of calculation. Historical payroll must not change because upstream data changed.
+**`payroll_runs`** and **`payroll_lines`** — a payroll run freezes its computed lines, storing the rate and hours used at the moment of calculation. Historical payroll must not change because upstream data changed. That is about a *finalized* run: a salary **draft** follows the compensation rates currently on file, recalculated when it is reviewed and again at finalize, and a finalized run never changes (differences go through an adjustment run). See the phase-2 financials design, §7.
 
 ### Phase 3 tables (designed now, built in phase 3)
 
