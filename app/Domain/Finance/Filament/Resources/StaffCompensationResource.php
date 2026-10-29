@@ -17,6 +17,7 @@ use Filament\Forms\Components\TextInput;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Resources\Resource;
 use Filament\Schemas\Components\Section;
+use Filament\Schemas\Components\View;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\Layout\Split;
@@ -164,6 +165,58 @@ final class StaffCompensationResource extends Resource
                 ])->from('md')->extraAttributes(['class' => 'px-4.5 py-3.5']),
             ])
             ->defaultSort('effective_from', 'desc');
+    }
+
+    /**
+     * "How to read this page" for the rates list (P4-T37): what the history is,
+     * the effective-dated rule (a raise adds a rate and never edits one), and what
+     * each row shows. Display only.
+     */
+    public static function listHelpPanel(): Section
+    {
+        return self::helpPanel('staff-compensation-help', [
+            ['title' => __('payroll.help_what_title'), 'lines' => [
+                __('payroll.help_comp_what_1'),
+                __('payroll.help_comp_what_2'),
+                __('payroll.help_comp_what_3'),
+            ]],
+            ['title' => __('payroll.help_comp_rows_title'), 'lines' => [
+                __('payroll.help_comp_row_amount'),
+                __('payroll.help_comp_row_dates'),
+                __('payroll.help_comp_row_overlap'),
+            ]],
+            ['title' => __('payroll.help_buttons_title'), 'terms' => [
+                __('payroll.change_compensation') => __('payroll.help_comp_change'),
+            ]],
+        ]);
+    }
+
+    /** "How to read this page" above the new-rate form (P4-T37). Display only. */
+    public static function createHelpPanel(): Section
+    {
+        return self::helpPanel('staff-compensation-create-help', [
+            ['title' => __('payroll.help_comp_create_title'), 'lines' => [
+                __('payroll.help_comp_create_1'),
+                __('payroll.help_comp_create_2'),
+                __('payroll.help_comp_create_3'),
+                __('payroll.help_comp_create_4'),
+            ]],
+        ]);
+    }
+
+    /**
+     * @param  string  $id  Stable and unique per page: the browser remembers open or closed under it.
+     * @param  list<array{title: string, lines?: list<string>, terms?: array<string, string>}>  $groups
+     */
+    private static function helpPanel(string $id, array $groups): Section
+    {
+        return Section::make(__('payroll.help_heading'))
+            ->id($id)
+            ->icon(Heroicon::OutlinedInformationCircle)
+            ->collapsible()
+            ->persistCollapsed()
+            ->schema([View::make('filament.finance.page-help')->viewData(['groups' => $groups])])
+            ->extraAttributes(['class' => 'rounded-xl! [&_.fi-section-content]:p-3.75!']);
     }
 
     /** @return Builder<StaffCompensation> */

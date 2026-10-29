@@ -25,6 +25,7 @@ use Filament\Infolists\Components\TextEntry;
 use Filament\Resources\Resource;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Utilities\Get;
+use Filament\Schemas\Components\View;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\Layout\Split;
@@ -228,11 +229,82 @@ final class PayrollRunResource extends Resource
                 ])->space(3)->extraAttributes(['class' => 'gap-3.25 p-4.25']),
             ])
             ->recordActions([
-                Action::make('review')->label(__('payroll.review_lines'))->authorize('view')
+                Action::make('review')->label(__('payroll.review_lines'))->tooltip(__('payroll.tooltip_review_lines'))->authorize('view')
                     ->url(fn (PayrollRun $record): string => self::getUrl('review', ['record' => $record]))->button()->color('gray'),
             ])
             ->defaultSort('id', 'desc')
             ->recordUrl(fn (PayrollRun $record): string => self::getUrl('review', ['record' => $record]));
+    }
+
+    /**
+     * "How to read this page" for the runs list (P4-T37): what a run is, the three
+     * kinds, what a card shows and what the two buttons do. Display only.
+     */
+    public static function listHelpPanel(): Section
+    {
+        return self::helpPanel('payroll-runs-help', [
+            ['title' => __('payroll.help_what_title'), 'lines' => [
+                __('payroll.help_runs_what_1'),
+                __('payroll.help_runs_what_2'),
+                __('payroll.help_runs_what_3'),
+            ]],
+            ['title' => __('payroll.help_runs_kinds_title'), 'terms' => [
+                PayrollRunType::MonthlySalary->label() => __('payroll.help_runs_kind_monthly_salary'),
+                PayrollRunType::InstructorBatch->label() => __('payroll.help_runs_kind_instructor_batch'),
+                PayrollRunType::Adjustment->label() => __('payroll.help_runs_kind_adjustment'),
+            ]],
+            ['title' => __('payroll.help_runs_card_title'), 'lines' => [
+                __('payroll.help_runs_card_state', ['draft' => __('payroll.draft'), 'finalized' => __('payroll.finalized')]),
+                __('payroll.help_runs_card_period'),
+                __('payroll.help_runs_card_total'),
+                __('payroll.help_runs_card_rates'),
+                __('payroll.help_runs_card_reports'),
+            ]],
+            ['title' => __('payroll.help_buttons_title'), 'terms' => [
+                __('payroll.create_run') => __('payroll.help_runs_create'),
+                __('payroll.review_lines') => __('payroll.help_runs_review'),
+            ]],
+        ]);
+    }
+
+    /**
+     * "How to read this page" for one run (P4-T37): the lines, and what each
+     * button does and must not be used for. Display only.
+     */
+    public static function reviewHelpPanel(): Section
+    {
+        return self::helpPanel('payroll-run-help', [
+            ['title' => __('payroll.help_what_title'), 'lines' => [
+                __('payroll.help_review_what_1'),
+                __('payroll.help_review_what_2'),
+            ]],
+            ['title' => __('payroll.help_review_lines_title'), 'lines' => [
+                __('payroll.help_review_line_rate'),
+                __('payroll.help_review_line_segment'),
+                __('payroll.help_review_line_amount'),
+                __('payroll.help_review_line_frozen'),
+            ]],
+            ['title' => __('payroll.help_buttons_title'), 'terms' => [
+                __('payroll.add_adjustment') => __('payroll.help_review_add_adjustment', ['adjustment' => PayrollRunType::Adjustment->label()]),
+                __('payroll.finalize') => __('payroll.help_review_finalize'),
+                __('payroll.delete_draft') => __('payroll.help_review_delete'),
+            ]],
+        ]);
+    }
+
+    /**
+     * @param  string  $id  Stable and unique per page: the browser remembers open or closed under it.
+     * @param  list<array{title: string, lines?: list<string>, terms?: array<string, string>}>  $groups
+     */
+    private static function helpPanel(string $id, array $groups): Section
+    {
+        return Section::make(__('payroll.help_heading'))
+            ->id($id)
+            ->icon(Heroicon::OutlinedInformationCircle)
+            ->collapsible()
+            ->persistCollapsed()
+            ->schema([View::make('filament.finance.page-help')->viewData(['groups' => $groups])])
+            ->extraAttributes(['class' => 'rounded-xl! [&_.fi-section-content]:p-3.75!']);
     }
 
     /** @return Builder<PayrollRun> */
