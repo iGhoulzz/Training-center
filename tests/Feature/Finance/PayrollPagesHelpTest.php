@@ -72,10 +72,10 @@ dataset('runs list sentinels', [
         'badge' => 'The badge says Draft (still being checked, and it can be deleted) or Finalized (approved and locked)',
         'total' => 'Frozen line total is the sum of the run\'s lines, before bonuses and deductions',
         'rates' => 'A later raise never changes a finalized run, which keeps the rate it was worked out with',
-        'salary lines' => 'Salary lines are worked out when the draft is created; a rate entered later is not picked up, so delete the draft and create it again. Instructor lines are a preview until finalizing fixes their rate, hours and amount',
+        'salary lines' => 'A salary draft follows the current pay rates: its lines are recalculated when the draft is opened by someone who can run payroll, and again when it is finalized. Instructor lines are a preview until finalizing fixes their rate, hours and amount',
         'reports' => 'A correction counts in the month of the line it corrects',
         'create' => 'Starts a new draft run. Nothing is posted until you finalize it',
-        'review' => 'Opens the run so you can check its lines. It changes nothing',
+        'review' => 'Opens the run so you can check its lines. A salary draft is first brought up to date with the current pay rates; nothing else changes',
     ]],
     'Arabic' => ['ar', [
         'heading' => 'كيف تقرأ هذه الصفحة',
@@ -87,10 +87,10 @@ dataset('runs list sentinels', [
         'badge' => 'تبيّن الشارة الحالة: مسودة (ما زالت قيد المراجعة ويمكن حذفها) أو معتمد (اعتُمد وأُغلق)',
         'total' => 'إجمالي البند المثبت هو مجموع بنود المسير قبل المكافآت والخصومات',
         'rates' => 'لا تغيّر الزيادة اللاحقة مسيرًا معتمدًا، فهو يحتفظ بالمعدل الذي احتُسب به',
-        'salary lines' => 'تُحتسب بنود الرواتب الشهرية عند إنشاء المسودة، ولا يدخل فيها معدل يُسجَّل بعد ذلك؛ احذف المسودة وأنشئها من جديد. أما بنود المدربين فمعاينة إلى أن يثبّت الاعتماد معدلها وساعاتها ومبلغها',
+        'salary lines' => 'تتبع مسودة الرواتب الشهرية معدلات الأجور الحالية: يُعاد احتساب بنودها عندما يفتحها من يملك صلاحية تشغيل مسير الرواتب، ومرة أخرى عند اعتمادها. أما بنود المدربين فمعاينة إلى أن يثبّت الاعتماد معدلها وساعاتها ومبلغها',
         'reports' => 'ويُحسب التصحيح في شهر البند الذي يصححه',
         'create' => 'يبدأ مسيرًا جديدًا بصفة مسودة. لا يُرحَّل شيء إلى أن تعتمده',
-        'review' => 'يفتح المسير لتراجع بنوده. ولا يغيّر شيئًا',
+        'review' => 'يفتح المسير لتراجع بنوده. وتُحدَّث مسودة الرواتب الشهرية أولًا وفق معدلات الأجور الحالية، ولا يتغير شيء غير ذلك',
     ]],
 ]);
 
@@ -113,7 +113,7 @@ dataset('review sentinels', [
         'what' => 'This is one payroll run with every line in it. Check the lines here before you finalize',
         'rate' => 'Rate is the monthly salary or the hourly rate that applied. Hours are shown on instructor lines only',
         'amount' => 'Total after bonuses and deductions adds the signed bonuses and deductions on that line',
-        'frozen' => 'Salary lines are worked out when the draft is created; a rate entered later is not picked up, so delete the draft and create it again. Instructor lines are a preview until finalizing fixes their rate, hours and amount',
+        'frozen' => 'A salary draft follows the current pay rates: its lines are recalculated when the draft is opened by someone who can run payroll, and again when it is finalized. Instructor lines are a preview until finalizing fixes their rate, hours and amount',
         'add' => 'Not for correcting a finalized run: use an Adjustment run for that',
         'finalize' => 'Approves the run and posts it to the books. Afterwards nothing on it can be edited, added to or deleted. It does not pay anyone',
         'delete' => 'Deletes this draft run and its lines. A finalized run can never be deleted',
@@ -123,7 +123,7 @@ dataset('review sentinels', [
         'what' => 'هذا مسير رواتب واحد بكل بنوده. راجع البنود هنا قبل الاعتماد',
         'rate' => 'معدل الأجر هو الراتب الشهري أو الأجر بالساعة الساري. وتظهر الساعات في بنود المدربين فقط',
         'amount' => 'فيضيف إليه المكافآت والخصومات الموجبة والسالبة على ذلك البند',
-        'frozen' => 'تُحتسب بنود الرواتب الشهرية عند إنشاء المسودة، ولا يدخل فيها معدل يُسجَّل بعد ذلك؛ احذف المسودة وأنشئها من جديد. أما بنود المدربين فمعاينة إلى أن يثبّت الاعتماد معدلها وساعاتها ومبلغها',
+        'frozen' => 'تتبع مسودة الرواتب الشهرية معدلات الأجور الحالية: يُعاد احتساب بنودها عندما يفتحها من يملك صلاحية تشغيل مسير الرواتب، ومرة أخرى عند اعتمادها. أما بنود المدربين فمعاينة إلى أن يثبّت الاعتماد معدلها وساعاتها ومبلغها',
         'add' => 'وليس لتصحيح مسير معتمد؛ لذلك استخدم مسير تسوية',
         'finalize' => 'يعتمد المسير ويرحّله إلى الدفاتر. وبعدها لا يمكن تعديل شيء فيه أو الإضافة إليه أو حذفه. وهو لا يدفع لأحد شيئًا',
         'delete' => 'أما المسير المعتمد فلا يمكن حذفه أبدًا',
@@ -223,7 +223,7 @@ it('keeps every payroll and compensation panel open by default and remembers a c
 dataset('payroll tooltips', [
     'English' => ['en', [
         'Start a new draft run. Nothing is posted until you finalize it.',
-        'Open this run to check its lines. Changes nothing.',
+        'Open this run to check its lines. A salary draft is first brought up to date with the current pay rates.',
         'Add a signed bonus or deduction to a line of this draft run. Not for correcting a finalized run.',
         'Approve and post this run. It cannot be changed afterwards, and it does not pay anyone.',
         'Delete this draft run and its lines. A finalized run cannot be deleted.',
@@ -231,7 +231,7 @@ dataset('payroll tooltips', [
     ]],
     'Arabic' => ['ar', [
         'ابدأ مسيرًا جديدًا بصفة مسودة. لا يُرحَّل شيء إلى أن تعتمده.',
-        'افتح هذا المسير لتراجع بنوده. لا يغيّر شيئًا.',
+        'افتح هذا المسير لتراجع بنوده. تُحدَّث مسودة الرواتب الشهرية أولًا وفق معدلات الأجور الحالية.',
         'أضف مكافأة أو خصمًا إلى بند من هذه المسودة. ليس لتصحيح مسير معتمد.',
         'اعتمد هذا المسير ورحِّله. لا يمكن تغييره بعد ذلك، ولا يدفع لأحد شيئًا.',
         'احذف هذه المسودة وبنودها. لا يمكن حذف مسير معتمد.',
