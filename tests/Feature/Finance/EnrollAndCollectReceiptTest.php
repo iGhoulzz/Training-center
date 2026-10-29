@@ -143,7 +143,7 @@ it('offers the collect form before the payment and not again after it', function
         ])
         ->call('confirm');
 
-    expect($component->html())->toContain('Amount to collect')->toContain('Collect payment')
+    expect($component->html())->toContain('Amount to collect')->toContain('Take payment')
         ->and(($this->recorded)($component))->toBeNull()
         ->and(($this->printLink)($component))->toBeNull();
 
@@ -154,7 +154,7 @@ it('offers the collect form before the payment and not again after it', function
         ], 'collectForm')
         ->call('finalize');
 
-    expect($component->html())->not->toContain('Amount to collect')->not->toContain('Collect payment')
+    expect($component->html())->not->toContain('Amount to collect')->not->toContain('Take payment')
         ->and(($this->recorded)($component))->not->toBeNull();
 });
 

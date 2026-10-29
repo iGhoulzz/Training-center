@@ -300,10 +300,10 @@ it('requires confirmation before collection and resets the next walk-in after sk
         ->set('data.student_id', $student->id)->call('advance')
         ->set('data.batch_id', $batch->id)->call('advance')
         ->set('data.discount_id', $discount->id)->call('advance')->assertSet('flowStep', 4)
-        ->assertSee(__('collect.confirm_before_payment'))->assertDontSee(__('collect.collect_action'));
+        ->assertSee(__('collect.confirm_before_payment'))->assertDontSee(__('collect.take_payment'));
     expect(Charge::query()->count())->toBe(0)->and($page->instance()->bill['reference'])->toBeNull()
         ->and($page->instance()->bill['receipt'])->toBeNull();
-    $page->call('confirm')->assertSet('flowStep', 4)->assertSee(__('collect.collect_action'));
+    $page->call('confirm')->assertSet('flowStep', 4)->assertSee(__('collect.take_payment'));
     expect(Charge::query()->sole()->amount)->toBe('214.187');
     $page->call('back')->assertSet('flowStep', 4)
         ->call('finishCollection')->assertSet('flowStep', 1)->assertSet('studentSearch', '')
