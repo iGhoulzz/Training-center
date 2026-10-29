@@ -1996,7 +1996,9 @@ answer with the refusal. It now shows only on an active enrolment, because
   server-side, and enforced under the charge lock by `RecordPaymentAction`'s opt-in
   `firstPaymentOnly` mode (Codex review: two sessions could otherwise both pay).
   The panel's bill id is server-owned (`#[Locked]`). `PaymentInvariantService` is
-  unchanged, and later installments stay out (§12).
+  unchanged, and later installments stay out (§12). **Superseded by Task 36**: a
+  part-paid bill is collectable too, and the predicate, the flag and the
+  exception are renamed `collectable`.
 - **For the owner to confirm:** a bill whose only payment was reversed counts as
   awaiting its first payment again.
 
@@ -2184,6 +2186,63 @@ three-decimal LYD amounts).
 
 **Arabic:** the Arabic admin catalogues stay empty until T17, which translates
 the new `reports.*`, `auth.*`, `navigation.*` and `collect.*` keys.
+
+### Task 36 — Collect a later installment
+**Owner: Claude · `p4/t36-later-installments` · from main · requested by the owner on 2026-10-29**
+
+**Why.** A student pays 300 of an 850 bill today and the remaining 550 later.
+Staff must record the 550 as a NEW payment on the SAME bill: Charges, the bill,
+"Collect payment", the same collect panel pre-filled with what is still owed, and
+a new receipt. Outstanding then reaches 0 on its own, because it is always
+computed (bill minus live allocations). This reverses §12's "no later installment
+through the interface", which the owner has now asked for.
+
+**What changed**
+- **One word for the rule: collectable.** A bill is collectable when it is not
+  written off and something is outstanding. A payment already on it no longer
+  blocks. `ChargeQueryService::awaitingFirstPaymentSql()` became `collectableSql()`
+  (alias `COLLECTABLE_ALIAS`), `RecordPaymentData::$firstPaymentOnly` became
+  `$collectableOnly`, `ChargeNotAwaitingFirstPaymentException` became
+  `ChargeNotCollectableException`, and `RecordPaymentAction`'s under-lock twin is
+  `isCollectableUnderLock()` (not written off, outstanding read under lock).
+- **The overpayment guard is not new.** `PaymentInvariantService::assertRecordable()`
+  already refuses an allocation above the locked outstanding amount for every
+  caller, so two installments whose sum exceeds what is owed cannot both land. The
+  collectable rule adds the refusals that guard cannot make: a written-off bill,
+  and a bill with nothing left, with the panel's existing "cannot be collected"
+  notice.
+- **The Charges "Collect payment" action** shows for any collectable bill, under
+  the same gates as before (`create_payment`, view the charge,
+  `EnrollAndCollect::canAccess()`). No new permission.
+- **The panel** already started at the current outstanding amount. Its bill aside
+  now also shows "Paid so far" and "Remaining", both derived from the live
+  allocations on every render. `installment_conflict` and `first_collection_hint`
+  (English and Arabic) now say a further payment is taken by pressing Collect
+  payment on the bill in Charges; `charge_not_collectable` no longer blames an earlier payment.
+  The same key still means the same handover, so a different amount typed into
+  the same open panel is still refused with the conflict notice.
+- The enrol-and-bill path is unchanged; its new bill is collectable.
+- Docs: the later-installment rule moved out of §12 (now a one-line pointer) into
+  §6 under the allocation table, which no longer says "not a promise of an
+  interface", and the "Later installments" line in the phase-2 financials design.
+
+**Contract rules asserted:**
+- 850 bill: 300 collected (receipt remaining 550.000), then 550 from Charges
+  (second receipt, remaining 0.000), the button then hidden, the student's balance
+  0.000, two payments and two receipts on one bill;
+- a third installment works (300, 250, 300);
+- an amount above the remaining is refused and nothing is written;
+- written-off and fully paid bills: no button, `?charge=` refused, finalize refused;
+- each allowed actor is paired with one holding one permission fewer;
+- under two real connections: installments that fit both land, installments that
+  exceed the outstanding amount land once, a settled bill refuses the second with
+  the collectable exception, and a replayed key returns the original payment;
+- the parity dataset keeps the button's SQL and the Action's locking twin equal
+  over every state of a bill.
+
+**Arabic:** T36 updated the Arabic `collect.*` wording alongside the English; the
+owner's translator should review the three reworded sentences and the two new
+labels.
 
 ---
 

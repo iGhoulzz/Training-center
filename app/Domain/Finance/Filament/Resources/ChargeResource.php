@@ -87,7 +87,8 @@ use Illuminate\Support\HtmlString;
  * `collectPaymentAction()` ("Collect payment", P4-T32) writes nothing: it links
  * to the Enrol & Collect page with the bill in the URL, and that page re-checks
  * the bill and `create_payment` on the server before it opens anything. It is
- * hidden unless the bill is awaiting its first payment and the actor may collect.
+ * hidden unless the bill is collectable (not written off, something still
+ * outstanding, P4-T36) and the actor may collect.
  *
  * OUTSTANDING GOES THROUGH ChargeBalance'S SQL SHAPE, NOT ITS PHP ONE
  * ----------------------------------------------------------------------
@@ -201,8 +202,8 @@ class ChargeResource extends Resource
      * charge into more than one row.
      *
      * THE FLAG BEHIND "Collect payment" IS SELECTED HERE TOO. Whether a bill is
-     * awaiting its first payment is one SQL condition in ChargeQueryService,
-     * selected into `ChargeQueryService::AWAITING_FIRST_PAYMENT_ALIAS` so the
+     * collectable is one SQL condition in ChargeQueryService,
+     * selected into `ChargeQueryService::COLLECTABLE_ALIAS` so the
      * row action reads an attribute rather than asking the database per row.
      *
      * NOT `enrollment.student` — see the class docblock.
@@ -215,7 +216,7 @@ class ChargeResource extends Resource
             ->select('charges.*')
             ->selectRaw(ChargeBalance::outstandingSql().' as '.ChargeBalance::OUTSTANDING_ALIAS)
             ->selectRaw(ChargeBalance::allocatedSql().' as '.ChargeBalance::ALLOCATED_ALIAS)
-            ->selectRaw(app(ChargeQueryService::class)->awaitingFirstPaymentSql().' as '.ChargeQueryService::AWAITING_FIRST_PAYMENT_ALIAS)
+            ->selectRaw(app(ChargeQueryService::class)->collectableSql().' as '.ChargeQueryService::COLLECTABLE_ALIAS)
             ->with(['enrollment.batch.course']);
 
         app(EnrollmentQueryService::class)->joinEnrollmentStudentLabelsTo($query->getQuery(), 'charges.enrollment_id');
@@ -414,17 +415,16 @@ class ChargeResource extends Resource
     }
 
     /**
-     * Collect the first payment on a bill later (P4-T32, QA Q1): a link to the
-     * Enrol & Collect page with this bill in the URL, which opens its collection
-     * panel.
+     * Collect a payment on a bill later (P4-T32, QA Q1; P4-T36 for an installment): a
+     * link to the Enrol & Collect page with this bill in the URL, which opens its
+     * collection panel, pre-filled with what is still owed.
      *
-     * WHICH BILLS: those AWAITING THEIR FIRST PAYMENT — the one condition in
-     * ChargeQueryService::awaitingFirstPaymentSql(), read here from the
-     * attribute `getEloquentQuery()` selected it into, so a row costs no query.
-     * `RecordPaymentAction` itself does not limit a bill to one payment; "one
-     * collection per bill" is only that the interface offers no later one, and
-     * design section 12 keeps later installments out. This is the entry point
-     * for a bill that has none yet.
+     * WHICH BILLS: those that are COLLECTABLE — the one condition in
+     * ChargeQueryService::collectableSql(), not written off and something still
+     * outstanding, read here from the attribute `getEloquentQuery()` selected it
+     * into, so a row costs no query. A payment already on the bill does not hide the
+     * button: a student who paid 300 of 850 comes back for the other 550, and that is
+     * a new payment with its own receipt on the same bill.
      *
      * HIDDEN, NOT THE GUARD. `visible()` is a courtesy; the page re-checks the
      * condition and `create_payment` on the server when it opens, and
@@ -439,7 +439,7 @@ class ChargeResource extends Resource
             ->icon(Heroicon::OutlinedBanknotes)
             ->color('success')
             ->url(fn (Charge $record): string => EnrollAndCollect::getUrl(['charge' => $record->getKey()]))
-            ->visible(fn (Charge $record): bool => (bool) $record->getAttribute(ChargeQueryService::AWAITING_FIRST_PAYMENT_ALIAS)
+            ->visible(fn (Charge $record): bool => (bool) $record->getAttribute(ChargeQueryService::COLLECTABLE_ALIAS)
                 && Gate::allows('create', Payment::class)
                 && Gate::allows('view', $record)
                 && EnrollAndCollect::canAccess());

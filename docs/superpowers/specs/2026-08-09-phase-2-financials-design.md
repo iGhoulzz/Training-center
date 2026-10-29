@@ -51,9 +51,9 @@ Phase 2's primary surface is one guided flow, not a set of CRUD screens the user
 
 The system allocates the payment to that bill. **Staff never see the word "allocation" and never make an allocation decision.**
 
-Later installments: **one bill, many receipts**, all pointing back to the same `CHG-…`. That is a statement about the DATA MODEL, not about a screen.
+Later installments: **one bill, many receipts**, all pointing back to the same `CHG-…`. Since 2026-10-29 (owner, P4-T36) there is a screen for it too: the Charges list offers "Collect payment" on any bill that is not written off and still has something outstanding, which opens the same collection panel pre-filled with what is still owed and records a new payment with its own receipt on the same bill.
 
-An earlier revision of this line read "search the student, open the unpaid bill, record another payment, issue another receipt", which described an interface the system deliberately does not have — system design section 12 lists collecting a later installment through the interface as out of scope, and section 6 says the same about the allocation table. It was raised twice in review of P2-T09 and is corrected here rather than a third time.
+Earlier revisions of this line said it was a statement about the DATA MODEL, not about a screen, and that system design section 12 kept collecting a later installment through the interface out of scope. That was the position until the owner asked for it; system design section 6 now describes it, and section 12 only points there. It was raised twice in review of P2-T09 and again by the owner, who decided it should exist.
 
 ### The receipt
 

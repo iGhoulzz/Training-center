@@ -21,7 +21,7 @@ use App\Domain\Finance\Data\EnrollAndBillData;
 use App\Domain\Finance\Data\RecordPaymentData;
 use App\Domain\Finance\Data\TenderData;
 use App\Domain\Finance\Enums\TenderMethod;
-use App\Domain\Finance\Exceptions\ChargeNotAwaitingFirstPaymentException;
+use App\Domain\Finance\Exceptions\ChargeNotCollectableException;
 use App\Domain\Finance\Exceptions\IdempotencyConflictException;
 use App\Domain\Finance\Exceptions\PaymentExceedsOutstandingException;
 use App\Domain\Finance\Models\Charge;
@@ -80,24 +80,26 @@ use Livewire\Attributes\Locked;
  * required-field validation of the emptied selection form. "Done"
  * (`finishCollection()`) closes the panel and returns to Student.
  *
- * THE PANEL CAN ALSO BE OPENED FROM A LINK (`?charge=`), FOR A BILL AWAITING
- * ITS FIRST PAYMENT
+ * THE PANEL CAN ALSO BE OPENED FROM A LINK (`?charge=`), FOR ANY COLLECTABLE BILL
  * -----------------------------------------------------------------------
  * A bill whose page was closed after Confirm could otherwise never be
- * collected. The Charges table offers "Collect payment" on a bill awaiting
- * its first payment, linking here with the bill's id. `mount()` does NOT
- * trust the URL: it authorizes `create_payment`, loads the bill through
- * `ChargeQueryService::awaitingFirstPaymentSql()` — the one place that
- * condition is written — and, only if both hold, opens the panel for THAT bill
- * through the same `beginCollection()` the Confirm path uses, so the collect
+ * collected, and neither could the rest of a bill that was paid in part (P4-T36:
+ * a student pays 300 of 850 today and the remaining 550 later, as a new payment
+ * and a new receipt). The Charges table offers "Collect payment" on a bill that
+ * is not written off and still has something outstanding, linking here with the
+ * bill's id. `mount()` does NOT trust the URL: it authorizes `create_payment`,
+ * loads the bill through `ChargeQueryService::collectableSql()` — the one place
+ * that condition is written — and, only if both hold, opens the panel for THAT
+ * bill through the same `beginCollection()` the Confirm path uses, so the collect
  * form, its validation, its idempotency key and the `RecordPaymentAction` call
- * are the same code. Anything else — a paid or written-off bill, one with
- * nothing outstanding, an unknown id, an actor without `create_payment` —
- * opens nothing and shows one refusal.
+ * are the same code. The amount to collect starts at what is STILL owed, and the
+ * bill aside shows the total, what has been paid so far and what remains. Anything
+ * else — a fully paid or written-off bill, an unknown id, an actor without
+ * `create_payment` — opens nothing and shows one refusal.
  *
  * @property-read Schema $form
  * @property-read Schema $collectForm
- * @property-read array{student: string, batch: string, list: ?Money, discount: string, amount: ?Money, reference: ?string, receipt: ?string} $bill
+ * @property-read array{student: string, batch: string, list: ?Money, discount: string, amount: ?Money, reference: ?string, receipt: ?string, paid: ?Money, remaining: ?Money} $bill
  * @property-read bool $tendersBalanced
  * @property-read ?Payment $recordedPayment
  * @property-read Collection<int, Student> $studentMatches
@@ -221,7 +223,7 @@ class EnrollAndCollect extends Page
         return __('collect.front_desk');
     }
 
-    /** @return array{student: string, batch: string, list: ?Money, discount: string, amount: ?Money, reference: ?string, receipt: ?string} */
+    /** @return array{student: string, batch: string, list: ?Money, discount: string, amount: ?Money, reference: ?string, receipt: ?string, paid: ?Money, remaining: ?Money} */
     #[Computed]
     public function bill(): array
     {
@@ -237,6 +239,9 @@ class EnrollAndCollect extends Page
                         : __('collect.discount_percentage_value', ['percentage' => $charge->discount_percentage]),
                     'amount' => Money::fromDecimal($charge->amount), 'reference' => $charge->reference,
                     'receipt' => Payment::query()->where('idempotency_key', $this->collectionIdempotencyKey)->value('reference'),
+                    // Both derived from the live allocations on every render, never stored (P4-T36).
+                    'paid' => ChargeBalance::allocatedFor((int) $charge->getKey()),
+                    'remaining' => ChargeBalance::outstandingFor((int) $charge->getKey()),
                 ];
             }
         }
@@ -248,6 +253,7 @@ class EnrollAndCollect extends Page
             'batch' => filled($this->data['batch_id'] ?? null) ? (self::batchOptionLabel($this->data['batch_id']) ?? __('collect.not_chosen')) : __('collect.not_chosen'),
             'list' => $list, 'discount' => $discount === null ? __('collect.no_discount') : self::discountLabel($discount),
             'amount' => $discount === null ? $list : $list?->afterDiscount($discount->percentage), 'reference' => null, 'receipt' => null,
+            'paid' => null, 'remaining' => null,
         ];
     }
 
@@ -360,8 +366,8 @@ class EnrollAndCollect extends Page
      *
      * THE URL IS A REQUEST, NOT A FACT. The id is parsed as a positive integer,
      * the actor must hold `create_payment`, and the bill is loaded through
-     * `ChargeQueryService::awaitingFirstPaymentSql()`, so a paid, written-off or
-     * nothing-outstanding bill, and an id that names no bill, all come back as
+     * `ChargeQueryService::collectableSql()`, so a fully paid or written-off
+     * bill, and an id that names no bill, all come back as
      * the same "no bill". An unauthorized actor gets that same refusal rather
      * than a different one that would confirm a bill exists. The button on the
      * Charges table is only a courtesy that hides itself; this is the check.
@@ -379,7 +385,7 @@ class EnrollAndCollect extends Page
         $charge = $chargeId !== false && Gate::allows('create', Payment::class)
             ? Charge::query()
                 ->whereKey($chargeId)
-                ->whereRaw(app(ChargeQueryService::class)->awaitingFirstPaymentSql())
+                ->whereRaw(app(ChargeQueryService::class)->collectableSql())
                 ->first()
             : null;
 
@@ -411,11 +417,10 @@ class EnrollAndCollect extends Page
      * Whether the open panel's bill may still take the payment about to be submitted.
      *
      * True when this panel's own payment already exists (the Action replays it, or
-     * refuses a different second amount), or when the bill still awaits its first
-     * payment by `ChargeQueryService::awaitingFirstPaymentSql()`, the same predicate
-     * that offered it. See `finalize()` for why this runs at submit as well as at open.
+     * refuses a different second amount), or when the bill is still collectable by
+     * `ChargeQueryService::collectableSql()`, the same predicate that offered it. See `finalize()` for why this runs at submit as well as at open.
      */
-    private function collectionStillAwaitsThisPayment(): bool
+    private function collectionStillCollectable(): bool
     {
         if (Payment::query()->where('idempotency_key', $this->collectionIdempotencyKey)->exists()) {
             return true;
@@ -423,7 +428,7 @@ class EnrollAndCollect extends Page
 
         return Charge::query()
             ->whereKey($this->collectionChargeId)
-            ->whereRaw(app(ChargeQueryService::class)->awaitingFirstPaymentSql())
+            ->whereRaw(app(ChargeQueryService::class)->collectableSql())
             ->exists();
     }
 
@@ -1020,26 +1025,29 @@ class EnrollAndCollect extends Page
          * THE BILL IS RE-CHECKED HERE, NOT ONLY WHEN THE PANEL OPENED (P4-T32 review).
          *
          * `collectionChargeId` is server-owned (see its docblock), but the bill itself can
-         * change between opening the panel and pressing the button. A second tab on the same "Collect payment" link may pay it first, or it
-         * may be written off. So every collection is checked against the same predicate
-         * that offered it, and a bill no longer awaiting its first payment is refused
-         * before anything is written.
+         * change between opening the panel and pressing the button. A second tab on the same
+         * "Collect payment" link may pay it in full first, or it may be written off. So every
+         * collection is checked against the same predicate that offered it, and a bill no
+         * longer collectable is refused before anything is written.
          *
          * Authorization stays first and unchanged, so an actor without `create_payment`
          * still gets the 403 that `RecordPaymentAction` has always given. Form validation
          * comes next, so malformed input still gets its own message.
          *
          * THE ONE EXCEPTION IS THIS PANEL'S OWN PAYMENT. When a payment already holds this
-         * panel's idempotency key, the bill is no longer "awaiting" precisely because this
-         * panel paid it. The call goes on to the Action, which replays the original receipt
-         * for a double-click and refuses a different second amount with the
-         * installment-conflict message, exactly as before.
+         * panel's idempotency key, the bill may no longer be collectable precisely because
+         * this panel settled it. The call goes on to the Action, which replays the original
+         * receipt for a double-click and refuses a different second amount with the
+         * installment-conflict message, which now points the operator to the next installment
+         * through the bill in Charges.
          *
          * THIS CHECK IS THE FAST PATH, NOT THE GUARANTEE. It runs before `RecordPaymentAction`
          * takes its lock on the bill, so two sessions landing in the same instant could both
          * pass it. The rule itself is enforced inside the Action, under the charge lock: the
-         * payload below sets `firstPaymentOnly`, and the Action refuses with
-         * `ChargeNotAwaitingFirstPaymentException`, caught further down into this same notice.
+         * payload below sets `collectableOnly`, and the Action refuses with
+         * `ChargeNotCollectableException`, caught further down into this same notice. An
+         * amount above what remains is refused by the Action's own invariant check, under the
+         * same lock, and caught below with both figures.
          */
         Gate::authorize('create', Payment::class);
 
@@ -1047,7 +1055,7 @@ class EnrollAndCollect extends Page
         // to the write as this page can put it.
         $state = $this->collectForm->getState();
 
-        if (! $this->collectionStillAwaitsThisPayment()) {
+        if (! $this->collectionStillCollectable()) {
             Notification::make()
                 ->title(__('collect.charge_not_collectable'))
                 ->danger()
@@ -1074,7 +1082,7 @@ class EnrollAndCollect extends Page
             allocation: (string) $state['amount'],
             tenders: $tenders,
             idempotencyKey: $this->collectionIdempotencyKey,
-            firstPaymentOnly: true,
+            collectableOnly: true,
         );
 
         /** @var User $actor */
@@ -1082,9 +1090,9 @@ class EnrollAndCollect extends Page
 
         try {
             app(RecordPaymentAction::class)->execute($actor, $payload);
-        } catch (ChargeNotAwaitingFirstPaymentException) {
+        } catch (ChargeNotCollectableException) {
             /*
-             * Another session paid, or the bill was written off, between the check
+             * Another session settled the bill, or it was written off, between the check
              * above and the Action's own lock. Same notice as the check: nothing was
              * recorded, because the Action refuses before it writes an allocation.
              */
@@ -1132,8 +1140,9 @@ class EnrollAndCollect extends Page
             return;
         }
 
-        // The panel now shows this payment's receipt; drop any copy cached before it existed.
-        unset($this->recordedPayment);
+        // The panel now shows this payment's receipt and the bill's new paid-so-far figure;
+        // drop any copy cached before they existed.
+        unset($this->recordedPayment, $this->bill);
 
         Notification::make()
             ->title(__('collect.collected_successfully'))

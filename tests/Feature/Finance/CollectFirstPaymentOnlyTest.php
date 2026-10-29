@@ -6,8 +6,9 @@ use App\Domain\Finance\Actions\RecordPaymentAction;
 use App\Domain\Finance\Data\RecordPaymentData;
 use App\Domain\Finance\Data\TenderData;
 use App\Domain\Finance\Enums\TenderMethod;
-use App\Domain\Finance\Exceptions\ChargeNotAwaitingFirstPaymentException;
+use App\Domain\Finance\Exceptions\ChargeNotCollectableException;
 use App\Domain\Finance\Exceptions\IdempotencyConflictException;
+use App\Domain\Finance\Exceptions\PaymentExceedsOutstandingException;
 use App\Domain\Finance\Filament\Pages\EnrollAndCollect;
 use App\Domain\Finance\Models\Charge;
 use App\Domain\Finance\Models\Payment;
@@ -28,19 +29,19 @@ use Spatie\Activitylog\Models\Activity;
 
 /*
 |--------------------------------------------------------------------------
-| "First payment only" is a rule of RecordPaymentAction (P4-T32 fix round)
+| "Collectable only" is a rule of RecordPaymentAction (P4-T32 fix round, P4-T36)
 |--------------------------------------------------------------------------
 |
-| The collection panel checks that a bill still awaits its first payment, but
-| that check runs before RecordPaymentAction takes the charge lock, so two panel
-| sessions with different idempotency keys could both pass it and both be
-| accepted while their sum stayed under the outstanding balance: a second
-| installment through the first-payment screen (design section 12).
+| The collection panel checks that a bill is still collectable (not written off,
+| something outstanding; a payment already on it does NOT block, P4-T36), but
+| that check runs before RecordPaymentAction takes the charge lock, so a till
+| could write the bill off or settle it between the check and the write.
 |
-| The panel therefore sets RecordPaymentData::$firstPaymentOnly, and the Action
-| refuses inside its transaction, under the charge row lock, once that bill has
-| a live payment. This file proves the rule at the Action and through the page;
-| CollectFirstPaymentConcurrencyTest proves it against two real connections.
+| The panel therefore sets RecordPaymentData::$collectableOnly, and the Action
+| refuses inside its transaction, under the charge row lock, a bill that is no
+| longer collectable. This file proves the rule at the Action and through the
+| page; CollectFirstPaymentConcurrencyTest proves it against two real connections.
+| The file keeps its P4-T32 name; it is where the parity dataset lives.
 |
 | EVERY ACTOR HOLDS EXACTLY create_payment, NEVER A ROLE.
 */
@@ -51,7 +52,7 @@ uses(RefreshDatabase::class);
  *
  * @return list<array{title: string, status: string}>
  */
-function firstPaymentOnlyNotifications(): array
+function collectNotifications(): array
 {
     $component = new Notifications;
     $component->mount();
@@ -97,14 +98,14 @@ beforeEach(function (): void {
         return $payment;
     };
 
-    $this->collect = fn (Charge $charge, string $amount, ?string $key = null, bool $firstPaymentOnly = true, ?User $by = null): Payment => app(RecordPaymentAction::class)->execute(
+    $this->collect = fn (Charge $charge, string $amount, ?string $key = null, bool $collectableOnly = true, ?User $by = null): Payment => app(RecordPaymentAction::class)->execute(
         $by ?? $this->till,
         new RecordPaymentData(
             chargeId: (int) $charge->getKey(),
             allocation: $amount,
             tenders: [new TenderData(TenderMethod::Cash, $amount)],
             idempotencyKey: $key ?? Str::uuid()->toString(),
-            firstPaymentOnly: $firstPaymentOnly,
+            collectableOnly: $collectableOnly,
         ),
     );
 });
@@ -115,8 +116,8 @@ beforeEach(function (): void {
 |--------------------------------------------------------------------------
 */
 
-it('refuses a first-payment-only collection on a bill that already has a live partial payment, writing nothing', function () {
-    $charge = Charge::factory()->create(['amount' => '1000.000']);
+it('refuses a collectable-only collection on a written-off bill with a live partial payment, writing nothing', function () {
+    $charge = Charge::factory()->writtenOff($this->till)->create(['amount' => '1000.000']);
     ($this->payTowards)($charge, '400.000');
 
     $paymentsBefore = Payment::query()->count();
@@ -127,11 +128,11 @@ it('refuses a first-payment-only collection on a bill that already has a live pa
 
     try {
         ($this->collect)($charge, '300.000');
-    } catch (ChargeNotAwaitingFirstPaymentException $exception) {
+    } catch (ChargeNotCollectableException $exception) {
         $thrown = $exception;
     }
 
-    expect($thrown)->toBeInstanceOf(ChargeNotAwaitingFirstPaymentException::class)
+    expect($thrown)->toBeInstanceOf(ChargeNotCollectableException::class)
         ->and($thrown->chargeId)->toBe((int) $charge->getKey())
         ->and($thrown->getMessage())->toBe(__('collect.charge_not_collectable'))
         ->and(Payment::query()->count())->toBe($paymentsBefore)
@@ -140,11 +141,45 @@ it('refuses a first-payment-only collection on a bill that already has a live pa
         ->and(Activity::query()->count())->toBe($activityBefore);
 });
 
-it('still records the second payment on the same bill when first-payment-only is off', function () {
+it('records a later installment on a bill that already has a live partial payment, writing one more of everything', function () {
+    $charge = Charge::factory()->create(['amount' => '1000.000']);
+    ($this->payTowards)($charge, '400.000');
+    $tendersBefore = PaymentTender::query()->count();
+
+    $payment = ($this->collect)($charge, '300.000');
+
+    expect(PaymentAllocation::query()->where('charge_id', $charge->getKey())->orderBy('id')->pluck('amount')->all())
+        ->toBe(['400.000', '300.000'])
+        ->and(Payment::query()->count())->toBe(2)
+        ->and(PaymentTender::query()->count())->toBe($tendersBefore + 1)
+        ->and($payment->receiptSnapshot->remaining_balance)->toBe('300.000');
+});
+
+it('refuses an installment above what the bill still owes with the invariant exception, writing nothing', function () {
+    $charge = Charge::factory()->create(['amount' => '1000.000']);
+    ($this->payTowards)($charge, '400.000');
+    $paymentsBefore = Payment::query()->count();
+
+    $thrown = null;
+
+    try {
+        ($this->collect)($charge, '600.001');
+    } catch (PaymentExceedsOutstandingException $exception) {
+        $thrown = $exception;
+    }
+
+    expect($thrown)->toBeInstanceOf(PaymentExceedsOutstandingException::class)
+        ->and($thrown->attemptedAmount)->toBe('600.001')
+        ->and($thrown->outstandingAmount)->toBe('600.000')
+        ->and(Payment::query()->count())->toBe($paymentsBefore)
+        ->and(PaymentAllocation::query()->where('charge_id', $charge->getKey())->pluck('amount')->all())->toBe(['400.000']);
+});
+
+it('still records the second payment on the same bill when collectable-only is off', function () {
     $charge = Charge::factory()->create(['amount' => '1000.000']);
     ($this->payTowards)($charge, '400.000');
 
-    ($this->collect)($charge, '300.000', firstPaymentOnly: false);
+    ($this->collect)($charge, '300.000', collectableOnly: false);
 
     expect(PaymentAllocation::query()->where('charge_id', $charge->getKey())->orderBy('id')->pluck('amount')->all())
         ->toBe(['400.000', '300.000']);
@@ -158,10 +193,10 @@ it('defaults to off, so a caller that never heard of the flag is unchanged', fun
         idempotencyKey: 'SENTINEL-KEY',
     );
 
-    expect($data->firstPaymentOnly)->toBeFalse();
+    expect($data->collectableOnly)->toBeFalse();
 });
 
-it('returns the original payment when the same key is replayed with first-payment-only on', function () {
+it('returns the original payment when the same key is replayed with collectable-only on', function () {
     $charge = Charge::factory()->create(['amount' => '1000.000']);
     $key = (string) Str::uuid();
 
@@ -173,7 +208,7 @@ it('returns the original payment when the same key is replayed with first-paymen
         ->and(PaymentAllocation::query()->sole()->amount)->toBe('300.000');
 });
 
-it('refuses a different amount under the same key as a conflict, not as a missing first payment', function () {
+it('refuses a different amount under the same key as a conflict, not as a bill that cannot be collected', function () {
     $charge = Charge::factory()->create(['amount' => '1000.000']);
     $key = (string) Str::uuid();
 
@@ -183,13 +218,13 @@ it('refuses a different amount under the same key as a conflict, not as a missin
         ->toThrow(IdempotencyConflictException::class);
 });
 
-it('decides exactly as ChargeQueryService::awaitingFirstPaymentSql does, for every state of a bill', function (Closure $makeCharge, bool $awaiting) {
+it('decides exactly as ChargeQueryService::collectableSql does, for every state of a bill', function (Closure $makeCharge, bool $collectable) {
     $charge = $makeCharge($this);
 
     // The predicate that offers the button, asked of the database.
     $offered = Charge::query()
         ->whereKey($charge->getKey())
-        ->whereRaw(app(ChargeQueryService::class)->awaitingFirstPaymentSql())
+        ->whereRaw(app(ChargeQueryService::class)->collectableSql())
         ->exists();
 
     $outcome = null;
@@ -197,12 +232,12 @@ it('decides exactly as ChargeQueryService::awaitingFirstPaymentSql does, for eve
     try {
         ($this->collect)($charge, '10.000');
         $outcome = 'recorded';
-    } catch (ChargeNotAwaitingFirstPaymentException) {
+    } catch (ChargeNotCollectableException) {
         $outcome = 'refused';
     }
 
-    expect($offered)->toBe($awaiting)
-        ->and($outcome)->toBe($awaiting ? 'recorded' : 'refused');
+    expect($offered)->toBe($collectable)
+        ->and($outcome)->toBe($collectable ? 'recorded' : 'refused');
 })->with([
     'an unpaid bill' => [fn ($test): Charge => Charge::factory()->create(['amount' => '100.000']), true],
     'a bill whose only payment was reversed' => [function ($test): Charge {
@@ -216,14 +251,20 @@ it('decides exactly as ChargeQueryService::awaitingFirstPaymentSql does, for eve
         ($test->payTowards)($charge, '40.000');
 
         return $charge;
-    }, false],
+    }, true],
     'a bill with a live payment beside a reversed one' => [function ($test): Charge {
         $charge = Charge::factory()->create(['amount' => '100.000']);
         ($test->payTowards)($charge, '40.000', reversed: true);
         ($test->payTowards)($charge, '25.000');
 
         return $charge;
-    }, false],
+    }, true],
+    'a bill with 10.000 left, the amount the dataset collects' => [function ($test): Charge {
+        $charge = Charge::factory()->create(['amount' => '100.000']);
+        ($test->payTowards)($charge, '90.000');
+
+        return $charge;
+    }, true],
     'a bill paid in full' => [function ($test): Charge {
         $charge = Charge::factory()->create(['amount' => '100.000']);
         ($test->payTowards)($charge, '100.000');
@@ -231,6 +272,12 @@ it('decides exactly as ChargeQueryService::awaitingFirstPaymentSql does, for eve
         return $charge;
     }, false],
     'a written-off bill' => [fn ($test): Charge => Charge::factory()->writtenOff($test->till)->create(['amount' => '100.000']), false],
+    'a written-off bill that also has a live partial payment' => [function ($test): Charge {
+        $charge = Charge::factory()->writtenOff($test->till)->create(['amount' => '100.000']);
+        ($test->payTowards)($charge, '40.000');
+
+        return $charge;
+    }, false],
     'a bill with nothing outstanding and no payment' => [fn ($test): Charge => Charge::factory()->create(['list_price' => '0.000']), false],
 ]);
 
@@ -249,45 +296,95 @@ it('answers an actor without create_payment with an authorization failure before
 |--------------------------------------------------------------------------
 */
 
-it('refuses with the notice when another session pays between the page check and the Action, recording nothing more', function () {
-    $charge = Charge::factory()->create(['amount' => '1000.000']);
-
-    $page = Livewire::actingAs($this->deskUser)
+/**
+ * Open the panel on a 1000.000 bill and submit 300.000, with a competing session's payment
+ * committing AFTER the page's pre-check has said yes and BEFORE the Action takes its lock.
+ *
+ * finalize() asks the page's own pre-check, then resolves the Action to run it, so the
+ * resolving hook fires in between: the interleaving, made deterministic.
+ *
+ * @param  callable(Charge): void  $compete
+ */
+function finalizeWhileCompeting(object $test, Charge $charge, callable $compete): void
+{
+    $page = Livewire::actingAs($test->deskUser)
         ->withQueryParams(['charge' => $charge->getKey()])
         ->test(EnrollAndCollect::class)
         ->fillForm([
             'amount' => '300.000',
             'tenders' => [['method' => 'cash', 'amount' => '300.000', 'external_reference' => null]],
         ], 'collectForm');
-    firstPaymentOnlyNotifications();
+    collectNotifications();
 
-    /*
-     * THE INTERLEAVING, MADE DETERMINISTIC. finalize() asks the page's own
-     * pre-check, then resolves the Action to run it. The resolving hook fires in
-     * between, so a competing session's payment (a different key) commits AFTER
-     * the pre-check has said yes and BEFORE the Action takes its lock.
-     */
     $competed = false;
-    app()->resolving(RecordPaymentAction::class, function () use (&$competed, $charge): void {
+    app()->resolving(RecordPaymentAction::class, function () use (&$competed, $charge, $compete): void {
         if ($competed) {
             return;
         }
 
         $competed = true;
-        ($this->collect)($charge, '400.000', firstPaymentOnly: false);
+        $compete($charge);
     });
 
     $page->call('finalize');
 
-    expect($competed)->toBeTrue('The competing payment was never injected, so this test proved nothing.')
-        ->and(PaymentAllocation::query()->where('charge_id', $charge->getKey())->pluck('amount')->all())->toBe(['400.000'])
+    expect($competed)->toBeTrue('The competing change was never injected, so this test proved nothing.');
+}
+
+it('refuses with the notice when another session settles the bill between the page check and the Action, recording nothing more', function () {
+    $charge = Charge::factory()->create(['amount' => '1000.000']);
+
+    finalizeWhileCompeting($this, $charge, fn (Charge $charge) => ($this->collect)($charge, '1000.000', collectableOnly: false));
+
+    expect(PaymentAllocation::query()->where('charge_id', $charge->getKey())->pluck('amount')->all())->toBe(['1000.000'])
         ->and(Payment::query()->count())->toBe(1)
-        ->and(firstPaymentOnlyNotifications())->toBe([
+        ->and(collectNotifications())->toBe([
             ['title' => __('collect.charge_not_collectable'), 'status' => 'danger'],
         ]);
 });
 
-it('records the first payment from the page as before, with no refusal', function () {
+it('refuses with the notice when another session writes the bill off between the page check and the Action', function () {
+    $charge = Charge::factory()->create(['amount' => '1000.000']);
+
+    finalizeWhileCompeting($this, $charge, fn (Charge $charge) => $charge->forceFill([
+        'written_off_at' => now(), 'written_off_by' => $this->till->getKey(), 'written_off_reason' => 'SENTINEL-WRITE-OFF',
+    ])->save());
+
+    expect(Payment::query()->count())->toBe(0)
+        ->and(collectNotifications())->toBe([
+            ['title' => __('collect.charge_not_collectable'), 'status' => 'danger'],
+        ]);
+});
+
+it('records the installment when another session paid part of the bill meanwhile and the sum still fits', function () {
+    $charge = Charge::factory()->create(['amount' => '1000.000']);
+
+    finalizeWhileCompeting($this, $charge, fn (Charge $charge) => ($this->collect)($charge, '400.000', collectableOnly: false));
+
+    expect(PaymentAllocation::query()->where('charge_id', $charge->getKey())->orderBy('id')->pluck('amount')->all())->toBe(['400.000', '300.000'])
+        ->and(collectNotifications())->toBe([
+            ['title' => __('collect.collected_successfully'), 'status' => 'success'],
+        ]);
+});
+
+it('refuses with both figures when another session paid part of the bill meanwhile and the sum no longer fits', function () {
+    $charge = Charge::factory()->create(['amount' => '1000.000']);
+
+    finalizeWhileCompeting($this, $charge, fn (Charge $charge) => ($this->collect)($charge, '800.000', collectableOnly: false));
+
+    $notifications = new Notifications;
+    $notifications->mount();
+    $sent = $notifications->notifications->values()->all();
+
+    expect(PaymentAllocation::query()->where('charge_id', $charge->getKey())->pluck('amount')->all())->toBe(['800.000'])
+        ->and(Payment::query()->count())->toBe(1)
+        ->and($sent)->toHaveCount(1)
+        ->and((string) $sent[0]->getTitle())->toBe(__('payments.exceeds_outstanding'))
+        ->and((string) $sent[0]->getBody())->toBe('Attempted 300.000 LYD; outstanding 200.000 LYD.')
+        ->and($sent[0]->getStatus())->toBe('danger');
+});
+
+it('records a payment from the page as before, with no refusal', function () {
     $charge = Charge::factory()->create(['amount' => '1000.000']);
 
     Livewire::actingAs($this->deskUser)

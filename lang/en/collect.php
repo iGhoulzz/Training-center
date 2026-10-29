@@ -108,7 +108,7 @@ return [
     // A second installment typed into a collection panel that already
     // recorded one: the shared idempotency key makes it a conflict, not a
     // replay. Whole sentence, and it tells the operator what to do next.
-    'installment_conflict' => 'This collection has already been recorded, and nothing further was taken. Collecting another installment against this bill is not available yet.',
+    'installment_conflict' => 'This collection has already been recorded, and nothing further was taken. To take a further payment on this bill, press Collect payment on the bill in Charges.',
 
     // PaymentExceedsOutstandingException carries both figures, so the
     // operator can correct the attempted collection without another lookup.
@@ -119,11 +119,14 @@ return [
     'amount_must_be_positive' => 'Enter an amount greater than zero.',
     'front_desk' => 'Front desk',
     'bill' => 'Bill',
+    // The bill aside while a bill is being collected: what is already paid and what is still owed.
+    'bill_paid_so_far' => 'Paid so far',
+    'bill_remaining' => 'Remaining',
     'not_chosen' => 'Not chosen',
     'take_payment' => 'Take payment',
     'balanced' => 'Balanced ✓',
     'unbalanced' => 'Check tender total',
-    'first_collection_hint' => 'The first collection may be partial. Collecting a later installment against this bill is not available.',
+    'first_collection_hint' => 'A collection may be partial. A further payment on this bill is taken by pressing Collect payment on the bill in Charges.',
     'step_collect' => 'Collect',
     'enrolment_steps' => 'Enrolment steps',
     'who_enrolling' => 'Who is enrolling?',
@@ -164,7 +167,7 @@ return [
     // sentence for every reason, so the page never says which of them it was —
     // a bill that does not exist, one the actor may not collect on, and one
     // that is already paid all read the same.
-    'charge_not_collectable' => 'This bill cannot be collected here. It may already have a payment, be written off or have nothing outstanding, or you may not be allowed to take payments.',
+    'charge_not_collectable' => 'This bill cannot be collected here. It may be written off or already paid in full, or you may not be allowed to take payments.',
 
     // P4-T35: what the panel shows once this panel's payment is recorded.
     'payment_recorded' => 'Payment recorded',
