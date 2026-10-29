@@ -12,7 +12,9 @@ use Filament\Infolists\Components\TextEntry;
 use Filament\Resources\Pages\ListRecords;
 use Filament\Schemas\Components\Grid;
 use Filament\Schemas\Components\Section;
+use Filament\Schemas\Components\View;
 use Filament\Schemas\Schema;
+use Filament\Support\Icons\Heroicon;
 use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\HtmlString;
 use Livewire\Attributes\Computed;
@@ -85,7 +87,28 @@ class ListCharges extends ListRecords
             ])->extraAttributes(['class' => 'rounded-xl! [&_.fi-section-content]:p-3.75! [&_.fi-sc]:gap-2.25!']);
         }
 
-        return $schema->components([Grid::make(['default' => 1, 'sm' => 2, 'xl' => 4])
+        return $schema->components([$this->helpPanel(), Grid::make(['default' => 1, 'sm' => 2, 'xl' => 4])
             ->extraAttributes(['class' => '[&>.fi-sc]:gap-3.5!'])->schema($cards), ...$content]);
+    }
+
+    /**
+     * "How to read this page" (P4-T37): what the four cards add up, what a row
+     * shows and what each button does, for staff who read "1100.000 LYD" over
+     * two part-paid bills and wondered where it came from.
+     *
+     * OPEN BY DEFAULT, AND A COLLAPSE IS REMEMBERED PER BROWSER. `persistCollapsed()`
+     * stores the state in the browser (Alpine's `$persist`, keyed on the section
+     * id), so it needs a stable id and no server column. Display only: nothing
+     * here reads or writes a bill.
+     */
+    private function helpPanel(): Section
+    {
+        return Section::make(__('charges.help_heading'))
+            ->id('charges-help')
+            ->icon(Heroicon::OutlinedInformationCircle)
+            ->collapsible()
+            ->persistCollapsed()
+            ->schema([View::make('filament.finance.charges-help')])
+            ->extraAttributes(['class' => 'rounded-xl! [&_.fi-section-content]:p-3.75!']);
     }
 }
