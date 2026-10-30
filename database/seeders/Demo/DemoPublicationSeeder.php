@@ -7,6 +7,7 @@ namespace Database\Seeders\Demo;
 use App\Domain\Publications\Actions\CreateArticleAction;
 use App\Domain\Publications\Actions\PublishArticleAction;
 use App\Domain\Publications\Models\Article;
+use App\Models\User;
 use Illuminate\Http\UploadedFile;
 use Mpdf\Mpdf;
 
@@ -45,7 +46,7 @@ final class DemoPublicationSeeder extends DemoAreaSeeder
                 $file = $this->pdf($key, $titleEn);
 
                 try {
-                    $this->articles[$key] = app(CreateArticleAction::class)->execute($context->user('admin'), [
+                    $this->articles[$key] = $context->by('admin', fn (User $actor) => app(CreateArticleAction::class)->execute($actor, [
                         'title_en' => $titleEn,
                         'title_ar' => $titleAr,
                         'description_en' => $descriptionEn,
@@ -53,7 +54,7 @@ final class DemoPublicationSeeder extends DemoAreaSeeder
                         'topic' => $topic,
                         'authors' => $authors,
                         'issued_on' => $context->day($day)->toDateString(),
-                    ], $file);
+                    ], $file));
                 } finally {
                     @unlink($file->getPathname());
                 }
@@ -61,7 +62,7 @@ final class DemoPublicationSeeder extends DemoAreaSeeder
 
             if ($publishAfter !== null) {
                 $context->timeline->add($context->day($day + $publishAfter), 12, "publish {$key}", function () use ($context, $key): void {
-                    app(PublishArticleAction::class)->execute($context->user('admin'), $this->articles[$key]);
+                    $context->by('admin', fn (User $actor) => app(PublishArticleAction::class)->execute($actor, $this->articles[$key]));
                 });
             }
         }

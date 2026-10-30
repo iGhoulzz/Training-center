@@ -4,14 +4,7 @@ declare(strict_types=1);
 
 namespace App\Console\Commands;
 
-use App\Domain\Enrollment\Models\Course;
-use App\Domain\Enrollment\Models\Student;
-use App\Domain\Finance\Models\Charge;
-use App\Domain\Finance\Models\Payment;
-use App\Domain\Finance\Models\PayrollRun;
-use App\Models\Role;
-use App\Models\User;
-use Database\Seeders\DatabaseSeeder;
+use Database\Seeders\Demo\DemoGuard;
 use Database\Seeders\Demo\DemoSeeder;
 use Illuminate\Console\Command;
 use Throwable;
@@ -22,8 +15,11 @@ use Throwable;
  *
  * Every row is written by the application's own Actions (see database/seeders/Demo), so
  * the activity log, references, receipts and reports are exactly what the app produces.
+ * The base roles and the owner account are seeded by the demo itself, on its first
+ * simulated day, when they are missing.
  *
- * Refuses, with no override flag:
+ * Refuses, with no override flag, through DemoGuard (which DemoSeeder repeats before its
+ * own first write):
  * - any environment other than local or testing, production above all;
  * - a database that already holds students, courses, charges, payments or payroll runs.
  *
@@ -37,24 +33,14 @@ final class DemoSeedCommand extends Command
 
     public function handle(DemoSeeder $seeder): int
     {
-        if (! app()->environment(['local', 'testing'])) {
-            $this->components->error('demo:seed only runs in the local or testing environment, never in production.');
+        $refusal = DemoGuard::refusal();
+
+        if ($refusal !== null) {
+            foreach ($refusal as $line) {
+                $this->components->error($line);
+            }
 
             return self::FAILURE;
-        }
-
-        $occupied = $this->occupiedBy();
-
-        if ($occupied !== null) {
-            $this->components->error("The database already holds {$occupied}; demo:seed is for a fresh database.");
-            $this->components->error('Run php artisan migrate:fresh --seed first.');
-
-            return self::FAILURE;
-        }
-
-        if (! $this->baseSeeded()) {
-            $this->components->info('Roles or the owner account are missing; running the base seeders first.');
-            $this->call('db:seed', ['--class' => DatabaseSeeder::class]);
         }
 
         $started = microtime(true);
@@ -87,24 +73,5 @@ final class DemoSeedCommand extends Command
         $this->line('Portal students must change their temporary password at first sign-in.');
 
         return self::SUCCESS;
-    }
-
-    /** What the database already holds that this command would collide with, if anything. */
-    private function occupiedBy(): ?string
-    {
-        return match (true) {
-            PayrollRun::query()->exists() => 'payroll runs',
-            Payment::query()->exists() => 'payments',
-            Charge::query()->exists() => 'charges',
-            Student::withTrashed()->exists() => 'students',
-            Course::query()->exists() => 'courses',
-            default => null,
-        };
-    }
-
-    private function baseSeeded(): bool
-    {
-        return Role::query()->whereIn('name', ['super_admin', 'admin', 'staff', 'student'])->count() === 4
-            && User::query()->where('email', 'owner@example.test')->exists();
     }
 }

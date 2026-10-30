@@ -23,6 +23,7 @@ use App\Domain\Finance\Models\Expense;
 use App\Domain\Finance\Models\Payment;
 use App\Domain\Finance\Support\ChargeBalance;
 use App\Domain\Finance\Support\Money;
+use App\Models\User;
 use Carbon\CarbonImmutable;
 use InvalidArgumentException;
 
@@ -89,13 +90,13 @@ final class DemoFinanceSeeder extends DemoAreaSeeder
 
         $context->timeline->add($context->day(-183), 9, 'discounts', function () use ($context): void {
             foreach (self::DISCOUNTS as $key => [$name, $percentage]) {
-                $context->discounts[$key] = app(CreateDiscountAction::class)->execute($context->user('owner'), $name, $percentage);
+                $context->discounts[$key] = $context->by('owner', fn (User $actor) => app(CreateDiscountAction::class)->execute($actor, $name, $percentage));
             }
         });
 
         // The spring promotion ended after it had been used; retiring it keeps the bills it priced.
         $context->timeline->add($context->day(-40), 9, 'retire the spring promotion', function () use ($context): void {
-            app(DeactivateDiscountAction::class)->execute($context->user('owner'), $context->discounts['promo']);
+            $context->by('owner', fn (User $actor) => app(DeactivateDiscountAction::class)->execute($actor, $context->discounts['promo']));
         });
     }
 
@@ -105,7 +106,7 @@ final class DemoFinanceSeeder extends DemoAreaSeeder
 
         $context->timeline->add($context->day(-183), 10, 'expense categories', function () use ($context): void {
             foreach (self::EXPENSE_CATEGORIES as $key => [$english, $arabic]) {
-                $context->expenseCategories[$key] = app(CreateExpenseCategoryAction::class)->execute($context->user('admin'), $english, $arabic);
+                $context->expenseCategories[$key] = $context->by('admin', fn (User $actor) => app(CreateExpenseCategoryAction::class)->execute($actor, $english, $arabic));
             }
         });
     }
@@ -123,10 +124,9 @@ final class DemoFinanceSeeder extends DemoAreaSeeder
             $adjust = $row['adjust'];
 
             $context->timeline->add($context->day($enrolDay + $adjust['after']), 10, "adjust bill {$id}", function () use ($context, $id, $adjust): void {
-                app(AdjustChargeAction::class)->execute(
-                    $context->user('owner'),
+                $context->by('owner', fn (User $actor) => app(AdjustChargeAction::class)->execute($actor,
                     new AdjustChargeData($this->chargeFor($id), $adjust['to'], $adjust['reason']),
-                );
+                ));
             });
         }
 
@@ -147,10 +147,9 @@ final class DemoFinanceSeeder extends DemoAreaSeeder
             $writeoff = $row['writeoff'];
 
             $context->timeline->add($context->day($enrolDay + $writeoff['after']), 11, "write off bill {$id}", function () use ($context, $id, $writeoff): void {
-                app(WriteOffChargeAction::class)->execute(
-                    $context->user('owner'),
+                $context->by('owner', fn (User $actor) => app(WriteOffChargeAction::class)->execute($actor,
                     new WriteOffChargeData($this->chargeFor($id), $writeoff['reason']),
-                );
+                ));
             });
         }
 
@@ -162,7 +161,7 @@ final class DemoFinanceSeeder extends DemoAreaSeeder
                     ->where('idempotency_key', "demo-{$id}-{$reverse['payment']}")
                     ->value('id');
 
-                app(ReversePaymentAction::class)->execute($context->user('owner'), $paymentId, $reverse['reason']);
+                $context->by('owner', fn (User $actor) => app(ReversePaymentAction::class)->execute($actor, $paymentId, $reverse['reason']));
             });
         }
     }
@@ -210,7 +209,7 @@ final class DemoFinanceSeeder extends DemoAreaSeeder
             $amount = $owed;
         }
 
-        $actor = $context->user($number % 3 === 0 ? 'owner' : 'admin');
+        $account = $number % 3 === 0 ? 'owner' : 'admin';
         $locale = app()->getLocale();
 
         if ($number % self::ARABIC_RECEIPT_EVERY === 0) {
@@ -219,13 +218,13 @@ final class DemoFinanceSeeder extends DemoAreaSeeder
 
         try {
             // collectableOnly is what the Collect payment panel sets (EnrollAndCollect.php:1085).
-            app(RecordPaymentAction::class)->execute($actor, new RecordPaymentData(
+            $context->by($account, fn (User $actor) => app(RecordPaymentAction::class)->execute($actor, new RecordPaymentData(
                 chargeId: $chargeId,
                 allocation: $amount->toDecimal(),
                 tenders: $this->tenders($tender, $amount, $number),
                 idempotencyKey: $key,
                 collectableOnly: true,
-            ));
+            )));
         } finally {
             app()->setLocale($locale);
         }
@@ -306,11 +305,10 @@ final class DemoFinanceSeeder extends DemoAreaSeeder
         $context = $this->context;
 
         $context->timeline->add(min($campaign->addDay(), $context->today), 9, 'reverse the duplicated expense', function () use ($context): void {
-            app(ReverseExpenseAction::class)->execute(
-                $context->user('owner'),
+            $context->by('owner', fn (User $actor) => app(ReverseExpenseAction::class)->execute($actor,
                 $this->expenses['marketing-duplicate'],
                 'Entered twice by mistake; the first entry stands.',
-            );
+            ));
         });
     }
 
@@ -320,13 +318,12 @@ final class DemoFinanceSeeder extends DemoAreaSeeder
         $paidOn = min($paidOn, $context->today);
 
         $context->timeline->add($paidOn, 12, "expense {$key}", function () use ($context, $key, $category, $amount, $paidOn, $description): void {
-            $this->expenses[$key] = app(RecordExpenseAction::class)->execute(
-                $context->user('admin'),
+            $this->expenses[$key] = $context->by('admin', fn (User $actor) => app(RecordExpenseAction::class)->execute($actor,
                 (int) $context->expenseCategories[$category]->getKey(),
                 $amount,
                 $paidOn->toDateString(),
                 $description,
-            );
+            ));
         });
     }
 }

@@ -20,7 +20,7 @@ namespace Database\Seeders\Demo;
 final class DemoScenarios
 {
     /**
-     * The 48 people on the register: [first name, last name, gender].
+     * The 49 people on the register: [first name, last name, gender].
      *
      * @return array<int, array{string, string, string}>
      */
@@ -76,6 +76,8 @@ final class DemoScenarios
             // Never enrolled: an enquiry the desk keeps, and one it later removes.
             47 => ['Rami', 'Salem', 'male'],
             48 => ['Reem', 'Yacoub', 'female'],
+            // Walks in today and enrols in the batch that started two weeks ago.
+            49 => ['Nabil', 'Ferjani', 'male'],
         ];
     }
 
@@ -279,7 +281,7 @@ final class DemoScenarios
         $add(31, 'R2', -10, 'admin', 'promo', '50@0:cash rest@30:cash');
         $add(32, 'R2', -8, 'frontdesk2', null, '40@0:card 30@30:card rest@60:card');
         $add(33, 'R2', -6, 'frontdesk1', null, 'none');
-        $add(34, 'R2', -4, 'frontdesk2', null, '40@0:cash');
+        $add(34, 'R2', -4, 'frontdesk2', null, '40@0:cash 30@49:cash');
         $add(35, 'R2', -3, 'frontdesk1', null, '30@0:cash', 'withdraw', 8);
         $add(36, 'R2', -2, 'admin', 'early', '100@0:cash+card');
 
@@ -296,6 +298,8 @@ final class DemoScenarios
         $add(44, 'R4', -6, 'frontdesk1', null, 'none');
         $add(45, 'R4', -4, 'frontdesk2', null, '40@0:cash 30@14:cash rest@28:cash');
         $add(46, 'R4', -2, 'frontdesk1', null, '100@0:card');
+        // Enrols and pays today, so today's Daily tender report opens on a real payment.
+        $add(49, 'R4', 14, 'frontdesk1', null, '100@0:card');
 
         // Upcoming batches already taking enrolments, billed and mostly unpaid.
         $add(8, 'U1', -16, 'frontdesk2', null, 'none');

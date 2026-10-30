@@ -13,6 +13,7 @@ use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Course;
 use App\Domain\Finance\Actions\UpdateBatchPriceAction;
 use App\Domain\Finance\Actions\UpdateCoursePriceAction;
+use App\Models\User;
 
 /**
  * What the centre teaches: five courses, nine batches and who teaches them.
@@ -46,11 +47,10 @@ final class DemoCatalogueSeeder extends DemoAreaSeeder
         $this->registerCourses();
 
         $context->timeline->add($context->day(self::PRICE_CHANGE_DAY), 9, 'English course price change', function () use ($context): void {
-            app(UpdateCoursePriceAction::class)->execute(
-                $context->user('owner'),
+            $context->by('owner', fn (User $actor) => app(UpdateCoursePriceAction::class)->execute($actor,
                 $context->courses['ENG-B1'],
                 self::PRICE_CHANGE_TO,
-            );
+            ));
         });
 
         foreach (DemoScenarios::batches() as $key => $spec) {
@@ -74,7 +74,7 @@ final class DemoCatalogueSeeder extends DemoAreaSeeder
                     'is_active' => true,
                 ]));
 
-                app(UpdateCoursePriceAction::class)->execute($context->user('owner'), $course, $spec['price']);
+                $context->by('owner', fn (User $actor) => app(UpdateCoursePriceAction::class)->execute($actor, $course, $spec['price']));
 
                 $context->courses[$code] = $course->refresh();
             }
@@ -93,7 +93,7 @@ final class DemoCatalogueSeeder extends DemoAreaSeeder
         $opened = min(max($spec['start'] - 18, -180), -12);
 
         $context->timeline->add($context->day($opened), 9, "open batch {$key}", function () use ($context, $key, $spec): void {
-            $batch = app(CreateWithIdentifierCodeAction::class)->createBatch($context->user('admin'), [
+            $batch = $context->by('admin', fn (User $actor) => app(CreateWithIdentifierCodeAction::class)->createBatch($actor, [
                 'course_id' => $context->courses[$spec['course']]->getKey(),
                 'code' => $spec['code'],
                 'start_date' => $context->day($spec['start'])->toDateString(),
@@ -101,10 +101,10 @@ final class DemoCatalogueSeeder extends DemoAreaSeeder
                 'capacity' => $spec['capacity'],
                 'total_hours' => $spec['hours'] ?? null,
                 'status' => BatchStatus::Planned,
-            ]);
+            ]));
 
             if (isset($spec['price'])) {
-                app(UpdateBatchPriceAction::class)->execute($context->user('owner'), $batch, $spec['price']);
+                $context->by('owner', fn (User $actor) => app(UpdateBatchPriceAction::class)->execute($actor, $batch, $spec['price']));
             }
 
             $context->batches[$key] = $batch->refresh();
@@ -114,21 +114,20 @@ final class DemoCatalogueSeeder extends DemoAreaSeeder
             $assignedHours = is_array($hours) ? $hours[0] : $hours;
 
             $context->timeline->add($context->day($opened + 2), 9, "assign {$instructor} to {$key}", function () use ($context, $key, $instructor, $assignedHours): void {
-                app(AssignInstructorAction::class)->execute($context->user('admin'), new AssignInstructorData(
+                $context->by('admin', fn (User $actor) => app(AssignInstructorAction::class)->execute($actor, new AssignInstructorData(
                     (int) $context->batches[$key]->getKey(),
                     (int) $context->user($instructor)->getKey(),
                     $assignedHours,
-                ));
+                )));
             });
         }
 
         foreach ($spec['removed'] ?? [] as $instructor => [$hours, $afterStart]) {
             $context->timeline->add($context->day($spec['start'] + $afterStart), 9, "remove {$instructor} from {$key}", function () use ($context, $key, $instructor): void {
-                app(RemoveInstructorAction::class)->execute(
-                    $context->user('admin'),
+                $context->by('admin', fn (User $actor) => app(RemoveInstructorAction::class)->execute($actor,
                     $context->batches[$key],
                     $context->user($instructor),
-                );
+                ));
             });
         }
 

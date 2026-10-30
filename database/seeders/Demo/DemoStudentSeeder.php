@@ -15,6 +15,7 @@ use App\Domain\Enrollment\Enums\StudentStatus;
 use App\Domain\Finance\Actions\EnrollAndBillAction;
 use App\Domain\Finance\Data\EnrollAndBillData;
 use App\Domain\Staff\Actions\IssuePortalCredentialAction;
+use App\Models\User;
 
 /**
  * The people the centre teaches, and what happened to each of their seats.
@@ -79,7 +80,7 @@ final class DemoStudentSeeder extends DemoAreaSeeder
         $this->registerStudent(48, -3, 'frontdesk2', StudentStatus::Prospective);
 
         $context->timeline->add($context->day(-20), 12, 'remove the enquiry that never enrolled', function () use ($context): void {
-            app(DeleteStudentAction::class)->execute($context->user('admin'), $context->students['47']);
+            $context->by('admin', fn (User $actor) => app(DeleteStudentAction::class)->execute($actor, $context->students['47']));
         });
     }
 
@@ -90,8 +91,7 @@ final class DemoStudentSeeder extends DemoAreaSeeder
         $context->timeline->add($context->day($day), 9, "register student {$number}", function () use ($context, $number, $creator, $status): void {
             [$first, $last, $gender] = DemoScenarios::students()[$number];
 
-            $context->students[(string) $number] = app(CreateWithIdentifierCodeAction::class)->createStudent(
-                $context->user($creator),
+            $context->students[(string) $number] = $context->by($creator, fn (User $actor) => app(CreateWithIdentifierCodeAction::class)->createStudent($actor,
                 [
                     'student_code' => '',
                     'first_name' => $first,
@@ -104,7 +104,7 @@ final class DemoStudentSeeder extends DemoAreaSeeder
                     'status' => $status,
                     'notes' => $number % 6 === 0 ? 'Prefers evening classes.' : null,
                 ],
-            );
+            ));
         });
     }
 
@@ -119,14 +119,13 @@ final class DemoStudentSeeder extends DemoAreaSeeder
         $context->timeline->add($context->day($enrolDay), 10, "enrol {$id}", function () use ($context, $row, $id): void {
             $discount = $row['discount'] === null ? null : (int) $context->discounts[$row['discount']]->getKey();
 
-            $context->enrollments[$id] = app(EnrollAndBillAction::class)->execute(
-                $context->user($row['by']),
+            $context->enrollments[$id] = $context->by($row['by'], fn (User $actor) => app(EnrollAndBillAction::class)->execute($actor,
                 new EnrollAndBillData(
                     (int) $context->students[(string) $row['student']]->getKey(),
                     (int) $context->batches[$row['batch']]->getKey(),
                     $discount,
                 ),
-            );
+            ));
         });
     }
 
@@ -144,7 +143,7 @@ final class DemoStudentSeeder extends DemoAreaSeeder
             $teacher = array_key_first($batch['instructors']);
 
             $context->timeline->add($context->day($endDay), 11, "complete {$id}", function () use ($context, $id, $teacher): void {
-                app(CompleteEnrollmentAction::class)->execute($context->user($teacher), $context->enrollments[$id]);
+                $context->by($teacher, fn (User $actor) => app(CompleteEnrollmentAction::class)->execute($actor, $context->enrollments[$id]));
             });
 
             if (! $stillStudying) {
@@ -158,7 +157,7 @@ final class DemoStudentSeeder extends DemoAreaSeeder
             $withdrawDay = $enrolDay + $row['end_after'];
 
             $context->timeline->add($context->day($withdrawDay), 12, "withdraw {$id}", function () use ($context, $id): void {
-                app(WithdrawEnrollmentAction::class)->execute($context->user('admin'), $context->enrollments[$id]);
+                $context->by('admin', fn (User $actor) => app(WithdrawEnrollmentAction::class)->execute($actor, $context->enrollments[$id]));
             });
 
             if (! $stillStudying) {
@@ -187,22 +186,21 @@ final class DemoStudentSeeder extends DemoAreaSeeder
         $context = $this->context;
 
         $context->timeline->add($context->day($endDay + 2), 12, "certificate for {$id}", function () use ($context, $id): void {
-            app(IssueStudentCertificateAction::class)->execute($context->user('admin'), $context->enrollments[$id]);
+            $context->by('admin', fn (User $actor) => app(IssueStudentCertificateAction::class)->execute($actor, $context->enrollments[$id]));
         });
 
         if ($plan === 'issue+revoke') {
             $context->timeline->add($context->day($endDay + 25), 12, "revoke certificate for {$id}", function () use ($context, $id): void {
-                app(RevokeStudentCertificateAction::class)->execute(
-                    $context->user('admin'),
+                $context->by('admin', fn (User $actor) => app(RevokeStudentCertificateAction::class)->execute($actor,
                     $context->enrollments[$id],
                     'The name was misspelled on the certificate; it is to be reissued after the record is corrected.',
-                );
+                ));
             });
         }
 
         if ($plan === 'issue+replace') {
             $context->timeline->add($context->day($endDay + 10), 12, "replace certificate for {$id}", function () use ($context, $id): void {
-                app(ReplaceStudentCertificateAction::class)->execute($context->user('admin'), $context->enrollments[$id]);
+                $context->by('admin', fn (User $actor) => app(ReplaceStudentCertificateAction::class)->execute($actor, $context->enrollments[$id]));
             });
         }
     }
@@ -214,7 +212,7 @@ final class DemoStudentSeeder extends DemoAreaSeeder
         $context->timeline->add($context->day($day), 14, "portal login for student {$number}", function () use ($context, $number, $issuer): void {
             $student = $context->students[(string) $number];
 
-            $password = app(IssuePortalCredentialAction::class)->execute($context->user($issuer), $student);
+            $password = $context->by($issuer, fn (User $actor) => app(IssuePortalCredentialAction::class)->execute($actor, $student));
 
             $context->portalLogins[] = [
                 'name' => $student->full_name,

@@ -18,25 +18,30 @@ use App\Domain\Finance\Models\Expense;
 use App\Domain\Finance\Models\Payment;
 use App\Domain\Finance\Models\PayrollRun;
 use App\Domain\Publications\Models\Article;
+use App\Models\Role;
 use App\Models\User;
 use Carbon\CarbonImmutable;
+use Database\Seeders\DatabaseSeeder;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
+use RuntimeException;
 use Spatie\Activitylog\Support\CauserResolver;
 
 /**
  * Builds the demo history by registering every area on one timeline and replaying it.
  *
- * The roles, permissions and the owner account must already exist (DatabaseSeeder);
- * DemoSeedCommand makes sure of that and of the safety rules before calling this.
+ * It refuses on its own (DemoGuard) before its first write, and seeds the base roles and
+ * owner account itself, as the first event of the history, when they are missing.
  *
- * Two process-wide settings are changed for the length of the run and put back:
+ * Three process-wide settings are changed for the length of the run and put back, in
+ * the same finally block, also when a step throws:
  *
  * - the default queue connection becomes `sync`, so each receipt job runs as the payment
  *   commits and the demo ends with every receipt generated whether or not a worker is
  *   running (the jobs and Actions are untouched);
  * - the identifier-code generator is rebound to a seeded one, so student numbers come out
- *   the same on every run. The timeline restores the clock itself.
+ *   the same on every run, and PHP's random generator is reseeded afterwards;
+ * - the clock is stepped by the timeline, which restores it itself.
  */
 final class DemoSeeder extends Seeder
 {
@@ -52,9 +57,18 @@ final class DemoSeeder extends Seeder
 
     private ?DemoContext $context = null;
 
+    /**
+     * @throws RuntimeException when the environment or the database is not one the demo may be written to.
+     */
     public function run(): void
     {
+        // Before anything is touched, whoever called: the command checks too, a bare
+        // `db:seed --class` does not.
+        DemoGuard::assertSafe();
+
         $queue = config('queue.default');
+        $binding = app()->getBindings()[IdentifierCode::class] ?? null;
+
         config(['queue.default' => 'sync']);
 
         mt_srand(DemoContext::SEED);
@@ -66,6 +80,8 @@ final class DemoSeeder extends Seeder
         $this->context = $context;
 
         try {
+            $this->registerBaseSeeders($context);
+
             foreach (self::AREAS as $area) {
                 (new $area($context))->run();
             }
@@ -75,7 +91,36 @@ final class DemoSeeder extends Seeder
             $this->generateMissingReceipts();
         } finally {
             config(['queue.default' => $queue]);
+
+            if ($binding === null) {
+                unset(app()[IdentifierCode::class]);
+            } else {
+                app()->bind(IdentifierCode::class, $binding['concrete'], $binding['shared']);
+            }
+
+            mt_srand(random_int(1, 2_147_483_647));
         }
+    }
+
+    /**
+     * The roles, permissions and owner account, on the demo's own first day.
+     *
+     * Seeding them inside the timeline, not before it, is what dates the owner's role
+     * grant before the owner's first act. A database that already ran
+     * `migrate:fresh --seed` has them stamped with that day instead, which is the
+     * truth about when they were made and the reason the README recommends plain
+     * `migrate:fresh`.
+     */
+    private function registerBaseSeeders(DemoContext $context): void
+    {
+        $context->timeline->add($context->day(-185), 7, 'base roles and owner account', function (): void {
+            $seeded = Role::query()->whereIn('name', ['super_admin', 'admin', 'staff', 'student'])->count() === 4
+                && User::query()->where('email', 'owner@example.test')->exists();
+
+            if (! $seeded) {
+                (new DatabaseSeeder)->setContainer(app())->__invoke();
+            }
+        });
     }
 
     /** The demo logins: staff accounts, then the portal students issued during the run. */

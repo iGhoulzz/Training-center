@@ -14,6 +14,7 @@ use App\Domain\Finance\Enums\CompensationType;
 use App\Domain\Finance\Enums\PayrollRunType;
 use App\Domain\Finance\Models\PayrollLine;
 use App\Domain\Staff\Actions\DeactivateUserAction;
+use App\Models\User;
 use Carbon\CarbonImmutable;
 
 /**
@@ -36,13 +37,17 @@ use Carbon\CarbonImmutable;
  * - hourly rates for the instructors, one of which changes once;
  * - the four complete months before this one finalized, some with a bonus or a deduction
  *   added to a line first;
- * - one instructor run covering every finished batch, finalized;
+ * - one instructor run covering every finished batch, finalized early this month;
  * - one Adjustment run correcting a line of the oldest finalized salary run;
  * - a draft salary run for the current month and a draft instructor run for assignments
  *   on running batches, both left unfinalized.
  *
- * A departed instructor is also here: Hana is paid in the instructor run and then
- * deactivated, so the payroll history of someone who has left is visible too.
+ * A departed instructor is also here: Hana is deactivated 30 days ago, and her final
+ * teaching hours are still paid in the finalized instructor run, so the payroll history
+ * of someone who has left is visible too.
+ *
+ * Both drafts are dated today, after the runs they must not precede, so the history is in
+ * order whatever day of the month the demo is loaded on.
  */
 final class DemoPayrollSeeder extends DemoAreaSeeder
 {
@@ -85,11 +90,11 @@ final class DemoPayrollSeeder extends DemoAreaSeeder
 
         $context->timeline->add($context->day(-183), 11, 'starting rates', function () use ($context, $start): void {
             foreach (self::SALARIES as $key => $amount) {
-                app(ChangeCompensationAction::class)->execute($context->user('owner'), (int) $context->user($key)->getKey(), CompensationType::Salary, $amount, $start);
+                $context->by('owner', fn (User $actor) => app(ChangeCompensationAction::class)->execute($actor, (int) $context->user($key)->getKey(), CompensationType::Salary, $amount, $start));
             }
 
             foreach (self::HOURLY as $key => $amount) {
-                app(ChangeCompensationAction::class)->execute($context->user('owner'), (int) $context->user($key)->getKey(), CompensationType::Hourly, $amount, $start);
+                $context->by('owner', fn (User $actor) => app(ChangeCompensationAction::class)->execute($actor, (int) $context->user($key)->getKey(), CompensationType::Hourly, $amount, $start));
             }
         });
 
@@ -108,13 +113,12 @@ final class DemoPayrollSeeder extends DemoAreaSeeder
         $context = $this->context;
 
         $context->timeline->add($this->clamp($recordedOn), 10, "raise for {$account}", function () use ($context, $account, $type, $amount, $effective): void {
-            app(ChangeCompensationAction::class)->execute(
-                $context->user('owner'),
+            $context->by('owner', fn (User $actor) => app(ChangeCompensationAction::class)->execute($actor,
                 (int) $context->user($account)->getKey(),
                 $type,
                 $amount,
                 $effective->toDateString(),
-            );
+            ));
         });
     }
 
@@ -126,29 +130,27 @@ final class DemoPayrollSeeder extends DemoAreaSeeder
         $key = "salary{$month}";
 
         $context->timeline->add($this->clamp($last->addDays(2)), 13, "create the salary run for {$first->format('F Y')}", function () use ($context, $key, $first, $last): void {
-            $context->payrollRuns[$key] = app(CreatePayrollRunAction::class)->execute(
-                $context->user('owner'),
+            $context->payrollRuns[$key] = $context->by('owner', fn (User $actor) => app(CreatePayrollRunAction::class)->execute($actor,
                 PayrollRunType::MonthlySalary,
                 $first->toDateString(),
                 $last->toDateString(),
                 [],
                 'Salaries for '.$first->format('F Y'),
-            );
+            ));
         });
 
         foreach (self::MONTH_ADJUSTMENTS[$month] as [$account, $amount, $reason]) {
             $context->timeline->add($this->clamp($last->addDays(2)), 13, "adjust {$account} in {$key}", function () use ($context, $key, $account, $amount, $reason): void {
-                app(AddPayrollLineAdjustmentAction::class)->execute(
-                    $context->user('owner'),
+                $context->by('owner', fn (User $actor) => app(AddPayrollLineAdjustmentAction::class)->execute($actor,
                     $this->lineOf($key, $account),
                     $amount,
                     $reason,
-                );
+                ));
             });
         }
 
-        $context->timeline->add($this->clamp($last->addDays(3)), 13, "finalize {$key}", function () use ($context, $key): void {
-            app(FinalizePayrollRunAction::class)->execute($context->user('owner'), $context->payrollRuns[$key]);
+        $context->timeline->add($this->clamp($last->addDays(3)), 14, "finalize {$key}", function () use ($context, $key): void {
+            $context->by('owner', fn (User $actor) => app(FinalizePayrollRunAction::class)->execute($actor, $context->payrollRuns[$key]));
         });
     }
 
@@ -156,7 +158,12 @@ final class DemoPayrollSeeder extends DemoAreaSeeder
     {
         $context = $this->context;
 
-        $context->timeline->add($context->day(-70), 13, 'create the instructor run for the finished batches', function () use ($context): void {
+        // Early in the CURRENT month, before today where the calendar allows it, so this
+        // month's wage cost and profit reports open on real figures. The salary run for
+        // this month stays a draft; only the teaching hours of the finished batches are paid.
+        $day = max($context->monthStart(0), $context->day(-2));
+
+        $context->timeline->add($day, 9, 'create the instructor run for the finished batches', function () use ($context): void {
             $assignments = [];
 
             foreach (['F1', 'F2', 'F3'] as $batch) {
@@ -165,18 +172,17 @@ final class DemoPayrollSeeder extends DemoAreaSeeder
                 }
             }
 
-            $context->payrollRuns['instructors'] = app(CreatePayrollRunAction::class)->execute(
-                $context->user('owner'),
+            $context->payrollRuns['instructors'] = $context->by('owner', fn (User $actor) => app(CreatePayrollRunAction::class)->execute($actor,
                 PayrollRunType::InstructorBatch,
                 null,
                 null,
                 $assignments,
                 'Teaching hours for the three finished batches',
-            );
+            ));
         });
 
-        $context->timeline->add($context->day(-69), 13, 'finalize the instructor run', function () use ($context): void {
-            app(FinalizePayrollRunAction::class)->execute($context->user('owner'), $context->payrollRuns['instructors']);
+        $context->timeline->add($day, 10, 'finalize the instructor run', function () use ($context): void {
+            $context->by('owner', fn (User $actor) => app(FinalizePayrollRunAction::class)->execute($actor, $context->payrollRuns['instructors']));
         });
     }
 
@@ -187,28 +193,26 @@ final class DemoPayrollSeeder extends DemoAreaSeeder
         $day = $this->clamp($context->monthStart(-2)->addDays(7));
 
         $context->timeline->add($day, 13, 'create the adjustment run', function () use ($context): void {
-            $run = app(CreatePayrollRunAction::class)->execute(
-                $context->user('owner'),
+            $run = $context->by('owner', fn (User $actor) => app(CreatePayrollRunAction::class)->execute($actor,
                 PayrollRunType::Adjustment,
                 null,
                 null,
                 [],
                 'Correction to an earlier salary run',
-            );
+            ));
 
-            app(AdjustPayrollLineAction::class)->execute(
-                $context->user('owner'),
+            $context->by('owner', fn (User $actor) => app(AdjustPayrollLineAction::class)->execute($actor,
                 $run,
                 $this->lineOf('salary-4', 'rania'),
                 '120.000',
                 'Overtime hours were left out of the original run.',
-            );
+            ));
 
             $context->payrollRuns['adjustment'] = $run;
         });
 
         $context->timeline->add($this->clamp($day->addDay()), 13, 'finalize the adjustment run', function () use ($context): void {
-            app(FinalizePayrollRunAction::class)->execute($context->user('owner'), $context->payrollRuns['adjustment']);
+            $context->by('owner', fn (User $actor) => app(FinalizePayrollRunAction::class)->execute($actor, $context->payrollRuns['adjustment']));
         });
     }
 
@@ -218,32 +222,29 @@ final class DemoPayrollSeeder extends DemoAreaSeeder
         $context = $this->context;
         $first = $context->monthStart(0);
 
-        $context->timeline->add($context->day(-1), 13, 'draft the salary run for this month', function () use ($context, $first): void {
-            $context->payrollRuns['draft-salary'] = app(CreatePayrollRunAction::class)->execute(
-                $context->user('owner'),
+        $context->timeline->add($context->today, 16, 'draft the salary run for this month', function () use ($context, $first): void {
+            $context->payrollRuns['draft-salary'] = $context->by('owner', fn (User $actor) => app(CreatePayrollRunAction::class)->execute($actor,
                 PayrollRunType::MonthlySalary,
                 $first->toDateString(),
                 $first->endOfMonth()->startOfDay()->toDateString(),
                 [],
                 'Salaries for '.$first->format('F Y').' (draft)',
-            );
+            ));
 
-            app(AddPayrollLineAdjustmentAction::class)->execute(
-                $context->user('owner'),
+            $context->by('owner', fn (User $actor) => app(AddPayrollLineAdjustmentAction::class)->execute($actor,
                 $this->lineOf('draft-salary', 'rania'),
                 '100.000',
                 'Mid-month performance bonus',
-            );
+            ));
 
-            app(AddPayrollLineAdjustmentAction::class)->execute(
-                $context->user('owner'),
+            $context->by('owner', fn (User $actor) => app(AddPayrollLineAdjustmentAction::class)->execute($actor,
                 $this->lineOf('draft-salary', 'huda'),
                 '-60.000',
                 'Late arrivals this month',
-            );
+            ));
         });
 
-        $context->timeline->add($context->day(-1), 14, 'draft the instructor run for the running batches', function () use ($context): void {
+        $context->timeline->add($context->today, 17, 'draft the instructor run for the running batches', function () use ($context): void {
             $wanted = ['R1' => 'yousef', 'R2' => 'omar', 'R3' => 'salma'];
             $assignments = [];
 
@@ -255,14 +256,13 @@ final class DemoPayrollSeeder extends DemoAreaSeeder
                 }
             }
 
-            $context->payrollRuns['draft-instructors'] = app(CreatePayrollRunAction::class)->execute(
-                $context->user('owner'),
+            $context->payrollRuns['draft-instructors'] = $context->by('owner', fn (User $actor) => app(CreatePayrollRunAction::class)->execute($actor,
                 PayrollRunType::InstructorBatch,
                 null,
                 null,
                 $assignments,
                 'Teaching hours so far on the running batches (draft)',
-            );
+            ));
         });
     }
 
@@ -271,7 +271,7 @@ final class DemoPayrollSeeder extends DemoAreaSeeder
         $context = $this->context;
 
         $context->timeline->add($context->day(-30), 12, 'Hana leaves the centre', function () use ($context): void {
-            app(DeactivateUserAction::class)->execute($context->user('owner'), $context->user('hana'));
+            $context->by('owner', fn (User $actor) => app(DeactivateUserAction::class)->execute($actor, $context->user('hana')));
         });
     }
 

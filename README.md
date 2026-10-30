@@ -67,9 +67,13 @@ To click through every admin screen on your own machine, fill a freshly migrated
 local database with a fictional six-month history:
 
 ```bash
-php artisan migrate:fresh --seed
+php artisan migrate:fresh
 php artisan demo:seed
 ```
+
+`demo:seed` seeds the roles and the owner account itself, on the history's first day.
+`php artisan migrate:fresh --seed` first also works; the owner account is then dated
+the day you ran it rather than six months back.
 
 It takes about fifteen seconds and prints a summary and the logins. Every row is
 written by the application's own Actions, so the activity log, references,
@@ -87,8 +91,9 @@ finalize.
 - **Local only.** The command refuses in any environment other than `local` or
   `testing`, and refuses a database that already holds students, courses, charges,
   payments or payroll runs. There is no override: start again with
-  `php artisan migrate:fresh --seed`. All people and contacts are invented
-  (`@example.test`, phone numbers `+218 91 000 0xxx`).
+  `php artisan migrate:fresh`. The seeder class refuses the same way if run directly. All
+  people and contacts are invented: addresses are `@example.test`, student phone numbers
+  `+218 91 000 0NNN` and staff phone numbers `+218 92 000 0NNN`.
 - **Receipts** are generated during the seed, with no worker running. Files it
   wrote to the `private` disk are not removed by `migrate:fresh`; they are harmless.
 

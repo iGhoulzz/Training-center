@@ -104,6 +104,23 @@ final class DemoContext
     }
 
     /**
+     * Run an Action as one of the demo's accounts, with that account as the causer.
+     *
+     * Several Actions write models whose activity-log causer comes from the signed-in
+     * user (Spatie resolves it from the session), and a seeder has no session: left
+     * alone the log would name nobody. Every Action call in the demo therefore goes
+     * through here, so the causer is the same account the Action authorizes.
+     *
+     * @param  Closure(User): mixed  $action
+     */
+    public function by(string $account, Closure $action): mixed
+    {
+        $actor = $this->user($account);
+
+        return $this->causers->withCauser($actor, fn (): mixed => $action($actor));
+    }
+
+    /**
      * Run a plain Eloquent write as an actor.
      *
      * Used only where the admin panel itself writes with a bare model save (a

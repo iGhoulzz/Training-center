@@ -8,7 +8,10 @@ use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Course;
 use App\Domain\Enrollment\Models\Enrollment;
 use App\Domain\Enrollment\Models\Student;
+use App\Domain\Enrollment\Support\IdentifierCode;
 use App\Domain\Finance\Enums\PayrollRunType;
+use App\Domain\Finance\Exports\ReportDataBuilder;
+use App\Domain\Finance\Exports\ReportKind;
 use App\Domain\Finance\Models\Charge;
 use App\Domain\Finance\Models\Payment;
 use App\Domain\Finance\Models\PayrollLine;
@@ -23,6 +26,7 @@ use App\Models\Role;
 use App\Models\User;
 use App\Support\CentreCalendar;
 use Carbon\CarbonImmutable;
+use Database\Seeders\Demo\DemoSeeder;
 use Illuminate\Foundation\Testing\DatabaseTruncation;
 use Illuminate\Foundation\Testing\RefreshDatabaseState;
 use Illuminate\Support\Facades\Artisan;
@@ -104,6 +108,71 @@ function demoChargeStates(): array
     return $states;
 }
 
+/**
+ * What each report opens on by default (ReportPage::filterComponents): the current
+ * month for Revenue, Payment methods, Wage cost and Profit, today for Daily tender and
+ * Outstanding. Student payment history opens on no student, by design, so it is not here.
+ */
+function assertDemoReportsOpenOnFigures(): void
+{
+    $today = CentreCalendar::localise(now());
+    $owner = User::query()->where('email', 'owner@example.test')->firstOrFail();
+    $month = $today->format('Y-m');
+
+    $defaults = [
+        'revenue' => ['from' => $today->startOfMonth()->format('Y-m-d'), 'to' => $today->endOfMonth()->format('Y-m-d')],
+        'payment_method' => ['from' => $today->startOfMonth()->format('Y-m-d'), 'to' => $today->endOfMonth()->format('Y-m-d')],
+        'daily_tender' => ['date' => $today->format('Y-m-d')],
+        'outstanding_aged' => ['date' => $today->format('Y-m-d')],
+        'wage_cost' => ['from' => $month, 'to' => $month],
+        'profit' => ['from' => $month, 'to' => $month],
+    ];
+
+    foreach ($defaults as $kind => $options) {
+        $dataset = app(ReportDataBuilder::class)->build(ReportKind::from($kind), $options, $owner);
+
+        expect(count($dataset->rows))->toBeGreaterThan(0, "The {$kind} report opens empty on its default filters.");
+    }
+}
+
+/**
+ * The history reads in order on any day: nothing after the real now, every create before
+ * its finalize by a real gap, drafts after the runs they follow, and the owner's role grant
+ * before the owner's first act.
+ */
+function assertDemoHistoryIsInOrder(CarbonImmutable $now): void
+{
+    $limit = $now->utc()->format('Y-m-d H:i:s');
+
+    foreach ([['activity_log', 'created_at'], ['payments', 'received_at'], ['payroll_runs', 'created_at'], ['payroll_runs', 'finalized_at'], ['enrollments', 'enrolled_at'], ['expenses', 'created_at']] as [$table, $column]) {
+        expect((string) DB::table($table)->max($column))->toBeLessThanOrEqual($limit, "{$table}.{$column} is dated after now.");
+    }
+
+    $finalized = PayrollRun::query()->whereNotNull('finalized_at')->get();
+    expect($finalized)->toHaveCount(6);
+
+    foreach ($finalized as $run) {
+        expect($run->finalized_at->getTimestamp() - $run->created_at->getTimestamp())->toBeGreaterThanOrEqual(60);
+    }
+
+    $drafts = PayrollRun::query()->whereNull('finalized_at')->get();
+    expect($drafts)->toHaveCount(2);
+
+    foreach ($drafts as $draft) {
+        expect($draft->created_at->getTimestamp())->toBeGreaterThanOrEqual($finalized->max(fn (PayrollRun $run): int => $run->finalized_at->getTimestamp()));
+    }
+
+    // The instructor run is paid earlier in the CURRENT month, so this month's wage cost is not empty.
+    $instructors = $finalized->firstWhere('type', PayrollRunType::InstructorBatch);
+    expect(CentreCalendar::localise($instructors->finalized_at)->format('Y-m'))->toBe(CentreCalendar::localise($now)->format('Y-m'));
+
+    $owner = User::query()->where('email', 'owner@example.test')->firstOrFail();
+    $granted = DB::table('activity_log')->where('event', 'roles_changed')->where('subject_id', $owner->getKey())->where('subject_type', User::class)->min('created_at');
+    $firstAct = DB::table('activity_log')->where('causer_id', $owner->getKey())->min('created_at');
+
+    expect((string) $granted)->toBeLessThan((string) $firstAct);
+}
+
 /** A fingerprint of the run that ignores dates and random codes, for the determinism test. */
 function demoDigest(): array
 {
@@ -157,9 +226,15 @@ it('refuses a database that already holds data, naming it, and writes nothing', 
 ]);
 
 it('builds the whole demo history, leaves every receipt generated and keeps the ledger consistent', function () {
+    // A real queue connection, so only the command's own switch to sync can keep the jobs table empty.
+    config(['queue.default' => 'database']);
+    $bound = app()->bound(IdentifierCode::class);
+
     [$code, $output] = runDemoSeed();
 
-    expect($code)->toBe(0);
+    expect($code)->toBe(0)
+        ->and(config('queue.default'))->toBe('database')
+        ->and(app()->bound(IdentifierCode::class))->toBe($bound);
 
     // The clock is real again.
     expect(Date::getTestNow())->toBeNull()
@@ -193,14 +268,14 @@ it('builds the whole demo history, leaves every receipt generated and keeps the 
     expect(DB::table('batch_instructor')->count())->toBe(9)
         ->and(DB::table('activity_log')->where('event', 'instructor_removed')->count())->toBe(1);
 
-    // Students: 48 made, one removed; 2 have portal logins.
-    expect(Student::query()->count())->toBe(47)
+    // Students: 49 made, one removed; 2 have portal logins.
+    expect(Student::query()->count())->toBe(48)
         ->and(Student::onlyTrashed()->count())->toBe(1)
         ->and(Student::query()->whereNotNull('user_id')->count())->toBe(2)
         ->and($output)->toContain('student05@example.test')->toContain('student30@example.test');
 
     // Enrolments by status, counted by hand from the scenario.
-    expect(Enrollment::query()->where('status', EnrollmentStatus::Active)->count())->toBe(27)
+    expect(Enrollment::query()->where('status', EnrollmentStatus::Active)->count())->toBe(28)
         ->and(Enrollment::query()->where('status', EnrollmentStatus::Completed)->count())->toBe(19)
         ->and(Enrollment::query()->where('status', EnrollmentStatus::Withdrawn)->count())->toBe(5);
 
@@ -224,15 +299,15 @@ it('builds the whole demo history, leaves every receipt generated and keeps the 
         ->and(DB::table('discounts')->count())->toBe(3);
 
     // Every Charges-page state is present, counted by hand.
-    expect(demoChargeStates())->toBe(['unpaid' => 9, 'part_paid' => 11, 'settled' => 29, 'written_off' => 2]);
+    expect(demoChargeStates())->toBe(['unpaid' => 9, 'part_paid' => 11, 'settled' => 30, 'written_off' => 2]);
 
     // Every ageing bucket holds bills, exactly the ones the scenario ages into it.
     $buckets = app(ChargeAgeing::class)->asOf(CentreCalendar::localise(now())->toDateString())->countBy()->all();
     ksort($buckets);
     expect($buckets)->toBe(['0-30' => 6, '31-60' => 6, '61-90' => 3, '91+' => 5]);
 
-    // Payments: 59 taken, two reversed; a bill with three live payments; a bill whose only payment was reversed.
-    expect(Payment::query()->count())->toBe(59)
+    // Payments: 61 taken (two of them today), two reversed; a bill with three live payments; a bill whose only payment was reversed.
+    expect(Payment::query()->count())->toBe(61)
         ->and(Payment::query()->whereNotNull('reversed_at')->count())->toBe(2)
         ->and(DB::table('payment_tenders')->distinct()->pluck('method')->sort()->values()->all())->toBe(['bank_transfer', 'card', 'cash', 'other']);
 
@@ -306,6 +381,14 @@ it('builds the whole demo history, leaves every receipt generated and keeps the 
     // The activity log was written by many different people.
     expect(DB::table('activity_log')->whereNotNull('causer_id')->distinct()->count('causer_id'))->toBeGreaterThanOrEqual(7);
 
+    // No log row names nobody, except the two events SystemRoleWriter records on purpose
+    // with causedByAnonymous(): a role or permission grant made by setup, not by a person.
+    expect(DB::table('activity_log')->whereNull('causer_id')->distinct()->pluck('event')->sort()->values()->all())
+        ->toBe(['permissions_changed', 'roles_changed']);
+
+    // The reports a person opens first are not empty.
+    assertDemoReportsOpenOnFigures();
+
     // Everything fictional: example.test addresses and all-zero-block phone numbers.
     expect(Student::withTrashed()->where('email', 'not like', '%@example.test')->count())->toBe(0)
         ->and(User::query()->where('email', 'not like', '%@example.test')->count())->toBe(0)
@@ -361,7 +444,10 @@ function assertDemoLedgerIsConsistent(): void
     }
 }
 
-it('puts the clock back even when an Action throws part-way', function () {
+it('puts the clock, the queue setting and the code generator back even when an Action throws part-way', function () {
+    config(['queue.default' => 'database']);
+    $bound = app()->bound(IdentifierCode::class);
+
     Payment::creating(function (): void {
         throw new RuntimeException('forced failure');
     });
@@ -372,15 +458,42 @@ it('puts the clock back even when an Action throws part-way', function () {
         ->and($output)->toContain('forced failure')->toContain('migrate:fresh --seed')
         ->and(Date::getTestNow())->toBeNull()
         ->and(abs(now()->diffInSeconds(CarbonImmutable::now())))->toBeLessThan(5)
+        ->and(config('queue.default'))->toBe('database')
+        ->and(app()->bound(IdentifierCode::class))->toBe($bound)
         // It really did stop midway: students exist, payments do not.
         ->and(Student::query()->count())->toBeGreaterThan(0)
         ->and(Payment::query()->count())->toBe(0);
 });
 
-it('gives the same shape on two fresh databases, and works after migrate:fresh --seed', function () {
+it('refuses on its own when the seeder is run directly, and writes nothing', function (string $environment, ?Closure $populate) {
+    $this->app->instance('env', $environment);
+    $populate?->call($this);
+
+    // The way round the command: `db:seed --class=... --force`.
+    expect(fn () => Artisan::call('db:seed', ['--class' => DemoSeeder::class, '--force' => true]))->toThrow(RuntimeException::class);
+
+    expect(Role::query()->count())->toBe(0)
+        ->and(User::query()->where('email', 'owner@example.test')->exists())->toBeFalse()
+        ->and(Course::query()->count())->toBe(0)
+        ->and(Date::getTestNow())->toBeNull();
+})->with([
+    'production' => ['production', null],
+    'staging' => ['staging', null],
+    'an occupied local database' => ['local', fn () => Student::factory()->create()],
+]);
+
+it('keeps the history in order on the first of a month, and gives the same shape twice', function () {
+    $now = CarbonImmutable::parse('2026-11-01 07:00:00', 'UTC');
+    Date::setTestNow($now);
+
     expect(runDemoSeed()[0])->toBe(0);
+
+    assertDemoHistoryIsInOrder($now);
+    assertDemoReportsOpenOnFigures();
+
     $first = demoDigest();
 
+    // The other way in: roles and owner seeded first, then the demo on top.
     Artisan::call('migrate:fresh', ['--seed' => true, '--force' => true]);
     app(PermissionRegistrar::class)->forgetCachedPermissions();
     Storage::fake('private');
@@ -389,4 +502,14 @@ it('gives the same shape on two fresh databases, and works after migrate:fresh -
         ->and(runDemoSeed()[0])->toBe(0);
 
     expect(demoDigest())->toBe($first);
+});
+
+it('keeps the history in order in the middle of a month', function () {
+    $now = CarbonImmutable::parse('2026-09-17 10:00:00', 'UTC');
+    Date::setTestNow($now);
+
+    expect(runDemoSeed()[0])->toBe(0);
+
+    assertDemoHistoryIsInOrder($now);
+    assertDemoReportsOpenOnFigures();
 });
