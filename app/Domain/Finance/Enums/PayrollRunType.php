@@ -26,9 +26,11 @@ enum PayrollRunType: string
      * A period run over salaried staff.
      *
      * Its lines are **segments**, not periods: the intersection of the run's
-     * period, one calendar month, and one compensation row's validity range. A
-     * run may legitimately cover a partial previous month plus a full current
-     * one, and a salary pro-rated across a month boundary has two different
+     * period, one calendar month, and one compensation row's validity range.
+     * Since P4-T40 a new run covers exactly one calendar month, and a month has
+     * at most one salary run (the `salary_month` unique column). Runs created
+     * before that may span a partial previous month plus a full current one,
+     * and a salary pro-rated across a month boundary has two different
      * denominators (design section 7).
      */
     case MonthlySalary = 'monthly_salary';

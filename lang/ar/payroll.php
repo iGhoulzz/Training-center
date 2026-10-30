@@ -78,7 +78,7 @@ return [
     'segments' => 'مقاطع الراتب',
     'segment_range_same_month' => ':from–:to',
     'segment_range' => ':from – :to',
-    'split_rate_changed' => 'قُسِّم في :date لأن معدل الأجر تغيّر.',
+    'split_rate_changed' => 'قُسِّم الراتب في :date لأن معدل الأجر تغيّر.',
     'split_by_month' => 'قُسِّم بحسب الشهر الميلادي.',
     'line_option_segment' => ':employee — :range · :amount د.ل.',
     'state' => 'الحالة',

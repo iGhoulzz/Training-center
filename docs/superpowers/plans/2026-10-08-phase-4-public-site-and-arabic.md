@@ -2340,6 +2340,49 @@ queue setting, code generator and random seed restored even when a step throws.
 
 ---
 
+### Task 40 — One salary run per calendar month, and a review that explains its splits
+**Owner: Claude · `p4/t40-salary-run-per-month` · from main · requested by the owner on 2026-10-30**
+
+**Why.** Trying the demo data, the owner made a Monthly salary draft from 1 Oct to
+1 Nov by mistake. Because a salary is split by calendar month, every employee got
+a second one-day "November" line, which looked like duplicated employees. October
+already had a salary draft, and nothing stopped a second one until finalize. And a
+person legitimately split by a mid-month raise also looked duplicated.
+
+**What changed**
+- **The form asks for a month**, not two dates. `CreatePayrollRunAction` refuses a
+  salary period that is not exactly one calendar month.
+- **One salary run per month**, draft or finalized. The Action refuses a period that
+  overlaps any salary run (`SalaryMonthAlreadyHasRunException`, naming the run).
+  The database enforces the same rule with a unique generated column
+  `payroll_runs.salary_month`. A concurrent duplicate's 1062 becomes the same
+  refusal. Deleting a draft frees its month. The migration refuses, listing the
+  run ids, if a database already holds two salary runs for one month, and never
+  rewrites data.
+- **The review page groups a salary run by employee**: one card per person with
+  their total (computed amounts plus bonuses and deductions, derived at render), the
+  segments inside, and a line saying why a person has two ("the pay rate changed on
+  …" or "split by calendar month" for older runs). Instructor and adjustment runs
+  are unchanged.
+- Help text (`help_runs_kind_monthly_salary`, `help_runs_card_period`,
+  `help_review_line_segment`) in English and Arabic, and the phase-2 financials
+  design.
+
+**Tests.** `PayrollSalaryRunMonthTest` and `PayrollSalaryRunMonthConcurrencyTest`
+cover:
+- the whole-month rule, including leap February;
+- the refusal while the run is a draft and once finalized, and the month freed
+  after a delete;
+- a legacy odd-period run blocking both of its months;
+- two creations of one month at once giving exactly one run and a typed refusal;
+- the migration's duplicate check;
+- the grouped review in English and Arabic.
+
+Older tests that built overlapping or multi-month runs through the Action now use
+a `legacySalaryRun()` helper.
+
+---
+
 ## What this plan does not cover
 
 From §12, recorded so they do not reappear as assumptions: multi-tenancy,

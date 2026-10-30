@@ -81,7 +81,7 @@ final class CreatePayrollRunAction
             return $this->createRun($actor, $type, $start, $end, $assignmentIds, $notes);
         } catch (UniqueConstraintViolationException $exception) {
             if (($exception->errorInfo[1] ?? null) !== self::DUPLICATE_ENTRY
-                || ! str_contains((string) $exception->index, self::SALARY_MONTH_INDEX)
+                || $exception->index !== self::SALARY_MONTH_INDEX
             ) {
                 throw $exception;
             }

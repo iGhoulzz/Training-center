@@ -424,7 +424,7 @@ it('hides the create page from an actor without run_payroll', function () {
 /** @return array<string, array{string, string, string, string}> */
 dataset('review wording', [
     'English' => ['en', 'Split on 16 Oct 2026 because the pay rate changed.', 'Split by calendar month.', 'Total for this run'],
-    'Arabic' => ['ar', 'قُسِّم في 16 أكتوبر 2026 لأن معدل الأجر تغيّر.', 'قُسِّم بحسب الشهر الميلادي.', 'الإجمالي لهذا المسير'],
+    'Arabic' => ['ar', 'قُسِّم الراتب في 16 أكتوبر 2026 لأن معدل الأجر تغيّر.', 'قُسِّم بحسب الشهر الميلادي.', 'الإجمالي لهذا المسير'],
 ]);
 
 it('shows a two-segment employee as one card with both segments and the person\'s total', function (string $locale, string $rateChanged, string $byMonth, string $totalLabel) {
