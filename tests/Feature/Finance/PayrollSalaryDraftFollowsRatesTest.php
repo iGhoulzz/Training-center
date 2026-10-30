@@ -25,6 +25,8 @@ use Livewire\Livewire;
 use Spatie\Activitylog\Models\Activity;
 use Spatie\Permission\Models\Permission;
 
+require_once __DIR__.'/PayrollLegacySalaryRun.php';
+
 uses(RefreshDatabase::class);
 
 /*
@@ -354,12 +356,8 @@ it('keeps an untouched line and its adjustment where they are while another mont
         'effective_from' => '2026-01-01',
         'effective_to' => null,
     ]);
-    $run = app(CreatePayrollRunAction::class)->execute(
-        $this->creator,
-        PayrollRunType::MonthlySalary,
-        '2026-03-01',
-        '2026-04-30',
-    );
+    // Two months in one run, as an older run holds them; the Action opens one month now (P4-T40).
+    $run = legacySalaryRun($this->creator, '2026-03-01', '2026-04-30');
     [$march, $april] = $run->lines()->orderBy('segment_start')->get()->all();
     $marchBonus = PayrollLineAdjustment::factory()->for($march, 'line')->create(['amount' => '40.000']);
     $aprilBonus = PayrollLineAdjustment::factory()->for($april, 'line')->create(['amount' => '25.000']);

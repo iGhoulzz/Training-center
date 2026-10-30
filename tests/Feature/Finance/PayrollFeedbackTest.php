@@ -116,9 +116,13 @@ it('says why a refused finalize was refused and leaves the run a draft', functio
     [$run, [$line]] = ($this->draftRun)(['309.000']);
 
     // A different run already finalized the same employee's same month.
+    // (an older run that began a month earlier: a month holds one salary run, P4-T40)
     PayrollLine::factory()
         ->finalized()
-        ->for(PayrollRun::factory()->finalized(), 'run')
+        ->for(PayrollRun::factory()->finalized()->state([
+            'period_start' => $run->period_start->subMonth()->startOfMonth()->toDateString(),
+            'period_end' => $run->period_end->toDateString(),
+        ]), 'run')
         ->create([
             'user_id' => $line->user_id,
             'segment_start' => $line->segment_start,
@@ -252,11 +256,14 @@ it('totals each line after its adjustments in exact decimal arithmetic', functio
     // prints its figure twice: as computed and as total.
     // Changed in P4-T38: a fixture line's rate now equals its amount (so the page's
     // recalculation leaves it alone), which prints the amount once more as the rate.
-    expect(substr_count($html, '318.875 LYD'))->toBe(1)
+    // Changed in P4-T40: a salary run is grouped by employee, so each person's total for the
+    // run is printed once more, above their segments. A one-segment person's total equals the
+    // line total: 318.875 and 100.300 appear twice, and 75.500 four times.
+    expect(substr_count($html, '318.875 LYD'))->toBe(2)
         ->and(substr_count($html, '309.000 LYD'))->toBe(2)
-        ->and(substr_count($html, '100.300 LYD'))->toBe(1)
+        ->and(substr_count($html, '100.300 LYD'))->toBe(2)
         ->and(substr_count($html, '100.000 LYD'))->toBe(2)
-        ->and(substr_count($html, '75.500 LYD'))->toBe(3)
+        ->and(substr_count($html, '75.500 LYD'))->toBe(4)
         ->and($html)->not->toContain('100.30000')
         ->and($html)->not->toContain('LYD LYD');
 });
@@ -269,6 +276,10 @@ it('shows no bonus block under a line with no adjustment', function () {
 
 it('reads a fixed number of adjustment and author queries however many lines there are', function () {
     $measure = function (int $lines): int {
+        // One salary run per month (P4-T40): the first measurement's run is cleared
+        // (its lines and bonuses with it) so the second can use the same month.
+        PayrollRun::query()->delete();
+
         // A salary draft takes every salary rate in force in its period, so the rates
         // an earlier measurement left behind are ended or they would add lines here.
         StaffCompensation::query()->update(['effective_to' => DB::raw('effective_from')]);

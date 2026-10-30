@@ -26,6 +26,8 @@ use Illuminate\Validation\ValidationException;
 use PHPUnit\Framework\Assert;
 use Symfony\Component\Process\Process;
 
+require_once __DIR__.'/PayrollLegacySalaryRun.php';
+
 uses(DatabaseTruncation::class);
 
 afterAll(function (): void {
@@ -296,18 +298,10 @@ it('uses a locking overlap scan after concurrent finalizers opened stale snapsho
         'user_id' => $employee->getKey(),
         'effective_from' => '2026-01-01',
     ]);
-    $first = app(CreatePayrollRunAction::class)->execute(
-        $actor,
-        PayrollRunType::MonthlySalary,
-        '2026-01-01',
-        '2026-01-15',
-    );
-    $overlap = app(CreatePayrollRunAction::class)->execute(
-        $actor,
-        PayrollRunType::MonthlySalary,
-        '2026-01-10',
-        '2026-01-31',
-    );
+    // Two older runs with periods that overlap: the Action no longer opens a second
+    // run over the same days, and finalize still has to refuse the overlap.
+    $first = legacySalaryRun($actor, '2026-01-01', '2026-01-15');
+    $overlap = legacySalaryRun($actor, '2026-01-10', '2026-01-31');
 
     $token = (string) Str::uuid();
     $paths = collect(['a-ready', 'a-result', 'b-ready', 'b-result'])
@@ -489,33 +483,12 @@ it('finalizes concurrent runs over oppositely ordered staff without deadlock', f
 
         return [$employee->getKey() => $rate];
     });
-    $runs = PayrollRun::factory()->count(2)->create([
-        'period_start' => '2026-05-01',
-        'period_end' => '2026-05-31',
-        'created_by' => $actor->getKey(),
+    // The second run starts a day later, because a month holds one salary run; the
+    // two still overlap on 2-31 May, and its lines go in in the opposite user order.
+    $runs = collect([
+        legacySalaryRun($actor, '2026-05-01', '2026-05-31'),
+        legacySalaryRun($actor, '2026-05-02', '2026-05-31', reverseLines: true),
     ]);
-
-    foreach ([$employees, $employees->reverse()->values()] as $index => $orderedEmployees) {
-        foreach ($orderedEmployees as $employee) {
-            PayrollLine::create([
-                'payroll_run_id' => $runs[$index]->getKey(),
-                'user_id' => $employee->getKey(),
-                'staff_compensation_id' => $rates[$employee->getKey()]->getKey(),
-                'batch_instructor_id' => null,
-                'corrects_payroll_line_id' => null,
-                'segment_start' => '2026-05-01',
-                'segment_end' => '2026-05-31',
-                'frozen_rate' => '2500.000',
-                'frozen_hours' => null,
-                'frozen_days' => 31,
-                'frozen_days_in_month' => 31,
-                'computed_amount' => '2500.000',
-                'posting_period_start' => null,
-                'reason' => null,
-                'finalized_at' => null,
-            ]);
-        }
-    }
 
     $token = (string) Str::uuid();
     $go = storage_path("framework/testing/payroll-{$token}-go");

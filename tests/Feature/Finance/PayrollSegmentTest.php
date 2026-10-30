@@ -13,6 +13,8 @@ use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 
+require_once __DIR__.'/PayrollLegacySalaryRun.php';
+
 uses(RefreshDatabase::class);
 
 beforeEach(function (): void {
@@ -38,12 +40,9 @@ it('splits a partial previous month and a full current month with each calendar 
         'effective_to' => null,
     ]);
 
-    $run = app(CreatePayrollRunAction::class)->execute(
-        $actor,
-        PayrollRunType::MonthlySalary,
-        '2026-03-20',
-        '2026-04-30',
-    );
+    // Not a period the Action opens any more (one calendar month per run, P4-T40); the
+    // arithmetic still has to be right for an older run that spans a month boundary.
+    $run = legacySalaryRun($actor, '2026-03-20', '2026-04-30');
 
     $lines = PayrollLine::query()
         ->where('payroll_run_id', $run->getKey())
@@ -113,12 +112,8 @@ it('rounds salary segments in integer dirham rather than through floats', functi
         'effective_to' => null,
     ]);
 
-    $run = app(CreatePayrollRunAction::class)->execute(
-        $actor,
-        PayrollRunType::MonthlySalary,
-        '2026-04-01',
-        '2026-04-15',
-    );
+    // A part-month period, which the Action no longer opens (P4-T40), as an older run holds it.
+    $run = legacySalaryRun($actor, '2026-04-01', '2026-04-15');
 
     expect($run->lines()->sole()->computed_amount)->toBe('108.175');
 });
