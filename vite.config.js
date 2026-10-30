@@ -10,6 +10,7 @@ export default defineConfig({
                 'resources/css/app.css',
                 'resources/css/public.css',
                 'resources/css/filament/admin/theme.css',
+                'resources/css/filament/student/theme.css',
                 'resources/js/app.js',
                 'resources/js/public-seal.js',
             ],
