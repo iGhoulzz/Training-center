@@ -366,25 +366,37 @@ it('holds the rule at the database: a unique stored generated column on salary r
     expect(fn () => DB::table('payroll_runs')->insert($row()))->toThrow(QueryException::class, 'uniq_salary_run_per_month');
 });
 
-it('finds salary runs that share a period start, listing their ids, without touching them', function () {
+it('finds salary runs that cover the same calendar month, listing their ids, without touching them', function () {
     $migration = require database_path('migrations/2026_10_30_000100_add_salary_month_to_payroll_runs_table.php');
 
-    // The real table can no longer hold a duplicate, so the check runs on a scratch copy of its shape.
-    DB::statement('create temporary table payroll_runs_scratch (id int primary key, type varchar(30), period_start date null)');
+    // The real table can no longer hold a clash, so the check runs on a scratch copy of its shape.
+    DB::statement('create temporary table payroll_runs_scratch (id int primary key, type varchar(30), period_start date null, period_end date null)');
     DB::table('payroll_runs_scratch')->insert([
-        ['id' => 4, 'type' => 'monthly_salary', 'period_start' => '2026-10-01'],
-        ['id' => 5, 'type' => 'monthly_salary', 'period_start' => '2026-11-01'],
-        ['id' => 9, 'type' => 'monthly_salary', 'period_start' => '2026-10-01'],
-        ['id' => 11, 'type' => 'monthly_salary', 'period_start' => '2026-10-01'],
-        ['id' => 12, 'type' => 'instructor_batch', 'period_start' => null],
-        ['id' => 13, 'type' => 'instructor_batch', 'period_start' => null],
+        // The same start, three times.
+        ['id' => 4, 'type' => 'monthly_salary', 'period_start' => '2026-10-01', 'period_end' => '2026-10-31'],
+        ['id' => 9, 'type' => 'monthly_salary', 'period_start' => '2026-10-01', 'period_end' => '2026-10-31'],
+        ['id' => 11, 'type' => 'monthly_salary', 'period_start' => '2026-10-01', 'period_end' => '2026-10-31'],
+        // Different starts in the same month: 1–15 and 16–30 June.
+        ['id' => 20, 'type' => 'monthly_salary', 'period_start' => '2026-06-01', 'period_end' => '2026-06-15'],
+        ['id' => 21, 'type' => 'monthly_salary', 'period_start' => '2026-06-16', 'period_end' => '2026-06-30'],
+        // A cross-month run (1 Aug – 1 Sep) and the September run.
+        ['id' => 30, 'type' => 'monthly_salary', 'period_start' => '2026-08-01', 'period_end' => '2026-09-01'],
+        ['id' => 31, 'type' => 'monthly_salary', 'period_start' => '2026-09-01', 'period_end' => '2026-09-30'],
+        // Clean: a lone month, and other run types.
+        ['id' => 5, 'type' => 'monthly_salary', 'period_start' => '2026-11-01', 'period_end' => '2026-11-30'],
+        ['id' => 12, 'type' => 'instructor_batch', 'period_start' => null, 'period_end' => null],
+        ['id' => 13, 'type' => 'instructor_batch', 'period_start' => null, 'period_end' => null],
     ]);
 
-    expect($migration->duplicateSalaryRuns('payroll_runs_scratch'))->toBe(['2026-10-01: runs #4, #9, #11'])
-        ->and(DB::table('payroll_runs_scratch')->count())->toBe(6);
+    expect($migration->duplicateSalaryRuns('payroll_runs_scratch'))->toBe([
+        '2026-06: runs #20, #21',
+        '2026-09: runs #30, #31',
+        '2026-10: runs #4, #9, #11',
+    ])->and(DB::table('payroll_runs_scratch')->count())->toBe(10);
 
-    DB::table('payroll_runs_scratch')->whereIn('id', [9, 11])->delete();
+    DB::table('payroll_runs_scratch')->whereIn('id', [9, 11, 21, 31])->delete();
 
+    // A run crossing into a month no other run touches clashes with nothing, itself included.
     expect($migration->duplicateSalaryRuns('payroll_runs_scratch'))->toBe([]);
 
     DB::statement('drop temporary table payroll_runs_scratch');

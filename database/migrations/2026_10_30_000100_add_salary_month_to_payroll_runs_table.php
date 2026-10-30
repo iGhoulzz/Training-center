@@ -2,8 +2,8 @@
 
 declare(strict_types=1);
 
+use Carbon\CarbonImmutable;
 use Illuminate\Database\Migrations\Migration;
-use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -29,13 +29,16 @@ use Illuminate\Support\Facades\DB;
  * It is a database-computed copy of a fact column, written by no one, that
  * exists only so a unique index can be built on a conditional value.
  *
- * AN EXISTING DUPLICATE STOPS THE MIGRATION
- * -----------------------------------------
- * If two salary runs already share a `period_start`, adding the index would
- * fail half-way with a bare "duplicate entry". This migration checks first and
- * stops with the run ids instead. It never deletes or rewrites a run: which of
- * the two is the mistaken one is a decision for a person, and a finalized run is
- * a posted fact.
+ * AN EXISTING CLASH STOPS THE MIGRATION
+ * -------------------------------------
+ * Runs made before this rule could start mid-month or cross a month boundary, so
+ * two of them can cover the same calendar month with different `period_start`
+ * values (1–15 and 16–31 October; 1 Oct – 1 Nov and 1–30 Nov). The index would
+ * accept those, and the rule would be false from the first day. So before
+ * altering the table this migration lists every calendar month that two or more
+ * salary runs touch, and stops with their ids. It never deletes or rewrites a
+ * run: which one is the mistake is a decision for a person, and a finalized run
+ * is a posted fact.
  */
 return new class extends Migration
 {
@@ -45,7 +48,7 @@ return new class extends Migration
 
         if ($duplicates !== []) {
             throw new RuntimeException(
-                'Cannot allow one salary run per month: these salary runs share a period start. '
+                'Cannot allow one salary run per month: these salary runs cover the same calendar month. '
                 .'Delete the mistaken draft (a finalized run cannot be deleted) and migrate again. '
                 .implode('; ', $duplicates),
             );
@@ -71,23 +74,39 @@ return new class extends Migration
     }
 
     /**
-     * Salary runs that share a `period_start`, one entry per shared date, each
-     * naming the run ids.
+     * Every calendar month that two or more salary runs cover, each naming the
+     * run ids. A run covers each month from its `period_start` to its
+     * `period_end`, inclusive, however few days of it.
      *
      * Public, and given the table, so the check can be exercised against a
-     * scratch table that holds duplicates (the real one can no longer).
+     * scratch table that holds clashes (the real one can no longer).
      *
-     * @return list<string> e.g. ["2026-10-01: runs #4, #9"]
+     * @return list<string> e.g. ["2026-10: runs #4, #9"]
      */
     public function duplicateSalaryRuns(string $table = 'payroll_runs'): array
     {
-        return DB::table($table)
+        /** @var array<string, list<int>> $runsByMonth */
+        $runsByMonth = [];
+
+        $runs = DB::table($table)
             ->where('type', 'monthly_salary')
             ->orderBy('id')
-            ->get(['id', 'period_start'])
-            ->groupBy('period_start')
-            ->filter(fn (Collection $runs): bool => $runs->count() > 1)
-            ->map(fn (Collection $runs, string $date): string => $date.': runs #'.$runs->pluck('id')->implode(', #'))
+            ->get(['id', 'period_start', 'period_end']);
+
+        foreach ($runs as $run) {
+            $month = CarbonImmutable::parse((string) $run->period_start)->startOfMonth();
+            $last = CarbonImmutable::parse((string) ($run->period_end ?? $run->period_start))->startOfMonth();
+
+            for (; $month->lessThanOrEqualTo($last); $month = $month->addMonth()) {
+                $runsByMonth[$month->format('Y-m')][] = (int) $run->id;
+            }
+        }
+
+        ksort($runsByMonth);
+
+        return collect($runsByMonth)
+            ->filter(fn (array $ids): bool => count($ids) > 1)
+            ->map(fn (array $ids, string $month): string => $month.': runs #'.implode(', #', $ids))
             ->values()
             ->all();
     }
