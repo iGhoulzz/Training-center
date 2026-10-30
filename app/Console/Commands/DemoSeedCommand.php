@@ -49,7 +49,7 @@ final class DemoSeedCommand extends Command
             $seeder->run();
         } catch (Throwable $exception) {
             $this->components->error('The demo seed failed part-way: '.$exception->getMessage());
-            $this->components->error('Run php artisan migrate:fresh --seed before trying again.');
+            $this->components->error('Run php artisan migrate:fresh before trying again (it empties this database).');
 
             return self::FAILURE;
         }

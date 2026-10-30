@@ -49,7 +49,7 @@ final class DemoGuard
 
         return $occupied === null
             ? null
-            : ["The database already holds {$occupied}; the demo data is for a fresh database.", 'Run php artisan migrate:fresh --seed first.'];
+            : ["The database already holds {$occupied}; the demo data is for a fresh database.", 'Run php artisan migrate:fresh first (it empties this database).'];
     }
 
     /** @throws RuntimeException when the demo data must not be written here. */

@@ -211,7 +211,7 @@ it('refuses a database that already holds data, naming it, and writes nothing', 
 
     $this->artisan('demo:seed')
         ->expectsOutputToContain("already holds {$noun}")
-        ->expectsOutputToContain('migrate:fresh --seed')
+        ->expectsOutputToContain('Run php artisan migrate:fresh first')
         ->assertFailed();
 
     expect(Role::query()->count())->toBe($before)
@@ -455,7 +455,7 @@ it('puts the clock, the queue setting and the code generator back even when an A
     [$code, $output] = runDemoSeed();
 
     expect($code)->toBe(1)
-        ->and($output)->toContain('forced failure')->toContain('migrate:fresh --seed')
+        ->and($output)->toContain('forced failure')->toContain('Run php artisan migrate:fresh before trying again')
         ->and(Date::getTestNow())->toBeNull()
         ->and(abs(now()->diffInSeconds(CarbonImmutable::now())))->toBeLessThan(5)
         ->and(config('queue.default'))->toBe('database')
