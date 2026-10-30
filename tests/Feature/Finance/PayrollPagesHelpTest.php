@@ -157,6 +157,12 @@ dataset('compensation list sentinels', [
         'dates' => 'Current means it has no end date yet',
         'overlap' => 'Two rates of the same type for one person cannot overlap',
         'button' => 'Adds a new rate from the date you choose, for a raise, a cut or a first rate. It cannot change an existing rate\'s amount or delete it',
+        'pay title' => 'How a rate becomes pay',
+        'monthly pay' => 'A monthly salary is paid in that month\'s Monthly salary run. A month the rate covers only in part is paid by the day: a salary of 3000.000 LYD that starts on the 16th of a 30-day month pays 1500.000 LYD for that month',
+        'raise lines' => 'A raise from the middle of a month gives that person two lines in that month\'s run, one at each rate',
+        'hourly pay' => 'An hourly rate pays instructors in an Instructor batch run: the hours assigned to them on a batch, times the hourly rate in effect when the run is finalized',
+        'no rate' => 'Someone with no rate here is in no payroll run. Give them a monthly salary or an hourly rate first',
+        'draft' => 'A new rate reaches an open salary draft the next time it is reviewed, and again when it is finalized. A finalized month never changes; correct it with an Adjustment run',
     ]],
     'Arabic' => ['ar', [
         'heading' => 'كيف تقرأ هذه الصفحة',
@@ -167,6 +173,12 @@ dataset('compensation list sentinels', [
         'dates' => 'وحالي تعني أنه لا تاريخ انتهاء له بعد',
         'overlap' => 'لا يجوز أن يتداخل معدلان من النوع نفسه للشخص الواحد',
         'button' => 'يضيف معدلًا جديدًا من التاريخ الذي تختاره، لزيادة أو تخفيض أو معدل أول. ولا يمكنه تغيير مبلغ معدل قائم أو حذفه',
+        'pay title' => 'كيف يتحول المعدل إلى أجر',
+        'monthly pay' => 'يُصرف الراتب الشهري في مسير «راتب شهري» لذلك الشهر. وإذا لم يغطِّ المعدل إلا جزءًا من الشهر احتُسب باليوم: فراتب قدره 3000.000 د.ل. يبدأ في اليوم 16 من شهر عدد أيامه 30 يُحتسب عنه 1500.000 د.ل. في ذلك الشهر',
+        'raise lines' => 'إذا جاءت الزيادة في منتصف الشهر ظهر للموظف بندان في مسير ذلك الشهر، لكل معدل بند',
+        'hourly pay' => 'يُصرف الأجر بالساعة للمدربين في مسير «دفعة مدرب»: الساعات المسندة إليهم في دفعة، مضروبة في الأجر بالساعة الساري عند اعتماد المسير',
+        'no rate' => 'من ليس له معدل هنا لا يدخل في أي مسير رواتب. أضف له راتبًا شهريًا أو أجرًا بالساعة أولًا',
+        'draft' => 'أما الشهر المعتمد فلا يتغير أبدًا؛ ويُصحَّح بمسير «تسوية»',
     ]],
 ]);
 
@@ -189,6 +201,7 @@ dataset('compensation create sentinels', [
         'keeps amount' => 'The earlier rate keeps its amount and start date, and past payroll runs keep the rate they were worked out with',
         'date' => 'The date must come after the start of the rate it replaces. A date that overlaps the existing history is refused',
         'amount' => 'Amount is a monthly salary or an hourly rate, in LYD, depending on the type you choose',
+        'type' => 'Choose Monthly salary for staff paid by the month, and Hourly rate for instructors paid for their teaching hours. Someone with neither is not paid in any payroll run',
     ]],
     'Arabic' => ['ar', [
         'heading' => 'كيف تقرأ هذه الصفحة',
@@ -196,6 +209,7 @@ dataset('compensation create sentinels', [
         'keeps amount' => 'يحتفظ المعدل السابق بمبلغه وتاريخ بدايته، وتحتفظ مسيرات الرواتب السابقة بالمعدل الذي احتُسبت به',
         'date' => 'يجب أن يكون التاريخ بعد بداية المعدل الذي سيحل محله. ويُرفض أي تاريخ يتداخل مع السجل القائم',
         'amount' => 'المبلغ هو راتب شهري أو أجر بالساعة، بالدينار الليبي، بحسب النوع الذي تختاره',
+        'type' => 'اختر «راتب شهري» للموظفين الذين يتقاضون أجرهم شهريًا، و«أجر بالساعة» للمدربين الذين يتقاضون أجرهم عن ساعات التدريس',
     ]],
 ]);
 

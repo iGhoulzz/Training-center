@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Domain\Finance\Filament\Resources;
 
 use App\Domain\Finance\Enums\CompensationType;
+use App\Domain\Finance\Enums\PayrollRunType;
 use App\Domain\Finance\Filament\Resources\StaffCompensationResource\Pages\CreateStaffCompensation;
 use App\Domain\Finance\Filament\Resources\StaffCompensationResource\Pages\ListStaffCompensations;
 use App\Domain\Finance\Filament\Resources\StaffCompensationResource\Pages\ViewStaffCompensation;
@@ -185,6 +186,17 @@ final class StaffCompensationResource extends Resource
                 __('payroll.help_comp_row_dates'),
                 __('payroll.help_comp_row_overlap'),
             ]],
+            ['title' => __('payroll.help_comp_pay_title'), 'lines' => [
+                __('payroll.help_comp_pay_monthly', [
+                    'monthly' => PayrollRunType::MonthlySalary->label(),
+                    'example_salary' => __('payroll.amount_lyd', ['amount' => '3000.000']),
+                    'example_paid' => __('payroll.amount_lyd', ['amount' => '1500.000']),
+                ]),
+                __('payroll.help_comp_pay_raise'),
+                __('payroll.help_comp_pay_hourly', ['instructor' => PayrollRunType::InstructorBatch->label()]),
+                __('payroll.help_comp_pay_none'),
+                __('payroll.help_comp_pay_draft', ['adjustment' => PayrollRunType::Adjustment->label()]),
+            ]],
             ['title' => __('payroll.help_buttons_title'), 'terms' => [
                 __('payroll.change_compensation') => __('payroll.help_comp_change'),
             ]],
@@ -200,6 +212,10 @@ final class StaffCompensationResource extends Resource
                 __('payroll.help_comp_create_2'),
                 __('payroll.help_comp_create_3'),
                 __('payroll.help_comp_create_4'),
+                __('payroll.help_comp_create_type', [
+                    'salary' => CompensationType::Salary->label(),
+                    'hourly' => CompensationType::Hourly->label(),
+                ]),
             ]],
         ]);
     }
