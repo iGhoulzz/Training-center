@@ -23,6 +23,7 @@ final class FinalizePayrollRunAction
     public function __construct(
         private readonly PayrollCalculator $calculator,
         private readonly CauserResolver $causers,
+        private readonly RecalculateSalaryDraftAction $salaryDrafts,
     ) {}
 
     public function execute(User $actor, PayrollRun $run): PayrollRun
@@ -37,6 +38,17 @@ final class FinalizePayrollRunAction
 
                 if ($lockedRun->isFinalized()) {
                     $this->reject('run', __('payroll.run_already_finalized'));
+                }
+
+                /*
+                 * A salary draft follows the rates on file at this moment, as an
+                 * instructor draft re-reads its hours and rate below: what is posted
+                 * is exactly what the rates say now. The recalculation takes the
+                 * users locks itself, in the order this Action takes them, and a
+                 * refusal (a bonus with no line to move to) rolls everything back.
+                 */
+                if ($lockedRun->type === PayrollRunType::MonthlySalary) {
+                    $this->salaryDrafts->recalculateLocked($actor, $lockedRun);
                 }
 
                 /*

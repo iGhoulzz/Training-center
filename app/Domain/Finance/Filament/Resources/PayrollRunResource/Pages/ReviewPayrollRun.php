@@ -7,6 +7,9 @@ namespace App\Domain\Finance\Filament\Resources\PayrollRunResource\Pages;
 use App\Domain\Finance\Actions\AddPayrollLineAdjustmentAction;
 use App\Domain\Finance\Actions\DeletePayrollRunAction;
 use App\Domain\Finance\Actions\FinalizePayrollRunAction;
+use App\Domain\Finance\Actions\RecalculateSalaryDraftAction;
+use App\Domain\Finance\Enums\PayrollRunType;
+use App\Domain\Finance\Exceptions\SalaryAdjustmentsHaveNoLineException;
 use App\Domain\Finance\Filament\Resources\PayrollRunResource;
 use App\Domain\Finance\Models\PayrollLine;
 use App\Domain\Finance\Models\PayrollRun;
@@ -34,6 +37,42 @@ use Illuminate\Validation\ValidationException;
 final class ReviewPayrollRun extends ViewRecord
 {
     protected static string $resource = PayrollRunResource::class;
+
+    /**
+     * A salary draft follows the pay rates on file, so opening one recalculates it.
+     *
+     * Only someone who may create payroll runs triggers the write; a viewer with
+     * less still gets the page, unchanged and with no toast, because finalize
+     * recalculates under its lock regardless. A refusal (a bonus with no line to
+     * move to) is shown and the page still renders the draft as it was.
+     */
+    public function mount(int|string $record): void
+    {
+        parent::mount($record);
+
+        $run = $this->run();
+
+        if ($run->type !== PayrollRunType::MonthlySalary
+            || $run->isFinalized()
+            || ! $this->actor()->can('create', PayrollRun::class)
+        ) {
+            return;
+        }
+
+        try {
+            $changed = app(RecalculateSalaryDraftAction::class)->execute($this->actor(), $run);
+        } catch (SalaryAdjustmentsHaveNoLineException $exception) {
+            $this->notifyRefusal($exception->getMessage());
+
+            return;
+        }
+
+        if ($changed) {
+            $this->reloadRun();
+
+            Notification::make()->title(__('payroll.lines_recalculated'))->info()->send();
+        }
+    }
 
     protected function getHeaderActions(): array
     {
@@ -149,14 +188,19 @@ final class ReviewPayrollRun extends ViewRecord
         try {
             $write();
         } catch (ValidationException $exception) {
-            Notification::make()
-                ->title($exception->validator->errors()->first() ?: __('payroll.refused'))
-                ->danger()
-                ->persistent()
-                ->send();
+            $this->notifyRefusal($exception->validator->errors()->first() ?: __('payroll.refused'));
+
+            throw (new Halt)->rollBackDatabaseTransaction();
+        } catch (SalaryAdjustmentsHaveNoLineException $exception) {
+            $this->notifyRefusal($exception->getMessage());
 
             throw (new Halt)->rollBackDatabaseTransaction();
         }
+    }
+
+    private function notifyRefusal(string $message): void
+    {
+        Notification::make()->title($message)->danger()->persistent()->send();
     }
 
     /**
