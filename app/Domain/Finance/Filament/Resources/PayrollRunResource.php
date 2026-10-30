@@ -15,9 +15,10 @@ use App\Domain\Finance\Models\PayrollRun;
 use App\Domain\Finance\Services\PayrollCalculator;
 use App\Domain\Finance\Support\Money;
 use App\Filament\HelpPanel;
+use App\Support\CentreCalendar;
 use BackedEnum;
+use Carbon\CarbonImmutable;
 use Filament\Actions\Action;
-use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
@@ -33,6 +34,7 @@ use Filament\Tables\Columns\Layout\Stack;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Collection;
 
 /**
  * Payroll drafts are created and reviewed here, then sealed through Actions.
@@ -46,6 +48,9 @@ final class PayrollRunResource extends Resource
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedClipboardDocumentCheck;
 
     protected static ?string $slug = 'payroll-runs';
+
+    /** A day as the review page words it ("16 Oct 2026"); Carbon names the month in the current language. */
+    private const SEGMENT_DATE_FORMAT = 'j M Y';
 
     public static function getModelLabel(): string
     {
@@ -74,16 +79,14 @@ final class PayrollRunResource extends Resource
                     ->live()
                     ->required(),
 
-                DatePicker::make('period_start')
-                    ->label(__('payroll.period_start'))
+                // One calendar month, not two dates (P4-T40): a salary run covers exactly one,
+                // and a month has one run. The page turns the choice into its first and last day.
+                Select::make('salary_month')
+                    ->label(__('payroll.salary_month'))
+                    ->helperText(__('payroll.salary_month_hint'))
+                    ->options(fn (): array => self::salaryMonthOptions())
                     ->visible(fn (Get $get): bool => $get('type') === PayrollRunType::MonthlySalary->value)
                     ->required(fn (Get $get): bool => $get('type') === PayrollRunType::MonthlySalary->value),
-
-                DatePicker::make('period_end')
-                    ->label(__('payroll.period_end'))
-                    ->visible(fn (Get $get): bool => $get('type') === PayrollRunType::MonthlySalary->value)
-                    ->required(fn (Get $get): bool => $get('type') === PayrollRunType::MonthlySalary->value)
-                    ->afterOrEqual('period_start'),
 
                 Select::make('assignment_ids')
                     ->label(__('payroll.instructor_assignments'))
@@ -126,6 +129,42 @@ final class PayrollRunResource extends Resource
         ]);
     }
 
+    /**
+     * The months a salary run can be opened for: 24 back to 3 ahead of the current
+     * month on the centre's calendar, newest first, as 'Y-m' => "October 2026".
+     *
+     * A month that already has a salary run says so and names it. That is a courtesy;
+     * the refusal that matters is CreatePayrollRunAction's, which looks at overlap and
+     * is backed by a unique index. A legacy run over two months marks both.
+     *
+     * @return array<string, string>
+     */
+    public static function salaryMonthOptions(): array
+    {
+        $newest = CentreCalendar::localise(now())->startOfMonth()->addMonths(3);
+        $oldest = $newest->subMonths(27);
+
+        $runs = PayrollRun::query()
+            ->where('type', PayrollRunType::MonthlySalary->value)
+            ->whereDate('period_start', '<=', $newest->endOfMonth()->toDateString())
+            ->whereDate('period_end', '>=', $oldest->toDateString())
+            ->orderBy('id')
+            ->get(['id', 'period_start', 'period_end']);
+
+        $options = [];
+
+        for ($month = $newest; $month->greaterThanOrEqualTo($oldest); $month = $month->subMonth()) {
+            $existing = $runs->first(fn (PayrollRun $run): bool => $run->period_start->toDateString() <= $month->endOfMonth()->toDateString()
+                && $run->period_end->toDateString() >= $month->toDateString());
+
+            $options[$month->format('Y-m')] = $existing instanceof PayrollRun
+                ? __('payroll.salary_month_option_taken', ['month' => $month->translatedFormat('F Y'), 'run' => $existing->getKey()])
+                : $month->translatedFormat('F Y');
+        }
+
+        return $options;
+    }
+
     public static function infolist(Schema $schema): Schema
     {
         return $schema->components([
@@ -145,48 +184,218 @@ final class PayrollRunResource extends Resource
                 TextEntry::make('finalizedBy.name')->label(__('payroll.finalized_by')),
                 TextEntry::make('notes')->label(__('payroll.notes')),
             ]),
-            Section::make(__('payroll.lines'))->schema([
-                RepeatableEntry::make('lines')
-                    ->label(__('payroll.lines'))
-                    ->schema([
-                        TextEntry::make('user.name')->label(__('payroll.employee')),
-                        TextEntry::make('segment_start')->label(__('payroll.segment_start'))->date(),
-                        TextEntry::make('segment_end')->label(__('payroll.segment_end'))->date(),
-                        TextEntry::make('frozen_rate')
-                            ->label(__('payroll.rate'))
-                            ->formatStateUsing(fn (?string $state): string => $state === null
-                                ? __('payroll.not_applicable')
-                                : __('payroll.amount_lyd', ['amount' => $state])),
-                        TextEntry::make('frozen_hours')->label(__('payroll.hours')),
-                        TextEntry::make('computed_amount')
-                            ->label(__('payroll.computed_amount'))
-                            ->formatStateUsing(fn (string $state): string => __('payroll.amount_lyd', ['amount' => $state])),
-                        TextEntry::make('reason')->label(__('payroll.reason')),
-                        // Bonuses and deductions added while the run is a draft. Only a line that
-                        // has any shows the block; the total beside it is derived here, never stored.
-                        RepeatableEntry::make('adjustments')
-                            ->label(__('payroll.adjustments'))
-                            ->visible(fn (PayrollLine $record): bool => $record->adjustments->isNotEmpty())
-                            ->schema([
-                                TextEntry::make('amount')
-                                    ->label(__('payroll.amount'))
-                                    ->formatStateUsing(fn (string $state): string => __('payroll.amount_lyd', ['amount' => $state])),
-                                TextEntry::make('reason')->label(__('payroll.reason')),
-                                TextEntry::make('createdBy.name')->label(__('payroll.added_by')),
-                                TextEntry::make('created_at')->label(__('payroll.added_at'))->dateTime(),
-                            ])
-                            ->columns(4)
-                            ->columnSpanFull(),
-                        TextEntry::make('line_total')
-                            ->label(__('payroll.line_total'))
-                            ->state(fn (PayrollLine $record): string => $record->adjustments->reduce(
-                                fn (Money $total, PayrollLineAdjustment $adjustment): Money => $total->add(Money::fromDecimal($adjustment->amount)),
-                                Money::fromDecimal($record->computed_amount),
-                            )->toDecimal())
-                            ->formatStateUsing(fn (string $state): string => __('payroll.amount_lyd', ['amount' => $state])),
-                    ])
-                    ->columns(3),
-            ]),
+            // One card per employee for a salary run (P4-T40); the other two kinds keep the flat list.
+            Section::make(__('payroll.lines'))
+                ->visible(fn (PayrollRun $record): bool => $record->type === PayrollRunType::MonthlySalary)
+                ->schema([
+                    RepeatableEntry::make('employee_groups')
+                        ->label(__('payroll.employees'))
+                        ->state(fn (PayrollRun $record): array => self::salaryEmployeeGroups($record))
+                        ->schema([
+                            TextEntry::make('name')->label(__('payroll.employee'))->weight('semibold'),
+                            TextEntry::make('total')
+                                ->label(__('payroll.employee_total'))
+                                ->weight('semibold')
+                                ->formatStateUsing(fn (string $state): string => __('payroll.amount_lyd', ['amount' => $state])),
+                            TextEntry::make('explanations')
+                                ->hiddenLabel()
+                                ->listWithLineBreaks()
+                                ->color('gray')
+                                ->columnSpanFull()
+                                ->visible(fn (TextEntry $component): bool => filled($component->getState())),
+                            RepeatableEntry::make('segments')
+                                ->label(__('payroll.segments'))
+                                ->columnSpanFull()
+                                ->schema([
+                                    TextEntry::make('segment_start')->label(__('payroll.segment_start'))->date(),
+                                    TextEntry::make('segment_end')->label(__('payroll.segment_end'))->date(),
+                                    TextEntry::make('frozen_rate')
+                                        ->label(__('payroll.rate'))
+                                        ->formatStateUsing(fn (?string $state): string => $state === null
+                                            ? __('payroll.not_applicable')
+                                            : __('payroll.amount_lyd', ['amount' => $state])),
+                                    TextEntry::make('computed_amount')
+                                        ->label(__('payroll.computed_amount'))
+                                        ->formatStateUsing(fn (string $state): string => __('payroll.amount_lyd', ['amount' => $state])),
+                                    TextEntry::make('reason')->label(__('payroll.reason')),
+                                    RepeatableEntry::make('adjustments')
+                                        ->label(__('payroll.adjustments'))
+                                        ->visible(fn (PayrollLine $record): bool => $record->adjustments->isNotEmpty())
+                                        ->schema([
+                                            TextEntry::make('amount')
+                                                ->label(__('payroll.amount'))
+                                                ->formatStateUsing(fn (string $state): string => __('payroll.amount_lyd', ['amount' => $state])),
+                                            TextEntry::make('reason')->label(__('payroll.reason')),
+                                            TextEntry::make('createdBy.name')->label(__('payroll.added_by')),
+                                            TextEntry::make('created_at')->label(__('payroll.added_at'))->dateTime(),
+                                        ])
+                                        ->columns(4)
+                                        ->columnSpanFull(),
+                                    TextEntry::make('line_total')
+                                        ->label(__('payroll.line_total'))
+                                        ->state(fn (PayrollLine $record): string => self::lineTotal($record)->toDecimal())
+                                        ->formatStateUsing(fn (string $state): string => __('payroll.amount_lyd', ['amount' => $state])),
+                                ])
+                                ->columns(3),
+                        ])
+                        ->columns(2),
+                ]),
+            Section::make(__('payroll.lines'))
+                ->visible(fn (PayrollRun $record): bool => $record->type !== PayrollRunType::MonthlySalary)
+                ->schema([
+                    RepeatableEntry::make('lines')
+                        ->label(__('payroll.lines'))
+                        ->schema([
+                            TextEntry::make('user.name')->label(__('payroll.employee')),
+                            TextEntry::make('segment_start')->label(__('payroll.segment_start'))->date(),
+                            TextEntry::make('segment_end')->label(__('payroll.segment_end'))->date(),
+                            TextEntry::make('frozen_rate')
+                                ->label(__('payroll.rate'))
+                                ->formatStateUsing(fn (?string $state): string => $state === null
+                                    ? __('payroll.not_applicable')
+                                    : __('payroll.amount_lyd', ['amount' => $state])),
+                            TextEntry::make('frozen_hours')->label(__('payroll.hours')),
+                            TextEntry::make('computed_amount')
+                                ->label(__('payroll.computed_amount'))
+                                ->formatStateUsing(fn (string $state): string => __('payroll.amount_lyd', ['amount' => $state])),
+                            TextEntry::make('reason')->label(__('payroll.reason')),
+                            // Bonuses and deductions added while the run is a draft. Only a line that
+                            // has any shows the block; the total beside it is derived here, never stored.
+                            RepeatableEntry::make('adjustments')
+                                ->label(__('payroll.adjustments'))
+                                ->visible(fn (PayrollLine $record): bool => $record->adjustments->isNotEmpty())
+                                ->schema([
+                                    TextEntry::make('amount')
+                                        ->label(__('payroll.amount'))
+                                        ->formatStateUsing(fn (string $state): string => __('payroll.amount_lyd', ['amount' => $state])),
+                                    TextEntry::make('reason')->label(__('payroll.reason')),
+                                    TextEntry::make('createdBy.name')->label(__('payroll.added_by')),
+                                    TextEntry::make('created_at')->label(__('payroll.added_at'))->dateTime(),
+                                ])
+                                ->columns(4)
+                                ->columnSpanFull(),
+                            TextEntry::make('line_total')
+                                ->label(__('payroll.line_total'))
+                                ->state(fn (PayrollLine $record): string => self::lineTotal($record)->toDecimal())
+                                ->formatStateUsing(fn (string $state): string => __('payroll.amount_lyd', ['amount' => $state])),
+                        ])
+                        ->columns(3),
+                ]),
+        ]);
+    }
+
+    /**
+     * A line's amount with its bonuses and deductions, in exact decimal arithmetic.
+     * Derived when the page renders and never stored.
+     */
+    private static function lineTotal(PayrollLine $line): Money
+    {
+        return $line->adjustments->reduce(
+            fn (Money $total, PayrollLineAdjustment $adjustment): Money => $total->add(Money::fromDecimal($adjustment->amount)),
+            Money::fromDecimal($line->computed_amount),
+        );
+    }
+
+    /**
+     * A salary run's lines grouped by employee, for the review page (P4-T40): one
+     * entry per person, in name order, with what they get for the whole run and
+     * why it is in more than one piece.
+     *
+     * The total is the sum of every segment's computed amount plus its bonuses and
+     * deductions, derived here from the rows and never stored. A person has two
+     * segments when a raise took effect inside the month (the compensation row
+     * differs) and, on a run from before the one-month rule, when the run crossed
+     * a month boundary. Each reason is read from the segments themselves.
+     *
+     * @return list<array{name: string, total: string, explanations: list<string>, segments: Collection<int, PayrollLine>}>
+     */
+    public static function salaryEmployeeGroups(PayrollRun $run): array
+    {
+        return $run->lines
+            ->sortBy(fn (PayrollLine $line): string => $line->segment_start?->toDateString() ?? '')
+            ->groupBy('user_id')
+            ->map(function (Collection $lines): array {
+                $lines = $lines->values();
+                $first = $lines->first();
+                assert($first instanceof PayrollLine);
+
+                return [
+                    'name' => $first->user->name,
+                    'total' => $lines->reduce(
+                        fn (Money $total, PayrollLine $line): Money => $total->add(self::lineTotal($line)),
+                        Money::zero(),
+                    )->toDecimal(),
+                    'explanations' => self::splitExplanations($lines),
+                    'segments' => $lines,
+                ];
+            })
+            ->sortBy(fn (array $group): string => mb_strtolower($group['name']))
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Why one person has more than one segment, one sentence per reason.
+     *
+     * Between neighbouring segments: a different compensation row means the pay
+     * rate changed on the later one's first day; a different calendar month means
+     * the run split by month. Both can hold at once, and the month sentence is
+     * given once however many month boundaries the run crossed.
+     *
+     * @param  Collection<int, PayrollLine>  $lines  in segment order
+     * @return list<string>
+     */
+    private static function splitExplanations(Collection $lines): array
+    {
+        $explanations = [];
+        $splitByMonth = false;
+
+        for ($index = 1; $index < $lines->count(); $index++) {
+            $previous = $lines[$index - 1];
+            $current = $lines[$index];
+
+            if ($previous->staff_compensation_id !== $current->staff_compensation_id && $current->segment_start !== null) {
+                $explanations[] = __('payroll.split_rate_changed', [
+                    'date' => $current->segment_start->translatedFormat(self::SEGMENT_DATE_FORMAT),
+                ]);
+            }
+
+            if ($previous->segment_start?->format('Y-m') !== $current->segment_start?->format('Y-m')) {
+                $splitByMonth = true;
+            }
+        }
+
+        if ($splitByMonth) {
+            $explanations[] = __('payroll.split_by_month');
+        }
+
+        return $explanations;
+    }
+
+    /**
+     * "1–15 Oct 2026", or "30 Sep 2026 – 15 Oct 2026" across a month boundary. A
+     * line with no segment (instructor and adjustment lines) has no range.
+     */
+    public static function segmentRangeLabel(PayrollLine $line): ?string
+    {
+        if ($line->segment_start === null || $line->segment_end === null) {
+            return null;
+        }
+
+        $format = self::SEGMENT_DATE_FORMAT;
+        $start = CarbonImmutable::instance($line->segment_start);
+        $end = CarbonImmutable::instance($line->segment_end);
+
+        if ($start->format('Y-m') === $end->format('Y-m')) {
+            return __('payroll.segment_range_same_month', [
+                'from' => $start->translatedFormat('j'),
+                'to' => $end->translatedFormat($format),
+            ]);
+        }
+
+        return __('payroll.segment_range', [
+            'from' => $start->translatedFormat($format),
+            'to' => $end->translatedFormat($format),
         ]);
     }
 

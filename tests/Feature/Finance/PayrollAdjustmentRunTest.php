@@ -359,8 +359,7 @@ it('exposes payroll as an Action-backed create and draft-review workflow', funct
         ->test(CreatePayrollRun::class)
         ->fillForm([
             'type' => PayrollRunType::MonthlySalary->value,
-            'period_start' => '2026-06-01',
-            'period_end' => '2026-06-30',
+            'salary_month' => '2026-06',
             'notes' => 'June payroll',
         ])
         ->call('create')

@@ -8,7 +8,9 @@ use App\Domain\Finance\Enums\PayrollRunType;
 use App\Domain\Finance\Models\PayrollRun;
 use App\Models\User;
 use App\Support\CentreCalendar;
+use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Factories\Factory;
+use WeakReference;
 
 /**
  * @extends Factory<PayrollRun>
@@ -17,19 +19,17 @@ class PayrollRunFactory extends Factory
 {
     protected $model = PayrollRun::class;
 
+    /** The application the count below belongs to; Laravel builds a new one for every test. */
+    private static ?WeakReference $countedApplication = null;
+
+    /** How many default salary months this test has been given so far. */
+    private static int $defaultMonthsIssued = 0;
+
     /**
      * @return array<string, mixed>
      */
     public function definition(): array
     {
-        /*
-         * Last month, whole, read on the centre's calendar. `now()` is an instant
-         * and which month it falls in is a local question — a run opened at 00:30
-         * local on 1 February covers January to the person opening it, while UTC
-         * still says it is January and the previous month is December.
-         */
-        $lastMonth = CentreCalendar::localise(now())->subMonth();
-
         return [
             /*
              * A salary run, which is the type that carries a period.
@@ -40,8 +40,16 @@ class PayrollRunFactory extends Factory
              */
             'type' => PayrollRunType::MonthlySalary,
 
-            'period_start' => $lastMonth->startOfMonth()->toDateString(),
-            'period_end' => $lastMonth->endOfMonth()->toDateString(),
+            /*
+             * A whole calendar month, resolved only when the test did not state a
+             * period (a closure is skipped when a state or an override replaces its
+             * key, so an instructor or adjustment run takes none). The first run a
+             * test makes is last month, read on the centre's calendar; each further
+             * default is a month earlier, because a month holds one salary run and
+             * `payroll_runs.salary_month` refuses a second (P4-T40).
+             */
+            'period_start' => fn (): string => self::defaultMonth()->toDateString(),
+            'period_end' => fn (array $attributes): string => CarbonImmutable::parse($attributes['period_start'])->endOfMonth()->toDateString(),
 
             'created_by' => User::factory(),
 
@@ -110,5 +118,21 @@ class PayrollRunFactory extends Factory
             'finalized_at' => now(),
             'finalized_by' => $actor?->getKey() ?? User::factory(),
         ]);
+    }
+
+    /**
+     * The first day of the next default salary month: last month, then the month
+     * before, and so on, counted per test (per application instance).
+     */
+    private static function defaultMonth(): CarbonImmutable
+    {
+        $application = app();
+
+        if (self::$countedApplication?->get() !== $application) {
+            self::$countedApplication = WeakReference::create($application);
+            self::$defaultMonthsIssued = 0;
+        }
+
+        return CentreCalendar::localise(now())->startOfMonth()->subMonths(1 + self::$defaultMonthsIssued++);
     }
 }

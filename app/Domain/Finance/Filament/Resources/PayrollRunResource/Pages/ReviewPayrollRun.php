@@ -90,10 +90,18 @@ final class ReviewPayrollRun extends ViewRecord
                         // draft run; this is not a centre-wide catalogue.
                         ->options(fn (): array => $this->run()->lines
                             ->mapWithKeys(fn (PayrollLine $line): array => [
-                                $line->getKey() => __('payroll.line_option', [
-                                    'employee' => $line->user->name,
-                                    'amount' => $line->computed_amount,
-                                ]),
+                                // A salary line says which days it covers, so one person's two lines
+                                // in a month can be told apart.
+                                $line->getKey() => PayrollRunResource::segmentRangeLabel($line) === null
+                                    ? __('payroll.line_option', [
+                                        'employee' => $line->user->name,
+                                        'amount' => $line->computed_amount,
+                                    ])
+                                    : __('payroll.line_option_segment', [
+                                        'employee' => $line->user->name,
+                                        'range' => PayrollRunResource::segmentRangeLabel($line),
+                                        'amount' => $line->computed_amount,
+                                    ]),
                             ])->all())
                         ->required(),
                     TextInput::make('amount')
