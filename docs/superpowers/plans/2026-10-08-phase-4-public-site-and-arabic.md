@@ -2300,6 +2300,46 @@ translator should review both.
 
 ---
 
+### Task 39 — A demo dataset to click through locally
+**Owner: Claude · `p4/t39-demo-dataset` · from main · requested by the owner on 2026-10-29**
+
+**Why.** The owner wants to open the app on their own machine and see wages,
+payroll, bills, reports and exports working on realistic data, without typing it
+all in by hand.
+
+**What it adds**
+- `php artisan demo:seed` fills a freshly migrated LOCAL database with a fictional
+  six-month history: staff of every role, courses and batches in every state,
+  about 48 students with enrolments, certificates and portal logins, bills in
+  every Charges state and ageing bucket, installments, adjustments, write-offs,
+  reversals, expenses, finalized salary, instructor and adjustment payroll runs
+  (one with a mid-month raise split into two lines), and a current-month salary
+  draft with a bonus and a deduction for the owner to review and finalize.
+- Every domain write goes through the same Action the UI uses, with a named staff
+  actor, under a stepped clock, so the activity log and every report look like real
+  use. Where the UI has no Action (course, batch, student and user creation, batch
+  and student status edits) the seeder mirrors the Filament page exactly.
+- Receipts are generated during the seed (the queue runs `sync` for the run and is
+  restored), so they exist without a worker. Report exports still need
+  `php artisan queue:work`; the README's "Demo data" section says how.
+- `DemoGuard` refuses outside the local and testing environments and on any
+  database that already holds courses, students, charges, payments or payroll
+  runs. The command and the seeder class both check it, so `db:seed --class` cannot
+  bypass it. No override flag.
+- Only fictional people: `@example.test` emails, `+218 9x 000 0NNN` phones,
+  "Demo Street" addresses.
+
+**Tests.** `tests/Feature/Demo/DemoSeedCommandTest.php` (15 tests, group
+`demo-seed`, about 60 s): the refusals (environment, every occupied table, the
+seeder run directly), coverage of every state above, integrity (outstanding
+equals billed minus live allocations, no over-allocation), every causer named
+except the two setup events `SystemRoleWriter` files anonymously, report pages
+non-empty on their default filters, ordering on any day (pinned at a month's
+first and mid-month), determinism across two fresh databases, and the clock,
+queue setting, code generator and random seed restored even when a step throws.
+
+---
+
 ## What this plan does not cover
 
 From §12, recorded so they do not reappear as assumptions: multi-tenancy,
