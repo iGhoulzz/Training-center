@@ -1,34 +1,39 @@
 <x-filament-panels::page>
-    <div class="overflow-x-auto rounded-xl bg-white shadow-sm ring-1 ring-gray-950/5 dark:bg-gray-900 dark:ring-white/10">
-        <table class="w-full divide-y divide-gray-200 text-sm dark:divide-white/10">
-            <thead class="bg-gray-50 dark:bg-white/5">
+    <section class="tc-portal-card" aria-label="{{ __('portal.my_balance_title') }}">
+        <div class="tc-portal-card__header">
+            <h2 class="tc-portal-card__title">{{ __('portal.my_balance_title') }}</h2>
+        </div>
+        <div class="tc-portal-table-scroll">
+            <table class="tc-portal-table">
+            <thead>
                 <tr>
-                    <th scope="col" class="px-4 py-3 text-start font-semibold text-gray-950 dark:text-white">{{ __('portal.balance_enrollment') }}</th>
-                    <th scope="col" class="px-4 py-3 text-start font-semibold text-gray-950 dark:text-white">{{ __('portal.enrollments_course') }}</th>
-                    <th scope="col" class="px-4 py-3 text-start font-semibold text-gray-950 dark:text-white">{{ __('portal.enrollments_batch') }}</th>
-                    <th scope="col" class="px-4 py-3 text-start font-semibold text-gray-950 dark:text-white">{{ __('portal.balance_outstanding') }}</th>
+                    <th scope="col">{{ __('portal.balance_enrollment') }}</th>
+                    <th scope="col">{{ __('portal.enrollments_course') }}</th>
+                    <th scope="col">{{ __('portal.enrollments_batch') }}</th>
+                    <th scope="col">{{ __('portal.balance_outstanding') }}</th>
                 </tr>
             </thead>
-            <tbody class="divide-y divide-gray-200 dark:divide-white/10">
+            <tbody>
                 @forelse ($rows as $row)
                     <tr>
-                        <td class="px-4 py-3 text-gray-700 dark:text-gray-200">{{ __('portal.balance_enrollment_row', ['id' => $row['enrollment_id']]) }}</td>
-                        <td class="px-4 py-3 text-gray-700 dark:text-gray-200">{{ $row['course'] }}</td>
-                        <td class="px-4 py-3 text-gray-700 dark:text-gray-200"><bdi>{{ $row['batch_code'] }}</bdi></td>
-                        <td class="px-4 py-3 text-gray-700 dark:text-gray-200">{{ __('portal.amount_lyd', ['amount' => $row['outstanding']]) }}</td>
+                        <td data-label="{{ __('portal.balance_enrollment') }}">{{ __('portal.balance_enrollment_row', ['id' => $row['enrollment_id']]) }}</td>
+                        <td data-label="{{ __('portal.enrollments_course') }}">{{ $row['course'] }}</td>
+                        <td data-label="{{ __('portal.enrollments_batch') }}"><bdi>{{ $row['batch_code'] }}</bdi></td>
+                        <td data-label="{{ __('portal.balance_outstanding') }}" class="tc-portal-money">{{ __('portal.amount_lyd', ['amount' => $row['outstanding']]) }}</td>
                     </tr>
                 @empty
                     <tr>
-                        <td colspan="4" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">{{ __('portal.no_enrollments') }}</td>
+                        <td colspan="4" class="tc-portal-empty">{{ __('portal.no_enrollments') }}</td>
                     </tr>
                 @endforelse
             </tbody>
-            <tfoot class="bg-gray-50 dark:bg-white/5">
+            <tfoot>
                 <tr>
-                    <th scope="row" colspan="3" class="px-4 py-3 text-start font-semibold text-gray-950 dark:text-white">{{ __('portal.balance_total') }}</th>
-                    <td class="px-4 py-3 font-semibold text-gray-950 dark:text-white">{{ __('portal.amount_lyd', ['amount' => $total]) }}</td>
+                    <th scope="row" colspan="3">{{ __('portal.balance_total') }}</th>
+                    <td class="tc-portal-money">{{ __('portal.amount_lyd', ['amount' => $total]) }}</td>
                 </tr>
             </tfoot>
-        </table>
-    </div>
+            </table>
+        </div>
+    </section>
 </x-filament-panels::page>
