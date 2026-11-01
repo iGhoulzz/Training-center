@@ -20,6 +20,10 @@
     .fi-body.fi-panel-student {
         background: var(--color-portal-cream);
         color: var(--color-portal-ink);
+    }
+
+    /* The Arabic face is loaded only for an Arabic page (StudentPanelProvider), so only an Arabic page names it. */
+    .fi-body.fi-panel-student:lang(ar) {
         font-family: 'IBM Plex Sans Arabic', ui-sans-serif, system-ui, sans-serif;
     }
 
@@ -51,6 +55,16 @@
     .fi-panel-student .fi-topbar .fi-user-menu-trigger:hover {
         background: rgb(250 246 236 / .1);
     }
+    /*
+     * Filament greys an enabled icon button's text on hover and focus
+     * (`.fi-icon-btn:not(.fi-disabled):not([disabled]):hover`, three classes and a
+     * pseudo-class), which out-specifies the rule above and leaves gray-600 on navy.
+     * The navy bars keep their cream text; the sidebar header's collapse button is one.
+     */
+    .fi-panel-student :is(.fi-topbar, .fi-sidebar-header) .fi-icon-btn:not(.fi-disabled):not([disabled]):is(:hover, :focus-visible) {
+        background: rgb(250 246 236 / .1);
+        color: var(--color-portal-cream);
+    }
 
     .tc-portal-brand {
         display: inline-flex;
@@ -67,7 +81,7 @@
         flex: none;
         border-radius: 999px;
         border: 2px solid var(--color-portal-gold);
-        object-fit: cover;
+        object-fit: contain;
         background: white;
     }
 
@@ -96,14 +110,84 @@
         border-radius: .75rem;
         min-block-size: 2.75rem;
     }
-    .fi-panel-student .fi-sidebar-item-btn:hover { background: rgb(250 246 236 / .1); }
+    /*
+     * Filament paints a linked item gray-100 on hover and on keyboard focus
+     * (`.fi-sidebar-item.fi-sidebar-item-has-url > .fi-sidebar-item-btn:hover`), a
+     * selector one class heavier than `.fi-sidebar-item-btn:hover`, so a plain hover
+     * rule loses and cream text lands on a near-white box. These repeat that selector
+     * under the panel's class, as the admin theme's do. Hover and focus-visible look
+     * the same, and the current page's item keeps its gold wash when it is hovered.
+     */
+    .fi-panel-student .fi-sidebar-item.fi-sidebar-item-has-url > .fi-sidebar-item-btn:is(:hover, :focus-visible) {
+        background: rgb(250 246 236 / .1);
+    }
     .fi-panel-student .fi-sidebar-item.fi-active > .fi-sidebar-item-btn {
         background: rgb(201 164 76 / .18);
         border-inline-start: 3px solid var(--color-portal-gold);
     }
+    .fi-panel-student .fi-sidebar-item.fi-active.fi-sidebar-item-has-url > .fi-sidebar-item-btn:is(:hover, :focus-visible) {
+        background: rgb(201 164 76 / .18);
+    }
+    /* The other sidebar buttons Filament greys the same way: a group's dropdown trigger and the notifications button. */
+    .fi-panel-student .fi-sidebar-group-dropdown-trigger-btn:is(:hover, :focus-visible),
+    .fi-panel-student .fi-sidebar-database-notifications-btn:is(:hover, :focus-visible) {
+        background: rgb(250 246 236 / .1);
+        color: var(--color-portal-cream);
+    }
     .fi-panel-student .fi-sidebar-item.fi-active .fi-sidebar-item-label,
     .fi-panel-student .fi-sidebar-item.fi-active .fi-sidebar-item-icon {
         color: var(--color-portal-gold);
+    }
+
+    /*
+     * THE LANGUAGE SWITCH (P4-T42): a two-segment pill. On the navy topbar the current
+     * language is gold with ink text (7.5:1) and the other is cream; on the sign-in
+     * card (--guest) it is navy on cream. Both halves are 36px tall, 44px from a
+     * coarse pointer on. The pill is dir="ltr" in the markup, so EN stays on the left.
+     */
+    .tc-portal-locale {
+        display: inline-flex;
+        border: 1px solid rgb(201 164 76 / .5);
+        border-radius: 999px;
+        padding: .125rem;
+        font-size: .75rem;
+        font-weight: 700;
+        line-height: 1;
+    }
+    .tc-portal-locale__option {
+        display: inline-flex;
+        min-inline-size: 2.75rem;
+        min-block-size: 2.25rem;
+        align-items: center;
+        justify-content: center;
+        border: 0;
+        border-radius: 999px;
+        padding-inline: .75rem;
+        background: transparent;
+        color: rgb(250 246 236 / .85);
+        cursor: pointer;
+        text-decoration: none;
+    }
+    .tc-portal-locale__option:is(:hover, :focus-visible) { background: rgb(250 246 236 / .12); color: var(--color-portal-cream); }
+    .tc-portal-locale__option[disabled] { cursor: progress; opacity: .6; }
+    .tc-portal-locale__option--current,
+    .tc-portal-locale__option--current:is(:hover, :focus-visible) {
+        background: var(--color-portal-gold);
+        color: var(--color-portal-ink);
+        cursor: default;
+    }
+    .tc-portal-locale--guest { border-color: rgb(13 39 69 / .3); }
+    .tc-portal-locale--guest .tc-portal-locale__option { color: var(--color-portal-navy); }
+    .tc-portal-locale--guest .tc-portal-locale__option:is(:hover, :focus-visible) { background: rgb(13 39 69 / .08); }
+    .tc-portal-locale--guest .tc-portal-locale__option--current,
+    .tc-portal-locale--guest .tc-portal-locale__option--current:is(:hover, :focus-visible) {
+        background: var(--color-portal-navy);
+        color: var(--color-portal-cream);
+    }
+    .tc-portal-locale-host { display: flex; align-items: center; }
+    .tc-portal-locale-guest { display: flex; justify-content: flex-end; margin-block-end: 1.25rem; }
+    @media (pointer: coarse) {
+        .tc-portal-locale__option { min-block-size: 2.75rem; }
     }
 
     .fi-panel-student .fi-main { padding-block: clamp(1.5rem, 4vw, 3rem); }

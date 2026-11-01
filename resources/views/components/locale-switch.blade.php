@@ -5,10 +5,20 @@
 
     PROPS.
     - `variant`: `public` (the default; the navy top bar of the public site),
-      `verifier` (the certificate verifier's header) or `admin` (the panel's topbar).
+      `verifier` (the certificate verifier's header), `admin` (the panel's topbar),
+      `portal` (the student portal's topbar) or `portal-guest` (the portal's sign-in page).
     - `to`: for `public` and `verifier`, the route (by its English name) the link goes
       to INSTEAD OF the page the visitor is on. Only the verifier's uniform miss sets it,
       to `verify.certificates.form`; see below.
+    - `url`: for `portal-guest`, the sign-in page's address; each link adds `?locale=`.
+
+    THE PORTAL'S TWO VARIANTS (P4-T42) are drawn from the portal theme's own classes
+    (`.tc-portal-locale`, resources/css/filament/student/theme.css), not utilities, because
+    the portal theme does not compile this file. `portal` is two buttons that call
+    `switchLocale` on the Livewire component it is drawn inside (App\Livewire\PortalLocaleSwitch),
+    which is how the choice reaches users.locale with the panel's protections around it.
+    `portal-guest` is two plain links for a visitor who has no account row to write to:
+    SetGuestPanelLocale reads `?locale=` and keeps the choice in the session.
 
     THE PILL IS `dir="ltr"` ITSELF, in both page directions. EN is always the left half
     and ع the right, so a change of language moves the thumb from one side to the other
@@ -55,7 +65,7 @@
 @use('App\Http\Middleware\SetLocale')
 @use('App\Support\PublicRoute')
 
-@props(['variant' => 'public', 'to' => null])
+@props(['variant' => 'public', 'to' => null, 'url' => null])
 
 @php
     $current = in_array(app()->getLocale(), SetLocale::SUPPORTED, true) ? app()->getLocale() : PublicRoute::ENGLISH_LOCALE;
@@ -107,6 +117,38 @@
             @endforeach
         </div>
     </form>
+@elseif ($variant === 'portal' || $variant === 'portal-guest')
+    <div
+        role="group"
+        aria-label="{{ __('public.locale_switch.label') }}"
+        dir="ltr"
+        data-locale-switch
+        data-current="{{ $current }}"
+        {{ $attributes->class(['tc-portal-locale', 'tc-portal-locale--guest' => $variant === 'portal-guest']) }}
+    >
+        @foreach (SetLocale::SUPPORTED as $locale)
+            @if ($locale === $current)
+                <span lang="{{ $locale }}" aria-current="true" class="tc-portal-locale__option tc-portal-locale__option--current">{{ __('public.locale_switch.short', [], $locale) }}</span>
+            @elseif ($variant === 'portal-guest')
+                <a
+                    href="{{ $url.(str_contains((string) $url, '?') ? '&' : '?').'locale='.$locale }}"
+                    hreflang="{{ $locale }}"
+                    lang="{{ $locale }}"
+                    aria-label="{{ __('public.locale_switch.name', [], $locale) }}"
+                    class="tc-portal-locale__option"
+                >{{ __('public.locale_switch.short', [], $locale) }}</a>
+            @else
+                <button
+                    type="button"
+                    wire:click="switchLocale('{{ $locale }}')"
+                    wire:loading.attr="disabled"
+                    lang="{{ $locale }}"
+                    aria-label="{{ __('public.locale_switch.name', [], $locale) }}"
+                    class="tc-portal-locale__option"
+                >{{ __('public.locale_switch.short', [], $locale) }}</button>
+            @endif
+        @endforeach
+    </div>
 @else
     <div
         role="group"

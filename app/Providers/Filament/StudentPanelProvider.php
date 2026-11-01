@@ -10,6 +10,7 @@ use App\Http\Middleware\ForcePasswordChange;
 use App\Http\Middleware\LogOutInactiveUser;
 use App\Http\Middleware\SetGuestPanelLocale;
 use App\Http\Middleware\SetLocale;
+use App\Livewire\PortalLocaleSwitch;
 use Filament\FontProviders\LocalFontProvider;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
@@ -25,6 +26,7 @@ use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
 use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Session\Middleware\StartSession;
+use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\Vite;
 use Illuminate\Support\HtmlString;
 use Illuminate\View\Middleware\ShareErrorsFromSession;
@@ -94,9 +96,34 @@ class StudentPanelProvider extends PanelProvider
             ->darkMode(false)
             ->themeSwitcher(false)
             ->font(fn (): ?string => app()->getLocale() === 'ar' ? 'IBM Plex Sans Arabic' : null, provider: LocalFontProvider::class)
+            // The display face is on every page; the Arabic face only on an Arabic one
+            // (the theme names it under :lang(ar)), as the admin panel loads its own.
             ->renderHook(PanelsRenderHook::STYLES_AFTER, fn (): Htmlable => (file_exists(public_path('build/manifest.json')) || file_exists(public_path('hot')))
-                ? Vite::fonts(['instrument-serif', 'ibm-plex-sans-arabic'])
+                ? Vite::fonts(app()->getLocale() === 'ar' ? ['instrument-serif', 'ibm-plex-sans-arabic'] : ['instrument-serif'])
                 : new HtmlString(''))
+            /*
+             * THE LANGUAGE SWITCH (P4-T42), before the user menu in the topbar. It is a
+             * Livewire component of this panel, so its writes pass through the panel's
+             * persistent middleware; see PortalLocaleSwitch. The user menu renders only
+             * for a signed-in user, so this does too.
+             */
+            ->renderHook(
+                PanelsRenderHook::USER_MENU_BEFORE,
+                fn (): Htmlable => new HtmlString(Blade::render('@livewire($switch)', ['switch' => PortalLocaleSwitch::class])),
+            )
+            /*
+             * THE GUEST'S SWITCH, on the sign-in page only: two links to the same page
+             * with ?locale=, which SetGuestPanelLocale reads and remembers. No write, so
+             * nothing here is a component. The hook sits in the login form's schema, so
+             * the password form (a signed-in page) never shows it.
+             */
+            ->renderHook(
+                PanelsRenderHook::AUTH_LOGIN_FORM_BEFORE,
+                fn (): Htmlable => new HtmlString(Blade::render(
+                    '<div class="tc-portal-locale-guest"><x-locale-switch variant="portal-guest" :url="$url" /></div>',
+                    ['url' => $panel->getLoginUrl()],
+                )),
+            )
             // A closure, not a bare __() call: the panel is registered at boot,
             // before SetLocale has read the actor's locale, so resolving the
             // string eagerly would pin it to the fallback for every request.
