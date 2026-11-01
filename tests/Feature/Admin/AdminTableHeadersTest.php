@@ -118,7 +118,8 @@ dataset('admin lists', [
     'certificates' => [ListStudentCertificates::class, ['view_any_student_certificate', 'view_student_certificate'], fn () => StudentCertificate::factory()->create(),
         ['Student', 'Course', 'Reference', 'Issued on', 'Status'], ['certificates.student', 'certificates.course', 'certificates.reference_number', 'certificates.issued_at', 'certificates.status']],
     'courses' => [ListCourses::class, ['view_any_course'], fn () => Course::factory()->create(),
-        ['Course code', 'Course name', 'Total hours', 'Status', 'Batches'], ['enrollment.course_code', 'enrollment.course_name', 'enrollment.total_hours', 'enrollment.status', 'enrollment.batches']],
+        // Total hours is toggled off by default: the hours sit under the course name.
+        ['Course code', 'Course name', 'Status', 'Batches'], ['enrollment.course_code', 'enrollment.course_name', 'enrollment.status', 'enrollment.batches']],
     'batches' => [ListBatches::class, ['view_any_batch'], fn () => Batch::factory()->create(),
         ['Batch code', 'Status', 'Schedule'], ['enrollment.batch_code', 'enrollment.status', 'enrollment.schedule']],
     'charges' => [ListCharges::class, ['view_any_charge'], fn () => Charge::factory()->create(),
