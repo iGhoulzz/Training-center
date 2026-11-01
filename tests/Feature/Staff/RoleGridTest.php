@@ -264,6 +264,17 @@ describe('a save carries hidden permissions through', function () {
         expect(gridHeldBy($role->fresh()))->toBe(['view_any_student']);
     });
 
+    it('lets only drawn names out of a submitted state, whatever the payload says', function () {
+        // The form already drops keys that have no box; this pins the second layer on its own.
+        $hidden = 'restore_role';
+        $visible = PermissionGrid::visibleNames()[0];
+
+        expect(PermissionGrid::visibleNames())->not->toContain($hidden)
+            ->and(PermissionGrid::tickedNames([$hidden => true, 'made_up_permission' => true]))->toBe([])
+            ->and(PermissionGrid::tickedNames([$visible => true, $hidden => true]))->toBe([$visible])
+            ->and(PermissionGrid::tickedNames([$visible => false]))->toBe([]);
+    });
+
     it('changes nothing, and writes no entry, when a role is saved untouched', function () {
         $role = gridRoleHolding('desk', ['view_any_student', 'restore_role']);
         $entriesBefore = Activity::query()->where('event', ActivityEvent::PERMISSIONS_CHANGED)->count();

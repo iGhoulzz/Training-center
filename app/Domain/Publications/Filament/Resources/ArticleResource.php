@@ -216,7 +216,7 @@ class ArticleResource extends Resource
                 AdminDetails::text('title_en', __('publications.title_en')),
 
                 AdminDetails::text('title_ar', __('publications.title_ar'))
-                    ->extraAttributes(['dir' => 'rtl']),
+                    ->extraAttributes(['dir' => 'rtl'], merge: true),
 
                 AdminDetails::code('slug', __('publications.slug')),
 
@@ -231,7 +231,7 @@ class ArticleResource extends Resource
                 AdminDetails::longText('description_en', __('publications.description_en')),
 
                 AdminDetails::longText('description_ar', __('publications.description_ar'))
-                    ->extraAttributes(['dir' => 'rtl']),
+                    ->extraAttributes(['dir' => 'rtl'], merge: true),
             ], wide: true),
 
             AdminDetails::section(__('publications.article_publication'), [

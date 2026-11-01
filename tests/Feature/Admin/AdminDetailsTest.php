@@ -97,15 +97,15 @@ it('renders every detail page as text in cards, in English and Arabic', function
         'course' => [ViewCourse::class, ['view_any_course', 'view_course'], fn () => Course::factory()->create(['code' => 'CRS-DET1', 'name_en' => 'Detail Course', 'description_en' => 'First line']), ['CRS-DET1', 'Detail Course', 'First line'], 'بيانات الدورة'],
         'batch' => [ViewBatch::class, ['view_any_batch', 'view_batch'], fn () => Batch::factory()->create(['code' => 'BAT-DET1']), ['BAT-DET1'], 'بيانات الدفعة'],
         'staff profile' => [ViewStaffProfile::class, ['view_any_staff_profile', 'view_staff_profile'], fn () => StaffProfile::factory()->create(['job_title' => 'Registrar']), ['Registrar'], 'البيانات الوظيفية'],
-        'payment' => [ViewPayment::class, ['view_any_payment', 'view_payment'], fn () => Payment::factory()->create(), [], 'بيانات الإيصال'],
+        'payment' => [ViewPayment::class, ['view_any_payment', 'view_payment'], fn () => Payment::factory()->create(['recorded_by' => User::factory()->create(['name' => 'Recorder Probe'])]), ['Recorder Probe'], 'بيانات الإيصال'],
         'expense' => [ViewExpense::class, ['view_any_expense', 'view_expense'], fn () => Expense::factory()->create(['amount' => '125.500', 'description' => 'Printer paper']), ['125.500', 'Printer paper'], 'بيانات المصروف'],
         'charge' => [ViewCharge::class, ['view_any_charge', 'view_charge'], fn () => Charge::factory()->create(['list_price' => '900.000']), ['900.000'], 'بيانات الفاتورة'],
         'discount' => [ViewDiscount::class, ['view_any_discount', 'view_discount'], fn () => Discount::factory()->create(['name' => 'Early bird', 'percentage' => '10.00']), ['Early bird', '10.00'], 'تعريف الخصم'],
-        'article' => [ViewArticle::class, ['view_any_article', 'view_article'], fn () => Article::factory()->create(['title_en' => 'Safety handbook']), ['Safety handbook'], 'تفاصيل المقال'],
+        'article' => [ViewArticle::class, ['view_any_article', 'view_article'], fn () => Article::factory()->create(['title_en' => 'Safety handbook', 'authors' => 'Probe Author Name']), ['Safety handbook', 'Probe Author Name'], 'تفاصيل المقال'],
         'certificate' => [ViewStudentCertificate::class, ['view_any_student_certificate', 'view_student_certificate'], fn () => StudentCertificate::factory()->create(['student_name' => 'Hana Mansour']), ['Hana Mansour'], 'بيانات الشهادة المطبوعة'],
         'pay rate' => [ViewStaffCompensation::class, ['view_any_staff_compensation', 'view_staff_compensation'], fn () => StaffCompensation::factory()->create(['amount' => '3000.000']), ['3000.000'], 'معدل الأجر'],
         'payroll run' => [ReviewPayrollRun::class, ['view_any_payroll_run', 'view_payroll_run'], fn () => PayrollRun::factory()->create(['notes' => 'March run']), ['March run'], 'بيانات المسير'],
-        'activity' => [ViewActivity::class, ['view_any_activity', 'view_activity'], fn () => activity()->event(ActivityEvent::PERMISSIONS_CHANGED)->log('Probe entry'), [], 'النشاط'],
+        'activity' => [ViewActivity::class, ['view_any_activity', 'view_activity'], fn () => activity()->event(ActivityEvent::PERMISSIONS_CHANGED)->withProperties(['reason' => 'Probe reason text'])->log('Probe entry'), ['Probe reason text'], 'النشاط'],
     ];
 
     foreach (['en', 'ar'] as $locale) {

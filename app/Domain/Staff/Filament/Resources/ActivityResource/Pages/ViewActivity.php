@@ -50,11 +50,11 @@ class ViewActivity extends ViewRecord
             AdminDetails::section(__('activity.changes'), [
                 AdminDetails::longText('attribute_changes', __('activity.changes'))
                     ->state(fn (Activity $record): string => ActivityResource::describeChanges($record))
-                    ->extraAttributes(['class' => 'font-mono']),
+                    ->extraAttributes(['class' => 'font-mono'], merge: true),
 
                 AdminDetails::longText('properties', __('activity.details'))
                     ->state(fn (Activity $record): string => ActivityResource::describeProperties($record))
-                    ->extraAttributes(['class' => 'font-mono']),
+                    ->extraAttributes(['class' => 'font-mono'], merge: true),
             ], wide: true),
         ]);
     }
