@@ -17,6 +17,7 @@ use App\Domain\Enrollment\Filament\Resources\BatchResource\RelationManagers\Inst
 use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Course;
 use App\Domain\Finance\Support\Money;
+use App\Filament\Tables\AdminTable;
 use App\Models\User;
 use BackedEnum;
 use Filament\Actions\DeleteAction;
@@ -356,7 +357,7 @@ class BatchResource extends Resource
 
     public static function table(Table $table): Table
     {
-        return $table
+        return AdminTable::configure($table)
             ->columns([
                 TextColumn::make('code')
                     ->label(__('enrollment.batch_code'))
@@ -515,7 +516,9 @@ class BatchResource extends Resource
             // that a crafted Livewire mount ignores, whereas authorize() runs
             // BatchPolicy::delete() against this record on the server.
             ->recordActions([
-                self::deleteAction(),
+                AdminTable::rowMenu([
+                    self::deleteAction(),
+                ]),
             ]);
     }
 

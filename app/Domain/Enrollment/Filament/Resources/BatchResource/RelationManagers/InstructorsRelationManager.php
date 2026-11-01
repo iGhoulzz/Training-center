@@ -11,6 +11,8 @@ use App\Domain\Enrollment\Exceptions\BatchClosedException;
 use App\Domain\Enrollment\Exceptions\InstructorNotEligibleException;
 use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Staff\Models\StaffProfile;
+use App\Filament\Tables\AdminColumns;
+use App\Filament\Tables\AdminTable;
 use App\Models\User;
 use Filament\Actions\Action;
 use Filament\Forms\Components\Select;
@@ -18,15 +20,12 @@ use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Support\Icons\Heroicon;
-use Filament\Tables\Columns\Layout\Stack;
 use Filament\Tables\Columns\TextColumn;
-use Filament\Tables\Columns\ViewColumn;
 use Filament\Tables\Table;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Gate;
-use LogicException;
 
 /**
  * Who teaches this batch, and for how many hours (P1-T10).
@@ -96,39 +95,18 @@ class InstructorsRelationManager extends RelationManager
 
     public function table(Table $table): Table
     {
-        return $table
+        return AdminTable::configure($table)
             ->modifyQueryUsing(fn (Builder $query): Builder => $query->with('staffProfile'))
-            ->contentGrid(['md' => 2, 'xl' => 3])
             ->recordTitleAttribute('name')
             ->columns([
-                Stack::make([
-                    ViewColumn::make('instructor_card')->view('filament.enrollment.columns.instructor-card')->searchable(['name'])
-                        ->viewData(function (User $record): array {
-                            $batch = $this->getOwnerRecord();
-                            if (! $batch instanceof Batch) {
-                                throw new LogicException('Instructor cards require a batch owner.');
-                            }
+                AdminColumns::person('name', __('enrollment.instructor'), fn (User $record): array => [
+                    'name' => $record->name, 'identity' => $record->getKey(), 'size' => 'instructor',
+                    'secondary' => $record->staffProfile->job_title ?? __('enrollment.no_job_title'), 'url' => null,
+                ])
+                    ->searchable(['name'])
+                    ->sortable(),
 
-                            return [
-                                'name' => $record->name, 'identity' => $record->getKey(),
-                                'jobTitle' => $record->staffProfile->job_title ?? __('enrollment.no_job_title'),
-                                'departed' => $record->trashed(),
-                                'state' => $record->trashed() ? __('enrollment.instructor_departed') : __('enrollment.instructor_current'),
-                                'hours' => self::pivotHours($record), 'totalHours' => $batch->effective_total_hours,
-                            ];
-                        }),
-                    TextColumn::make('name')
-                        ->hidden()
-                        ->label(__('enrollment.instructor'))
-                        ->searchable()
-                        ->sortable(),
-
-                    TextColumn::make('staffProfile.job_title')
-                        ->hidden()
-                        ->label(__('staff.job_title'))
-                        ->placeholder(__('enrollment.no_job_title')),
-
-                    /*
+                /*
                  * Whether this allocation belongs to somebody who still works
                  * here.
                  *
@@ -143,34 +121,31 @@ class InstructorsRelationManager extends RelationManager
                  * annotation somebody forgot to fill in; two badges read as an
                  * answer.
                  */
-                    TextColumn::make('employment_state')
-                        ->hidden()
-                        ->label(__('enrollment.instructor_employment_state'))
-                        ->state(fn (User $record): string => $record->trashed()
-                            ? __('enrollment.instructor_departed')
-                            : __('enrollment.instructor_current'))
-                        ->badge()
-                        ->color(fn (User $record): string => $record->trashed() ? 'danger' : 'success')
-                        ->tooltip(fn (User $record): ?string => $record->trashed()
-                            ? __('enrollment.instructor_departed_hint')
-                            : null),
+                AdminColumns::status('employment_state', __('enrollment.instructor_employment_state'), color: fn (User $record): string => $record->trashed() ? 'danger' : 'success')
+                    ->state(fn (User $record): string => $record->trashed()
+                        ? __('enrollment.instructor_departed')
+                        : __('enrollment.instructor_current'))
+                    ->tooltip(fn (User $record): ?string => $record->trashed()
+                        ? __('enrollment.instructor_departed_hint')
+                        : null),
 
-                    // The pivot value, which is the entire point of this panel: the
-                    // hours belong to the pair, not to the batch and not to the
-                    // account.
-                    TextColumn::make('assigned_hours')
-                        ->hidden()
-                        ->label(__('enrollment.assigned_hours'))
-                        ->state(fn (User $record): int => self::pivotHours($record))
-                        ->numeric(),
-                ]),
+                // The pivot value, which is the entire point of this panel: the
+                // hours belong to the pair, not to the batch and not to the
+                // account.
+                TextColumn::make('assigned_hours')
+                    ->label(__('enrollment.assigned_hours'))
+                    ->state(fn (User $record): int => self::pivotHours($record))
+                    ->alignEnd()
+                    ->numeric(),
             ])
             ->headerActions([
                 $this->assignAction(),
             ])
             ->recordActions([
-                $this->editHoursAction(),
-                $this->removeAction(),
+                AdminTable::rowMenu([
+                    $this->editHoursAction(),
+                    $this->removeAction(),
+                ]),
             ]);
         // No bulk actions, deliberately. See the class docblock.
     }

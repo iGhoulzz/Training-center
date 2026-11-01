@@ -122,4 +122,6 @@ return [
     'role_details' => 'الدور والصلاحيات',
     'guard' => 'حارس المصادقة',
     'updated_at' => 'آخر تحديث',
+    'activity_column' => 'سجل النشاط',
+    'payroll_column' => 'معدلات الأجور',
 ];

@@ -125,4 +125,7 @@ return [
 
     // PaymentResource::printReceiptAction() (P4-T24).
     'print_receipt' => 'Print receipt',
+
+    // Admin table (P4-T41): who recorded a receipt, under its date.
+    'recorded_by_line' => 'Recorded by :name',
 ];

@@ -8,6 +8,7 @@ use App\Domain\Enrollment\Filament\Resources\StudentCertificateResource;
 use App\Domain\Enrollment\Models\Enrollment;
 use App\Domain\Enrollment\Models\StudentCertificate;
 use App\Domain\Enrollment\Queries\CertificateIssuanceQueue as IssuanceQueueQuery;
+use App\Filament\Tables\AdminTable;
 use App\Models\User;
 use App\Support\CentreCalendar;
 use BackedEnum;
@@ -56,7 +57,7 @@ class CertificateIssuanceQueue extends Page implements HasTable
 
     public function table(Table $table): Table
     {
-        return $table
+        return AdminTable::configure($table)
             ->query(app(IssuanceQueueQuery::class)->query())
             ->columns([
                 TextColumn::make('student.student_code')->label(__('certificates.queue_student_code')),

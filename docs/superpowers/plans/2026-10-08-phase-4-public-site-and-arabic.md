@@ -2383,6 +2383,43 @@ a `legacySalaryRun()` helper.
 
 ---
 
+### Task 41 — One shared table for every admin list
+**Owner: Claude · `p4/t41-shared-table-layout` · from main · requested by the owner on 2026-10-31**
+
+**Why.** 14 of the 18 admin lists used Filament's card-row layout (`Split`/`Stack`).
+It shows no column header row, and each row sizes its columns to its own content,
+so columns drift between rows. The owner asked for one reusable table component
+that every list uses, matching across the system.
+
+**What changed**
+- **`App\Filament\Tables\AdminTable`** (`configure()`, `rowMenu()`) and
+  **`AdminColumns`** (title, code, secondary, actor, money, status, date,
+  dateTime, person). All 22 admin tables use them: a header row, aligned columns,
+  sortable headers, one row menu, and the same spacing, pagination and empty
+  state. The styling lives once, in `theme.css` (`.tc-table`, logical properties
+  only).
+- **Secondary columns** show from `lg`/`xl` and are toggleable. The write-off and
+  reversal reasons stay on the row.
+- **Activity log** columns: When, Who, What happened, Record, a one-line summary
+  (fields changed, recorded or removed) and the IP address. The full changes stay
+  on the entry's page.
+- **Expenses:** a Recorded/Reversed status badge. **Users:** every column is
+  labelled.
+- **Documentation:** the owner's decision is recorded as conflict 10 in
+  `docs/design/README.md`, plus a paragraph in `docs/ENGINEERING.md`.
+- **A test-date bug** on main is fixed: `PayrollLineFactory` overflowed the month
+  on the 29th–31st.
+
+**Tests.**
+- `AdminTableArchTest`: every `table()` goes through `AdminTable`, with no
+  `Split`/`Stack`/`contentGrid`, and a sample-shape self-check.
+- `AdminTableHeadersTest`: every list's header row, in English and Arabic.
+- `AdminTableRowsTest`: the activity summaries, the expense badge and the row
+  menus.
+- The revamp contract tests were moved from card markup to table markup.
+
+---
+
 ## What this plan does not cover
 
 From §12, recorded so they do not reappear as assumptions: multi-tenancy,

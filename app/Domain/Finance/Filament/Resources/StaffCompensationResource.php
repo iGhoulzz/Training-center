@@ -11,6 +11,8 @@ use App\Domain\Finance\Filament\Resources\StaffCompensationResource\Pages\ListSt
 use App\Domain\Finance\Filament\Resources\StaffCompensationResource\Pages\ViewStaffCompensation;
 use App\Domain\Finance\Models\StaffCompensation;
 use App\Filament\HelpPanel;
+use App\Filament\Tables\AdminColumns;
+use App\Filament\Tables\AdminTable;
 use App\Models\User;
 use BackedEnum;
 use Filament\Forms\Components\DatePicker;
@@ -21,9 +23,6 @@ use Filament\Resources\Resource;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
-use Filament\Tables\Columns\Layout\Split;
-use Filament\Tables\Columns\Layout\Stack;
-use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 
@@ -135,35 +134,26 @@ final class StaffCompensationResource extends Resource
 
     public static function table(Table $table): Table
     {
-        return $table
-            ->extraAttributes(['class' => '[&_.fi-ta-record-content-ctn]:py-0! [&_.fi-ta-record-content]:px-0!'])
+        return AdminTable::configure($table)
             ->columns([
-                Split::make([
-                    Stack::make([
-                        TextColumn::make('user.name')
-                            ->label(__('payroll.employee'))
-                            ->searchable()
-                            ->sortable()->weight('semibold'),
-                        TextColumn::make('type')
-                            ->label(__('payroll.compensation_type'))
-                            ->formatStateUsing(fn (CompensationType|string $state): string => $state instanceof CompensationType
-                                ? $state->label()
-                                : $state)->size('xs')->color('gray'),
-                    ])->space(1),
-                    TextColumn::make('amount')
-                        ->label(__('payroll.amount'))
-                        ->formatStateUsing(fn (string $state): string => __('payroll.amount_lyd', ['amount' => $state]))->weight('semibold')->color('warning'),
-                    Stack::make([
-                        TextColumn::make('effective_from')
-                            ->label(__('payroll.effective_from'))
-                            ->date()
-                            ->sortable(),
-                        TextColumn::make('effective_to')
-                            ->label(__('payroll.effective_to'))
-                            ->date()
-                            ->placeholder(__('payroll.current_rate')),
-                    ])->space(1),
-                ])->from('md')->extraAttributes(['class' => 'px-4.5 py-3.5']),
+                AdminColumns::title('user.name', __('payroll.employee'))
+                    ->searchable()
+                    ->sortable(),
+
+                AdminColumns::secondary('type', __('payroll.compensation_type'))
+                    ->formatStateUsing(fn (CompensationType|string $state): string => $state instanceof CompensationType
+                        ? $state->label()
+                        : $state),
+
+                AdminColumns::money('amount', __('payroll.amount'), 'payroll.amount_lyd')
+                    ->weight('semibold')
+                    ->color('warning'),
+
+                AdminColumns::date('effective_from', __('payroll.effective_from'))
+                    ->sortable(),
+
+                AdminColumns::date('effective_to', __('payroll.effective_to'))
+                    ->placeholder(__('payroll.current_rate')),
             ])
             ->defaultSort('effective_from', 'desc');
     }

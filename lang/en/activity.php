@@ -233,4 +233,11 @@ return [
         'previous_hours' => 'previous_hours',
         'replaced_existing' => 'replaced_existing',
     ],
+
+    // Admin table (P4-T41): the list's own headers and its one-line summary.
+    'what_happened' => 'What happened',
+    'summary' => 'Summary',
+    'fields_changed' => '{1} :count field changed|[0,*] :count fields changed',
+    'fields_recorded' => '{1} :count field recorded|[0,*] :count fields recorded',
+    'fields_removed' => '{1} :count field removed|[0,*] :count fields removed',
 ];

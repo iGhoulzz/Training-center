@@ -21,10 +21,11 @@ use App\Domain\Staff\Exceptions\ProtectedAccountException;
 use App\Domain\Staff\Exceptions\StudentHasNoEmailException;
 use App\Domain\Staff\Exceptions\StudentHasNoPortalAccountException;
 use App\Domain\Staff\Exceptions\StudentHasPortalAccountException;
+use App\Filament\Tables\AdminColumns;
+use App\Filament\Tables\AdminTable;
 use App\Models\User;
 use BackedEnum;
 use Filament\Actions\Action;
-use Filament\Actions\ActionGroup;
 use Filament\Actions\DeleteAction;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Select;
@@ -39,10 +40,6 @@ use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\View;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
-use Filament\Tables\Columns\Layout\Grid;
-use Filament\Tables\Columns\Layout\Stack;
-use Filament\Tables\Columns\TextColumn;
-use Filament\Tables\Columns\ViewColumn;
 use Filament\Tables\Filters\Filter;
 use Filament\Tables\Table;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -211,7 +208,7 @@ class StudentResource extends Resource
 
     public static function table(Table $table): Table
     {
-        return $table
+        return AdminTable::configure($table)
             // Staff without Finance read access must not receive balance data.
             ->modifyQueryUsing(fn (Builder $query): Builder => auth()->user()?->can('view_any_charge')
                 ? app(StudentBalanceQuery::class)->withOutstanding($query)
@@ -233,57 +230,30 @@ class StudentResource extends Resource
                     }),
             ])
             ->columns([
-                Grid::make(['default' => 1, 'md' => 3])->extraAttributes([
-                    'class' => 'gap-2 md:gap-3 md:grid-cols-[minmax(118px,1.6fr)_minmax(84px,.9fr)_minmax(66px,.8fr)] [&>*]:min-w-0',
-                ])->schema([
-                    Stack::make([
-                        ViewColumn::make('identity')->view('filament.enrollment.columns.person')
-                            ->searchable(['first_name', 'last_name', 'student_code', 'phone'])
-                            ->viewData(fn (Student $record): array => [
-                                'name' => $record->full_name, 'identity' => $record->getKey(),
-                                'secondary' => $record->student_code.' · '.($record->phone ?? __('enrollment.no_phone')), 'url' => null,
-                            ]),
-                        TextColumn::make('student_code')
-                            ->label(__('enrollment.student_code'))
-                            ->hidden()
-                            ->searchable()
-                            ->sortable(),
+                // Searches the real columns behind the composed name: full_name is an
+                // accessor, not a column. Sorts by last name, then first, which is what
+                // the (last_name, first_name) index exists for.
+                AdminColumns::person('identity', __('enrollment.student'), fn (Student $record): array => [
+                    'name' => $record->full_name, 'identity' => $record->getKey(),
+                    'secondary' => $record->phone ?? __('enrollment.no_phone'), 'url' => null,
+                ])
+                    ->searchable(['first_name', 'last_name', 'student_code', 'phone'])
+                    ->sortable(['last_name', 'first_name']),
 
-                        // full_name is an accessor, not a column, so the search has to
-                        // name the two real columns behind it — and it cannot be
-                        // sorted at all. Order by last name instead; that is what the
-                        // (last_name, first_name) index exists for.
-                        TextColumn::make('full_name')
-                            ->label(__('enrollment.full_name'))
-                            ->hidden()
-                            ->searchable(['first_name', 'last_name'])
-                            ->weight('semibold'),
+                AdminColumns::code('student_code', __('enrollment.student_code'))
+                    ->searchable()
+                    ->sortable(),
 
-                        TextColumn::make('phone')
-                            ->label(__('enrollment.phone'))
-                            ->hidden()
-                            ->searchable()
-                            ->placeholder(__('enrollment.no_phone')),
-                    ]),
+                AdminColumns::status('status', __('enrollment.status'), fn (StudentStatus $state): string => $state->label(), fn (StudentStatus $state): string => match ($state) {
+                    StudentStatus::Active => 'success',
+                    StudentStatus::Graduated => 'info',
+                    default => 'gray',
+                })
+                    ->sortable(),
 
-                    TextColumn::make('status')
-                        ->label(__('enrollment.status'))
-                        ->badge()
-                        ->formatStateUsing(fn (StudentStatus $state): string => $state->label())
-                        ->color(fn (StudentStatus $state): string => match ($state) {
-                            StudentStatus::Active => 'success',
-                            StudentStatus::Graduated => 'info',
-                            default => 'gray',
-                        })
-                        ->sortable(),
-
-                    TextColumn::make(StudentBalanceQuery::OUTSTANDING_ALIAS)
-                        ->label(__('enrollment.outstanding'))
-                        ->visible(fn (): bool => auth()->user()?->can('view_any_charge') ?? false)
-                        ->formatStateUsing(fn (string $state): string => __('enrollment.money_lyd', ['amount' => $state]))
-                        ->extraAttributes(['class' => 'whitespace-nowrap tabular-nums text-[12.5px]'])
-                        ->color('warning'),
-                ]),
+                AdminColumns::money(StudentBalanceQuery::OUTSTANDING_ALIAS, __('enrollment.outstanding'), 'enrollment.money_lyd')
+                    ->visible(fn (): bool => auth()->user()?->can('view_any_charge') ?? false)
+                    ->color('warning'),
             ])
             // Surname order: the register is a list of people, and the desk
             // looks someone up by name far more often than by when they were
@@ -305,12 +275,12 @@ class StudentResource extends Resource
             // using() hands the delete to DeleteStudentAction (P4-T33), which
             // refuses a student with an active enrolment or an outstanding balance.
             ->recordActions([
-                ActionGroup::make([
+                AdminTable::rowMenu([
                     ...self::portalActions(),
                     DeleteAction::make()
                         ->authorize('delete')
                         ->using(fn (Student $record): bool => self::deleteThroughAction($record)),
-                ])->iconButton()->dropdownTeleport(),
+                ]),
             ]);
     }
 

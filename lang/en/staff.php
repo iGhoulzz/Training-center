@@ -214,4 +214,8 @@ return [
     'role_details' => 'Role and permissions',
     'guard' => 'Authentication guard',
     'updated_at' => 'Last updated',
+
+    // Admin table (P4-T41): headers for the links out of the staff list.
+    'activity_column' => 'Activity log',
+    'payroll_column' => 'Pay rates',
 ];

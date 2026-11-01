@@ -22,6 +22,8 @@ use App\Domain\Finance\Models\Payment;
 use App\Domain\Finance\Services\ChargeQueryService;
 use App\Domain\Finance\Support\ChargeBalance;
 use App\Domain\Finance\Support\Money;
+use App\Filament\Tables\AdminColumns;
+use App\Filament\Tables\AdminTable;
 use App\Models\User;
 use BackedEnum;
 use Filament\Actions\Action;
@@ -31,8 +33,6 @@ use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\IconColumn;
-use Filament\Tables\Columns\Layout\Split;
-use Filament\Tables\Columns\Layout\Stack;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\TernaryFilter;
@@ -226,98 +226,96 @@ class ChargeResource extends Resource
 
     public static function table(Table $table): Table
     {
-        return $table
-            ->extraAttributes(['class' => '[&_.fi-ta-record-content-ctn]:py-0! [&_.fi-ta-record-content]:px-0!'])
-            // Native layout rows wrap their content in a link when recordUrl is
-            // set; child student/batch links need a non-interactive container.
+        // Links on the student, bill and batch cells must not sit inside a row-wide
+        // anchor, so the row itself links nowhere.
+        return AdminTable::configure($table)
             ->recordUrl(null)
             ->columns([
-                Split::make([
-                    Stack::make([
-                        TextColumn::make('student_identity')
-                            ->label(__('charges.student'))
-                            ->state(fn (Charge $record): string => trim($record->getAttribute(EnrollmentQueryService::ENROLLMENT_STUDENT_FIRST_NAME).' '.$record->getAttribute(EnrollmentQueryService::ENROLLMENT_STUDENT_LAST_NAME)))
-                            ->weight('semibold')->size('sm')
-                            ->url(fn (Charge $record): ?string => auth()->user()?->can('view_student') && auth()->user()->can('view_any_student')
-                                && (bool) $record->getAttribute(EnrollmentQueryService::ENROLLMENT_STUDENT_AVAILABLE)
-                                ? StudentResource::getUrl('index', ['student' => $record->getAttribute(EnrollmentQueryService::ENROLLMENT_STUDENT_ID)]) : null),
-                        TextColumn::make('reference')
-                            ->label(__('charges.reference'))
-                            ->searchable()
-                            ->sortable()->color('gray')->size('xs')
-                            ->url(fn (Charge $record): ?string => auth()->user()?->can('view_charge')
-                                ? self::getUrl('view', ['record' => $record]) : null),
+                AdminColumns::title('student_identity', __('charges.student'))
+                    ->state(fn (Charge $record): string => trim($record->getAttribute(EnrollmentQueryService::ENROLLMENT_STUDENT_FIRST_NAME).' '.$record->getAttribute(EnrollmentQueryService::ENROLLMENT_STUDENT_LAST_NAME)))
+                    ->url(fn (Charge $record): ?string => auth()->user()?->can('view_student') && auth()->user()->can('view_any_student')
+                        && (bool) $record->getAttribute(EnrollmentQueryService::ENROLLMENT_STUDENT_AVAILABLE)
+                        ? StudentResource::getUrl('index', ['student' => $record->getAttribute(EnrollmentQueryService::ENROLLMENT_STUDENT_ID)]) : null),
 
-                        TextColumn::make('enrollment.reference')
-                            ->label(__('charges.enrollment_reference'))
-                            ->searchable()
-                            ->sortable()->size('xs')->color('gray'),
+                // The enrolment's reference sits under the bill's, so it is on every row even
+                // while its own column, which can still be searched and sorted, is hidden.
+                AdminColumns::code('reference', __('charges.reference'))
+                    ->description(fn (Charge $record): string => $record->enrollment->reference)
+                    ->searchable()
+                    ->sortable()
+                    ->url(fn (Charge $record): ?string => auth()->user()?->can('view_charge')
+                        ? self::getUrl('view', ['record' => $record]) : null),
 
-                        TextColumn::make('enrollment.batch.course.code')
-                            ->label(__('charges.course'))
-                            ->searchable()->size('xs')->color('gray'),
+                AdminColumns::code('enrollment.reference', __('charges.enrollment_reference'))
+                    ->searchable()
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
 
-                        TextColumn::make('enrollment.batch.code')
-                            ->label(__('charges.batch'))
-                            ->searchable()->size('xs')->color('gray')
-                            ->url(fn (Charge $record): ?string => auth()->user()?->can('view_batch')
-                                ? BatchResource::getUrl('view', ['record' => $record->enrollment->batch]) : null),
-                    ])->space(1),
-                    Stack::make([
+                // The course's code sits under the batch's, for the same reason.
+                AdminColumns::secondary('enrollment.batch.course.code', __('charges.course'))
+                    ->searchable()
+                    ->toggleable(isToggledHiddenByDefault: true),
 
-                        TextColumn::make('amount')
-                            ->label(__('charges.amount'))
-                            ->formatStateUsing(fn (string $state): string => self::formatMoney($state))
-                            ->sortable()->description(__('charges.billed')),
+                AdminColumns::secondary('enrollment.batch.code', __('charges.batch'))
+                    ->description(fn (Charge $record): string => $record->enrollment->batch->course->code)
+                    ->searchable()
+                    ->toggleable()
+                    ->url(fn (Charge $record): ?string => auth()->user()?->can('view_batch')
+                        ? BatchResource::getUrl('view', ['record' => $record->enrollment->batch]) : null),
 
-                        TextColumn::make('discount_percentage')
-                            ->label(__('charges.discount'))
-                            ->formatStateUsing(fn (?string $state): string => $state === null
-                                ? __('charges.no_discount')
-                                : __('charges.discount_percentage_value', ['percentage' => $state]))
-                            ->sortable()->size('xs')->color('gray'),
-                    ])->space(1),
-                    Stack::make([
-                        TextColumn::make('paid_progress')->label(__('charges.allocated'))
-                            ->extraAttributes(['class' => '[&_svg]:text-success-400! [&_.font-semibold]:text-success-400!'])
-                            ->state(fn (Charge $record): string => (string) $record->getAttribute(ChargeBalance::ALLOCATED_ALIAS))
-                            ->formatStateUsing(fn (string $state, Charge $record): HtmlString => new HtmlString(Blade::render(
-                                '<x-admin.meter :value="$paid" :maximum="$billed" :label="$label" tone="success" :percentage="true" />',
-                                ['paid' => Money::fromDecimal($state)->dirham, 'billed' => Money::fromDecimal($record->amount)->dirham,
-                                    'label' => __('charges.paid_amount', ['amount' => self::formatMoney($state)])],
-                            ))),
+                // The discount, when there is one, sits under the amount it reduced; its own
+                // column, which can be sorted, is hidden until asked for.
+                AdminColumns::money('amount', __('charges.amount'), 'charges.amount_lyd')
+                    ->description(fn (Charge $record): ?string => $record->discount_percentage === null
+                        ? null
+                        : __('charges.discount').' '.__('charges.discount_percentage_value', ['percentage' => $record->discount_percentage]))
+                    ->sortable(),
 
-                        // The SQL shape, not the PHP one — see the class docblock. The
-                        // alias is exactly what getEloquentQuery() selected it as, so a
-                        // typo here would silently render an empty column rather than
-                        // fail, the same reasoning ChargeBalance::OUTSTANDING_ALIAS
-                        // documents.
-                        TextColumn::make(ChargeBalance::OUTSTANDING_ALIAS)
-                            ->label(__('charges.outstanding'))
-                            ->formatStateUsing(fn (string $state): string => self::formatMoney($state))
-                            ->sortable()->color('warning')
-                            ->description(fn (Charge $record): ?string => auth()->user()?->can('view_any_payment') && auth()->user()->can('view_student')
-                                && (bool) $record->getAttribute(EnrollmentQueryService::ENROLLMENT_STUDENT_AVAILABLE)
-                                ? __('charges.view_payments') : null)
-                            ->url(fn (Charge $record): ?string => auth()->user()?->can('view_any_payment') && auth()->user()->can('view_student')
-                                && (bool) $record->getAttribute(EnrollmentQueryService::ENROLLMENT_STUDENT_AVAILABLE)
-                                ? PaymentResource::getUrl('index', ['filters' => ['student' => ['id' => $record->getAttribute(EnrollmentQueryService::ENROLLMENT_STUDENT_ID)]]]) : null),
-                    ])->space(1),
-                    Stack::make([
-                        TextColumn::make('payment_state')->label(__('charges.payment_state'))
-                            ->state(fn (Charge $record): string => $record->isWrittenOff() ? __('charges.written_off')
-                                : (Money::fromDecimal((string) $record->getAttribute(ChargeBalance::OUTSTANDING_ALIAS))->isZero()
-                                    ? __('charges.settled') : (Money::fromDecimal((string) $record->getAttribute(ChargeBalance::ALLOCATED_ALIAS))->isPositive()
-                                        ? __('charges.part_paid') : __('charges.unpaid'))))
-                            ->badge()->color(fn (Charge $record): string => $record->isWrittenOff() ? 'gray'
-                                : (Money::fromDecimal((string) $record->getAttribute(ChargeBalance::OUTSTANDING_ALIAS))->isZero() ? 'success' : 'warning')),
+                AdminColumns::secondary('discount_percentage', __('charges.discount'))
+                    ->formatStateUsing(fn (?string $state): string => $state === null
+                        ? __('charges.no_discount')
+                        : __('charges.discount_percentage_value', ['percentage' => $state]))
+                    ->sortable()
+                    ->alignEnd()
+                    ->toggleable(isToggledHiddenByDefault: true),
 
-                        TextColumn::make('due_date')
-                            ->label(__('charges.due_date'))
-                            ->date()
-                            ->sortable()->size('xs')->color('gray'),
+                TextColumn::make('paid_progress')->label(__('charges.allocated'))
+                    ->state(fn (Charge $record): string => (string) $record->getAttribute(ChargeBalance::ALLOCATED_ALIAS))
+                    ->formatStateUsing(fn (string $state, Charge $record): HtmlString => new HtmlString(Blade::render(
+                        '<x-admin.meter :value="$paid" :maximum="$billed" :label="$label" tone="success" :percentage="true" />',
+                        ['paid' => Money::fromDecimal($state)->dirham, 'billed' => Money::fromDecimal($record->amount)->dirham,
+                            'label' => __('charges.paid_amount', ['amount' => self::formatMoney($state)])],
+                    ))),
 
-                        /*
+                // The SQL shape, not the PHP one — see the class docblock. The
+                // alias is exactly what getEloquentQuery() selected it as, so a
+                // typo here would silently render an empty column rather than
+                // fail, the same reasoning ChargeBalance::OUTSTANDING_ALIAS
+                // documents.
+                AdminColumns::money(ChargeBalance::OUTSTANDING_ALIAS, __('charges.outstanding'), 'charges.amount_lyd')
+                    ->sortable()
+                    ->color('warning')
+                    ->tooltip(fn (Charge $record): ?string => auth()->user()?->can('view_any_payment') && auth()->user()->can('view_student')
+                        && (bool) $record->getAttribute(EnrollmentQueryService::ENROLLMENT_STUDENT_AVAILABLE)
+                        ? __('charges.view_payments') : null)
+                    ->url(fn (Charge $record): ?string => auth()->user()?->can('view_any_payment') && auth()->user()->can('view_student')
+                        && (bool) $record->getAttribute(EnrollmentQueryService::ENROLLMENT_STUDENT_AVAILABLE)
+                        ? PaymentResource::getUrl('index', ['filters' => ['student' => ['id' => $record->getAttribute(EnrollmentQueryService::ENROLLMENT_STUDENT_ID)]]]) : null),
+
+                AdminColumns::status('payment_state', __('charges.payment_state'), color: fn (Charge $record): string => $record->isWrittenOff() ? 'gray'
+                    : (Money::fromDecimal((string) $record->getAttribute(ChargeBalance::OUTSTANDING_ALIAS))->isZero() ? 'success' : 'warning'))
+                    ->state(fn (Charge $record): string => $record->isWrittenOff() ? __('charges.written_off')
+                        : (Money::fromDecimal((string) $record->getAttribute(ChargeBalance::OUTSTANDING_ALIAS))->isZero()
+                            ? __('charges.settled') : (Money::fromDecimal((string) $record->getAttribute(ChargeBalance::ALLOCATED_ALIAS))->isPositive()
+                                ? __('charges.part_paid') : __('charges.unpaid'))))
+                    // The write-off's reason rides on the badge, so it is on every written-off row
+                    // whether or not the Written off column is showing.
+                    ->tooltip(fn (Charge $record): ?string => $record->isWrittenOff() ? $record->written_off_reason : null),
+
+                AdminColumns::date('due_date', __('charges.due_date'))
+                    ->sortable(),
+
+                /*
                  * Derived from the fact column, never stored — Charge::isWrittenOff()
                  * is the same predicate the model exposes, read here rather than
                  * redefined. NOT a status column and not meant to read as one:
@@ -326,16 +324,15 @@ class ChargeResource extends Resource
                  * reason so the debt's history stays visible from the list, not just
                  * the detail page, matching design section 4's "nothing is erased".
                  */
-                        IconColumn::make('written_off')
-                            ->label(__('charges.written_off'))
-                            ->state(fn (Charge $record): bool => $record->isWrittenOff())
-                            ->boolean()
-                            ->falseIcon(false)
-                            ->tooltip(fn (Charge $record): ?string => $record->isWrittenOff()
-                                ? $record->written_off_reason
-                                : null),
-                    ])->space(1),
-                ])->from('lg')->extraAttributes(['class' => 'gap-3.5 py-3.5 px-4.5']),
+                IconColumn::make('written_off')
+                    ->label(__('charges.written_off'))
+                    ->state(fn (Charge $record): bool => $record->isWrittenOff())
+                    ->boolean()
+                    ->falseIcon(false)
+                    ->toggleable(isToggledHiddenByDefault: true)
+                    ->tooltip(fn (Charge $record): ?string => $record->isWrittenOff()
+                        ? $record->written_off_reason
+                        : null),
             ])
             ->filters([
                 Filter::make('student')->label(__('enrollment.student'))
@@ -401,10 +398,14 @@ class ChargeResource extends Resource
             // authorize() on each action, not visible() — see the class
             // docblock. Shared builders so the table row and ViewCharge's
             // header actions cannot drift apart.
+            // Collect stays one click away, as an icon named by its tooltip; the two
+            // corrections go in the row menu, which is always the last control.
             ->recordActions([
-                self::collectPaymentAction(),
-                self::adjustAction(),
-                self::writeOffAction(),
+                self::collectPaymentAction()->iconButton(),
+                AdminTable::rowMenu([
+                    self::adjustAction(),
+                    self::writeOffAction(),
+                ]),
             ])
             // No bulk actions of any kind. ChargePolicy's *Any methods refuse
             // unconditionally (design section 10; see docs/ENGINEERING.md's

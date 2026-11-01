@@ -13,6 +13,8 @@ use App\Domain\Staff\Filament\Resources\StaffProfileResource\Pages\ListStaffProf
 use App\Domain\Staff\Filament\Resources\StaffProfileResource\Pages\ViewStaffProfile;
 use App\Domain\Staff\Filament\Resources\StaffProfileResource\RelationManagers\CertificatesRelationManager;
 use App\Domain\Staff\Models\StaffProfile;
+use App\Filament\Tables\AdminColumns;
+use App\Filament\Tables\AdminTable;
 use App\Models\User;
 use BackedEnum;
 use Filament\Actions\DeleteAction;
@@ -29,8 +31,6 @@ use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\ImageColumn;
-use Filament\Tables\Columns\Layout\Split;
-use Filament\Tables\Columns\Layout\Stack;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -300,64 +300,53 @@ class StaffProfileResource extends Resource
 
     public static function table(Table $table): Table
     {
-        return $table
-            ->extraAttributes(['class' => '[&_.fi-ta-record-content-ctn]:py-0! [&_.fi-ta-record-content]:px-0!'])
+        return AdminTable::configure($table)
             ->columns([
-                Split::make([
-                    /*
+                /*
                  * A real photo is served through a per-request policy check.
                  * The private disk has no URL; feeding its path to ImageColumn
                  * would make Filament fall back to Storage::url(), which is both
                  * wrong and outside the authorization boundary.
                  */
-                    ImageColumn::make('profile_photo_path')
-                        ->label(__('staff.profile_photo'))
-                        ->state(fn (StaffProfile $record): ?string => (
-                            is_string($record->profile_photo_path)
-                            && $record->profile_photo_path !== ''
-                            && static::canView($record)
-                        ) ? route('staff.profiles.photo', $record) : null)
-                        ->placeholder(fn (StaffProfile $record): string => $record->initials())
-                        ->alt(fn (StaffProfile $record): string => $record->user->name)
-                        ->circular(),
+                ImageColumn::make('profile_photo_path')
+                    ->label(__('staff.profile_photo'))
+                    ->state(fn (StaffProfile $record): ?string => (
+                        is_string($record->profile_photo_path)
+                        && $record->profile_photo_path !== ''
+                        && static::canView($record)
+                    ) ? route('staff.profiles.photo', $record) : null)
+                    ->placeholder(fn (StaffProfile $record): string => $record->initials())
+                    ->alt(fn (StaffProfile $record): string => $record->user->name)
+                    ->circular(),
 
-                    Stack::make([
+                // A departed instructor keeps their profile; the relation is
+                // withTrashed() so the row still says whose it is.
+                AdminColumns::title('user.name', __('staff.name'))
+                    ->searchable()
+                    ->sortable()
+                    ->placeholder(__('staff.no_account')),
 
-                        TextColumn::make('user.name')
-                            ->label(__('staff.name'))
-                            ->searchable()
-                            ->sortable()
-                            // A departed instructor keeps their profile; the relation is
-                            // withTrashed() so the row still says whose it is.
-                            ->placeholder(__('staff.no_account'))->weight('semibold'),
+                AdminColumns::secondary('job_title', __('staff.job_title'))
+                    ->searchable()
+                    ->placeholder(__('staff.no_job_title')),
 
-                        TextColumn::make('job_title')
-                            ->label(__('staff.job_title'))
-                            ->searchable()
-                            ->placeholder(__('staff.no_job_title'))->size('xs')->color('gray'),
-                    ])->space(1),
+                AdminColumns::status('employment_type', __('staff.employment_type'), fn (EmploymentType $state): string => $state->label(), 'gray')
+                    ->sortable(),
 
-                    TextColumn::make('employment_type')
-                        ->label(__('staff.employment_type'))
-                        ->badge()
-                        ->formatStateUsing(fn (EmploymentType $state): string => $state->label())
-                        ->sortable(),
+                AdminColumns::date('hire_date', __('staff.hire_date'))
+                    ->placeholder(__('staff.no_hire_date'))
+                    ->sortable(),
 
-                    TextColumn::make('hire_date')
-                        ->label(__('staff.hire_date'))
-                        ->date()
-                        ->placeholder(__('staff.no_hire_date'))
-                        ->sortable(),
-
-                    TextColumn::make('certificates_count')
-                        ->label(__('staff.certificates'))
-                        ->counts('certificates')->badge()->color('gray'),
-                ])->from('md')->extraAttributes(['class' => 'gap-3.5 px-4.5 py-[15px]']),
+                TextColumn::make('certificates_count')
+                    ->label(__('staff.certificates'))
+                    ->counts('certificates')->badge()->color('gray'),
             ])
             ->defaultSort('id')
             ->recordUrl(fn (StaffProfile $record): string => static::getUrl('view', ['record' => $record]))
             ->recordActions([
-                static::deleteAction(),
+                AdminTable::rowMenu([
+                    static::deleteAction(),
+                ]),
             ]);
     }
 

@@ -15,6 +15,8 @@ use App\Domain\Finance\Models\PayrollRun;
 use App\Domain\Finance\Services\PayrollCalculator;
 use App\Domain\Finance\Support\Money;
 use App\Filament\HelpPanel;
+use App\Filament\Tables\AdminColumns;
+use App\Filament\Tables\AdminTable;
 use App\Support\CentreCalendar;
 use BackedEnum;
 use Carbon\CarbonImmutable;
@@ -29,9 +31,6 @@ use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
-use Filament\Tables\Columns\Layout\Split;
-use Filament\Tables\Columns\Layout\Stack;
-use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
@@ -401,41 +400,41 @@ final class PayrollRunResource extends Resource
 
     public static function table(Table $table): Table
     {
-        return $table
-            ->extraAttributes(['class' => '[&_.fi-ta-record-content-ctn]:py-0! [&_.fi-ta-record-content]:px-0! [&_.fi-ta-content-grid]:gap-3.5! [&_.fi-ta-record]:rounded-[14px]! [&_.fi-ta-record]:bg-gray-900!'])
-            ->contentGrid(['default' => 1, 'md' => 2, 'xl' => 3])
+        return AdminTable::configure($table)
             ->columns([
-                Stack::make([
-                    Split::make([
-                        TextColumn::make('type')
-                            ->label(__('payroll.run_type'))
-                            ->formatStateUsing(fn (PayrollRunType|string $state): string => $state instanceof PayrollRunType
-                                ? $state->label()
-                                : $state)->weight('semibold'),
-                        TextColumn::make('run_state')->label(__('payroll.state'))
-                            ->state(fn (PayrollRun $record): string => $record->isFinalized() ? __('payroll.finalized') : __('payroll.draft'))
-                            ->badge()->color(fn (PayrollRun $record): string => $record->isFinalized() ? 'success' : 'warning')->grow(false),
-                    ]),
-                    Split::make([
-                        TextColumn::make('period_start')->label(__('payroll.period_start'))->date(),
-                        TextColumn::make('period_end')->label(__('payroll.period_end'))->date(),
-                    ])->extraAttributes(['class' => 'text-[11.5px] text-gray-400']),
-                    TextColumn::make('run_total')->label(__('payroll.run_total'))
-                        ->description(__('payroll.frozen_total_hint'))
-                        ->state(fn (PayrollRun $record): string => $record->lines->reduce(
-                            fn (Money $total, PayrollLine $line): Money => $total->add(Money::fromDecimal($line->computed_amount)), Money::zero(),
-                        )->toDecimal())
-                        ->formatStateUsing(fn (string $state): string => __('payroll.amount_lyd', ['amount' => $state]))
-                        ->weight('semibold')->extraAttributes(['class' => '[&_.fi-ta-text-item]:text-[22px] tracking-[-0.025em] tabular-nums']),
-                    TextColumn::make('line_count')->label(__('payroll.lines'))
-                        ->state(fn (PayrollRun $record): string => trans_choice('payroll.line_count', $record->lines->count()))
-                        ->size('xs')->color('gray'),
-                    TextColumn::make('createdBy.name')->label(__('payroll.created_by'))->description(__('payroll.created_by'))->size('xs')->color('gray'),
-                    TextColumn::make('finalized_at')
-                        ->label(__('payroll.finalized_at'))
-                        ->dateTime()
-                        ->placeholder(__('payroll.draft'))->size('xs')->color('gray'),
-                ])->space(3)->extraAttributes(['class' => 'gap-3.25 p-4.25']),
+                AdminColumns::title('type', __('payroll.run_type'))
+                    ->formatStateUsing(fn (PayrollRunType|string $state): string => $state instanceof PayrollRunType
+                        ? $state->label()
+                        : $state),
+
+                AdminColumns::status('run_state', __('payroll.state'), color: fn (PayrollRun $record): string => $record->isFinalized() ? 'success' : 'warning')
+                    ->state(fn (PayrollRun $record): string => $record->isFinalized() ? __('payroll.finalized') : __('payroll.draft')),
+
+                AdminColumns::date('period_start', __('payroll.period_start')),
+
+                AdminColumns::date('period_end', __('payroll.period_end')),
+
+                AdminColumns::money('run_total', __('payroll.run_total'), 'payroll.amount_lyd')
+                    ->tooltip(__('payroll.frozen_total_hint'))
+                    ->state(fn (PayrollRun $record): string => $record->lines->reduce(
+                        fn (Money $total, PayrollLine $line): Money => $total->add(Money::fromDecimal($line->computed_amount)), Money::zero(),
+                    )->toDecimal())
+                    ->weight('semibold'),
+
+                AdminColumns::secondary('line_count', __('payroll.lines'))
+                    ->state(fn (PayrollRun $record): string => trans_choice('payroll.line_count', $record->lines->count()))
+                    ->toggleable()
+                    ->visibleFrom('md'),
+
+                AdminColumns::actor('createdBy.name', __('payroll.created_by'))
+                    ->toggleable()
+                    ->visibleFrom('lg'),
+
+                AdminColumns::dateTime('finalized_at', __('payroll.finalized_at'))
+                    ->placeholder(__('payroll.draft'))
+                    ->sortable()
+                    ->toggleable()
+                    ->visibleFrom('lg'),
             ])
             ->recordActions([
                 Action::make('review')->label(__('payroll.review_lines'))->tooltip(__('payroll.tooltip_review_lines'))->authorize('view')

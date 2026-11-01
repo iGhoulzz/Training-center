@@ -27,6 +27,8 @@ use App\Domain\Finance\Exceptions\ChargeAlreadyCommittedException;
 use App\Domain\Finance\Filament\Resources\ChargeResource;
 use App\Domain\Finance\Services\ChargeQueryService;
 use App\Domain\Finance\Support\ChargeBalance;
+use App\Filament\Tables\AdminColumns;
+use App\Filament\Tables\AdminTable;
 use App\Models\User;
 use App\Support\CentreCalendar;
 use Filament\Actions\Action;
@@ -36,7 +38,6 @@ use Filament\Notifications\Notification;
 use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
-use Filament\Tables\Columns\ViewColumn;
 use Filament\Tables\Table;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
@@ -147,7 +148,7 @@ class EnrollmentsRelationManager extends RelationManager
 
     public function table(Table $table): Table
     {
-        return $table
+        return AdminTable::configure($table)
             ->recordTitleAttribute('id')
             ->modifyQueryUsing(function (Builder $query): Builder {
                 // Eager-load the student, or every row queries for its own name. The
@@ -185,14 +186,12 @@ class EnrollmentsRelationManager extends RelationManager
                  * student_code and enrolled_at are sortable instead, and both are
                  * real indexed columns.
                  */
-                ViewColumn::make('student.full_name')->view('filament.enrollment.columns.person')
-                    ->viewData(fn (Enrollment $record): array => [
-                        'name' => $record->student->full_name, 'identity' => $record->student_id, 'size' => 'roster',
-                        'secondary' => $record->student->student_code,
-                        'url' => StudentResource::canViewAny() && StudentResource::canView($record->student)
-                            ? StudentResource::getUrl('index', ['student' => $record->student_id]) : null,
-                    ])
-                    ->label(__('enrollment.student'))
+                AdminColumns::person('student.full_name', __('enrollment.student'), fn (Enrollment $record): array => [
+                    'name' => $record->student->full_name, 'identity' => $record->student_id, 'size' => 'roster',
+                    'secondary' => $record->student->student_code,
+                    'url' => StudentResource::canViewAny() && StudentResource::canView($record->student)
+                        ? StudentResource::getUrl('index', ['student' => $record->student_id]) : null,
+                ])
                     ->searchable(query: fn (Builder $query, string $search): Builder => $query
                         ->whereHas('student', fn (Builder $student): Builder => $student
                             ->where('first_name', 'like', '%'.$search.'%')
@@ -228,7 +227,7 @@ class EnrollmentsRelationManager extends RelationManager
                     ->color('warning'),
             ])
             ->headerActions([$this->enrollAction()])
-            ->recordActions([$this->withdrawAction(), $this->deleteAction()])
+            ->recordActions([AdminTable::rowMenu([$this->withdrawAction(), $this->deleteAction()])])
             // The one bulk action this table has. See the class docblock for
             // why this is safe while a bulk withdrawal or delete is not.
             ->toolbarActions([$this->completeAction()]);

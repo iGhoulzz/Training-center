@@ -55,37 +55,50 @@ beforeEach(function () {
     };
 });
 
+/**
+ * The header labels of the page's table, in order, as the rows' columns read left to right.
+ *
+ * @return array<int, string>
+ */
+function tableHeaderLabels(string $html): array
+{
+    $xpath = new XPath(HTMLDocument::createFromString($html, LIBXML_NOERROR | \Dom\HTML_NO_DEFAULT_NS));
+    $labels = [];
+    foreach ($xpath->query('//table[contains(concat(" ", normalize-space(@class), " "), " fi-ta-table ")]/thead/tr/th') as $cell) {
+        $labels[] = trim(preg_replace('/\s+/', ' ', $cell->textContent));
+    }
+
+    return $labels;
+}
+
 it('keeps student row operations compact while preserving delete without edit access', function () {
     $student = Student::factory()->create();
     $actor = ($this->actor)(['view_any_student', 'view_student', 'view_any_charge', 'delete_student', 'issue_portal_credential']);
     $page = Livewire::actingAs($actor)->test(ListStudents::class);
-    $document = new DOMDocument;
-    @$document->loadHTML($page->html());
-    $xpath = new DOMXPath($document);
-    $actions = $xpath->query('//*[contains(concat(" ", normalize-space(@class), " "), " fi-ta-record ")]//*[contains(concat(" ", normalize-space(@class), " "), " fi-ta-actions ")]')->item(0);
+    $document = HTMLDocument::createFromString($page->html(), LIBXML_NOERROR | \Dom\HTML_NO_DEFAULT_NS);
+    $xpath = new XPath($document);
+    // A real table: a header row naming every column, the row actions last.
+    expect(tableHeaderLabels($page->html()))->toBe([
+        __('enrollment.student'), __('enrollment.student_code'), __('enrollment.status'), __('enrollment.outstanding'), __('tables.actions'),
+    ]);
+    $actions = $xpath->query('//tr[contains(concat(" ", normalize-space(@class), " "), " fi-ta-row ")]//*[contains(concat(" ", normalize-space(@class), " "), " fi-ta-actions ")]')->item(0);
     expect($actions)->not->toBeNull();
     expect($xpath->query('.//*[contains(concat(" ", normalize-space(@class), " "), " fi-dropdown-trigger ")]', $actions)->length)->toBe(1);
     expect($xpath->query('.//button[@aria-label="'.__('enrollment.select_student').'"]', $actions)->length)->toBe(1);
-    $grid = $xpath->query('//*[contains(concat(" ", normalize-space(@class), " "), " fi-ta-grid ")]')->item(0);
-    expect($grid)->not->toBeNull();
-    expect($xpath->query('./*', $grid)->length)->toBe(3);
-    expect($xpath->query('.//*[contains(concat(" ", normalize-space(@class), " "), " whitespace-nowrap ")]', $grid)->length)->toBe(1);
     $page->assertTableActionVisible('delete', $student)->callTableAction('delete', $student);
     expect($student->fresh()->trashed())->toBeTrue();
 });
 
-it('renders certificate snapshots in explicit responsive columns with an unbroken issue date', function () {
+it('renders certificate snapshots as labelled columns with an unbroken issue date', function () {
     $certificate = StudentCertificate::factory()->create(['completed_on' => '2025-01-12', 'issued_at' => '2025-03-05 12:00:00']);
     $actor = ($this->actor)(['view_any_student_certificate']);
     $page = Livewire::actingAs($actor)->test(ListStudentCertificates::class);
-    $document = new DOMDocument;
-    @$document->loadHTML($page->html());
-    $xpath = new DOMXPath($document);
-    $grid = $xpath->query('//*[contains(concat(" ", normalize-space(@class), " "), " fi-ta-grid ")]')->item(0);
-    expect($grid)->not->toBeNull();
-    expect($xpath->query('//*[contains(concat(" ", normalize-space(@class), " "), " fi-ta-record-content ")]/*')->length)->toBe(1);
-    expect($xpath->query('./*', $grid)->length)->toBe(4);
-    expect($xpath->query('.//*[contains(concat(" ", normalize-space(@class), " "), " whitespace-nowrap ")]', $grid)->length)->toBeGreaterThanOrEqual(2);
+    // The completion date is toggled off by default, so it has no header either.
+    expect(tableHeaderLabels($page->html()))->toBe([
+        __('certificates.student'), __('certificates.course'), __('certificates.reference_number'),
+        __('certificates.issued_at'), __('certificates.issued_by'), __('certificates.status'),
+    ]);
+    expect($page->html())->not->toContain('fi-ta-grid')->not->toContain('fi-ta-record-content');
     $page->assertSee($certificate->reference_number)->assertSee('Mar 5, 2025')->assertDontSee('Jan 12, 2025');
 });
 
@@ -108,7 +121,7 @@ it('keeps the optional completion date available and sorts it when enabled', fun
     expect(strip_tags($page->html()))->not->toContain('Jan 12, 2025', 'Feb 15, 2025');
 });
 
-it('contains long certificate text on the rendered text items with and without links', function (bool $canFollowLinks) {
+it('keeps long certificate text inside its own table cell, with and without links', function (bool $canFollowLinks) {
     $certificate = StudentCertificate::factory()->create([
         'student_name' => str_repeat('LongStudentName', 12),
         'course_name' => str_repeat('LongCourseName', 12),
@@ -118,15 +131,16 @@ it('contains long certificate text on the rendered text items with and without l
     $page = Livewire::actingAs($actor)->test(ListStudentCertificates::class);
     $document = HTMLDocument::createFromString($page->html(), LIBXML_NOERROR | \Dom\HTML_NO_DEFAULT_NS);
     $xpath = new XPath($document);
-    $items = $xpath->query('//*[contains(concat(" ", normalize-space(@class), " "), " fi-ta-grid ")]//*[contains(concat(" ", normalize-space(@class), " "), " fi-ta-text-item ") and contains(concat(" ", normalize-space(@class), " "), " truncate ")]');
-    expect($items->length)->toBe(4);
-    foreach ($items as $item) {
-        expect(explode(' ', $item->getAttribute('class')))->toContain('block');
+    // Each long value sits in a table cell of its own, under the shared table's class.
+    foreach (['LongStudentName' => $certificate->student_name, 'LongCourseName' => $certificate->course_name] as $needle => $value) {
+        $cells = $xpath->query('//*[contains(concat(" ", normalize-space(@class), " "), " tc-table ")]//td[.//*[contains(concat(" ", normalize-space(@class), " "), " fi-ta-text-item ")][contains(., "'.$needle.'")]]');
+        expect($cells->length)->toBe(1);
+        expect(trim($cells->item(0)->textContent))->toBe($value);
     }
     $page->assertSee($certificate->student_name)->assertSee($certificate->course_name);
 })->with([true, false]);
 
-it('reserves the same certificate action track for rows with and without lifecycle actions', function (string $grant) {
+it('gives certificate rows with and without lifecycle actions the same cells, so the action column stays aligned', function (string $grant) {
     $valid = StudentCertificate::factory()->create();
     $revoked = StudentCertificate::factory()->revoked()->create();
     $permissions = match ($grant) {
@@ -139,26 +153,24 @@ it('reserves the same certificate action track for rows with and without lifecyc
     $page = Livewire::actingAs($actor)->test(ListStudentCertificates::class);
     $document = HTMLDocument::createFromString($page->html(), LIBXML_NOERROR | \Dom\HTML_NO_DEFAULT_NS);
     $xpath = new XPath($document);
-    $rows = $xpath->query('//*[contains(concat(" ", normalize-space(@class), " "), " fi-ta-record ")]');
+    $rows = $xpath->query('//tr[contains(concat(" ", normalize-space(@class), " "), " fi-ta-row ")]');
     expect($rows->length)->toBe(2);
-    foreach ($rows as $row) {
-        expect($row->getAttribute('class'))->toContain('md:[&_.fi-ta-record-content-ctn]:grid', 'md:[&_.fi-ta-record-content-ctn]:grid-cols-[minmax(0,1fr)_4.5rem]');
-        $track = $xpath->query('./div[contains(concat(" ", normalize-space(@class), " "), " fi-ta-record-content-ctn ")]', $row)->item(0);
-        expect($track)->not->toBeNull();
-        expect($xpath->query('./div[1]//*[contains(concat(" ", normalize-space(@class), " "), " fi-ta-grid ")]', $track)->length)->toBe(1);
-    }
+    // A revoked row offers fewer actions than a valid one, but both draw the same cells: a table
+    // keeps the columns aligned, where the old card rows had to reserve a track to do it.
+    expect($xpath->query('./td', $rows->item(0))->length)->toBe($xpath->query('./td', $rows->item(1))->length);
+    expect($rows->item(0)->getAttribute('class'))->toContain('tc-table-row');
     if (in_array($grant, ['reader', 'all'], true)) {
         foreach ([$valid, $revoked] as $certificate) {
             $page->assertTableActionVisible('view', $certificate);
             expect($xpath->query('//a[@href="'.StudentCertificateResource::getUrl('view', ['record' => $certificate]).'" and contains(@class, "fi-dropdown-list-item") ]')->length)->toBe(1);
         }
-        expect($xpath->query('//*[contains(concat(" ", normalize-space(@class), " "), " fi-ta-record ")]//*[contains(concat(" ", normalize-space(@class), " "), " fi-dropdown-trigger ")]')->length)->toBe(2);
+        expect($xpath->query('//tr[contains(concat(" ", normalize-space(@class), " "), " fi-ta-row ")]//*[contains(concat(" ", normalize-space(@class), " "), " fi-dropdown-trigger ")]')->length)->toBe(2);
         $this->actingAs($actor)->get(StudentCertificateResource::getUrl('view', ['record' => $valid]))->assertSuccessful();
     } else {
         $page->assertTableActionHidden('view', $valid)->assertTableActionHidden('view', $revoked)
             ->mountTableAction('view', $valid)->assertSet('mountedActions', []);
         $this->actingAs($actor)->get(StudentCertificateResource::getUrl('view', ['record' => $valid]))->assertForbidden();
-        expect($xpath->query('//*[contains(concat(" ", normalize-space(@class), " "), " fi-ta-record ")]//*[contains(concat(" ", normalize-space(@class), " "), " fi-dropdown-trigger ")]')->length)->toBe($grant === 'operator' ? 1 : 0);
+        expect($xpath->query('//tr[contains(concat(" ", normalize-space(@class), " "), " fi-ta-row ")]//*[contains(concat(" ", normalize-space(@class), " "), " fi-dropdown-trigger ")]')->length)->toBe($grant === 'operator' ? 1 : 0);
     }
     $page->assertTableActionHidden('replace', $revoked)->assertTableActionHidden('revoke', $revoked);
 })->with(['reader', 'operator', 'all', 'register only']);
@@ -170,7 +182,7 @@ it('keeps certificate operations in a compact authorized row menu', function () 
     $document = new DOMDocument;
     @$document->loadHTML($page->html());
     $xpath = new DOMXPath($document);
-    expect($xpath->query('//*[contains(concat(" ", normalize-space(@class), " "), " fi-ta-record ")]//*[contains(concat(" ", normalize-space(@class), " "), " fi-dropdown-trigger ")]')->length)->toBe(1);
+    expect($xpath->query('//tr[contains(concat(" ", normalize-space(@class), " "), " fi-ta-row ")]//*[contains(concat(" ", normalize-space(@class), " "), " fi-dropdown-trigger ")]')->length)->toBe(1);
     $page->assertTableActionVisible('replace', $certificate)->assertTableActionVisible('revoke', $certificate);
     $reader = ($this->actor)(['view_any_student_certificate']);
     Livewire::actingAs($reader)->test(ListStudentCertificates::class)
@@ -196,12 +208,15 @@ it('keeps certificate destination links valid after HTML5 parsing for each read 
     $html = $page->html();
     $document = HTMLDocument::createFromString($html, LIBXML_NOERROR | \Dom\HTML_NO_DEFAULT_NS);
     $xpath = new XPath($document);
-    $grid = $xpath->query('//*[contains(concat(" ", normalize-space(@class), " "), " fi-ta-grid ")]')->item(0);
-    expect($grid)->not->toBeNull();
-    expect($grid->firstElementChild->textContent)->toContain($certificate->student_name);
-    expect($grid->lastElementChild->textContent)->toContain($certificate->status->label());
-    expect($xpath->query('.//a[contains(@class, "fi-ta-record-content")]', $grid)->length)->toBe(0);
-    expect($html)->not->toMatch('/<a\b[^>]*class="fi-ta-record-content"[^>]*>.*?<a\b/s');
+    $row = $xpath->query('//tr[contains(concat(" ", normalize-space(@class), " "), " fi-ta-row ")]')->item(0);
+    expect($row)->not->toBeNull();
+    $cells = $xpath->query('./td', $row);
+    expect($cells->item(0)->textContent)->toContain($certificate->student_name);
+    // The status cell is the last data cell; the actions cell follows it when the actor has any.
+    expect($xpath->query('./td[contains(., "'.$certificate->status->label().'")]', $row)->length)->toBe(1);
+    // A link in one cell is never nested in another: no row-wide anchor wraps the cells' own.
+    expect($xpath->query('//a//a')->length)->toBe(0);
+    expect($html)->not->toMatch('/<a\b[^>]*>(?:(?!<\/a>).)*<a\b/s');
     $destinations = [
         'view_student_certificate' => [StudentCertificateResource::getUrl('view', ['record' => $certificate]), $certificate->reference_number],
         'view_student' => [StudentResource::getUrl('view', ['record' => $certificate->enrollment->student]), $certificate->student_name],

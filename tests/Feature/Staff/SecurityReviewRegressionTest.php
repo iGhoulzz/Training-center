@@ -280,7 +280,8 @@ it('exposes no inline persisting edit action on the roles table', function () {
 
     $table = RoleResource::table(new Table(Livewire::new(ListRoles::class)));
 
-    $recordActions = $table->getRecordActions();
+    // The row actions sit in the table's one row menu: read them flat.
+    $recordActions = $table->getFlatActions();
 
     // The name is not the point — an edit affordance is fine and expected. What
     // must not exist is Filament's EditAction, which persists a modal with a
