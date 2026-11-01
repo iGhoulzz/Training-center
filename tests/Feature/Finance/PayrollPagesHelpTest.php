@@ -64,7 +64,7 @@ beforeEach(function (): void {
 dataset('runs list sentinels', [
     'English' => ['en', [
         'heading' => 'How to read this page',
-        'what' => 'Each card is one payroll run: a set of pay lines worked out and checked here before it is approved',
+        'what' => 'Each row is one payroll run: a set of pay lines worked out and checked here before it is approved',
         'posted' => 'Finalized means posted, not paid. Paying staff happens outside this system',
         'monthly' => 'Works out the pay of salaried staff for one calendar month, which you choose. A month has only one salary run. A salary is split by rate, so a raise in the middle of the month gives that person two correctly priced lines',
         'period' => 'Period start and end are the first and last day of the calendar month a monthly salary run covers',
@@ -80,7 +80,7 @@ dataset('runs list sentinels', [
     ]],
     'Arabic' => ['ar', [
         'heading' => 'كيف تقرأ هذه الصفحة',
-        'what' => 'تمثل كل بطاقة مسير رواتب واحدًا: مجموعة من بنود الرواتب تُحتسب وتُراجع هنا قبل اعتمادها',
+        'what' => 'يمثل كل صف مسير رواتب واحدًا: مجموعة من بنود الرواتب تُحتسب وتُراجع هنا قبل اعتمادها',
         'posted' => 'معتمد تعني مرحّل إلى الدفاتر وليس مدفوعًا. ويتم دفع الرواتب خارج هذا النظام',
         'monthly' => 'يحتسب رواتب الموظفين بالراتب الشهري عن شهر ميلادي واحد تختاره. ولكل شهر مسير رواتب واحد فقط. يُقسَّم الراتب بحسب معدل الأجر، فإذا حدثت زيادة في منتصف الشهر ظهر للموظف بندان بسعر صحيح لكل منهما',
         'period' => 'بداية الفترة ونهايتها هما أول يوم وآخر يوم من الشهر الميلادي الذي يغطيه مسير الراتب الشهري',

@@ -270,7 +270,6 @@ class ChargeResource extends Resource
                     ->visibleFrom('2xl'),
 
                 TextColumn::make('paid_progress')->label(__('charges.allocated'))
-                    ->extraAttributes(['class' => '[&_svg]:text-success-400! [&_.font-semibold]:text-success-400!'])
                     ->state(fn (Charge $record): string => (string) $record->getAttribute(ChargeBalance::ALLOCATED_ALIAS))
                     ->formatStateUsing(fn (string $state, Charge $record): HtmlString => new HtmlString(Blade::render(
                         '<x-admin.meter :value="$paid" :maximum="$billed" :label="$label" tone="success" :percentage="true" />',
