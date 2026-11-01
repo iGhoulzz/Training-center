@@ -626,6 +626,33 @@
         }
     }
 
+    /*
+     * THE ROLE PERMISSION GRID (P4-T42): rows are areas, columns are abilities. Each row is a
+     * seven-column grid (the area's label spans two, then one column per ability), so the boxes
+     * of different rows sit in the same columns. A narrow screen scrolls the card sideways
+     * rather than squeezing the boxes. Alignment is centred and every spacing is symmetric, so
+     * the grid reads the same mirrored for Arabic.
+     */
+    .tc-perm-grid .fi-section-content {
+        @apply overflow-x-auto p-0;
+    }
+
+    .tc-perm-row {
+        @apply min-w-[34rem] items-center gap-0 border-b border-hairline-soft px-[18px] py-1.5 last:border-b-0;
+    }
+
+    .tc-perm-head {
+        @apply bg-fill-subtle py-2.5 text-[11px] font-semibold tracking-[0.05em] text-gray-400 uppercase;
+    }
+
+    .tc-perm-cell {
+        @apply justify-self-center text-center;
+    }
+
+    .tc-perm-none {
+        @apply text-gray-600;
+    }
+
     /* The primary button: primary-500, primary-400 on hover, with the on-primary text and icon. */
     .fi-btn.fi-color-primary:not(.fi-outlined):not(label) {
         @apply bg-primary-500 text-on-primary;
