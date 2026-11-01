@@ -759,7 +759,8 @@ it('shows a view-only actor the article without a way to change it', function ()
     Livewire::actingAs(($this->actorWith)('view_any_article', 'view_article'))
         ->test(ViewArticle::class, ['record' => $article->getKey()])
         ->assertSuccessful()
-        ->assertFormSet(['title_en' => 'Read only title'])
+        // An infolist since P4-T42 (was the form switched to disabled): the title is shown as text.
+        ->assertSee('Read only title')
         ->assertActionHidden('edit');
 
     Livewire::actingAs($this->admin)

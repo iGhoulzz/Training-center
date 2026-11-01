@@ -67,6 +67,20 @@ them:
     the report pages, the cards above a list (Charges' ageing, the student detail)
     and every form keep the handoff's drawing. `AdminTableArchTest` fails a list that
     re-introduces the row layout or skips the component.
+11. **Detail pages are cards of read-only text, and the role editor is a grid (owner
+    decision, 2026-11-01, P4-T42).** The handoff draws a record's page as its form with
+    the inputs greyed out; in the build that made some pages (Students, Courses,
+    Articles, Discounts) look like a form you could not type in, beside pages (Payments,
+    Expenses, Certificates) that were already read-only text, and left some cards half
+    the width. Every View page now draws an infolist through one shared component,
+    `App\Filament\Details\AdminDetails`: full-width section cards, two columns from
+    `lg`, a muted dash for an empty value, drawn by `.tc-details` in the admin theme.
+    The Article and Discount forms use the same section cards as the other forms.
+    Roles & permissions replaces Shield's stock screen (class paths, a guard field, 182
+    boxes) with a grid: a row per area under the sidebar's headings, a column per
+    ability, and the special permissions with a sentence each. Boxes for abilities
+    nothing uses are not drawn, and a permission that is not drawn is kept as it is when
+    a role is saved. `AdminDetailsArchTest` and `RoleGridTest` enforce it.
 
 ## What was removed, and why
 

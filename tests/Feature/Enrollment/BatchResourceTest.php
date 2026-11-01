@@ -295,8 +295,10 @@ it('exposes no price field on the view page', function () {
 
     Livewire::actingAs(($this->makeUser)('admin'))
         ->test(ViewBatch::class, ['record' => $batch->getKey()])
-        ->assertFormFieldExists('capacity')
-        ->assertFormFieldDoesNotExist('price');
+        // An infolist since P4-T42 (was the form switched to disabled). A hidden entry is still in
+        // the schema, so the pair is "visible to the pricing viewer, hidden from the admin".
+        ->assertSchemaComponentVisible('capacity', 'infolist')
+        ->assertSchemaComponentHidden('price', 'infolist');
 });
 
 it('lets a super admin set the price when creating a batch', function () {
@@ -324,7 +326,7 @@ it('lets a super admin view and change a batch price', function () {
 
     Livewire::actingAs($superAdmin)
         ->test(ViewBatch::class, ['record' => $batch->getKey()])
-        ->assertFormFieldExists('price');
+        ->assertSchemaComponentVisible('price', 'infolist');
 
     Livewire::actingAs($superAdmin)
         ->test(EditBatch::class, ['record' => $batch->getKey()])

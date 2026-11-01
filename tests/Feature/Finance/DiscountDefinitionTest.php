@@ -104,7 +104,8 @@ it('hands the create Action the exact percentage string entered by the operator'
             'percentage' => '10.00',
         ]);
 
-    $percentage = collect($component->instance()->getSchema('form')?->getComponents())
+    // The percentage sits inside the form's section card (P4-T42), so the search is through the flat list.
+    $percentage = collect($component->instance()->getSchema('form')?->getFlatComponents())
         ->first(fn (object $field): bool => $field instanceof TextInput && $field->getName() === 'percentage');
 
     expect($percentage)->not->toBeNull('The create form has no percentage field to check.')
