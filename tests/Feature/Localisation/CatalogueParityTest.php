@@ -460,6 +460,7 @@ it('finds the pluralised values, so the plural checks have something to check', 
     expect(catalogueParityPluralKeys())->toEqualCanonicalizing([
         'activity.fields_changed',
         'activity.fields_recorded',
+        'activity.fields_removed',
         'certificates.queue_pending',
         'charges.bill_count',
         'charges.outstanding_bills',

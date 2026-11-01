@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Domain\Enrollment\Models\Course;
 use App\Domain\Enrollment\Models\Student;
 use App\Domain\Finance\Filament\Resources\ExpenseResource\Pages\ListExpenses;
 use App\Domain\Finance\Models\Expense;
@@ -130,4 +131,20 @@ it('headlines the status column "Status", where an unlabelled icon stood', funct
     $column = Livewire::actingAs($reader)->test(ListExpenses::class)->instance()->getTable()->getColumn('reversed');
 
     expect($column->getLabel())->toBe('Status')->and($column->isBadge())->toBeTrue();
+});
+
+it('summarises a deleted record as fields removed, not changed', function () {
+    $course = Course::factory()->create();
+    $course->delete();
+    $entry = Activity::query()->where('event', 'deleted')->where('subject_type', Course::class)->latest('id')->firstOrFail();
+    // A deletion carries only the values the record had: nothing on the new side.
+    expect($entry->attribute_changes->get('attributes') ?? [])->toBe([]);
+    $count = count($entry->attribute_changes->get('old'));
+    $actor = ($this->actor)(['view_any_activity', 'view_activity']);
+
+    expect($count)->toBeGreaterThan(1);
+
+    Livewire::actingAs($actor)->test(ListActivities::class)
+        ->assertCanSeeTableRecords([$entry])
+        ->assertTableColumnStateSet('attribute_changes', $count.' fields removed', $entry);
 });

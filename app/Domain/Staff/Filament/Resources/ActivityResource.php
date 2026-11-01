@@ -371,7 +371,13 @@ class ActivityResource extends Resource
             $fields = count(array_unique([...array_keys($newValues), ...array_keys($oldValues)]));
 
             if ($fields > 0) {
-                return trans_choice($oldValues === [] ? 'activity.fields_recorded' : 'activity.fields_changed', $fields);
+                // Which side holds values says what happened: only new values, a record
+                // came into being; only old values, one was removed; both, fields changed.
+                return trans_choice(match (true) {
+                    $oldValues === [] => 'activity.fields_recorded',
+                    $newValues === [] => 'activity.fields_removed',
+                    default => 'activity.fields_changed',
+                }, $fields);
             }
         }
 

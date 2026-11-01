@@ -239,4 +239,5 @@ return [
     'summary' => 'Summary',
     'fields_changed' => '{1} :count field changed|[0,*] :count fields changed',
     'fields_recorded' => '{1} :count field recorded|[0,*] :count fields recorded',
+    'fields_removed' => '{1} :count field removed|[0,*] :count fields removed',
 ];
