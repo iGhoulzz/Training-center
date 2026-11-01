@@ -329,13 +329,16 @@ it('draws the admin pill only with classes the admin theme compiles', function (
     expect($classes)->toContain('rounded-full', 'bg-gray-800', 'bg-primary-500', 'text-on-primary')
         ->not->toContain('rounded-pill')->not->toContain('text-caption')->not->toContain('bg-gold');
 
-    $built = glob(public_path('build/assets/theme-*.css')) ?: [];
+    // Through the manifest, not a glob: the student portal compiles a theme-*.css of
+    // its own (#145), and a glob's first match was whichever hash sorted first.
+    $manifestPath = public_path('build/manifest.json');
 
-    if ($built === []) {
+    if (! is_file($manifestPath)) {
         return;
     }
 
-    $css = (string) file_get_contents($built[0]);
+    $manifest = json_decode((string) file_get_contents($manifestPath), true, flags: JSON_THROW_ON_ERROR);
+    $css = (string) file_get_contents(public_path('build/'.$manifest['resources/css/filament/admin/theme.css']['file']));
     $missing = array_values(array_filter($classes, fn (string $class): bool => ! str_contains($css, '.'.$class)));
 
     expect($missing)->toBe([], 'These classes are not in the compiled admin theme: '.implode(', ', $missing));

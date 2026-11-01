@@ -62,6 +62,9 @@ const READ_ONLY_FEATURE_TESTS = [
     'Enrollment/IdentifierCodeArchTest.php',
     'Finance/MoneyCastArchTest.php',
     'PolicyAbilitySurfaceTest.php',
+    // Reads the portal theme's CSS and StudentPanelProvider's source and asserts over
+    // them; it renders nothing and opens no connection (P4-T42).
+    'Portal/PortalThemeTest.php',
     'Staff/ActionBoundaryArchTest.php',
     'Staff/FileLifecycleConfigurationTest.php',
     'Tooling/ProductionDefaultsTest.php',
