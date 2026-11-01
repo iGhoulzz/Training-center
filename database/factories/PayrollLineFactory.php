@@ -66,7 +66,7 @@ class PayrollLineFactory extends Factory
      */
     public function definition(): array
     {
-        $segment = CentreCalendar::localise(now())->subMonth()->startOfMonth();
+        $segment = CentreCalendar::localise(now())->startOfMonth()->subMonth();
         $daysInMonth = $segment->daysInMonth;
 
         return [
