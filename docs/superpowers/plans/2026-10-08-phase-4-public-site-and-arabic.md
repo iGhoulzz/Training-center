@@ -2420,6 +2420,45 @@ that every list uses, matching across the system.
 
 ---
 
+### Task 42 — Consistent detail pages and forms, and a readable Roles screen
+**Owner: Claude · `p4/t42-detail-pages-and-roles` · from main · requested by the owner on 2026-11-01**
+
+**Why.** After the tables (Task 41), the owner noticed older pages still looked
+unstyled. The Roles & permissions editor was Shield's stock screen, with class
+paths, a "Guard name" field, untranslated technical labels and 182 boxes. Students
+and Courses showed details as disabled form inputs while other View pages used
+read-only cards. The Article and Discount forms skipped the section-card pattern.
+
+**What changed**
+- **`App\Filament\Details\AdminDetails`** (with a shared `AdminFormat` for money,
+  which `AdminColumns` now uses too). Every View page draws its details through it:
+  read-only text in full-width cards, side by side on wide screens, with a muted
+  dash for an empty value. Header actions, relation managers, tabs and sensitive
+  field visibility are unchanged.
+- **The Article and Discount forms** use section cards.
+- **Roles & permissions is a readable grid**
+  (`RoleResource\PermissionGrid`):
+  - areas are grouped like the sidebar, with translated ability columns and a
+    "Special permissions" group that has one line of help per permission;
+  - there are no class paths and no guard field;
+  - permissions nothing in the app checks are hidden, and
+    `RoleGridTest` proves which ones.
+  - **A save keeps every hidden permission the role holds** and never adds one it
+    lacks. The submitted state is whitelisted against the drawn boxes, and writes
+    still go through `UpdateRolePermissionsAction` and `RolePolicy`, unchanged. No
+    permission is created or deleted.
+
+**Tests.**
+- `AdminDetailsTest`: every View page in English and Arabic, with no disabled
+  form inputs.
+- `AdminDetailsArchTest`: the guard test.
+- `FormSectionCardsTest`.
+- `RoleGridTest`: human labels; completeness; hidden permissions carried
+  through both ways; tampering; the super admin and own-role refusals.
+- `RoleEditorPermissionsTest`, rewritten for the grid.
+
+---
+
 ## What this plan does not cover
 
 From §12, recorded so they do not reappear as assumptions: multi-tenancy,
