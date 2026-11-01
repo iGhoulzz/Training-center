@@ -477,6 +477,97 @@
         }
     }
 
+    /*
+     * THE ADMIN TABLE (P4-T41): the one look every admin list has, drawn under `.tc-table`.
+     * App\Filament\Tables\AdminTable puts the class on the table's root and `tc-table-row`
+     * on each body row; a page never styles a table by hand. A real header row (small,
+     * capitalised, gray-400 on a faint fill), cells padded alike, a hairline between rows,
+     * a row that lights on hover, and a body that scrolls sideways inside its own box
+     * rather than breaking the page. Every inline measure is logical, so the table reads
+     * the same mirrored for Arabic; a number column uses `text-end`, which is the trailing
+     * edge in both directions.
+     */
+    .tc-table .fi-ta-table {
+        @apply divide-hairline-soft;
+
+        & > thead {
+            @apply divide-hairline-soft;
+
+            & > tr {
+                @apply bg-fill-subtle;
+            }
+        }
+
+        & > tbody {
+            @apply divide-hairline-soft;
+        }
+    }
+
+    .tc-table .fi-ta-header-cell {
+        @apply px-3 py-2.5 text-[11px] font-semibold tracking-[0.08em] text-gray-400 uppercase first:ps-5 last:pe-5 sm:first-of-type:ps-5 sm:last-of-type:pe-5;
+
+        line-height: normal;
+
+        &.fi-ta-header-cell-sorted,
+        & .fi-ta-header-cell-sort-btn:hover {
+            @apply text-gray-50;
+        }
+
+        & .fi-ta-header-cell-sort-btn:focus-visible {
+            @apply outline-2 outline-offset-2 outline-primary-400 ring-0;
+        }
+    }
+
+    /* The row-actions column: its header says "Actions"; its cells hold the buttons, end-aligned. */
+    .tc-table .fi-ta-actions-header-cell {
+        @apply px-3 first:ps-5 last:pe-5;
+    }
+
+    .tc-table .fi-ta-cell {
+        @apply p-0 align-middle first:ps-0 last:pe-0 sm:first:ps-0 sm:last:pe-0;
+
+        &:has(.fi-ta-actions) {
+            @apply px-3 py-2 first-of-type:ps-5 last-of-type:pe-5 sm:first-of-type:ps-5 sm:last-of-type:pe-5;
+        }
+    }
+
+    .tc-table :is(.fi-ta-text, .fi-ta-icon, .fi-ta-image, .fi-ta-color, .fi-ta-toggle, .fi-ta-checkbox, .tc-table-cell):not(.fi-inline) {
+        @apply px-3 py-3;
+    }
+
+    .tc-table .fi-ta-cell:first-child :is(.fi-ta-text, .fi-ta-icon, .fi-ta-image, .fi-ta-color, .fi-ta-toggle, .fi-ta-checkbox, .tc-table-cell):not(.fi-inline) {
+        @apply ps-5;
+    }
+
+    .tc-table .fi-ta-cell:last-child :is(.fi-ta-text, .fi-ta-icon, .fi-ta-image, .fi-ta-color, .fi-ta-toggle, .fi-ta-checkbox, .tc-table-cell):not(.fi-inline) {
+        @apply pe-5;
+    }
+
+    .tc-table .fi-ta-row {
+        @apply [@media(hover:hover)]:hover:bg-fill-hover;
+    }
+
+    .tc-table .fi-ta-text-item-description {
+        @apply text-xs text-gray-400;
+    }
+
+    /* The empty state and the pagination bar: the same hairline and spacing on every list. */
+    .tc-table .fi-ta-empty-state {
+        @apply border-hairline-soft px-6 py-14;
+    }
+
+    .tc-table .fi-ta-empty-state-icon-bg {
+        @apply bg-fill-hover;
+    }
+
+    .tc-table .fi-ta-empty-state-heading {
+        @apply text-sm font-semibold text-gray-50;
+    }
+
+    .tc-table .fi-ta-empty-state-description {
+        @apply text-[12.5px] text-gray-400;
+    }
+
     /* The primary button: primary-500, primary-400 on hover, with the on-primary text and icon. */
     .fi-btn.fi-color-primary:not(.fi-outlined):not(label) {
         @apply bg-primary-500 text-on-primary;

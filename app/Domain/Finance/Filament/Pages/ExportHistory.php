@@ -6,6 +6,7 @@ namespace App\Domain\Finance\Filament\Pages;
 
 use App\Domain\Finance\Exports\ReportExportAuthorization;
 use App\Domain\Finance\Exports\ReportExporter;
+use App\Filament\Tables\AdminTable;
 use App\Models\User;
 use App\Support\CentreCalendar;
 use BackedEnum;
@@ -143,7 +144,7 @@ final class ExportHistory extends Page implements HasTable
 
     public function table(Table $table): Table
     {
-        return $table
+        return AdminTable::configure($table)
             ->query(fn (): Builder => $this->ownExports())
             ->columns([
                 TextColumn::make('report')

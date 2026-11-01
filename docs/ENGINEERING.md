@@ -530,6 +530,17 @@ file under `resources/`.
   - **The admin:** it keeps the admin prototype's 14px base. Filament already
     raises its inputs to 16px on touch devices, and its sidebar collapses on a
     phone.
+- **Admin lists use `AdminTable`; do not hand-style a table (owner, 2026-10-31).**
+  Every Filament table in the admin begins `AdminTable::configure($table)` and is
+  built from real columns, so each list has a header row, aligned columns and the
+  same spacing, hover, empty state, pagination and row-action menu. The look lives
+  once, under `.tc-table` in `resources/css/filament/admin/theme.css`; a page
+  never adds utility classes to a table, and never uses `Split`, `Stack`, `Grid`
+  or `contentGrid`, which draw no header and let the columns drift.
+  `App\Filament\Tables\AdminColumns` builds the shapes pages repeat (a name with a
+  muted line, a code, money, a status badge, a date). A row's actions go in
+  `AdminTable::rowMenu()`, one menu button that is the same width on every row.
+  `AdminTableArchTest` enforces all of it.
 - **Blade components for anything used twice**, under
   `resources/views/components/`. A partial included with variables is not a
   component.

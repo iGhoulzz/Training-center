@@ -9,6 +9,8 @@ use App\Domain\Staff\Actions\UploadStaffCertificateAction;
 use App\Domain\Staff\Exceptions\FileStorageException;
 use App\Domain\Staff\Models\StaffCertificate;
 use App\Domain\Staff\Models\StaffProfile;
+use App\Filament\Tables\AdminColumns;
+use App\Filament\Tables\AdminTable;
 use App\Models\User;
 use Filament\Actions\Action;
 use Filament\Actions\CreateAction;
@@ -22,9 +24,6 @@ use Filament\Schemas\Schema;
 use Filament\Support\Exceptions\Halt;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\IconColumn;
-use Filament\Tables\Columns\Layout\Split;
-use Filament\Tables\Columns\Layout\Stack;
-use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Model;
@@ -108,40 +107,31 @@ class CertificatesRelationManager extends RelationManager
 
     public function table(Table $table): Table
     {
-        return $table
-            ->extraAttributes(['class' => '[&_.fi-ta-record-content-ctn]:py-0! [&_.fi-ta-record-content]:px-0!'])
+        return AdminTable::configure($table)
             ->recordTitleAttribute('title')
             ->columns([
-                Split::make([
-                    TextColumn::make('title')
-                        ->label(__('staff.certificate_title'))
-                        ->searchable()->weight('semibold'),
+                AdminColumns::title('title', __('staff.certificate_title'))
+                    ->searchable(),
 
-                    Stack::make([
+                AdminColumns::date('issued_on', __('staff.issued_on'))
+                    ->placeholder(__('staff.no_issue_date')),
 
-                        TextColumn::make('issued_on')
-                            ->label(__('staff.issued_on'))
-                            ->date()
-                            ->placeholder(__('staff.no_issue_date')),
+                AdminColumns::date('expires_on', __('staff.expires_on'))
+                    ->placeholder(__('staff.never_expires')),
 
-                        TextColumn::make('expires_on')
-                            ->label(__('staff.expires_on'))
-                            ->date()
-                            ->placeholder(__('staff.never_expires')),
-                    ])->space(1),
-
-                    IconColumn::make('is_expired')
-                        ->label(__('staff.expired'))
-                        ->state(fn (StaffCertificate $record): bool => $record->isExpired())
-                        ->boolean(),
-                ])->from('md')->extraAttributes(['class' => 'gap-3.5 px-4.5 py-3.5']),
+                IconColumn::make('is_expired')
+                    ->label(__('staff.expired'))
+                    ->state(fn (StaffCertificate $record): bool => $record->isExpired())
+                    ->boolean(),
             ])
             ->headerActions([
                 static::uploadAction(),
             ])
             ->recordActions([
-                static::downloadAction(),
-                static::certificateDeleteAction(),
+                AdminTable::rowMenu([
+                    static::downloadAction(),
+                    static::certificateDeleteAction(),
+                ]),
             ]);
         // No bulk actions, deliberately. See the class docblock.
     }

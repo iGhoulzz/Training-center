@@ -13,6 +13,7 @@ use App\Domain\Publications\Filament\Resources\ArticleResource\Pages\ListArticle
 use App\Domain\Publications\Filament\Resources\ArticleResource\Pages\ViewArticle;
 use App\Domain\Publications\Models\Article;
 use App\Domain\Staff\Exceptions\FileStorageException;
+use App\Filament\Tables\AdminTable;
 use App\Models\User;
 use App\Support\CentreCalendar;
 use BackedEnum;
@@ -198,7 +199,7 @@ class ArticleResource extends Resource
 
     public static function table(Table $table): Table
     {
-        return $table
+        return AdminTable::configure($table)
             ->defaultSort('created_at', 'desc')
             ->columns([
                 TextColumn::make('title_en')
@@ -251,20 +252,22 @@ class ArticleResource extends Resource
                     ),
             ])
             ->recordActions([
-                Action::make('view')
-                    ->label(__('publications.view_article'))
-                    ->icon(Heroicon::OutlinedEye)
-                    ->authorize('view')
-                    ->url(fn (Article $record): string => self::getUrl('view', ['record' => $record])),
+                AdminTable::rowMenu([
+                    Action::make('view')
+                        ->label(__('publications.view_article'))
+                        ->icon(Heroicon::OutlinedEye)
+                        ->authorize('view')
+                        ->url(fn (Article $record): string => self::getUrl('view', ['record' => $record])),
 
-                Action::make('edit')
-                    ->label(__('publications.edit_article'))
-                    ->icon(Heroicon::OutlinedPencilSquare)
-                    ->authorize('update')
-                    ->url(fn (Article $record): string => self::getUrl('edit', ['record' => $record])),
+                    Action::make('edit')
+                        ->label(__('publications.edit_article'))
+                        ->icon(Heroicon::OutlinedPencilSquare)
+                        ->authorize('update')
+                        ->url(fn (Article $record): string => self::getUrl('edit', ['record' => $record])),
 
-                self::publishAction(),
-                self::unpublishAction(),
+                    self::publishAction(),
+                    self::unpublishAction(),
+                ]),
             ])
             // No bulk actions of any kind, and no DeleteAction above. See the
             // class docblock: the library has no delete path.

@@ -12,6 +12,8 @@ use App\Domain\Staff\Filament\Resources\UserResource\Pages\ListUsers;
 use App\Domain\Staff\Models\StaffProfile;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
+use Dom\HTMLDocument;
+use Dom\XPath;
 use Filament\Facades\Filament;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Livewire\Livewire;
@@ -31,12 +33,21 @@ beforeEach(function () {
     };
 });
 
-it('combines an account and its permitted profile in a responsive row', function () {
+it('lists an account and its permitted profile in labelled columns', function () {
     $profile = StaffProfile::factory()->create(['job_title' => 'Visible employment canary']);
     $actor = ($this->actor)(['view_any_user', 'view_staff_profile', 'view_any_activity']);
     $page = Livewire::actingAs($actor)->test(ListUsers::class)->assertCanSeeTableRecords([$profile->user]);
     $html = preg_replace('/wire:snapshot="[^"]*"/', '', $page->html());
-    expect($html)->toContain('Visible employment canary', 'fi-ta-grid', 'md:grid-cols-[minmax(140px,1.6fr)_minmax(104px,1.1fr)_minmax(96px,1fr)_minmax(168px,1.1fr)]');
+    expect($html)->toContain('Visible employment canary', 'tc-table')->not->toContain('fi-ta-grid');
+    // Every column has a header that says what it is, the two links out of the list included.
+    $document = HTMLDocument::createFromString($page->html(), LIBXML_NOERROR | \Dom\HTML_NO_DEFAULT_NS);
+    $labels = [];
+    foreach ((new XPath($document))->query('//table[contains(@class, "fi-ta-table")]/thead/tr/th') as $cell) {
+        $labels[] = trim(preg_replace('/\s+/', ' ', $cell->textContent));
+    }
+    expect(array_slice($labels, 0, 6))->toBe([
+        __('staff.name'), __('staff.roles'), __('staff.last_login'), __('staff.hire_date'), __('staff.is_active'), __('staff.activity_column'),
+    ]);
     $page->assertTableColumnVisible('activity_link');
 
     $less = ($this->actor)(['view_any_user', 'view_any_activity']);
@@ -135,7 +146,15 @@ it('renders an append-only timeline with no write actions even for a super admin
     activity()->event('created')->withProperties(['email' => 'timeline@example.test'])->log('created');
     $entry = Activity::query()->latest('id')->firstOrFail();
     $page = Livewire::actingAs($actor)->test(ListActivities::class)->assertCanSeeTableRecords([$entry]);
-    expect($page->html())->toContain('fi-ta-stack');
+    // The log is a table with a header row, one column per question a reader asks of an entry.
+    $document = HTMLDocument::createFromString($page->html(), LIBXML_NOERROR | \Dom\HTML_NO_DEFAULT_NS);
+    $labels = [];
+    foreach ((new XPath($document))->query('//table[contains(@class, "fi-ta-table")]/thead/tr/th') as $cell) {
+        $labels[] = trim(preg_replace('/\s+/', ' ', $cell->textContent));
+    }
+    expect($labels)->toBe([
+        __('activity.when'), __('activity.who'), __('activity.what_happened'), __('activity.record'), __('activity.summary'), __('activity.ip'),
+    ])->and($page->html())->not->toContain('fi-ta-stack');
     expect(array_keys($page->instance()->getTable()->getActions()))->toBe([])
         ->and(array_keys($page->instance()->getTable()->getBulkActions()))->toBe([]);
     Livewire::actingAs($actor)->test(ViewActivity::class, ['record' => $entry->id])

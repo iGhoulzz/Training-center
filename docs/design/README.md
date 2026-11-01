@@ -21,8 +21,8 @@ development and production alike, with no switch, setting or route back to it. T
 `*-today.jpg` screenshots record what the panel looked like before the revamp.
 They are reference, never a target.
 
-Nine further conflicts are known, and the screenshots still show the drawn
-version of each. Seven are decided; two are open and name the task that settles
+Ten further conflicts are known, and the screenshots still show the drawn
+version of each. Eight are decided; two are open and name the task that settles
 them:
 
 1. Public programme cards show no "seats left" pill. The screenshots show one.
@@ -54,6 +54,19 @@ them:
    map". No task scopes one, and an embedded map loads a third-party origin into the
    public pages. The default is the address as text plus a "Get directions" link,
    which loads nothing. The owner may decide otherwise in T12.
+10. **Admin lists are tables with headers, not the handoff's card rows (owner
+    decision, 2026-10-31, P4-T41).** The handoff draws each admin list as a column
+    of cards: Filament's flexible row layout (`Split`, `Stack`, `contentGrid`). That
+    layout draws no header row and sizes every row to its own content, so a longer
+    name, a missing action or an extra line under an amount moved the next column
+    sideways. Every admin list is now one shared table, `App\Filament\Tables\AdminTable`:
+    a real header row, columns that stay aligned from row to row, sortable headers
+    where the data allows, and the same spacing, hover, empty state, pagination and
+    toolbar everywhere, drawn by `.tc-table` in `resources/css/filament/admin/theme.css`.
+    This replaces the T16 revamp's card-row look for lists only. The dashboard,
+    the report pages, the cards above a list (Charges' ageing, the student detail)
+    and every form keep the handoff's drawing. `AdminTableArchTest` fails a list that
+    re-introduces the row layout or skips the component.
 
 ## What was removed, and why
 

@@ -11,6 +11,8 @@ use App\Domain\Finance\Filament\Resources\ExpenseResource\Pages\ListExpenses;
 use App\Domain\Finance\Filament\Resources\ExpenseResource\Pages\ViewExpense;
 use App\Domain\Finance\Models\Expense;
 use App\Domain\Finance\Models\ExpenseCategory;
+use App\Filament\Tables\AdminColumns;
+use App\Filament\Tables\AdminTable;
 use App\Models\User;
 use App\Support\CentreCalendar;
 use BackedEnum;
@@ -26,10 +28,6 @@ use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 use Filament\Support\Exceptions\Halt;
 use Filament\Support\Icons\Heroicon;
-use Filament\Tables\Columns\IconColumn;
-use Filament\Tables\Columns\Layout\Split;
-use Filament\Tables\Columns\Layout\Stack;
-use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Filters\TernaryFilter;
 use Filament\Tables\Table;
@@ -172,50 +170,39 @@ final class ExpenseResource extends Resource
 
     public static function table(Table $table): Table
     {
-        return $table
-            ->extraAttributes(['class' => '[&_.fi-ta-record-content-ctn]:py-0! [&_.fi-ta-record-content]:px-0!'])
+        return AdminTable::configure($table)
             ->columns([
-                Split::make([
-                    Stack::make([
-                        TextColumn::make('paid_on')
-                            ->label(__('expenses.paid_on'))
-                            ->date()
-                            ->sortable()->size('xs')->color('gray'),
+                AdminColumns::date('paid_on', __('expenses.paid_on'))
+                    ->sortable(),
 
-                        TextColumn::make('category.name_en')
-                            ->label(__('expenses.category'))
-                            ->state(fn (Expense $record): string => $record->category->name())->weight('semibold'),
+                AdminColumns::title('category.name_en', __('expenses.category'))
+                    ->state(fn (Expense $record): string => $record->category->name()),
 
-                        TextColumn::make('description')
-                            ->label(__('expenses.description'))
-                            ->limit(60)
-                            ->searchable()->size('xs')->color('gray'),
-                    ])->space(1),
+                AdminColumns::secondary('description', __('expenses.description'))
+                    ->limit(60)
+                    ->searchable()
+                    ->visibleFrom('md'),
 
-                    TextColumn::make('amount')
-                        ->label(__('expenses.amount'))
-                        ->formatStateUsing(fn (string $state): string => self::formatMoney($state))
-                        ->sortable()->weight('semibold'),
-                    Stack::make([
+                AdminColumns::money('amount', __('expenses.amount'), 'expenses.amount_lyd')
+                    ->sortable(),
 
-                        TextColumn::make('recordedBy.name')
-                            ->label(__('expenses.recorded_by')),
+                AdminColumns::actor('recordedBy.name', __('expenses.recorded_by'))
+                    ->visibleFrom('lg'),
 
-                        /*
+                /*
                  * Derived from the fact column, never stored. Reversing an expense
                  * does not change what it says happened; it only takes it out of
                  * every profit figure. The tooltip carries the reason so the
-                 * history stays visible from the list.
+                 * history stays visible from the list. A labelled badge, not a bare
+                 * icon: the column answers "is this expense standing?" in words.
+                 * Named `reversed` and holding the boolean, as it always has.
                  */
-                        IconColumn::make('reversed')
-                            ->label(__('expenses.reversed'))
-                            ->state(fn (Expense $record): bool => $record->isReversed())
-                            ->boolean()
-                            ->tooltip(fn (Expense $record): ?string => $record->isReversed()
-                                ? $record->reversal_reason
-                                : null),
-                    ])->space(1),
-                ])->from('md')->extraAttributes(['class' => 'px-4.5 py-3.5']),
+                AdminColumns::status('reversed', __('expenses.status'), color: fn (bool $state): string => $state ? 'danger' : 'success')
+                    ->state(fn (Expense $record): bool => $record->isReversed())
+                    ->formatStateUsing(fn (bool $state): string => $state ? __('expenses.state_reversed') : __('expenses.state_recorded'))
+                    ->tooltip(fn (Expense $record): ?string => $record->isReversed()
+                        ? $record->reversal_reason
+                        : null),
             ])
             ->filters([
                 SelectFilter::make('expense_category_id')
@@ -230,13 +217,15 @@ final class ExpenseResource extends Resource
             ])
             ->defaultSort('paid_on', 'desc')
             ->recordActions([
-                Action::make('view')
-                    ->label(__('expenses.view_expense'))
-                    ->icon(Heroicon::OutlinedEye)
-                    ->authorize('view')
-                    ->url(fn (Expense $record): string => self::getUrl('view', ['record' => $record])),
+                AdminTable::rowMenu([
+                    Action::make('view')
+                        ->label(__('expenses.view_expense'))
+                        ->icon(Heroicon::OutlinedEye)
+                        ->authorize('view')
+                        ->url(fn (Expense $record): string => self::getUrl('view', ['record' => $record])),
 
-                self::reverseAction(),
+                    self::reverseAction(),
+                ]),
             ])
             // No bulk actions of any kind, and no edit or delete action above. See
             // the class docblock: ExpensePolicy refuses every *Any ability, because

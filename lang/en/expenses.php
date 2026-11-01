@@ -76,4 +76,9 @@ return [
     'category_lifecycle_hint' => 'Categories are deactivated when no longer needed. Their expense history stays available.',
     'payment_details' => 'Expense details',
     'immutable_hint' => 'Record money already paid. A correction reverses this expense and records a new one.',
+
+    // Admin table (P4-T41): the reversal state's column.
+    'status' => 'Status',
+    'state_recorded' => 'Recorded',
+    'state_reversed' => 'Reversed',
 ];

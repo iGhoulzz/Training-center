@@ -214,9 +214,10 @@ it('registers no create or edit action anywhere on this resource', function () {
         ->and($list->instance()->getAction('create'))->toBeNull()
         ->and($list->instance()->getAction('edit'))->toBeNull();
 
-    $recordActions = collect($list->instance()->getTable()->getRecordActions());
+    // Collect is one click; adjust and write off are in the row menu. Flat, they are all here.
+    $recordActions = collect($list->instance()->getTable()->getFlatActions());
 
-    expect($recordActions->map(fn ($action) => $action->getName())->all())
+    expect($recordActions->map(fn ($action) => $action->getName())->values()->all())
         ->toBe(['collectPayment', 'adjust', 'writeOff'])
         ->and($recordActions->filter(
             fn ($action) => $action instanceof CreateAction || $action instanceof EditAction

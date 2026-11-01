@@ -9,6 +9,8 @@ use App\Domain\Finance\Filament\Resources\ExpenseCategoryResource\Pages\CreateEx
 use App\Domain\Finance\Filament\Resources\ExpenseCategoryResource\Pages\EditExpenseCategory;
 use App\Domain\Finance\Filament\Resources\ExpenseCategoryResource\Pages\ListExpenseCategories;
 use App\Domain\Finance\Models\ExpenseCategory;
+use App\Filament\Tables\AdminColumns;
+use App\Filament\Tables\AdminTable;
 use BackedEnum;
 use Filament\Actions\Action;
 use Filament\Forms\Components\TextInput;
@@ -18,9 +20,6 @@ use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\IconColumn;
-use Filament\Tables\Columns\Layout\Split;
-use Filament\Tables\Columns\Layout\Stack;
-use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\TernaryFilter;
 use Filament\Tables\Table;
 
@@ -105,27 +104,20 @@ final class ExpenseCategoryResource extends Resource
 
     public static function table(Table $table): Table
     {
-        return $table
-            ->extraAttributes(['class' => '[&_.fi-ta-record-content-ctn]:py-0! [&_.fi-ta-record-content]:px-0!'])
+        return AdminTable::configure($table)
             ->columns([
-                Split::make([
-                    Stack::make([
-                        TextColumn::make('name_en')
-                            ->label(__('expenses.category_name_en'))
-                            ->searchable()
-                            ->sortable()->weight('semibold'),
+                AdminColumns::title('name_en', __('expenses.category_name_en'))
+                    ->searchable()
+                    ->sortable(),
 
-                        TextColumn::make('name_ar')
-                            ->label(__('expenses.category_name_ar'))
-                            ->placeholder(__('expenses.not_translated'))
-                            ->searchable()->size('xs')->color('gray'),
-                    ])->space(1),
+                AdminColumns::secondary('name_ar', __('expenses.category_name_ar'))
+                    ->placeholder(__('expenses.not_translated'))
+                    ->searchable(),
 
-                    IconColumn::make('is_active')
-                        ->label(__('expenses.category_is_active'))
-                        ->boolean()
-                        ->sortable(),
-                ])->from('sm')->extraAttributes(['class' => 'px-4.5 py-3.5']),
+                IconColumn::make('is_active')
+                    ->label(__('expenses.category_is_active'))
+                    ->boolean()
+                    ->sortable(),
             ])
             ->filters([
                 TernaryFilter::make('is_active')

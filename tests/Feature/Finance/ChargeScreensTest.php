@@ -64,13 +64,16 @@ beforeEach(function (): void {
 |--------------------------------------------------------------------------
 */
 
-it('describes the billed amount as just "billed", the amount itself carrying the currency', function () {
+it('labels the billed amount in its column header, the amount itself carrying the currency', function () {
     ($this->billFor)('STU-0042', 'Amina', 'Zarrouk');
     $actor = ($this->actor)(['view_any_charge']);
 
     $text = ($this->textOf)(Livewire::actingAs($actor)->test(ListCharges::class)->html());
 
-    expect($text)->toContain('1500.000 LYD billed')
+    // The list is a table now: the header says "Billed amount" once, and each row's amount
+    // carries only the currency, with no "billed" line beneath it.
+    expect($text)->toContain('Billed amount')->toContain('1500.000 LYD')
+        ->not->toContain('1500.000 LYD billed')
         ->not->toContain('billed LYD');
 });
 

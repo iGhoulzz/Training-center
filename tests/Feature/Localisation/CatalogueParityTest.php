@@ -454,9 +454,12 @@ it('lists only allowlisted keys that still exist and are still identical', funct
 
 it('finds the pluralised values, so the plural checks have something to check', function () {
     // The five publication counts and the download line from the library, and the
-    // hours line from the programme card. A detector gone blind passes every
+    // hours line from the programme card, and the activity log's two field counts
+    // (P4-T41). A detector gone blind passes every
     // plural test with nothing to look at.
     expect(catalogueParityPluralKeys())->toEqualCanonicalizing([
+        'activity.fields_changed',
+        'activity.fields_recorded',
         'certificates.queue_pending',
         'charges.bill_count',
         'charges.outstanding_bills',

@@ -16,6 +16,8 @@ use App\Domain\Enrollment\Models\Enrollment;
 use App\Domain\Finance\Queries\RevenuePerCourse;
 use App\Domain\Finance\Support\Money;
 use App\Domain\Finance\Support\ReportPeriod;
+use App\Filament\Tables\AdminColumns;
+use App\Filament\Tables\AdminTable;
 use App\Support\CentreCalendar;
 use BackedEnum;
 use Filament\Actions\Action;
@@ -32,10 +34,7 @@ use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\View;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
-use Filament\Tables\Columns\IconColumn;
-use Filament\Tables\Columns\Layout\Stack;
 use Filament\Tables\Columns\TextColumn;
-use Filament\Tables\Columns\ViewColumn;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 
@@ -190,8 +189,7 @@ class CourseResource extends Resource
 
     public static function table(Table $table): Table
     {
-        return $table
-            ->contentGrid(['md' => 2, 'xl' => 3])
+        return AdminTable::configure($table)
             ->modifyQueryUsing(function (Builder $query): Builder {
                 $query->withCount('batches')->addSelect([
                     self::ENROLLED_STUDENTS_COUNT => Enrollment::query()
@@ -208,27 +206,11 @@ class CourseResource extends Resource
                 return $query;
             })
             ->columns([
-                ViewColumn::make('course_card')->view('filament.enrollment.columns.course-card')
-                    ->searchable(['code', 'name_en', 'name_ar'])
-                    ->viewData(fn (Course $record): array => [
-                        'name' => $record->name(), 'code' => $record->code, 'hours' => $record->total_hours, 'active' => $record->is_active,
-                        'price' => auth()->user()?->can('manage_pricing') ? Money::fromDecimal($record->default_price) : null,
-                        'revenue' => auth()->user()?->can('view_financial_report') ? Money::fromDecimal((string) $record->getAttribute(RevenuePerCourse::TOTAL_ALIAS)) : null,
-                        'revenueMaximum' => auth()->user()?->can('view_financial_report') ? Money::fromDecimal((string) $record->getAttribute(RevenuePerCourse::MAXIMUM_ALIAS))->dirham : 0,
-                        'year' => CentreCalendar::yearOf(now()), 'batches' => (int) $record->batches_count,
-                        'enrolled' => auth()->user()->can('view_any_enrollment') ? (int) $record->getAttribute(self::ENROLLED_STUDENTS_COUNT) : null,
-                        'batchesUrl' => BatchResource::canViewAny() ? BatchResource::getUrl('index', ['filters' => ['course_id' => ['value' => $record->getKey()]]]) : null,
-                        'enrolledUrl' => StudentResource::canViewAny() && (auth()->user()?->can('view_any_enrollment') ?? false)
-                            ? StudentResource::getUrl('index', ['filters' => ['course' => ['id' => $record->getKey()]]]) : null,
-                    ]),
-                Stack::make([
-                    TextColumn::make('code')
-                        ->hidden()
-                        ->label(__('enrollment.course_code'))
-                        ->searchable()
-                        ->sortable(),
+                AdminColumns::code('code', __('enrollment.course_code'))
+                    ->searchable()
+                    ->sortable(),
 
-                    /*
+                /*
                  * Shows the localized name but sorts and searches the real
                  * columns behind it — Course::name() is a locale-dependent
                  * method, not an attribute, so it cannot be ordered on.
@@ -250,49 +232,55 @@ class CourseResource extends Resource
                  * enough for it to be measurable; a training centre's course
                  * list is not.
                  */
-                    TextColumn::make('name_en')
-                        ->hidden()
-                        ->label(__('enrollment.course_name'))
-                        ->formatStateUsing(fn (Course $record): string => $record->name())
-                        ->searchable(['name_en', 'name_ar'])
-                        ->sortable()->weight('semibold'),
+                AdminColumns::title('name_en', __('enrollment.course_name'))
+                    ->formatStateUsing(fn (Course $record): string => $record->name())
+                    ->searchable(['name_en', 'name_ar'])
+                    ->sortable(),
 
-                    // Not sortable: no index on total_hours, and the catalogue is
-                    // looked through by code or name, never by length.
-                    TextColumn::make('total_hours')
-                        ->hidden()
-                        ->label(__('enrollment.total_hours'))
-                        ->numeric(),
+                // Not sortable: no index on total_hours, and the catalogue is
+                // looked through by code or name, never by length.
+                TextColumn::make('total_hours')
+                    ->label(__('enrollment.total_hours'))
+                    ->alignEnd()
+                    ->numeric(),
 
-                    // How many times this course has actually been run. Counted
-                    // rather than stored: a cached count is a derived value that
-                    // drifts, and the catalogue list is the only place it is read.
-                    TextColumn::make('batches_count')
-                        ->hidden()
-                        ->label(__('enrollment.batches'))
-                        ->counts('batches')
-                        ->numeric(),
+                AdminColumns::status('course_status', __('enrollment.status'), color: fn (Course $record): string => $record->is_active ? 'success' : 'gray')
+                    ->state(fn (Course $record): string => $record->is_active ? __('enrollment.course_active') : __('enrollment.course_retired'))
+                    ->sortable(['is_active']),
 
-                    IconColumn::make('is_active')
-                        ->hidden()
-                        ->label(__('enrollment.is_active'))
-                        ->boolean()
-                        ->sortable(),
+                // How many times this course has actually been run. Counted
+                // rather than stored: a cached count is a derived value that
+                // drifts, and the catalogue list is the only place it is read.
+                TextColumn::make('batches_count')
+                    ->label(__('enrollment.batches'))
+                    ->counts('batches')
+                    ->alignEnd()
+                    ->numeric()
+                    ->url(fn (Course $record): ?string => BatchResource::canViewAny()
+                        ? BatchResource::getUrl('index', ['filters' => ['course_id' => ['value' => $record->getKey()]]]) : null),
 
-                    TextColumn::make('course_status')->label(__('enrollment.status'))
-                        ->hidden()
-                        ->state(fn (Course $record): string => $record->is_active ? __('enrollment.course_active') : __('enrollment.course_retired'))
-                        ->badge()->color(fn (Course $record): string => $record->is_active ? 'success' : 'gray'),
+                TextColumn::make(self::ENROLLED_STUDENTS_COUNT)
+                    ->label(__('enrollment.enrollments'))
+                    ->formatStateUsing(fn (int $state): string => __('enrollment.enrolled_students', ['count' => $state]))
+                    ->visible(fn (): bool => auth()->user()?->can('view_any_enrollment') ?? false)
+                    ->visibleFrom('2xl')
+                    ->url(fn (Course $record): ?string => StudentResource::canViewAny() && (auth()->user()?->can('view_any_enrollment') ?? false)
+                        ? StudentResource::getUrl('index', ['filters' => ['course' => ['id' => $record->getKey()]]]) : null),
 
-                    TextColumn::make(self::ENROLLED_STUDENTS_COUNT)
-                        ->hidden()
-                        ->label(__('enrollment.enrollments'))
-                        ->formatStateUsing(fn (int $state): string => __('enrollment.enrolled_students', ['count' => $state]))
-                        ->visible(fn (): bool => auth()->user()?->can('view_any_enrollment') ?? false),
-                ]),
+                // The default price and this year's collected revenue, each behind its own
+                // permission (manage_pricing, view_financial_report). The price column is
+                // not named `default_price`: pricing is changed from the guarded form
+                // field, never inline from a listing.
+                AdminColumns::money('course_price', __('pricing.course_default_price'), 'enrollment.money_lyd')
+                    ->visible(fn (): bool => auth()->user()?->can('manage_pricing') ?? false)
+                    ->state(fn (Course $record): string => Money::fromDecimal($record->default_price)->toDecimal())
+                    ->visibleFrom('lg'),
 
-                // Deliberately absent from the table: pricing is changed from
-                // the guarded form field, not inline from a listing.
+                AdminColumns::money('revenue_this_year', __('enrollment.revenue_this_year'), 'enrollment.money_lyd')
+                    ->visible(fn (): bool => auth()->user()?->can('view_financial_report') ?? false)
+                    ->state(fn (Course $record): string => Money::fromDecimal((string) $record->getAttribute(RevenuePerCourse::TOTAL_ALIAS))->toDecimal())
+                    ->visibleFrom('lg'),
+
             ])
             ->defaultSort('code')
             // Delete belongs on the row, not only on the edit page.
@@ -308,10 +296,12 @@ class CourseResource extends Resource
             // that a crafted Livewire mount ignores, whereas authorize() runs
             // CoursePolicy::delete() against this record on the server.
             ->recordActions([
-                Action::make('batches')->label(fn (Course $record): string => __('enrollment.batches_count', ['count' => $record->batches_count]))
-                    ->visible(fn (): bool => BatchResource::canViewAny())
-                    ->url(fn (Course $record): string => BatchResource::getUrl('index', ['filters' => ['course_id' => ['value' => $record->getKey()]]])),
-                self::deleteAction(),
+                AdminTable::rowMenu([
+                    Action::make('batches')->label(fn (Course $record): string => __('enrollment.batches_count', ['count' => $record->batches_count]))
+                        ->visible(fn (): bool => BatchResource::canViewAny())
+                        ->url(fn (Course $record): string => BatchResource::getUrl('index', ['filters' => ['course_id' => ['value' => $record->getKey()]]])),
+                    self::deleteAction(),
+                ]),
             ]);
     }
 

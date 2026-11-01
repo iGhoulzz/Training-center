@@ -6,6 +6,8 @@ namespace App\Domain\Staff\Filament\Resources;
 
 use App\Domain\Staff\Filament\Resources\ActivityResource\Pages\ListActivities;
 use App\Domain\Staff\Filament\Resources\ActivityResource\Pages\ViewActivity;
+use App\Filament\Tables\AdminColumns;
+use App\Filament\Tables\AdminTable;
 use App\Models\User;
 use App\Support\CentreCalendar;
 use BackedEnum;
@@ -13,9 +15,6 @@ use Carbon\Carbon;
 use Filament\Forms\Components\DatePicker;
 use Filament\Resources\Resource;
 use Filament\Support\Icons\Heroicon;
-use Filament\Tables\Columns\Layout\Split;
-use Filament\Tables\Columns\Layout\Stack;
-use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
@@ -94,26 +93,17 @@ class ActivityResource extends Resource
 
     public static function table(Table $table): Table
     {
-        return $table
-            ->extraAttributes(['class' => '[&_.fi-ta-record-content-ctn]:py-0! [&_.fi-ta-record-content]:px-0!'])
+        return AdminTable::configure($table)
             ->defaultSort('id', 'desc')
             ->columns([
-                Split::make([
-                    TextColumn::make('created_at')
-                        ->label(__('activity.when'))
-                        ->dateTime()
-                        ->sortable()->size('xs')->color('gray')->grow(false)
-                        ->extraAttributes(['class' => 'md:w-24 whitespace-normal']),
+                AdminColumns::dateTime('created_at', __('activity.when'))
+                    ->sortable(),
 
-                    Stack::make([
-                        Split::make([
-
-                            /*
+                /*
                  * Null is meaningful and gets a word rather than a blank cell: a
                  * seeder, a scheduled job or a failed sign-in genuinely has no
                  * actor, and "System" says so. An empty cell reads as missing data.
-                 */
-                            /*
+                 *
                  * THREE DISTINCT ANSWERS, NOT TWO.
                  *
                  * No causer at all means the SYSTEM acted — a seeder, a console
@@ -125,70 +115,41 @@ class ActivityResource extends Resource
                  * survives both deletion and a later rename: the log says who the
                  * actor was then, not who that row is called now.
                  */
-                            TextColumn::make('causer_name')
-                                ->label(__('activity.who'))
-                                ->weight('semibold')->size('sm')->grow(false)
-                                ->state(fn (Activity $record): string => self::actorLabel($record))
-                                ->searchable(query: fn (Builder $query, string $search): Builder => $query
-                                    ->where('properties->causer_name', 'like', '%'.$search.'%')),
+                AdminColumns::title('causer_name', __('activity.who'))
+                    ->state(fn (Activity $record): string => self::actorLabel($record))
+                    ->searchable(query: fn (Builder $query, string $search): Builder => $query
+                        ->where('properties->causer_name', 'like', '%'.$search.'%')),
 
-                            TextColumn::make('event')
-                                ->label(__('activity.action'))
-                                ->badge()
-                                ->grow(false)
-                                ->color(fn (?string $state): string => match ($state) {
-                                    'created', 'logged_in' => 'success',
-                                    'updated', 'roles_changed', 'permissions_changed', 'instructor_hours_changed' => 'warning',
-                                    'deleted', 'login_failed' => 'danger',
-                                    default => 'gray',
-                                })
-                                ->formatStateUsing(fn (?string $state): string => self::eventLabel($state)),
+                AdminColumns::status('event', __('activity.what_happened'), fn (?string $state): string => self::eventLabel($state), fn (?string $state): string => match ($state) {
+                    'created', 'logged_in' => 'success',
+                    'updated', 'roles_changed', 'permissions_changed', 'instructor_hours_changed' => 'warning',
+                    'deleted', 'login_failed' => 'danger',
+                    default => 'gray',
+                }),
 
-                            /*
+                /*
                  * The TYPE alone cannot identify anything. "Student" tells a
                  * reader nothing about which student, and an audit trail whose
                  * subject is unidentifiable answers half a question.
                  */
-                            TextColumn::make('subject_type')
-                                ->label(__('activity.record'))
-                                ->size('xs')->color('gray')
-                                ->state(fn (Activity $record): string => self::subjectLabel($record)),
-                        ])->extraAttributes(['class' => 'gap-2 flex-wrap items-baseline']),
+                AdminColumns::secondary('subject_type', __('activity.record'))
+                    ->state(fn (Activity $record): ?string => $record->subject_type === null ? null : self::subjectLabel($record)),
 
-                        /*
-                 * One translated line per changed field, not a JSON blob.
-                 * wrap() rather than limit(): a truncated audit entry is a reason
-                 * to open something else, and there is nothing else to open.
+                /*
+                 * ONE LINE, NOT THE ENTRY. A count of the fields that changed, or for
+                 * an explicit event the substance it carries (which roles, whose
+                 * email), and nothing for an entry with neither, a sign-in for one.
+                 * The field-by-field detail is on the entry's own page, which the row
+                 * links to: a truncated audit entry would be a reason to open
+                 * something else, and this one tells the reader what to open.
                  */
-                        TextColumn::make('attribute_changes')
-                            ->label(__('activity.changes'))
-                            ->state(fn (Activity $record): string => self::describeChanges($record))
-                            ->wrap()->size('xs')->color('gray')
-                            ->extraAttributes(['class' => 'font-mono whitespace-pre-line break-words']),
+                AdminColumns::secondary('attribute_changes', __('activity.summary'))
+                    ->state(fn (Activity $record): ?string => self::summarise($record))
+                    ->limit(80)
+                    ->visibleFrom('md'),
 
-                        /*
-                 * The explicit events carry their substance HERE, not in
-                 * attribute_changes: which roles were added or removed, the email
-                 * a failed sign-in attempted, the title of a cascaded certificate.
-                 * Without this column the panel says "Roles changed" and never
-                 * says which roles, which is most of the answer missing.
-                 *
-                 * ip and causer_name are omitted — they have their own column and
-                 * are context rather than detail.
-                 */
-                        TextColumn::make('properties')
-                            ->label(__('activity.details'))
-                            ->state(fn (Activity $record): string => self::describeProperties($record))
-                            ->wrap()
-                            ->toggleable()->size('xs')->color('gray')
-                            ->extraAttributes(['class' => 'font-mono whitespace-pre-line break-words']),
-
-                        TextColumn::make('properties.ip')
-                            ->label(__('activity.ip'))
-                            ->placeholder(__('activity.no_ip'))
-                            ->toggleable()->size('xs')->color('gray'),
-                    ])->space(1)->extraAttributes(['class' => 'min-w-0']),
-                ])->from('md')->extraAttributes(['class' => 'gap-3.5 px-5 py-3']),
+                AdminColumns::secondary('properties.ip', __('activity.ip'))
+                    ->visibleFrom('lg'),
             ])
             ->filters([
                 /*
@@ -385,13 +346,54 @@ class ActivityResource extends Resource
      */
     public static function describeProperties(Activity $activity): string
     {
+        $lines = self::propertyLines($activity);
+
+        return $lines->isEmpty() ? __('activity.empty_value') : $lines->implode('
+');
+    }
+
+    /**
+     * The one line the list shows for an entry (P4-T41): how many fields changed, or
+     * for an explicit event the details it carries, or null when it has neither.
+     * The whole entry stays on its own page; this never renders a field's value.
+     */
+    public static function summarise(Activity $activity): ?string
+    {
+        $changes = $activity->attribute_changes;
+
+        if ($changes instanceof Collection) {
+            /** @var array<string, mixed> $newValues */
+            $newValues = $changes->get('attributes') ?? [];
+
+            /** @var array<string, mixed> $oldValues */
+            $oldValues = $changes->get('old') ?? [];
+
+            $fields = count(array_unique([...array_keys($newValues), ...array_keys($oldValues)]));
+
+            if ($fields > 0) {
+                return trans_choice($oldValues === [] ? 'activity.fields_recorded' : 'activity.fields_changed', $fields);
+            }
+        }
+
+        $lines = self::propertyLines($activity);
+
+        return $lines->isEmpty() ? null : $lines->implode('; ');
+    }
+
+    /**
+     * Each substantive property as one translated line.
+     *
+     * @return Collection<int, string>
+     */
+    private static function propertyLines(Activity $activity): Collection
+    {
         $properties = $activity->properties;
 
         if (! $properties instanceof Collection) {
-            return __('activity.empty_value');
+            return collect();
         }
 
-        $lines = $properties
+        return $properties
             ->except(['ip', 'causer_name'])
             ->reject(fn (mixed $value): bool => $value === null
                 || $value === ''
@@ -401,10 +403,8 @@ class ActivityResource extends Resource
                 'value' => is_array($value)
                     ? implode(', ', array_map(fn (mixed $item): string => (string) $item, $value))
                     : self::renderValue($value),
-            ]));
-
-        return $lines->isEmpty() ? __('activity.empty_value') : $lines->implode('
-');
+            ]))
+            ->values();
     }
 
     /** The translated label for a stored event, falling back to the raw value. */

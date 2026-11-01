@@ -8,6 +8,8 @@ use App\Domain\Staff\Filament\Resources\RoleResource\Pages\CreateRole;
 use App\Domain\Staff\Filament\Resources\RoleResource\Pages\EditRole;
 use App\Domain\Staff\Filament\Resources\RoleResource\Pages\ListRoles;
 use App\Domain\Staff\Filament\Resources\RoleResource\Pages\ViewRole;
+use App\Filament\Tables\AdminColumns;
+use App\Filament\Tables\AdminTable;
 use App\Models\Role;
 use BezhanSalleh\FilamentShield\Facades\FilamentShield;
 use BezhanSalleh\FilamentShield\Resources\Roles\RoleResource as ShieldRoleResource;
@@ -18,8 +20,6 @@ use Filament\Schemas\Components\Component;
 use Filament\Schemas\Components\Tabs\Tab;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
-use Filament\Tables\Columns\Layout\Split;
-use Filament\Tables\Columns\Layout\Stack;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use Illuminate\Support\Facades\Gate;
@@ -86,25 +86,31 @@ class RoleResource extends ShieldRoleResource
      */
     public static function table(Table $table): Table
     {
-        return parent::table($table)
-            ->extraAttributes(['class' => '[&_.fi-ta-record-content-ctn]:py-0! [&_.fi-ta-record-content]:px-0!'])
+        return AdminTable::configure(parent::table($table))
             ->columns([
-                Split::make([
-                    Stack::make([
-                        TextColumn::make('name')->label(__('staff.roles'))->searchable()->weight('semibold'),
-                        TextColumn::make('guard_name')->label(__('staff.guard'))->size('xs')->color('gray'),
-                    ])->space(1),
-                    TextColumn::make('permissions_count')->label(__('staff.role_details'))->counts('permissions')->badge()->color('info'),
-                    TextColumn::make('updated_at')->label(__('staff.updated_at'))->dateTime()->size('xs')->color('gray'),
-                ])->from('md')->extraAttributes(['class' => 'gap-3.5 px-4.5 py-[15px]']),
+                AdminColumns::title('name', __('staff.roles'))
+                    ->searchable(),
+
+                AdminColumns::secondary('guard_name', __('staff.guard')),
+
+                TextColumn::make('permissions_count')
+                    ->label(__('staff.role_details'))
+                    ->counts('permissions')
+                    ->badge()
+                    ->color('info'),
+
+                AdminColumns::dateTime('updated_at', __('staff.updated_at'))
+                    ->visibleFrom('md'),
             ])
             ->recordActions([
-                Action::make('edit')
-                    ->label(__('filament-actions::edit.single.label'))
-                    ->icon(Heroicon::OutlinedPencilSquare)
-                    ->url(fn (Role $record): string => EditRole::getUrl(['record' => $record]))
-                    ->authorize(fn (Role $record): bool => Gate::allows('update', $record)),
-                DeleteAction::make(),
+                AdminTable::rowMenu([
+                    Action::make('edit')
+                        ->label(__('filament-actions::edit.single.label'))
+                        ->icon(Heroicon::OutlinedPencilSquare)
+                        ->url(fn (Role $record): string => EditRole::getUrl(['record' => $record]))
+                        ->authorize(fn (Role $record): bool => Gate::allows('update', $record)),
+                    DeleteAction::make(),
+                ]),
             ])
             ->toolbarActions([]);
     }
