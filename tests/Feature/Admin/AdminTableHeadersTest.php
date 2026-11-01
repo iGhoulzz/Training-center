@@ -2,14 +2,21 @@
 
 declare(strict_types=1);
 
+use App\Domain\Enrollment\Filament\Pages\CertificateIssuanceQueue;
 use App\Domain\Enrollment\Filament\Resources\BatchResource\Pages\ListBatches;
+use App\Domain\Enrollment\Filament\Resources\BatchResource\Pages\ViewBatch;
+use App\Domain\Enrollment\Filament\Resources\BatchResource\RelationManagers\EnrollmentsRelationManager;
+use App\Domain\Enrollment\Filament\Resources\BatchResource\RelationManagers\InstructorsRelationManager;
 use App\Domain\Enrollment\Filament\Resources\CourseResource\Pages\ListCourses;
 use App\Domain\Enrollment\Filament\Resources\StudentCertificateResource\Pages\ListStudentCertificates;
 use App\Domain\Enrollment\Filament\Resources\StudentResource\Pages\ListStudents;
 use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Course;
+use App\Domain\Enrollment\Models\Enrollment;
 use App\Domain\Enrollment\Models\Student;
 use App\Domain\Enrollment\Models\StudentCertificate;
+use App\Domain\Finance\Exports\RevenueReportExporter;
+use App\Domain\Finance\Filament\Pages\ExportHistory;
 use App\Domain\Finance\Filament\Resources\ChargeResource\Pages\ListCharges;
 use App\Domain\Finance\Filament\Resources\DiscountResource\Pages\ListDiscounts;
 use App\Domain\Finance\Filament\Resources\ExpenseCategoryResource\Pages\ListExpenseCategories;
@@ -29,13 +36,17 @@ use App\Domain\Publications\Models\Article;
 use App\Domain\Staff\Filament\Resources\ActivityResource\Pages\ListActivities;
 use App\Domain\Staff\Filament\Resources\RoleResource\Pages\ListRoles;
 use App\Domain\Staff\Filament\Resources\StaffProfileResource\Pages\ListStaffProfiles;
+use App\Domain\Staff\Filament\Resources\StaffProfileResource\Pages\ViewStaffProfile;
+use App\Domain\Staff\Filament\Resources\StaffProfileResource\RelationManagers\CertificatesRelationManager;
 use App\Domain\Staff\Filament\Resources\UserResource\Pages\ListUsers;
+use App\Domain\Staff\Models\StaffCertificate;
 use App\Domain\Staff\Models\StaffProfile;
 use App\Models\Role;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Dom\HTMLDocument;
 use Dom\XPath;
+use Filament\Actions\Exports\Models\Export;
 use Filament\Facades\Filament;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Livewire\Livewire;
@@ -190,3 +201,70 @@ it('has a header-order check that can fail', function () {
         ->and(adminTableHasClassToken('<div class="tc-table-row"></div>', 'tc-table'))->toBeFalse()
         ->and(adminTableHasClassToken('<div class="a tc-table b"></div>', 'tc-table'))->toBeTrue();
 });
+
+/*
+ * The tables that are not a resource's list: two relation managers on a batch, one on a staff
+ * profile, the certificate queue and the export history. Each mounts through `mount`, which takes
+ * the actor and returns the component, and has its own English and Arabic header row.
+ */
+dataset('admin tables beyond the lists', [
+    'batch instructors' => [['view_batch'], function (User $actor) {
+        $batch = Batch::factory()->active()->create();
+        $instructor = User::factory()->create();
+        StaffProfile::factory()->for($instructor)->instructor()->create();
+        $batch->instructors()->attach($instructor, ['assigned_hours' => 10]);
+
+        return [Livewire::actingAs($actor)->test(InstructorsRelationManager::class, ['ownerRecord' => $batch, 'pageClass' => ViewBatch::class]), $instructor];
+    }, ['Instructor', 'Employment', 'Assigned hours'], ['enrollment.instructor', 'enrollment.instructor_employment_state', 'enrollment.assigned_hours']],
+    'batch enrolments' => [['view_batch', 'view_any_enrollment'], function (User $actor) {
+        $batch = Batch::factory()->active()->create();
+        $enrollment = Enrollment::factory()->for($batch)->create();
+
+        return [Livewire::actingAs($actor)->test(EnrollmentsRelationManager::class, ['ownerRecord' => $batch, 'pageClass' => ViewBatch::class]), $enrollment];
+    }, ['Student', 'Student code', 'Status', 'Enrolled on'], ['enrollment.student', 'enrollment.student_code', 'enrollment.status', 'enrollment.enrolled_at']],
+    'staff certificates' => [['view_staff_profile', 'view_any_staff_certificate'], function (User $actor) {
+        $profile = StaffProfile::factory()->create();
+        $certificate = StaffCertificate::factory()->for($profile, 'staffProfile')->create();
+
+        return [Livewire::actingAs($actor)->test(CertificatesRelationManager::class, ['ownerRecord' => $profile, 'pageClass' => ViewStaffProfile::class]), $certificate];
+    }, ['Title', 'Issued on', 'Expires on', 'Expired'], ['staff.certificate_title', 'staff.issued_on', 'staff.expires_on', 'staff.expired']],
+    'certificate queue' => [['issue_student_certificate'], function (User $actor) {
+        $enrollment = Enrollment::factory()->completed()->create();
+
+        return [Livewire::actingAs($actor)->test(CertificateIssuanceQueue::class), $enrollment];
+    }, ['Student code', 'Student', 'Course', 'Batch', 'Completed on'], ['certificates.queue_student_code', 'certificates.student', 'certificates.course', 'certificates.queue_batch', 'certificates.completed_on']],
+    'export history' => [['view_financial_report', 'export_financial_report'], function (User $actor) {
+        $export = new Export(['exporter' => RevenueReportExporter::class, 'file_disk' => 'local', 'file_name' => 'report', 'total_rows' => 3, 'completed_at' => null, 'processed_rows' => 0, 'successful_rows' => 0]);
+        $export->user()->associate($actor);
+        $export->save();
+
+        return [Livewire::actingAs($actor)->test(ExportHistory::class), $export];
+    }, ['Report', 'Requested', 'Rows', 'Status'], ['export_history.columns.report', 'export_history.columns.requested_at', 'export_history.columns.rows', 'export_history.columns.status']],
+]);
+
+it('draws a header row on every other admin table, in English', function (array $permissions, Closure $mount, array $english, array $keys) {
+    $actor = User::factory()->create(['is_active' => true]);
+    $actor->givePermissionTo(['access_admin_panel', ...$permissions]);
+    [$component, $record] = $mount($actor);
+
+    $labels = adminTableHeaderRow($component->html());
+
+    $component->assertCanSeeTableRecords([$record]);
+    expect(headerRowHasInOrder($labels, $english))->toBeTrue('Header row: '.json_encode($labels))
+        ->and(adminTableHasClassToken($component->html(), 'tc-table'))->toBeTrue()
+        ->and($component->html())->not->toContain('fi-ta-grid')->not->toContain('fi-ta-stack');
+})->with('admin tables beyond the lists');
+
+it('draws the same header row on every other admin table, in Arabic', function (array $permissions, Closure $mount, array $english, array $keys) {
+    $actor = User::factory()->create(['is_active' => true]);
+    $actor->givePermissionTo(['access_admin_panel', ...$permissions]);
+    app()->setLocale('ar');
+    $arabic = array_map(fn (string $key): string => __($key), $keys);
+    expect(array_map(fn (string $key): string => __($key, [], 'en'), $keys))->not->toBe($arabic);
+
+    [$component, $record] = $mount($actor);
+    $component->assertCanSeeTableRecords([$record]);
+    $labels = adminTableHeaderRow($component->html());
+
+    expect(headerRowHasInOrder($labels, $arabic))->toBeTrue('Header row: '.json_encode($labels));
+})->with('admin tables beyond the lists');

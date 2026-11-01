@@ -232,7 +232,10 @@ class CourseResource extends Resource
                  * enough for it to be measurable; a training centre's course
                  * list is not.
                  */
+                // The hours sit under the name, so they are on the row while the Total hours
+                // column, which is hidden until asked for, is off.
                 AdminColumns::title('name_en', __('enrollment.course_name'))
+                    ->description(fn (Course $record): string => __('enrollment.hours_short', ['hours' => $record->total_hours]))
                     ->formatStateUsing(fn (Course $record): string => $record->name())
                     ->searchable(['name_en', 'name_ar'])
                     ->sortable(),
@@ -242,6 +245,7 @@ class CourseResource extends Resource
                 TextColumn::make('total_hours')
                     ->label(__('enrollment.total_hours'))
                     ->alignEnd()
+                    ->toggleable(isToggledHiddenByDefault: true)
                     ->numeric(),
 
                 AdminColumns::status('course_status', __('enrollment.status'), color: fn (Course $record): string => $record->is_active ? 'success' : 'gray')
@@ -263,7 +267,7 @@ class CourseResource extends Resource
                     ->label(__('enrollment.enrollments'))
                     ->formatStateUsing(fn (int $state): string => __('enrollment.enrolled_students', ['count' => $state]))
                     ->visible(fn (): bool => auth()->user()?->can('view_any_enrollment') ?? false)
-                    ->visibleFrom('2xl')
+                    ->toggleable()
                     ->url(fn (Course $record): ?string => StudentResource::canViewAny() && (auth()->user()?->can('view_any_enrollment') ?? false)
                         ? StudentResource::getUrl('index', ['filters' => ['course' => ['id' => $record->getKey()]]]) : null),
 
@@ -274,12 +278,12 @@ class CourseResource extends Resource
                 AdminColumns::money('course_price', __('pricing.course_default_price'), 'enrollment.money_lyd')
                     ->visible(fn (): bool => auth()->user()?->can('manage_pricing') ?? false)
                     ->state(fn (Course $record): string => Money::fromDecimal($record->default_price)->toDecimal())
-                    ->visibleFrom('lg'),
+                    ->toggleable(),
 
                 AdminColumns::money('revenue_this_year', __('enrollment.revenue_this_year'), 'enrollment.money_lyd')
                     ->visible(fn (): bool => auth()->user()?->can('view_financial_report') ?? false)
                     ->state(fn (Course $record): string => Money::fromDecimal((string) $record->getAttribute(RevenuePerCourse::TOTAL_ALIAS))->toDecimal())
-                    ->visibleFrom('lg'),
+                    ->toggleable(),
 
             ])
             ->defaultSort('code')

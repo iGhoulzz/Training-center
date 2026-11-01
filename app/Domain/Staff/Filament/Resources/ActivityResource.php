@@ -146,9 +146,11 @@ class ActivityResource extends Resource
                 AdminColumns::secondary('attribute_changes', __('activity.summary'))
                     ->state(fn (Activity $record): ?string => self::summarise($record))
                     ->limit(80)
+                    ->toggleable()
                     ->visibleFrom('md'),
 
                 AdminColumns::secondary('properties.ip', __('activity.ip'))
+                    ->toggleable()
                     ->visibleFrom('lg'),
             ])
             ->filters([

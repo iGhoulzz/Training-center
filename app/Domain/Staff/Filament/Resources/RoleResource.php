@@ -100,6 +100,7 @@ class RoleResource extends ShieldRoleResource
                     ->color('info'),
 
                 AdminColumns::dateTime('updated_at', __('staff.updated_at'))
+                    ->toggleable()
                     ->visibleFrom('md'),
             ])
             ->recordActions([

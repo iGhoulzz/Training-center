@@ -172,6 +172,7 @@ class StudentCertificateResource extends Resource
                     ->sortable(),
 
                 AdminColumns::actor('issuedBy.name', __('certificates.issued_by'))
+                    ->toggleable()
                     ->visibleFrom('lg'),
 
                 AdminColumns::status('status', __('certificates.status'), fn (CertificateStatus $state): string => $state->label(), fn (CertificateStatus $state): string => match ($state) {

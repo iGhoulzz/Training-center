@@ -230,10 +230,12 @@ class UserResource extends Resource
                 AdminColumns::dateTime('last_login_at', __('staff.last_login'))
                     ->placeholder(__('staff.never'))
                     ->sortable()
+                    ->toggleable()
                     ->visibleFrom('md'),
 
                 AdminColumns::date('staffProfile.hire_date', __('staff.hire_date'))
                     ->visible(fn (): bool => auth()->user()?->can('view_staff_profile') ?? false)
+                    ->toggleable()
                     ->visibleFrom('lg'),
 
                 AdminColumns::status('is_active', __('staff.is_active'), fn (bool $state): string => $state ? __('staff.active') : __('staff.deactivated'), fn (bool $state): string => $state ? 'success' : 'gray'),
@@ -245,6 +247,7 @@ class UserResource extends Resource
                     ->url(fn (User $record): string => ActivityResource::getUrl('index', ['tableFilters' => ['causer_id' => ['value' => $record->id]]]))
                     ->color('primary')
                     ->visible(fn (): bool => auth()->user()?->can('view_any_activity') ?? false)
+                    ->toggleable()
                     ->visibleFrom('lg'),
 
                 AdminColumns::secondary('payroll_link', __('staff.payroll_column'))
@@ -252,6 +255,7 @@ class UserResource extends Resource
                     ->url(fn (User $record): string => StaffCompensationResource::getUrl('index', ['tableSearch' => $record->name]))
                     ->color('primary')
                     ->visible(fn (): bool => auth()->user()?->can('view_any_staff_compensation') ?? false)
+                    ->toggleable()
                     ->visibleFrom('lg'),
             ])
             ->recordUrl(null)

@@ -504,7 +504,7 @@
     }
 
     .tc-table .fi-ta-header-cell {
-        @apply px-3 py-2.5 text-[11px] font-semibold tracking-[0.08em] text-gray-400 uppercase first:ps-5 last:pe-5 sm:first-of-type:ps-5 sm:last-of-type:pe-5;
+        @apply px-2.5 py-2.5 text-[11px] font-semibold tracking-[0.05em] text-gray-400 uppercase first:ps-5 last:pe-5 sm:first-of-type:ps-5 sm:last-of-type:pe-5;
 
         line-height: normal;
 
@@ -520,19 +520,19 @@
 
     /* The row-actions column: its header says "Actions"; its cells hold the buttons, end-aligned. */
     .tc-table .fi-ta-actions-header-cell {
-        @apply px-3 first:ps-5 last:pe-5;
+        @apply px-2 first:ps-5 last:pe-5;
     }
 
     .tc-table .fi-ta-cell {
         @apply p-0 align-middle first:ps-0 last:pe-0 sm:first:ps-0 sm:last:pe-0;
 
         &:has(.fi-ta-actions) {
-            @apply px-3 py-2 first-of-type:ps-5 last-of-type:pe-5 sm:first-of-type:ps-5 sm:last-of-type:pe-5;
+            @apply px-2 py-2 first-of-type:ps-5 last-of-type:pe-5 sm:first-of-type:ps-5 sm:last-of-type:pe-5;
         }
     }
 
     .tc-table :is(.fi-ta-text, .fi-ta-icon, .fi-ta-image, .fi-ta-color, .fi-ta-toggle, .fi-ta-checkbox, .tc-table-cell):not(.fi-inline) {
-        @apply px-3 py-3;
+        @apply px-2.5 py-3;
     }
 
     .tc-table .fi-ta-cell:first-child :is(.fi-ta-text, .fi-ta-icon, .fi-ta-image, .fi-ta-color, .fi-ta-toggle, .fi-ta-checkbox, .tc-table-cell):not(.fi-inline) {
@@ -543,11 +543,30 @@
         @apply pe-5;
     }
 
+    /*
+     * When a wide list scrolls sideways inside its box, the row-actions column stays at the
+     * trailing edge, so a row's menu is never scrolled out of reach. The solid fill hides the
+     * cells that slide under it; the gradient lays the header's and a hovered row's tint on top.
+     */
+    .tc-table .fi-ta-actions-header-cell:last-child,
+    .tc-table .fi-ta-cell:has(> .fi-ta-actions):last-child {
+        @apply sticky end-0 bg-gray-900;
+    }
+
+    .tc-table .fi-ta-actions-header-cell:last-child {
+        background-image: linear-gradient(var(--color-fill-subtle), var(--color-fill-subtle));
+    }
+
+    .tc-table .fi-ta-row:hover > .fi-ta-cell:has(> .fi-ta-actions):last-child {
+        background-image: linear-gradient(var(--color-fill-hover), var(--color-fill-hover));
+    }
+
     .tc-table .fi-ta-row {
         @apply [@media(hover:hover)]:hover:bg-fill-hover;
     }
 
-    .tc-table .fi-ta-text-item-description {
+    /* The muted line under a value: small, in the same family as the value it explains. */
+    .tc-table .fi-ta-text-description {
         @apply text-xs text-gray-400;
     }
 

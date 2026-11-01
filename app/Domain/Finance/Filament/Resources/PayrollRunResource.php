@@ -423,14 +423,17 @@ final class PayrollRunResource extends Resource
 
                 AdminColumns::secondary('line_count', __('payroll.lines'))
                     ->state(fn (PayrollRun $record): string => trans_choice('payroll.line_count', $record->lines->count()))
+                    ->toggleable()
                     ->visibleFrom('md'),
 
                 AdminColumns::actor('createdBy.name', __('payroll.created_by'))
+                    ->toggleable()
                     ->visibleFrom('lg'),
 
                 AdminColumns::dateTime('finalized_at', __('payroll.finalized_at'))
                     ->placeholder(__('payroll.draft'))
                     ->sortable()
+                    ->toggleable()
                     ->visibleFrom('lg'),
             ])
             ->recordActions([

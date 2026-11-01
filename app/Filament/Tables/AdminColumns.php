@@ -58,6 +58,7 @@ final class AdminColumns
         return TextColumn::make($name)
             ->label($label)
             ->fontFamily(FontFamily::Mono)
+            ->size('xs')
             ->color('gray');
     }
 

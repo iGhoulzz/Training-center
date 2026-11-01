@@ -181,12 +181,14 @@ final class ExpenseResource extends Resource
                 AdminColumns::secondary('description', __('expenses.description'))
                     ->limit(60)
                     ->searchable()
+                    ->toggleable()
                     ->visibleFrom('md'),
 
                 AdminColumns::money('amount', __('expenses.amount'), 'expenses.amount_lyd')
                     ->sortable(),
 
                 AdminColumns::actor('recordedBy.name', __('expenses.recorded_by'))
+                    ->toggleable()
                     ->visibleFrom('lg'),
 
                 /*

@@ -4,8 +4,13 @@ declare(strict_types=1);
 
 use App\Domain\Enrollment\Models\Course;
 use App\Domain\Enrollment\Models\Student;
+use App\Domain\Finance\Filament\Resources\ChargeResource\Pages\ListCharges;
 use App\Domain\Finance\Filament\Resources\ExpenseResource\Pages\ListExpenses;
+use App\Domain\Finance\Filament\Resources\PaymentResource\Pages\ListPayments;
+use App\Domain\Finance\Models\Charge;
+use App\Domain\Finance\Models\Discount;
 use App\Domain\Finance\Models\Expense;
+use App\Domain\Finance\Models\Payment;
 use App\Domain\Staff\Filament\Resources\ActivityResource;
 use App\Domain\Staff\Filament\Resources\ActivityResource\Pages\ListActivities;
 use App\Domain\Staff\Filament\Resources\ActivityResource\Pages\ViewActivity;
@@ -147,4 +152,60 @@ it('summarises a deleted record as fields removed, not changed', function () {
     Livewire::actingAs($actor)->test(ListActivities::class)
         ->assertCanSeeTableRecords([$entry])
         ->assertTableColumnStateSet('attribute_changes', $count.' fields removed', $entry);
+});
+
+/*
+|--------------------------------------------------------------------------
+| A column hidden by default is only ever hidden because its facts are on the row elsewhere
+|--------------------------------------------------------------------------
+*/
+
+it('keeps a bill\'s enrolment, course, discount and write-off reason on its row while their own columns are hidden', function () {
+    $charge = Charge::factory()->create(['list_price' => '200.000', 'amount' => '180.000', 'discount_id' => Discount::factory()->create()->getKey(), 'discount_percentage' => '10.00']);
+    $charge->forceFill(['written_off_at' => now(), 'written_off_by' => User::factory()->create()->getKey(), 'written_off_reason' => 'SENTINEL-WRITE-OFF-REASON'])->save();
+    $actor = ($this->actor)(['view_any_charge']);
+
+    $page = Livewire::actingAs($actor)->test(ListCharges::class)->assertCanSeeTableRecords([$charge]);
+    $table = $page->instance()->getTable();
+
+    // The columns that carry a fact already shown elsewhere are toggleable and start hidden...
+    foreach (['enrollment.reference', 'enrollment.batch.course.code', 'discount_percentage', 'written_off'] as $name) {
+        expect($table->getColumn($name)->isToggleable())->toBeTrue($name)
+            ->and($table->getColumn($name)->isToggledHiddenByDefault())->toBeTrue($name);
+    }
+
+    // ...because the row says each of them in words: the enrolment under the bill, the course under
+    // the batch, the discount under the amount, and the reason on the badge's tooltip.
+    $text = strip_tags($page->html());
+    expect($text)->toContain($charge->enrollment->reference)
+        ->toContain($charge->enrollment->batch->course->code)
+        ->toContain('Discount 10.00%')
+        ->and($table->getColumn('payment_state')->record($charge)->getTooltip())->toBe('SENTINEL-WRITE-OFF-REASON');
+});
+
+it('keeps a receipt\'s reversal reason, recorder and pending PDF on its row while their own columns are hidden', function () {
+    $payment = Payment::factory()->reversed()->create(['recorded_by' => ($recorder = User::factory()->create(['name' => 'Sentinel Recorder']))->getKey(), 'receipt_path' => null]);
+    $payment->forceFill(['reversal_reason' => 'SENTINEL-REVERSAL-REASON'])->save();
+    $actor = ($this->actor)(['view_any_payment', 'view_payment']);
+
+    $page = Livewire::actingAs($actor)->test(ListPayments::class)->assertCanSeeTableRecords([$payment]);
+    $table = $page->instance()->getTable();
+
+    foreach (['recordedBy.name', 'reversed', 'receipt_pending'] as $name) {
+        expect($table->getColumn($name)->isToggleable())->toBeTrue($name)
+            ->and($table->getColumn($name)->isToggledHiddenByDefault())->toBeTrue($name);
+    }
+
+    expect(strip_tags($page->html()))->toContain('Recorded by Sentinel Recorder')->toContain(__('payments.receipt_generating'))
+        ->and($table->getColumn('payment_state')->record($payment)->getTooltip())->toBe('SENTINEL-REVERSAL-REASON');
+});
+
+it('lets a user hide or show every secondary column, and starts none hidden that carries a fact found nowhere else', function () {
+    $actor = ($this->actor)(['view_any_activity', 'view_activity']);
+    $table = Livewire::actingAs($actor)->test(ListActivities::class)->instance()->getTable();
+
+    foreach (['attribute_changes', 'properties.ip'] as $name) {
+        expect($table->getColumn($name)->isToggleable())->toBeTrue($name)
+            ->and($table->getColumn($name)->isToggledHiddenByDefault())->toBeFalse($name);
+    }
 });

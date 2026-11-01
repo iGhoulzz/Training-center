@@ -202,7 +202,11 @@ class PaymentResource extends Resource
         return AdminTable::configure($table)
             ->recordUrl(null)
             ->columns([
+                // While the receipt's PDF is still being made, that is said under its reference,
+                // so it is on the row whether or not its own column is showing.
                 AdminColumns::code('reference', __('payments.reference'))
+                    ->description(fn (Payment $record): ?string => $record->receipt_path === null && (auth()->user()?->can('view_payment') ?? false)
+                        ? __('payments.receipt_generating') : null)
                     ->searchable()
                     ->sortable()
                     ->url(fn (Payment $record): ?string => auth()->user()?->can('view_payment')
@@ -212,12 +216,16 @@ class PaymentResource extends Resource
                     ->url(fn (Payment $record): ?string => auth()->user()?->can('view_student') && auth()->user()->can('view_any_student') && ! $record->student->trashed()
                         ? StudentResource::getUrl('index', ['student' => $record->student_id]) : null),
 
+                // Who recorded it sits under when, so it is on the row while its own column is hidden.
                 AdminColumns::dateTime('received_at', __('payments.received_at'))
+                    ->description(fn (Payment $record): ?string => $record->recordedBy === null
+                        ? null
+                        : __('payments.recorded_by_line', ['name' => $record->recordedBy->name]))
                     ->sortable(),
 
                 AdminColumns::code('bill', __('payments.bill'))
                     ->state(fn (Payment $record): ?string => $record->allocations->first()?->charge?->reference)
-                    ->visibleFrom('md')
+                    ->toggleable()
                     ->url(fn (Payment $record): ?string => auth()->user()?->can('view_charge') && $record->allocations->first()?->charge !== null
                         ? ChargeResource::getUrl('view', ['record' => $record->allocations->first()->charge]) : null),
 
@@ -225,7 +233,7 @@ class PaymentResource extends Resource
                     ->state(fn (Payment $record): array => $record->tenders->map(fn (PaymentTender $tender): string => __('payments.tender_chip', [
                         'method' => $tender->method->label(), 'amount' => $tender->amount,
                     ]))->all())->badge()->color('gray')->wrap()
-                    ->visibleFrom('lg'),
+                    ->toggleable(),
 
                 // The SQL shape, not the PHP one — see the class docblock.
                 // `tenders_sum_amount` is Laravel's own generated alias for
@@ -244,10 +252,13 @@ class PaymentResource extends Resource
                 // See the class docblock: exactly one allocation in
                 // practice, so the first is the whole answer.
                 AdminColumns::status('payment_state', __('payments.payment_state'), color: fn (Payment $record): string => $record->isReversed() ? 'danger' : 'success')
-                    ->state(fn (Payment $record): string => $record->isReversed() ? __('payments.state_reversed') : __('payments.state_recorded')),
+                    ->state(fn (Payment $record): string => $record->isReversed() ? __('payments.state_reversed') : __('payments.state_recorded'))
+                    // The reversal's reason rides on the badge, so it is on every reversed row
+                    // whether or not the Reversed column is showing.
+                    ->tooltip(fn (Payment $record): ?string => $record->isReversed() ? $record->reversal_reason : null),
 
                 AdminColumns::actor('recordedBy.name', __('payments.recorded_by'))
-                    ->visibleFrom('2xl'),
+                    ->toggleable(isToggledHiddenByDefault: true),
 
                 /*
                  * Derived from the fact column, never stored —
@@ -267,14 +278,14 @@ class PaymentResource extends Resource
                     ->boolean()
                     ->falseIcon(false)
                     ->trueColor('danger')
-                    ->visibleFrom('2xl')
+                    ->toggleable(isToggledHiddenByDefault: true)
                     ->tooltip(fn (Payment $record): ?string => $record->isReversed()
                         ? $record->reversal_reason
                         : null),
 
                 AdminColumns::secondary('receipt_pending', __('payments.download_receipt'))
                     ->state(__('payments.receipt_generating'))
-                    ->visibleFrom('2xl')
+                    ->toggleable(isToggledHiddenByDefault: true)
                     ->visible(fn (): bool => auth()->user()?->can('view_payment') ?? false)
                     ->formatStateUsing(fn (string $state, Payment $record): ?string => $record->receipt_path === null ? $state : null),
             ])

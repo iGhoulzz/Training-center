@@ -237,7 +237,10 @@ class ChargeResource extends Resource
                         && (bool) $record->getAttribute(EnrollmentQueryService::ENROLLMENT_STUDENT_AVAILABLE)
                         ? StudentResource::getUrl('index', ['student' => $record->getAttribute(EnrollmentQueryService::ENROLLMENT_STUDENT_ID)]) : null),
 
+                // The enrolment's reference sits under the bill's, so it is on every row even
+                // while its own column, which can still be searched and sorted, is hidden.
                 AdminColumns::code('reference', __('charges.reference'))
+                    ->description(fn (Charge $record): string => $record->enrollment->reference)
                     ->searchable()
                     ->sortable()
                     ->url(fn (Charge $record): ?string => auth()->user()?->can('view_charge')
@@ -246,19 +249,26 @@ class ChargeResource extends Resource
                 AdminColumns::code('enrollment.reference', __('charges.enrollment_reference'))
                     ->searchable()
                     ->sortable()
-                    ->visibleFrom('2xl'),
+                    ->toggleable(isToggledHiddenByDefault: true),
 
+                // The course's code sits under the batch's, for the same reason.
                 AdminColumns::secondary('enrollment.batch.course.code', __('charges.course'))
                     ->searchable()
-                    ->visibleFrom('2xl'),
+                    ->toggleable(isToggledHiddenByDefault: true),
 
                 AdminColumns::secondary('enrollment.batch.code', __('charges.batch'))
+                    ->description(fn (Charge $record): string => $record->enrollment->batch->course->code)
                     ->searchable()
-                    ->visibleFrom('2xl')
+                    ->toggleable()
                     ->url(fn (Charge $record): ?string => auth()->user()?->can('view_batch')
                         ? BatchResource::getUrl('view', ['record' => $record->enrollment->batch]) : null),
 
+                // The discount, when there is one, sits under the amount it reduced; its own
+                // column, which can be sorted, is hidden until asked for.
                 AdminColumns::money('amount', __('charges.amount'), 'charges.amount_lyd')
+                    ->description(fn (Charge $record): ?string => $record->discount_percentage === null
+                        ? null
+                        : __('charges.discount').' '.__('charges.discount_percentage_value', ['percentage' => $record->discount_percentage]))
                     ->sortable(),
 
                 AdminColumns::secondary('discount_percentage', __('charges.discount'))
@@ -267,7 +277,7 @@ class ChargeResource extends Resource
                         : __('charges.discount_percentage_value', ['percentage' => $state]))
                     ->sortable()
                     ->alignEnd()
-                    ->visibleFrom('2xl'),
+                    ->toggleable(isToggledHiddenByDefault: true),
 
                 TextColumn::make('paid_progress')->label(__('charges.allocated'))
                     ->state(fn (Charge $record): string => (string) $record->getAttribute(ChargeBalance::ALLOCATED_ALIAS))
@@ -297,7 +307,10 @@ class ChargeResource extends Resource
                     ->state(fn (Charge $record): string => $record->isWrittenOff() ? __('charges.written_off')
                         : (Money::fromDecimal((string) $record->getAttribute(ChargeBalance::OUTSTANDING_ALIAS))->isZero()
                             ? __('charges.settled') : (Money::fromDecimal((string) $record->getAttribute(ChargeBalance::ALLOCATED_ALIAS))->isPositive()
-                                ? __('charges.part_paid') : __('charges.unpaid')))),
+                                ? __('charges.part_paid') : __('charges.unpaid'))))
+                    // The write-off's reason rides on the badge, so it is on every written-off row
+                    // whether or not the Written off column is showing.
+                    ->tooltip(fn (Charge $record): ?string => $record->isWrittenOff() ? $record->written_off_reason : null),
 
                 AdminColumns::date('due_date', __('charges.due_date'))
                     ->sortable(),
@@ -316,7 +329,7 @@ class ChargeResource extends Resource
                     ->state(fn (Charge $record): bool => $record->isWrittenOff())
                     ->boolean()
                     ->falseIcon(false)
-                    ->visibleFrom('2xl')
+                    ->toggleable(isToggledHiddenByDefault: true)
                     ->tooltip(fn (Charge $record): ?string => $record->isWrittenOff()
                         ? $record->written_off_reason
                         : null),
