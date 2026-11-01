@@ -66,6 +66,8 @@ class PayrollLineFactory extends Factory
      */
     public function definition(): array
     {
+        // Anchor to day one before subtracting: October 31 minus a month
+        // overflows September and would make this line belong to October.
         $segment = CentreCalendar::localise(now())->startOfMonth()->subMonth();
         $daysInMonth = $segment->daysInMonth;
 

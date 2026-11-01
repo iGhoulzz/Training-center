@@ -96,6 +96,17 @@ beforeEach(function (): void {
         ->test(ReviewPayrollRun::class, ['record' => $run->getKey()]);
 });
 
+it('keeps default salary lines in the run month at the end of a longer month', function () {
+    $this->travelTo('2026-10-31 10:00:00');
+
+    $run = PayrollRun::factory()->create();
+    $line = PayrollLine::factory()->for($run, 'run')->create();
+
+    expect($run->period_start->toDateString())->toBe('2026-09-01')
+        ->and($line->segment_start->toDateString())->toBe('2026-09-01')
+        ->and($line->segment_end->toDateString())->toBe('2026-09-30');
+});
+
 it('finalizes with a success toast and re-renders the page as finalized without a reload', function () {
     [$run] = ($this->draftRun)(['309.000']);
 

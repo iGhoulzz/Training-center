@@ -1,38 +1,43 @@
 <x-filament-panels::page>
-    <div class="overflow-x-auto rounded-xl bg-white shadow-sm ring-1 ring-gray-950/5 dark:bg-gray-900 dark:ring-white/10">
-        <table class="w-full divide-y divide-gray-200 text-sm dark:divide-white/10">
-            <thead class="bg-gray-50 dark:bg-white/5">
+    <section class="tc-portal-card" aria-label="{{ __('portal.my_enrollments_title') }}">
+        <div class="tc-portal-card__header">
+            <h2 class="tc-portal-card__title">{{ __('portal.my_enrollments_title') }}</h2>
+        </div>
+        <div class="tc-portal-table-scroll">
+            <table class="tc-portal-table">
+            <thead>
                 <tr>
-                    <th scope="col" class="px-4 py-3 text-start font-semibold text-gray-950 dark:text-white">{{ __('portal.enrollments_course') }}</th>
-                    <th scope="col" class="px-4 py-3 text-start font-semibold text-gray-950 dark:text-white">{{ __('portal.enrollments_batch') }}</th>
-                    <th scope="col" class="px-4 py-3 text-start font-semibold text-gray-950 dark:text-white">{{ __('portal.enrollments_enrolled_on') }}</th>
-                    <th scope="col" class="px-4 py-3 text-start font-semibold text-gray-950 dark:text-white">{{ __('portal.enrollments_completed_on') }}</th>
-                    <th scope="col" class="px-4 py-3 text-start font-semibold text-gray-950 dark:text-white">{{ __('portal.enrollments_status') }}</th>
+                    <th scope="col">{{ __('portal.enrollments_course') }}</th>
+                    <th scope="col">{{ __('portal.enrollments_batch') }}</th>
+                    <th scope="col">{{ __('portal.enrollments_enrolled_on') }}</th>
+                    <th scope="col">{{ __('portal.enrollments_completed_on') }}</th>
+                    <th scope="col">{{ __('portal.enrollments_status') }}</th>
                     @if ($showsCertificates)
-                        <th scope="col" class="px-4 py-3 text-start font-semibold text-gray-950 dark:text-white">{{ __('portal.enrollments_certificate_reference') }}</th>
-                        <th scope="col" class="px-4 py-3 text-start font-semibold text-gray-950 dark:text-white">{{ __('portal.enrollments_certificate_status') }}</th>
+                        <th scope="col">{{ __('portal.enrollments_certificate_reference') }}</th>
+                        <th scope="col">{{ __('portal.enrollments_certificate_status') }}</th>
                     @endif
                 </tr>
             </thead>
-            <tbody class="divide-y divide-gray-200 dark:divide-white/10">
+            <tbody>
                 @forelse ($rows as $row)
                     <tr>
-                        <td class="px-4 py-3 text-gray-700 dark:text-gray-200">{{ $row['course'] }}</td>
-                        <td class="px-4 py-3 text-gray-700 dark:text-gray-200">{{ $row['batch_code'] }}</td>
-                        <td class="px-4 py-3 text-gray-700 dark:text-gray-200">{{ $row['enrolled_at'] }}</td>
-                        <td class="px-4 py-3 text-gray-700 dark:text-gray-200">{{ $row['completed_at'] ?? __('portal.not_completed') }}</td>
-                        <td class="px-4 py-3 text-gray-700 dark:text-gray-200">{{ $row['status_label'] }}</td>
+                        <td data-label="{{ __('portal.enrollments_course') }}">{{ $row['course'] }}</td>
+                        <td data-label="{{ __('portal.enrollments_batch') }}"><bdi>{{ $row['batch_code'] }}</bdi></td>
+                        <td data-label="{{ __('portal.enrollments_enrolled_on') }}">{{ $row['enrolled_at'] }}</td>
+                        <td data-label="{{ __('portal.enrollments_completed_on') }}">{{ $row['completed_at'] ?? __('portal.not_completed') }}</td>
+                        <td data-label="{{ __('portal.enrollments_status') }}"><span class="tc-portal-status">{{ $row['status_label'] }}</span></td>
                         @if ($showsCertificates)
-                            <td class="px-4 py-3 text-gray-700 dark:text-gray-200">{{ $row['certificate_reference'] ?? __('portal.no_certificate') }}</td>
-                            <td class="px-4 py-3 text-gray-700 dark:text-gray-200">{{ $row['certificate_status_label'] ?? __('portal.no_certificate') }}</td>
+                            <td data-label="{{ __('portal.enrollments_certificate_reference') }}"><bdi>{{ $row['certificate_reference'] ?? __('portal.no_certificate') }}</bdi></td>
+                            <td data-label="{{ __('portal.enrollments_certificate_status') }}">{{ $row['certificate_status_label'] ?? __('portal.no_certificate') }}</td>
                         @endif
                     </tr>
                 @empty
                     <tr>
-                        <td colspan="{{ $showsCertificates ? 7 : 5 }}" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">{{ __('portal.no_enrollments') }}</td>
+                        <td colspan="{{ $showsCertificates ? 7 : 5 }}" class="tc-portal-empty">{{ __('portal.no_enrollments') }}</td>
                     </tr>
                 @endforelse
             </tbody>
-        </table>
-    </div>
+            </table>
+        </div>
+    </section>
 </x-filament-panels::page>

@@ -77,6 +77,10 @@ class StudentPanelProvider extends PanelProvider
 {
     public function panel(Panel $panel): Panel
     {
+        if (file_exists(public_path('build/manifest.json')) || file_exists(public_path('hot'))) {
+            $panel->viteTheme('resources/css/filament/student/theme.css');
+        }
+
         return $panel
             // NOT ->default(). The admin panel is the default; making this one
             // default would send unqualified Filament routing to the portal.
@@ -87,14 +91,18 @@ class StudentPanelProvider extends PanelProvider
             // matters most here, where a staff member who types their password gets
             // told it is wrong, and the reason an open session ended is shown on it.
             ->login(Login::class)
+            ->darkMode(false)
+            ->themeSwitcher(false)
             ->font(fn (): ?string => app()->getLocale() === 'ar' ? 'IBM Plex Sans Arabic' : null, provider: LocalFontProvider::class)
-            ->renderHook(PanelsRenderHook::STYLES_AFTER, fn (): Htmlable => app()->getLocale() === 'ar'
-                ? Vite::fonts('ibm-plex-sans-arabic')
+            ->renderHook(PanelsRenderHook::STYLES_AFTER, fn (): Htmlable => (file_exists(public_path('build/manifest.json')) || file_exists(public_path('hot')))
+                ? Vite::fonts(['instrument-serif', 'ibm-plex-sans-arabic'])
                 : new HtmlString(''))
             // A closure, not a bare __() call: the panel is registered at boot,
             // before SetLocale has read the actor's locale, so resolving the
             // string eagerly would pin it to the fallback for every request.
             ->brandName(fn (): string => __('portal.brand'))
+            ->brandLogo(fn (): Htmlable => new HtmlString(view('filament.portal.brand')->render()))
+            ->brandLogoHeight('2.75rem')
             ->colors([
                 'primary' => Color::Amber,
             ])
