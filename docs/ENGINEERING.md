@@ -541,6 +541,17 @@ file under `resources/`.
   muted line, a code, money, a status badge, a date). A row's actions go in
   `AdminTable::rowMenu()`, one menu button that is the same width on every row.
   `AdminTableArchTest` enforces all of it.
+- **Detail pages use `AdminDetails`; no disabled form as a detail view (owner,
+  2026-11-01).** Every `ViewRecord` page draws an infolist that begins
+  `AdminDetails::schema()`: section cards, full width, side by side from `lg`, with a
+  muted dash for a missing value. `App\Filament\Details\AdminDetails` builds the
+  entries pages repeat (text, code, money from the decimal string, status badge, date,
+  moment in the centre's zone, person, long text); the look lives once under
+  `.tc-details` in the admin theme. A page keeps its own `visible()` rules, so a
+  sensitive figure stays behind its permission. `AdminDetailsArchTest` enforces it; the
+  role page is its one listed exception because the permission grid is the page. The
+  role editor's grid carries any permission it does not draw through a save
+  (`PermissionGrid`), because the Action syncs a role to exactly what it is given.
 - **Blade components for anything used twice**, under
   `resources/views/components/`. A partial included with variables is not a
   component.

@@ -10,6 +10,7 @@ use App\Domain\Finance\Filament\Resources\StaffCompensationResource\Pages\Create
 use App\Domain\Finance\Filament\Resources\StaffCompensationResource\Pages\ListStaffCompensations;
 use App\Domain\Finance\Filament\Resources\StaffCompensationResource\Pages\ViewStaffCompensation;
 use App\Domain\Finance\Models\StaffCompensation;
+use App\Filament\Details\AdminDetails;
 use App\Filament\HelpPanel;
 use App\Filament\Tables\AdminColumns;
 use App\Filament\Tables\AdminTable;
@@ -18,7 +19,6 @@ use BackedEnum;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
-use Filament\Infolists\Components\TextEntry;
 use Filament\Resources\Resource;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
@@ -112,23 +112,22 @@ final class StaffCompensationResource extends Resource
 
     public static function infolist(Schema $schema): Schema
     {
-        return $schema->components([
-            Section::make(__('payroll.rate_details'))->description(__('payroll.effective_rate_hint'))->columns(2)->schema([
-                TextEntry::make('user.name')->label(__('payroll.employee')),
-                TextEntry::make('type')
-                    ->label(__('payroll.compensation_type'))
-                    ->formatStateUsing(fn (CompensationType|string $state): string => $state instanceof CompensationType
+        return AdminDetails::schema($schema, [
+            AdminDetails::section(__('payroll.rate_details'), [
+                AdminDetails::person('user.name', __('payroll.employee')),
+                AdminDetails::status(
+                    'type',
+                    __('payroll.compensation_type'),
+                    fn (CompensationType|string $state): string => $state instanceof CompensationType
                         ? $state->label()
-                        : $state),
-                TextEntry::make('amount')
-                    ->label(__('payroll.amount'))
-                    ->formatStateUsing(fn (string $state): string => __('payroll.amount_lyd', ['amount' => $state])),
-                TextEntry::make('effective_from')->label(__('payroll.effective_from'))->date(),
-                TextEntry::make('effective_to')
-                    ->label(__('payroll.effective_to'))
-                    ->date()
+                        : $state,
+                    'gray',
+                ),
+                AdminDetails::money('amount', __('payroll.amount'), 'payroll.amount_lyd'),
+                AdminDetails::date('effective_from', __('payroll.effective_from')),
+                AdminDetails::date('effective_to', __('payroll.effective_to'))
                     ->placeholder(__('payroll.current_rate')),
-            ]),
+            ], __('payroll.effective_rate_hint'), wide: true),
         ]);
     }
 

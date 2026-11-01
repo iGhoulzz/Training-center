@@ -16,6 +16,7 @@ use App\Domain\Enrollment\Models\Enrollment;
 use App\Domain\Finance\Queries\RevenuePerCourse;
 use App\Domain\Finance\Support\Money;
 use App\Domain\Finance\Support\ReportPeriod;
+use App\Filament\Details\AdminDetails;
 use App\Filament\Tables\AdminColumns;
 use App\Filament\Tables\AdminTable;
 use App\Support\CentreCalendar;
@@ -184,6 +185,38 @@ class CourseResource extends Resource
                     ...(auth()->user()->can('manage_pricing') ? [__('pricing.course_default_price') => preg_match('/^\d{1,9}(?:\.\d{1,3})?$/D', (string) $get('default_price')) === 1 ? Money::fromDecimal((string) $get('default_price')) : __('enrollment.not_recorded')] : [])],
                 'notices' => [['tone' => 'neutral', 'text' => __('enrollment.course_inheritance_hint')]],
             ])->visible(fn (string $operation): bool => $operation !== 'view'),
+        ]);
+    }
+
+    /**
+     * The read-only catalogue entry: the same facts as the form, as text in cards (P4-T42).
+     *
+     * The default price keeps the permission it has on the form: only `manage_pricing`
+     * sees it. A one-permission-short viewer gets the card without it, not a blank.
+     */
+    public static function infolist(Schema $schema): Schema
+    {
+        return AdminDetails::schema($schema, [
+            AdminDetails::section(__('enrollment.course_details'), [
+                AdminDetails::code('code', __('enrollment.course_code')),
+
+                AdminDetails::text('name_en', __('enrollment.name_en')),
+
+                AdminDetails::text('name_ar', __('enrollment.name_ar')),
+
+                AdminDetails::text('total_hours', __('enrollment.total_hours')),
+
+                AdminDetails::money('default_price', __('pricing.course_default_price'), 'enrollment.money_lyd')
+                    ->visible(fn (): bool => auth()->user()?->can('manage_pricing') ?? false),
+
+                AdminDetails::status('is_active', __('enrollment.is_active'), fn (bool $state): string => $state ? __('enrollment.course_active') : __('enrollment.course_retired'), fn (bool $state): string => $state ? 'success' : 'gray'),
+            ], wide: true),
+
+            AdminDetails::section(__('enrollment.course_descriptions'), [
+                AdminDetails::longText('description_en', __('enrollment.description_en')),
+
+                AdminDetails::longText('description_ar', __('enrollment.description_ar')),
+            ], wide: true),
         ]);
     }
 

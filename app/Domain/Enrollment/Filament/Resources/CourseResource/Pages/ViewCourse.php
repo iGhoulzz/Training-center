@@ -15,8 +15,9 @@ use Filament\Resources\Pages\ViewRecord;
  * This page is what makes the staff role's view-only grant mean something:
  * without it the catalogue would list courses that front-desk staff could never
  * open, and answering "how many hours is English B1" is exactly their job.
- * Filament renders the resource form disabled here, and
- * ViewRecord::authorizeAccess() aborts 403 unless CoursePolicy::view() passes.
+ * CourseResource::infolist() draws the record as read-only text in cards, not the
+ * form switched to disabled, and ViewRecord::authorizeAccess() aborts 403 unless
+ * CoursePolicy::view() passes.
  */
 class ViewCourse extends ViewRecord
 {

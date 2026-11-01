@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Tables;
 
+use App\Filament\Details\AdminFormat;
 use App\Support\CentreCalendar;
 use Closure;
 use Filament\Support\Enums\FontFamily;
@@ -86,9 +87,7 @@ final class AdminColumns
         return TextColumn::make($name)
             ->label($label)
             ->alignEnd()
-            ->formatStateUsing(fn (mixed $state): ?string => $state === null
-                ? null
-                : __($amountKey, ['amount' => (string) $state]))
+            ->formatStateUsing(fn (mixed $state): ?string => AdminFormat::money($amountKey, $state))
             ->extraAttributes(['class' => 'whitespace-nowrap tabular-nums']);
     }
 

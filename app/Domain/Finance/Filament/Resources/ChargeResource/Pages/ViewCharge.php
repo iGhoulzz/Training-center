@@ -9,9 +9,8 @@ use App\Domain\Enrollment\Services\EnrollmentQueryService;
 use App\Domain\Finance\Filament\Resources\ChargeResource;
 use App\Domain\Finance\Models\Charge;
 use App\Domain\Finance\Support\ChargeBalance;
-use Filament\Infolists\Components\TextEntry;
+use App\Filament\Details\AdminDetails;
 use Filament\Resources\Pages\ViewRecord;
-use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 
 /**
@@ -62,10 +61,9 @@ class ViewCharge extends ViewRecord
 
     public function infolist(Schema $schema): Schema
     {
-        return $schema->components([
-            Section::make(__('charges.bill_details'))->columns(2)->schema([
-                TextEntry::make('student_identity')
-                    ->label(__('charges.student'))
+        return AdminDetails::schema($schema, [
+            AdminDetails::section(__('charges.bill_details'), [
+                AdminDetails::text('student_identity', __('charges.student'))
                     ->state(fn (Charge $record): string => __('charges.student_label', [
                         'code' => app(EnrollmentQueryService::class)->receiptContextFor((int) $record->enrollment_id)['student_code'],
                         'name' => trim($record->getAttribute(EnrollmentQueryService::ENROLLMENT_STUDENT_FIRST_NAME).' '.$record->getAttribute(EnrollmentQueryService::ENROLLMENT_STUDENT_LAST_NAME)),
@@ -74,24 +72,17 @@ class ViewCharge extends ViewRecord
                         && (bool) $record->getAttribute(EnrollmentQueryService::ENROLLMENT_STUDENT_AVAILABLE)
                         ? StudentResource::getUrl('index', ['student' => $record->getAttribute(EnrollmentQueryService::ENROLLMENT_STUDENT_ID)]) : null),
 
-                TextEntry::make('reference')
-                    ->label(__('charges.reference')),
+                AdminDetails::code('reference', __('charges.reference')),
 
-                TextEntry::make('enrollment.reference')
-                    ->label(__('charges.enrollment_reference')),
+                AdminDetails::code('enrollment.reference', __('charges.enrollment_reference')),
 
-                TextEntry::make('enrollment.batch.course.code')
-                    ->label(__('charges.course')),
+                AdminDetails::code('enrollment.batch.course.code', __('charges.course')),
 
-                TextEntry::make('enrollment.batch.code')
-                    ->label(__('charges.batch')),
+                AdminDetails::code('enrollment.batch.code', __('charges.batch')),
 
-                TextEntry::make('list_price')
-                    ->label(__('charges.list_price'))
-                    ->formatStateUsing(fn (string $state): string => ChargeResource::formatMoney($state)),
+                AdminDetails::money('list_price', __('charges.list_price'), 'charges.amount_lyd'),
 
-                TextEntry::make('discount_percentage')
-                    ->label(__('charges.discount'))
+                AdminDetails::text('discount_percentage', __('charges.discount'))
                     ->formatStateUsing(fn (?string $state): string => $state === null
                         ? __('charges.no_discount')
                         : __('charges.discount_percentage_value', ['percentage' => $state])),
@@ -99,44 +90,32 @@ class ViewCharge extends ViewRecord
                 // The frozen figure — see Charge's own docblock on why this can
                 // legitimately disagree with list_price and discount_percentage
                 // after an AdjustChargeAction correction.
-                TextEntry::make('amount')
-                    ->label(__('charges.amount'))
-                    ->formatStateUsing(fn (string $state): string => ChargeResource::formatMoney($state)),
+                AdminDetails::money('amount', __('charges.amount'), 'charges.amount_lyd'),
 
-                TextEntry::make('allocated')
-                    ->label(__('charges.allocated'))
-                    ->state(fn (Charge $record): string => ChargeBalance::allocatedFor((int) $record->getKey())->toDecimal())
-                    ->formatStateUsing(fn (string $state): string => ChargeResource::formatMoney($state)),
+                AdminDetails::money('allocated', __('charges.allocated'), 'charges.amount_lyd')
+                    ->state(fn (Charge $record): string => ChargeBalance::allocatedFor((int) $record->getKey())->toDecimal()),
 
-                TextEntry::make('outstanding')
-                    ->label(__('charges.outstanding'))
-                    ->state(fn (Charge $record): string => ChargeBalance::outstandingFor((int) $record->getKey())->toDecimal())
-                    ->formatStateUsing(fn (string $state): string => ChargeResource::formatMoney($state)),
+                AdminDetails::money('outstanding', __('charges.outstanding'), 'charges.amount_lyd')
+                    ->state(fn (Charge $record): string => ChargeBalance::outstandingFor((int) $record->getKey())->toDecimal()),
 
-                TextEntry::make('due_date')
-                    ->label(__('charges.due_date'))
-                    ->date(),
+                AdminDetails::date('due_date', __('charges.due_date')),
 
                 /*
-             * Nothing is erased by a write-off (design section 4) — these three
-             * columns are additional facts about the bill, not a replacement for
-             * anything above. Hidden entirely rather than shown blank when the
-             * charge was never written off, so the detail page does not read as
-             * though something is missing.
-             */
-                TextEntry::make('written_off_at')
-                    ->label(__('charges.written_off_at'))
-                    ->dateTime()
+                 * Nothing is erased by a write-off (design section 4) — these three
+                 * columns are additional facts about the bill, not a replacement for
+                 * anything above. Hidden entirely rather than shown blank when the
+                 * charge was never written off, so the detail page does not read as
+                 * though something is missing.
+                 */
+                AdminDetails::dateTime('written_off_at', __('charges.written_off_at'))
                     ->visible(fn (Charge $record): bool => $record->isWrittenOff()),
 
-                TextEntry::make('writtenOffBy.name')
-                    ->label(__('charges.written_off_by'))
+                AdminDetails::person('writtenOffBy.name', __('charges.written_off_by'))
                     ->visible(fn (Charge $record): bool => $record->isWrittenOff()),
 
-                TextEntry::make('written_off_reason')
-                    ->label(__('charges.written_off_reason'))
+                AdminDetails::longText('written_off_reason', __('charges.written_off_reason'))
                     ->visible(fn (Charge $record): bool => $record->isWrittenOff()),
-            ]),
+            ], wide: true),
         ]);
     }
 }

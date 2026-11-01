@@ -6,9 +6,8 @@ namespace App\Domain\Finance\Filament\Resources\PaymentResource\Pages;
 
 use App\Domain\Finance\Filament\Resources\PaymentResource;
 use App\Domain\Finance\Models\Payment;
-use Filament\Infolists\Components\TextEntry;
+use App\Filament\Details\AdminDetails;
 use Filament\Resources\Pages\ViewRecord;
-use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 
 /**
@@ -49,53 +48,41 @@ class ViewPayment extends ViewRecord
 
     public function infolist(Schema $schema): Schema
     {
-        return $schema->components([
-            Section::make(__('payments.receipt_details'))->columns(2)->schema([
-                TextEntry::make('reference')
-                    ->label(__('payments.reference')),
+        return AdminDetails::schema($schema, [
+            AdminDetails::section(__('payments.receipt_details'), [
+                AdminDetails::code('reference', __('payments.reference')),
 
-                TextEntry::make('student.full_name')
-                    ->label(__('payments.student')),
+                AdminDetails::text('student.full_name', __('payments.student')),
 
-                TextEntry::make('received_at')
-                    ->label(__('payments.received_at'))
-                    ->dateTime(),
+                AdminDetails::dateTime('received_at', __('payments.received_at')),
 
-                TextEntry::make('tenders_sum_amount')
-                    ->label(__('payments.total'))
-                    ->formatStateUsing(fn (string $state): string => PaymentResource::formatMoney($state)),
+                AdminDetails::money('tenders_sum_amount', __('payments.total'), 'payments.amount_lyd'),
 
                 // See the class docblock: exactly one allocation in practice,
                 // so the first is the whole answer — same reasoning as the
                 // table's `bill` column.
-                TextEntry::make('bill')
-                    ->label(__('payments.bill'))
+                AdminDetails::text('bill', __('payments.bill'))
                     ->state(fn (Payment $record): ?string => $record->allocations->first()?->charge?->reference),
 
-                TextEntry::make('recordedBy.name')
-                    ->label(__('payments.recorded_by')),
+                AdminDetails::person('recordedBy.name', __('payments.recorded_by')),
 
                 /*
-             * Nothing is erased by a reversal (design section 5) — these
-             * three columns are additional facts about the payment, not a
-             * replacement for anything above. Hidden entirely rather than
-             * shown blank when the payment was never reversed, matching
-             * ChargeResource::ViewCharge's written_off_at / written_off_by /
-             * written_off_reason group.
-             */
-                TextEntry::make('reversed_at')
-                    ->label(__('payments.reversed_on'))
-                    ->dateTime()
+                 * Nothing is erased by a reversal (design section 5) — these
+                 * three columns are additional facts about the payment, not a
+                 * replacement for anything above. Hidden entirely rather than
+                 * shown blank when the payment was never reversed, matching
+                 * ChargeResource::ViewCharge's written_off_at / written_off_by /
+                 * written_off_reason group.
+                 */
+                AdminDetails::dateTime('reversed_at', __('payments.reversed_on'))
                     ->visible(fn (Payment $record): bool => $record->isReversed()),
 
-                TextEntry::make('reversedBy.name')
-                    ->label(__('payments.reversed_by'))
+                AdminDetails::person('reversedBy.name', __('payments.reversed_by'))
                     ->visible(fn (Payment $record): bool => $record->isReversed()),
 
-                TextEntry::make('reversal_reason')
-                    ->label(__('payments.reason'))
+                AdminDetails::longText('reversal_reason', __('payments.reason'))
                     ->visible(fn (Payment $record): bool => $record->isReversed()),
-            ]),
+            ], wide: true),
         ]);
     }
 }

@@ -14,6 +14,7 @@ use App\Domain\Finance\Models\PayrollLineAdjustment;
 use App\Domain\Finance\Models\PayrollRun;
 use App\Domain\Finance\Services\PayrollCalculator;
 use App\Domain\Finance\Support\Money;
+use App\Filament\Details\AdminDetails;
 use App\Filament\HelpPanel;
 use App\Filament\Tables\AdminColumns;
 use App\Filament\Tables\AdminTable;
@@ -166,25 +167,26 @@ final class PayrollRunResource extends Resource
 
     public static function infolist(Schema $schema): Schema
     {
-        return $schema->components([
-            Section::make(__('payroll.run_details'))->columns(2)->schema([
-                TextEntry::make('type')
-                    ->label(__('payroll.run_type'))
-                    ->formatStateUsing(fn (PayrollRunType|string $state): string => $state instanceof PayrollRunType
+        return AdminDetails::schema($schema, [
+            AdminDetails::section(__('payroll.run_details'), [
+                AdminDetails::status(
+                    'type',
+                    __('payroll.run_type'),
+                    fn (PayrollRunType|string $state): string => $state instanceof PayrollRunType
                         ? $state->label()
-                        : $state),
-                TextEntry::make('period_start')->label(__('payroll.period_start'))->date(),
-                TextEntry::make('period_end')->label(__('payroll.period_end'))->date(),
-                TextEntry::make('createdBy.name')->label(__('payroll.created_by')),
-                TextEntry::make('finalized_at')
-                    ->label(__('payroll.finalized_at'))
-                    ->dateTime()
+                        : $state,
+                ),
+                AdminDetails::date('period_start', __('payroll.period_start')),
+                AdminDetails::date('period_end', __('payroll.period_end')),
+                AdminDetails::person('createdBy.name', __('payroll.created_by')),
+                AdminDetails::dateTime('finalized_at', __('payroll.finalized_at'))
                     ->placeholder(__('payroll.draft')),
-                TextEntry::make('finalizedBy.name')->label(__('payroll.finalized_by')),
-                TextEntry::make('notes')->label(__('payroll.notes')),
-            ]),
+                AdminDetails::person('finalizedBy.name', __('payroll.finalized_by')),
+                AdminDetails::longText('notes', __('payroll.notes')),
+            ], wide: true),
             // One card per employee for a salary run (P4-T40); the other two kinds keep the flat list.
             Section::make(__('payroll.lines'))
+                ->columnSpanFull()
                 ->visible(fn (PayrollRun $record): bool => $record->type === PayrollRunType::MonthlySalary)
                 ->schema([
                     RepeatableEntry::make('employee_groups')
@@ -240,6 +242,7 @@ final class PayrollRunResource extends Resource
                         ->columns(2),
                 ]),
             Section::make(__('payroll.lines'))
+                ->columnSpanFull()
                 ->visible(fn (PayrollRun $record): bool => $record->type !== PayrollRunType::MonthlySalary)
                 ->schema([
                     RepeatableEntry::make('lines')

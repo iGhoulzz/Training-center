@@ -33,6 +33,10 @@ return [
     'replacement_pdf_file' => 'Replace the PDF file',
     'replacement_pdf_file_help' => 'Leave this empty to keep the current file. A new file replaces it for readers as soon as you save. A PDF document of up to :megabytes MB.',
     'original_filename' => 'File name',
+    'article_details' => 'Article details',
+    'article_descriptions' => 'Descriptions',
+    'article_document' => 'Document',
+    'article_publication' => 'Publication',
 
     // The list.
     'status' => 'Status',

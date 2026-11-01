@@ -111,7 +111,15 @@ it('defines a view schema that is not the editable form', function () {
      * and re-coupling view to edit so every future form field is exposed here by
      * default.
      */
-    $components = StaffProfileResource::infolist(app(Schema::class))->getComponents();
+    // Flat, because the owner's name now sits inside the first card (P4-T42) and no longer
+    // at the top level of the schema.
+    $flatten = function (array $components) use (&$flatten): array {
+        return collect($components)
+            ->flatMap(fn ($component): array => [$component, ...$flatten($component->getDefaultChildComponents())])
+            ->all();
+    };
+
+    $components = $flatten(StaffProfileResource::infolist(app(Schema::class))->getComponents());
 
     $selects = collect($components)
         ->filter(fn ($component): bool => $component instanceof Select)

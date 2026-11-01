@@ -13,6 +13,7 @@ use App\Domain\Publications\Filament\Resources\ArticleResource\Pages\ListArticle
 use App\Domain\Publications\Filament\Resources\ArticleResource\Pages\ViewArticle;
 use App\Domain\Publications\Models\Article;
 use App\Domain\Staff\Exceptions\FileStorageException;
+use App\Filament\Details\AdminDetails;
 use App\Filament\Tables\AdminTable;
 use App\Models\User;
 use App\Support\CentreCalendar;
@@ -25,6 +26,7 @@ use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
+use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 use Filament\Support\Exceptions\Halt;
 use Filament\Support\Icons\Heroicon;
@@ -111,89 +113,136 @@ class ArticleResource extends Resource
     public static function form(Schema $schema): Schema
     {
         return $schema->components([
-            TextInput::make('title_en')
-                ->label(__('publications.title_en'))
-                ->required()
-                ->maxLength(200),
+            Section::make(__('publications.article_details'))->columns(2)->columnSpanFull()->schema([
+                TextInput::make('title_en')
+                    ->label(__('publications.title_en'))
+                    ->required()
+                    ->maxLength(200),
 
-            TextInput::make('title_ar')
-                ->label(__('publications.title_ar'))
-                ->helperText(__('publications.title_ar_help'))
-                ->maxLength(200)
-                ->extraInputAttributes(['dir' => 'rtl']),
+                TextInput::make('title_ar')
+                    ->label(__('publications.title_ar'))
+                    ->helperText(__('publications.title_ar_help'))
+                    ->maxLength(200)
+                    ->extraInputAttributes(['dir' => 'rtl']),
 
-            // Generated from the English title on creation, so there is nothing
-            // to type there. Once the article is published the field is disabled
-            // and therefore not sent, which the Action reads as "leave it".
-            TextInput::make('slug')
-                ->label(__('publications.slug'))
-                ->helperText(__('publications.slug_help'))
-                ->hiddenOn('create')
-                ->required()
-                ->maxLength(CreateArticleAction::SLUG_MAX_LENGTH)
-                ->unique(ignoreRecord: true)
-                ->disabled(fn (?Article $record): bool => $record?->isPublished() ?? false),
+                // Generated from the English title on creation, so there is nothing
+                // to type there. Once the article is published the field is disabled
+                // and therefore not sent, which the Action reads as "leave it".
+                TextInput::make('slug')
+                    ->label(__('publications.slug'))
+                    ->helperText(__('publications.slug_help'))
+                    ->hiddenOn('create')
+                    ->required()
+                    ->maxLength(CreateArticleAction::SLUG_MAX_LENGTH)
+                    ->unique(ignoreRecord: true)
+                    ->disabled(fn (?Article $record): bool => $record?->isPublished() ?? false),
 
-            Textarea::make('description_en')
-                ->label(__('publications.description_en'))
-                ->required()
-                ->maxLength(5000)
-                ->rows(4),
+                TextInput::make('topic')
+                    ->label(__('publications.topic'))
+                    ->helperText(__('publications.topic_help'))
+                    ->required()
+                    ->maxLength(100)
+                    // Offered so that "Safety" is typed the same way twice; a free
+                    // text field alone would grow "Safety" and "safety " as two chips.
+                    // The most-used topics only, bounded in SQL: see TOPIC_SUGGESTION_LIMIT.
+                    ->datalist(fn (): array => Article::query()
+                        ->select('topic')
+                        ->groupBy('topic')
+                        ->orderByRaw('COUNT(*) DESC')
+                        ->orderBy('topic')
+                        ->limit(self::TOPIC_SUGGESTION_LIMIT)
+                        ->pluck('topic')
+                        ->all()),
 
-            Textarea::make('description_ar')
-                ->label(__('publications.description_ar'))
-                ->helperText(__('publications.description_ar_help'))
-                ->maxLength(5000)
-                ->rows(4)
-                ->extraInputAttributes(['dir' => 'rtl']),
+                TextInput::make('authors')
+                    ->label(__('publications.authors'))
+                    ->required()
+                    ->maxLength(255),
 
-            TextInput::make('topic')
-                ->label(__('publications.topic'))
-                ->helperText(__('publications.topic_help'))
-                ->required()
-                ->maxLength(100)
-                // Offered so that "Safety" is typed the same way twice; a free
-                // text field alone would grow "Safety" and "safety " as two chips.
-                // The most-used topics only, bounded in SQL: see TOPIC_SUGGESTION_LIMIT.
-                ->datalist(fn (): array => Article::query()
-                    ->select('topic')
-                    ->groupBy('topic')
-                    ->orderByRaw('COUNT(*) DESC')
-                    ->orderBy('topic')
-                    ->limit(self::TOPIC_SUGGESTION_LIMIT)
-                    ->pluck('topic')
-                    ->all()),
+                DatePicker::make('issued_on')
+                    ->label(__('publications.issued_on'))
+                    ->required()
+                    ->maxDate(fn () => CentreCalendar::localise(now())),
+            ]),
 
-            TextInput::make('authors')
-                ->label(__('publications.authors'))
-                ->required()
-                ->maxLength(255),
+            Section::make(__('publications.article_descriptions'))->columns(2)->columnSpanFull()->schema([
+                Textarea::make('description_en')
+                    ->label(__('publications.description_en'))
+                    ->required()
+                    ->maxLength(5000)
+                    ->rows(4),
 
-            DatePicker::make('issued_on')
-                ->label(__('publications.issued_on'))
-                ->required()
-                ->maxDate(fn () => CentreCalendar::localise(now())),
+                Textarea::make('description_ar')
+                    ->label(__('publications.description_ar'))
+                    ->helperText(__('publications.description_ar_help'))
+                    ->maxLength(5000)
+                    ->rows(4)
+                    ->extraInputAttributes(['dir' => 'rtl']),
+            ]),
 
-            // storeFiles(false): the upload stays a Livewire temporary file and
-            // the Action owns writing it to the private disk under a generated
-            // name. Without this Filament would store it itself, choosing the
-            // path — the exact thing the Action must control.
-            FileUpload::make('pdf_file')
-                ->label(fn (string $operation): string => $operation === 'create'
-                    ? __('publications.pdf_file')
-                    : __('publications.replacement_pdf_file'))
-                ->helperText(fn (string $operation): string => $operation === 'create'
-                    ? __('publications.pdf_file_help', ['megabytes' => intdiv(CreateArticleAction::MAX_KILOBYTES, 1024)])
-                    : __('publications.replacement_pdf_file_help', ['megabytes' => intdiv(CreateArticleAction::MAX_KILOBYTES, 1024)]))
-                ->required(fn (string $operation): bool => $operation === 'create')
-                ->visibleOn(['create', 'edit'])
-                ->storeFiles(false)
-                ->acceptedFileTypes([CreateArticleAction::MIME_TYPE])
-                // The label would become the attribute with its first letter
-                // lower-cased ("pDF file", "replace the PDF file"), so name it.
-                ->validationAttribute(__('publications.pdf_file_attribute'))
-                ->validationMessages(['mimetypes' => __('publications.pdf_file_not_pdf')])
-                ->maxSize(CreateArticleAction::MAX_KILOBYTES),
+            Section::make(__('publications.article_document'))->columnSpanFull()->schema([
+                // storeFiles(false): the upload stays a Livewire temporary file and
+                // the Action owns writing it to the private disk under a generated
+                // name. Without this Filament would store it itself, choosing the
+                // path — the exact thing the Action must control.
+                FileUpload::make('pdf_file')
+                    ->label(fn (string $operation): string => $operation === 'create'
+                        ? __('publications.pdf_file')
+                        : __('publications.replacement_pdf_file'))
+                    ->helperText(fn (string $operation): string => $operation === 'create'
+                        ? __('publications.pdf_file_help', ['megabytes' => intdiv(CreateArticleAction::MAX_KILOBYTES, 1024)])
+                        : __('publications.replacement_pdf_file_help', ['megabytes' => intdiv(CreateArticleAction::MAX_KILOBYTES, 1024)]))
+                    ->required(fn (string $operation): bool => $operation === 'create')
+                    ->visibleOn(['create', 'edit'])
+                    ->storeFiles(false)
+                    ->acceptedFileTypes([CreateArticleAction::MIME_TYPE])
+                    // The label would become the attribute with its first letter
+                    // lower-cased ("pDF file", "replace the PDF file"), so name it.
+                    ->validationAttribute(__('publications.pdf_file_attribute'))
+                    ->validationMessages(['mimetypes' => __('publications.pdf_file_not_pdf')])
+                    ->maxSize(CreateArticleAction::MAX_KILOBYTES),
+            ]),
+        ]);
+    }
+
+    /**
+     * The read-only article: the same facts as the form, plus where it stands, as text in
+     * cards (P4-T42).
+     */
+    public static function infolist(Schema $schema): Schema
+    {
+        return AdminDetails::schema($schema, [
+            AdminDetails::section(__('publications.article_details'), [
+                AdminDetails::text('title_en', __('publications.title_en')),
+
+                AdminDetails::text('title_ar', __('publications.title_ar'))
+                    ->extraAttributes(['dir' => 'rtl'], merge: true),
+
+                AdminDetails::code('slug', __('publications.slug')),
+
+                AdminDetails::text('topic', __('publications.topic')),
+
+                AdminDetails::text('authors', __('publications.authors')),
+
+                AdminDetails::date('issued_on', __('publications.issued_on')),
+            ], wide: true),
+
+            AdminDetails::section(__('publications.article_descriptions'), [
+                AdminDetails::longText('description_en', __('publications.description_en')),
+
+                AdminDetails::longText('description_ar', __('publications.description_ar'))
+                    ->extraAttributes(['dir' => 'rtl'], merge: true),
+            ], wide: true),
+
+            AdminDetails::section(__('publications.article_publication'), [
+                AdminDetails::status('is_published', __('publications.status'), fn (bool $state): string => $state ? __('publications.published') : __('publications.unpublished'), fn (bool $state): string => $state ? 'success' : 'gray')
+                    ->state(fn (Article $record): bool => $record->isPublished()),
+
+                AdminDetails::dateTime('published_at', __('publications.published_at'))
+                    ->placeholder(__('publications.unpublished')),
+
+                AdminDetails::text('download_count', __('publications.download_count')),
+            ], wide: true),
         ]);
     }
 

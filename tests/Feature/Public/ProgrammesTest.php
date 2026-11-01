@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Domain\Enrollment\Data\PublicProgramme;
+use App\Domain\Enrollment\Enums\BatchStatus;
 use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Course;
 use App\Domain\Enrollment\Queries\PublicProgrammeCatalogue;
@@ -204,26 +205,28 @@ it('agrees with PricingService and effective_total_hours for the chosen batch', 
     }
 });
 
-it('chooses the earliest planned batch that has not started', function () {
+it('chooses the earliest planned or active batch that has not started', function () {
     $course = Course::factory()->create(['name_en' => 'Chosen Course', 'total_hours' => 40, 'default_price' => '1.000']);
 
-    // The one that must win: planned, in the future, the earliest of those.
-    Batch::factory()->for($course)->create(['start_date' => '2026-10-20', 'price' => '111.000', 'total_hours' => 11]);
+    // The one that must win: ACTIVE (an intake since P4-T42), in the future, the earliest of the
+    // planned and active ones. It used to lose to the planned 20 October batch because it was
+    // not planned; this assertion was changed deliberately with the owner's rule.
+    Batch::factory()->for($course)->active()->create(['start_date' => '2026-10-14', 'price' => '444.000', 'total_hours' => 44]);
     // Planned and later.
+    Batch::factory()->for($course)->create(['start_date' => '2026-10-20', 'price' => '111.000', 'total_hours' => 11]);
     Batch::factory()->for($course)->create(['start_date' => '2026-11-10', 'price' => '222.000', 'total_hours' => 22]);
     // Planned but already past.
     Batch::factory()->for($course)->create(['start_date' => '2026-09-01', 'price' => '333.000', 'total_hours' => 33]);
-    // Earlier than the winner and in the future, but not planned.
-    Batch::factory()->for($course)->active()->create(['start_date' => '2026-10-14', 'price' => '444.000', 'total_hours' => 44]);
-    Batch::factory()->for($course)->cancelled()->create(['start_date' => '2026-10-15', 'price' => '555.000', 'total_hours' => 55]);
-    Batch::factory()->for($course)->completed()->create(['start_date' => '2026-10-16', 'price' => '666.000', 'total_hours' => 66]);
+    // Earlier than the winner and in the future, but neither planned nor active.
+    Batch::factory()->for($course)->cancelled()->create(['start_date' => '2026-10-13', 'price' => '555.000', 'total_hours' => 55]);
+    Batch::factory()->for($course)->completed()->create(['start_date' => '2026-10-13', 'price' => '666.000', 'total_hours' => 66]);
 
     $card = programmeCardTexts((string) $this->get('/programmes')->assertOk()->getContent())['Chosen Course'];
 
-    expect($card)->toContain('111.000 LYD')->toContain('11 hours')->toContain('Starts 20 Oct 2026');
+    expect($card)->toContain('444.000 LYD')->toContain('44 hours')->toContain('Starts 14 Oct 2026');
 
-    foreach (['222', '333', '444', '555', '666'] as $other) {
-        expect(str_contains($card, "{$other}.000"))->toBeFalse("The card shows the {$other}.000 batch, which is not the next planned one.");
+    foreach (['111', '222', '333', '555', '666'] as $other) {
+        expect(str_contains($card, "{$other}.000"))->toBeFalse("The card shows the {$other}.000 batch, which is not the next intake.");
     }
 });
 
@@ -292,6 +295,200 @@ it('orders courses with an upcoming batch first, by start date then name, and th
     $names = array_keys(programmeCardTexts((string) $this->get('/programmes')->assertOk()->getContent()));
 
     expect($names)->toBe(['Aardvark Law', 'Contract Drafting', 'Late Course', 'Alpha Fallback', 'Zeta Fallback']);
+});
+
+/**
+ * Create an active course with one Active batch that started on $start (and ends on $end, if given).
+ *
+ * @param  array<string, mixed>  $course
+ * @param  array<string, mixed>  $batch
+ */
+function courseInSession(string $start, ?string $end, array $course = [], array $batch = []): Course
+{
+    $created = Course::factory()->create($course);
+    Batch::factory()->for($created)->active()->create(['start_date' => $start, 'end_date' => $end] + $batch);
+
+    return $created;
+}
+
+it('shows an Active batch that has not started exactly like a planned one, on the card and on the page', function () {
+    $course = courseWithBatch('2026-10-20',
+        ['name_en' => 'Active Intake', 'description_en' => 'Same text.', 'total_hours' => 60, 'default_price' => '100.000'],
+        ['price' => '1450.000', 'total_hours' => 48, 'status' => BatchStatus::Active],
+    );
+    $planned = courseWithBatch('2026-10-20',
+        ['name_en' => 'Planned Twin', 'description_en' => 'Same text.', 'total_hours' => 60, 'default_price' => '100.000'],
+        ['price' => '1450.000', 'total_hours' => 48],
+    );
+
+    foreach (['/', '/programmes'] as $path) {
+        $cards = programmeCardTexts((string) $this->get($path)->assertOk()->getContent());
+
+        expect($cards['Active Intake'])->toContain('48 hours')->toContain('1450.000 LYD')->toContain('Starts 20 Oct 2026')
+            ->not->toContain('No intake has been announced')->not->toContain('In session')
+            ->and(str_replace('Active Intake', 'Planned Twin', $cards['Active Intake']))->toBe($cards['Planned Twin']);
+    }
+
+    foreach ([$course, $planned] as $each) {
+        $text = programmePageText((string) $this->get('/programmes/'.$each->id)->assertOk()->getContent());
+
+        expect($text)->toContain('1450.000 LYD')->toContain('Starts 20 Oct 2026')->not->toContain('No intake has been announced');
+    }
+});
+
+it('lets planned and active batches compete for a card, and the earliest start wins', function () {
+    $course = Course::factory()->create(['name_en' => 'Competing Course', 'total_hours' => 40]);
+    Batch::factory()->for($course)->create(['start_date' => '2026-10-30', 'price' => '300.000']);
+    Batch::factory()->for($course)->active()->create(['start_date' => '2026-10-25', 'price' => '250.000']);
+    Batch::factory()->for($course)->create(['start_date' => '2026-11-20', 'price' => '350.000']);
+
+    $card = programmeCardTexts((string) $this->get('/programmes')->assertOk()->getContent())['Competing Course'];
+
+    expect($card)->toContain('250.000 LYD')->toContain('Starts 25 Oct 2026')->not->toContain('300.000')->not->toContain('350.000');
+
+    // Now a planned batch that starts sooner than the active one.
+    Batch::factory()->for($course)->create(['start_date' => '2026-10-18', 'price' => '180.000']);
+    $card = programmeCardTexts((string) $this->get('/programmes')->assertOk()->getContent())['Competing Course'];
+
+    expect($card)->toContain('180.000 LYD')->toContain('Starts 18 Oct 2026')->not->toContain('250.000');
+});
+
+it('says a programme is in session, since and until when, with no price, and keeps the contact call to action', function () {
+    $course = courseInSession('2026-09-01', '2026-12-15',
+        ['name_en' => 'Running Course', 'total_hours' => 30, 'default_price' => '777.777'],
+        ['price' => '888.888', 'total_hours' => 12],
+    );
+
+    foreach (['/', '/programmes'] as $path) {
+        $html = (string) $this->get($path)->assertOk()->getContent();
+        $card = programmeCardTexts($html)['Running Course'];
+
+        expect($card)->toContain('In session now: started 01 Sep 2026, runs until 15 Dec 2026')
+            ->toContain('Contact us about the next intake')
+            ->not->toContain('No intake has been announced')
+            ->and(programmeCardHtml($html, 'Running Course'))->toContain('href="'.url('/contact').'"')
+            ->and(str_contains($html, 'LYD'))->toBeFalse('A price is on the page for a course that only has a batch in session.')
+            ->and(str_contains($html, 'Starts'))->toBeFalse('A start date is promised for a course that only has a batch in session.')
+            ->and(str_contains($html, '888.888'))->toBeFalse('The running batch\'s price is on the page.')
+            ->and(str_contains($html, '777.777'))->toBeFalse('The course default price is on the page.');
+    }
+
+    $page = programmePageText((string) $this->get('/programmes/'.$course->id)->assertOk()->getContent());
+
+    expect($page)->toContain('In session now: started 01 Sep 2026, runs until 15 Dec 2026')
+        ->not->toContain('LYD')->not->toContain('No intake has been announced');
+});
+
+it('says only when it started when the batch in session has no end date', function () {
+    $course = courseInSession('2026-09-01', null, ['name_en' => 'Open Ended Course']);
+
+    $card = programmeCardTexts((string) $this->get('/programmes')->assertOk()->getContent())['Open Ended Course'];
+    $page = programmePageText((string) $this->get('/programmes/'.$course->id)->assertOk()->getContent());
+
+    foreach ([$card, $page] as $text) {
+        expect($text)->toContain('In session now: started 01 Sep 2026')->not->toContain('runs until')->not->toContain('No intake has been announced');
+    }
+});
+
+it('shows a batch in session on its last day, and the no-intake line once its end date has passed', function () {
+    courseInSession('2026-09-01', '2026-10-12', ['name_en' => 'Last Day Course']);
+    $over = courseInSession('2026-08-01', '2026-10-11', ['name_en' => 'Over Course']);
+
+    $cards = programmeCardTexts((string) $this->get('/programmes')->assertOk()->getContent());
+
+    expect($cards['Last Day Course'])->toContain('In session now: started 01 Sep 2026, runs until 12 Oct 2026')
+        ->and($cards['Over Course'])->toContain('No intake has been announced yet.')->not->toContain('In session')
+        ->and(programmePageText((string) $this->get('/programmes/'.$over->id)->assertOk()->getContent()))
+        ->toContain('No intake has been announced yet.')->not->toContain('In session');
+});
+
+it('shows the intake and not the session when a course has both', function () {
+    $course = courseInSession('2026-09-01', '2026-12-15', ['name_en' => 'Both Course', 'total_hours' => 30]);
+    Batch::factory()->for($course)->create(['start_date' => '2026-11-02', 'price' => '640.125', 'total_hours' => 24]);
+
+    $card = programmeCardTexts((string) $this->get('/programmes')->assertOk()->getContent())['Both Course'];
+    $page = programmePageText((string) $this->get('/programmes/'.$course->id)->assertOk()->getContent());
+
+    foreach ([$card, $page] as $text) {
+        expect($text)->toContain('640.125 LYD')->toContain('Starts 02 Nov 2026')->toContain('24 hours')
+            ->not->toContain('In session')->not->toContain('No intake has been announced');
+    }
+});
+
+it('never shows a completed or cancelled batch, or the batch of an inactive course, as in session', function () {
+    Batch::factory()->for(Course::factory()->create(['name_en' => 'Completed Course']))->completed()->create(['start_date' => '2026-09-01', 'end_date' => '2026-12-15']);
+    Batch::factory()->for(Course::factory()->create(['name_en' => 'Cancelled Course']))->cancelled()->create(['start_date' => '2026-09-01', 'end_date' => '2026-12-15']);
+    Batch::factory()->for(Course::factory()->create(['name_en' => 'Planned Past Course']))->create(['start_date' => '2026-09-01', 'end_date' => '2026-12-15']);
+    $retired = courseInSession('2026-09-01', '2026-12-15', ['name_en' => 'Retired Running Course', 'is_active' => false]);
+
+    $html = (string) $this->get('/programmes')->assertOk()->getContent();
+    $cards = programmeCardTexts($html);
+
+    expect(array_keys($cards))->toBe(['Cancelled Course', 'Completed Course', 'Planned Past Course'])
+        ->and(str_contains($html, 'In session'))->toBeFalse()
+        ->and(str_contains($html, 'Retired Running Course'))->toBeFalse();
+
+    $this->get('/programmes/'.$retired->id)->assertNotFound();
+});
+
+it('orders a programme in session after those with an intake and before those with nothing', function () {
+    Course::factory()->create(['name_en' => 'Aaa Nothing']);
+    courseInSession('2026-09-01', '2026-12-15', ['name_en' => 'Zzz Running']);
+    courseInSession('2026-09-02', null, ['name_en' => 'Mmm Running']);
+    courseWithBatch('2026-11-03', ['name_en' => 'Yyy Intake']);
+    Course::factory()->create(['name_en' => 'Bbb Nothing']);
+
+    $names = array_keys(programmeCardTexts((string) $this->get('/programmes')->assertOk()->getContent()));
+
+    expect($names)->toBe(['Yyy Intake', 'Mmm Running', 'Zzz Running', 'Aaa Nothing', 'Bbb Nothing']);
+});
+
+it('runs the same number of queries for two courses in session as for six', function () {
+    $counts = [];
+
+    foreach ([2, 6] as $total) {
+        while (Course::query()->count() < $total) {
+            $n = Course::query()->count();
+            $course = courseInSession('2026-09-01', '2026-12-15', ['name_en' => "Session Course {$n}"]);
+
+            if ($n % 2 === 0) {
+                Batch::factory()->for($course)->active()->create(['start_date' => '2026-11-01']);
+            }
+        }
+
+        $id = Course::query()->orderBy('id')->firstOrFail()->id;
+
+        foreach (['/', '/programmes', "/programmes/{$id}"] as $path) {
+            $counts[$path][$total] = count(sqlStatementsDuring(fn () => $this->get($path)->assertOk()));
+        }
+    }
+
+    $expected = ['/' => 3, '/programmes' => 2, "/programmes/{$id}" => 2];
+
+    foreach ($counts as $path => $byTotal) {
+        expect($byTotal[2])->toBe($byTotal[6], "{$path} runs more queries as courses are added.")
+            ->and($byTotal[6])->toBe($expected[$path]);
+    }
+});
+
+it('projects the session only for a course with no intake', function () {
+    $running = courseInSession('2026-09-01', '2026-12-15', ['name_en' => 'Projected Running', 'description_en' => 'Running description.', 'total_hours' => 30, 'default_price' => '555.000'], ['price' => '666.000']);
+    $openEnded = courseInSession('2026-09-02', null, ['name_en' => 'Projected Open', 'description_en' => 'Open description.', 'total_hours' => 20]);
+    $both = courseInSession('2026-09-03', '2026-12-20', ['name_en' => 'Projected Both', 'description_en' => 'Both description.', 'total_hours' => 10]);
+    Batch::factory()->for($both)->create(['start_date' => '2026-11-02', 'price' => '99.500', 'total_hours' => 8]);
+
+    $catalogue = app(PublicProgrammeCatalogue::class);
+
+    $expected = [
+        new PublicProgramme(id: $both->id, name: 'Projected Both', description: 'Both description.', hours: 8, price: '99.500', startDate: '2026-11-02', inSessionSince: null, inSessionUntil: null),
+        new PublicProgramme(id: $openEnded->id, name: 'Projected Open', description: 'Open description.', hours: 20, price: null, startDate: null, inSessionSince: '2026-09-02', inSessionUntil: null),
+        new PublicProgramme(id: $running->id, name: 'Projected Running', description: 'Running description.', hours: 30, price: null, startDate: null, inSessionSince: '2026-09-01', inSessionUntil: '2026-12-15'),
+    ];
+
+    expect($catalogue->cards())->toEqual($expected)
+        ->and($catalogue->find($both->id))->toEqual($expected[0])
+        ->and($catalogue->find($openEnded->id))->toEqual($expected[1])
+        ->and($catalogue->find($running->id))->toEqual($expected[2]);
 });
 
 it('shows the first four on the home page with a link to all of them, and every course on the programmes page', function () {
@@ -540,6 +737,10 @@ it('pins the public programme projection to its exact property list', function (
             'hours' => 'int',
             'price' => '?string',
             'startDate' => '?string',
+            // Added deliberately by P4-T42: whether a course with no intake is in session,
+            // since when and until when. Never filled when there is an intake.
+            'inSessionSince' => '?string',
+            'inSessionUntil' => '?string',
         ]);
 });
 

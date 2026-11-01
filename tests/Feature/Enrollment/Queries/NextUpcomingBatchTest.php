@@ -19,7 +19,9 @@ it('selects today and the lowest id on a tie and omits inactive courses', functi
     $this->travelTo(now()->setDateTime(2026, 10, 9, 22, 30));
     $course = Course::factory()->create(['is_active' => true, 'total_hours' => 40, 'default_price' => '123.456']);
     Batch::factory()->for($course)->create(['start_date' => '2026-10-09']);
-    foreach ([BatchStatus::Active, BatchStatus::Cancelled, BatchStatus::Completed] as $status) {
+    // An Active batch with a future start IS an intake since P4-T42 (see the tests below), so it
+    // no longer belongs among the statuses that never count.
+    foreach ([BatchStatus::Cancelled, BatchStatus::Completed] as $status) {
         Batch::factory()->for($course)->create(['start_date' => '2026-10-10', 'status' => $status]);
     }
     $first = Batch::factory()->for($course)->create(['start_date' => '2026-10-10', 'total_hours' => null, 'price' => null]);
@@ -77,6 +79,133 @@ it('loads one or twenty course cards in one statement', function () {
         $counts[] = count(DB::getQueryLog());
         DB::disableQueryLog();
     }
+    expect($counts)->toBe([1, 1]);
+});
+
+/*
+|--------------------------------------------------------------------------
+| An Active batch is an intake, and a batch in session is reported (P4-T42)
+|--------------------------------------------------------------------------
+|
+| Today is 2026-10-12 (centre calendar) in every test below, and every date is a
+| literal, so each expected value is written out by hand.
+*/
+
+/**
+ * One active course with the given batches, read back through the query.
+ *
+ * @param  list<array<string, mixed>>  $batches  attributes for Batch::factory(), each with a 'state' key naming the factory state
+ * @return array{intake: array<string, mixed>|null, in_session: array{start_date: string, end_date: string|null}|null}
+ */
+function nextUpcomingCardFor(array $batches): array
+{
+    $course = Course::factory()->create(['is_active' => true, 'default_price' => '10.000', 'total_hours' => 20]);
+
+    foreach ($batches as $attributes) {
+        $state = $attributes['state'] ?? 'planned';
+        unset($attributes['state']);
+        $factory = Batch::factory()->for($course);
+        // Planned is the factory's default and has no state of its own.
+        ($state === 'planned' ? $factory : $factory->{$state}())->create($attributes);
+    }
+
+    return app(NextUpcomingBatch::class)->forCoursesWithSessions()[$course->id];
+}
+
+it('treats an Active batch starting today or later as an intake, competing with Planned ones by start date', function () {
+    $this->travelTo(CarbonImmutable::parse('2026-10-12 12:00:00', 'UTC'));
+
+    $course = Course::factory()->create(['is_active' => true]);
+    Batch::factory()->for($course)->create(['start_date' => '2026-10-30', 'price' => '300.000']);
+    $active = Batch::factory()->for($course)->active()->create(['start_date' => '2026-10-20', 'price' => '200.000']);
+    Batch::factory()->for($course)->create(['start_date' => '2026-11-15', 'price' => '400.000']);
+
+    $card = app(NextUpcomingBatch::class)->forCourses()[$course->id];
+
+    expect($card['batch_id'])->toBe($active->id)
+        ->and($card['start_date'])->toBe('2026-10-20')
+        ->and($card['price']->toDecimal())->toBe('200.000');
+
+    // A Planned batch that starts earlier beats the Active one; on the same day the lowest id wins.
+    $earlier = Batch::factory()->for($course)->create(['start_date' => '2026-10-15']);
+    expect(app(NextUpcomingBatch::class)->forCourses()[$course->id]['batch_id'])->toBe($earlier->id);
+
+    $sameDay = Course::factory()->create(['is_active' => true]);
+    $lowest = Batch::factory()->for($sameDay)->active()->create(['start_date' => '2026-10-20']);
+    Batch::factory()->for($sameDay)->create(['start_date' => '2026-10-20']);
+    expect(app(NextUpcomingBatch::class)->forCourses()[$sameDay->id]['batch_id'])->toBe($lowest->id);
+});
+
+it('reports the Active batch that started in the past and has not ended as in session, with its dates', function () {
+    $this->travelTo(CarbonImmutable::parse('2026-10-12 12:00:00', 'UTC'));
+
+    $withEnd = nextUpcomingCardFor([['state' => 'active', 'start_date' => '2026-09-01', 'end_date' => '2026-12-15']]);
+    $withoutEnd = nextUpcomingCardFor([['state' => 'active', 'start_date' => '2026-09-05', 'end_date' => null]]);
+    // The end date is inclusive: a batch whose last day is today is still running.
+    $lastDay = nextUpcomingCardFor([['state' => 'active', 'start_date' => '2026-09-05', 'end_date' => '2026-10-12']]);
+
+    expect($withEnd['intake'])->toBeNull()
+        ->and($withEnd['in_session'])->toBe(['start_date' => '2026-09-01', 'end_date' => '2026-12-15'])
+        ->and($withoutEnd['in_session'])->toBe(['start_date' => '2026-09-05', 'end_date' => null])
+        ->and($lastDay['in_session'])->toBe(['start_date' => '2026-09-05', 'end_date' => '2026-10-12']);
+});
+
+it('does not report a batch in session once its end date has passed, or a batch that is not Active', function () {
+    $this->travelTo(CarbonImmutable::parse('2026-10-12 12:00:00', 'UTC'));
+
+    foreach ([
+        'ended yesterday' => [['state' => 'active', 'start_date' => '2026-08-01', 'end_date' => '2026-10-11']],
+        'planned and past' => [['state' => 'planned', 'start_date' => '2026-09-01', 'end_date' => '2026-12-15']],
+        'completed' => [['state' => 'completed', 'start_date' => '2026-09-01', 'end_date' => '2026-12-15']],
+        'cancelled' => [['state' => 'cancelled', 'start_date' => '2026-09-01', 'end_date' => '2026-12-15']],
+        // It starts today, so it is an intake and not a batch in session.
+        'active, starting today' => [['state' => 'active', 'start_date' => '2026-10-12', 'end_date' => '2026-12-15']],
+    ] as $label => $batches) {
+        $card = nextUpcomingCardFor($batches);
+
+        expect($card['in_session'])->toBeNull($label);
+    }
+});
+
+it('reports the batch that started most recently when several are in session, and both an intake and a session when a course has both', function () {
+    $this->travelTo(CarbonImmutable::parse('2026-10-12 12:00:00', 'UTC'));
+
+    $several = nextUpcomingCardFor([
+        ['state' => 'active', 'start_date' => '2026-08-01', 'end_date' => '2026-12-01'],
+        ['state' => 'active', 'start_date' => '2026-09-20', 'end_date' => '2027-01-01'],
+        ['state' => 'active', 'start_date' => '2026-09-10', 'end_date' => null],
+    ]);
+    $both = nextUpcomingCardFor([
+        ['state' => 'active', 'start_date' => '2026-09-01', 'end_date' => '2026-12-15'],
+        ['state' => 'planned', 'start_date' => '2026-11-02', 'end_date' => '2027-02-01', 'price' => '321.000'],
+    ]);
+
+    expect($several['in_session'])->toBe(['start_date' => '2026-09-20', 'end_date' => '2027-01-01'])
+        ->and($both['intake']['start_date'])->toBe('2026-11-02')
+        ->and($both['intake']['price']->toDecimal())->toBe('321.000')
+        ->and($both['in_session'])->toBe(['start_date' => '2026-09-01', 'end_date' => '2026-12-15']);
+});
+
+it('still reads twenty courses, each with a batch in session and an intake, in one statement', function () {
+    $this->travelTo(CarbonImmutable::parse('2026-10-12 12:00:00', 'UTC'));
+    $counts = [];
+
+    foreach ([1, 20] as $size) {
+        while (Course::query()->count() < $size) {
+            $course = Course::factory()->create(['is_active' => true]);
+            Batch::factory()->for($course)->active()->create(['start_date' => '2026-09-01']);
+            Batch::factory()->for($course)->active()->create(['start_date' => '2026-11-01']);
+        }
+
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        $cards = app(NextUpcomingBatch::class)->forCoursesWithSessions();
+        $counts[] = count(DB::getQueryLog());
+        DB::disableQueryLog();
+
+        expect($cards)->toHaveCount($size);
+    }
+
     expect($counts)->toBe([1, 1]);
 });
 

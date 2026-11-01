@@ -214,8 +214,9 @@ it('exposes no price field on the view page', function () {
 
     Livewire::actingAs(($this->makeUser)('admin'))
         ->test(ViewCourse::class, ['record' => $course->getKey()])
-        ->assertFormFieldExists('total_hours')
-        ->assertFormFieldDoesNotExist('default_price');
+        // An infolist since P4-T42 (was the form switched to disabled).
+        ->assertSchemaComponentVisible('total_hours', 'infolist')
+        ->assertSchemaComponentHidden('default_price', 'infolist');
 });
 
 it('lets a super admin set the default price when creating a course', function () {
@@ -240,7 +241,7 @@ it('lets a super admin view and change a course default price', function () {
 
     Livewire::actingAs($superAdmin)
         ->test(ViewCourse::class, ['record' => $course->getKey()])
-        ->assertFormFieldExists('default_price');
+        ->assertSchemaComponentVisible('default_price', 'infolist');
 
     Livewire::actingAs($superAdmin)
         ->test(EditCourse::class, ['record' => $course->getKey()])

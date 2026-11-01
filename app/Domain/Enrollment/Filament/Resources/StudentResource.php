@@ -21,6 +21,7 @@ use App\Domain\Staff\Exceptions\ProtectedAccountException;
 use App\Domain\Staff\Exceptions\StudentHasNoEmailException;
 use App\Domain\Staff\Exceptions\StudentHasNoPortalAccountException;
 use App\Domain\Staff\Exceptions\StudentHasPortalAccountException;
+use App\Filament\Details\AdminDetails;
 use App\Filament\Tables\AdminColumns;
 use App\Filament\Tables\AdminTable;
 use App\Models\User;
@@ -203,6 +204,55 @@ class StudentResource extends Resource
                         ],
                     ];
                 })->visible(fn (string $operation): bool => $operation !== 'view'),
+        ]);
+    }
+
+    /**
+     * The read-only record: the same facts as the form, as text in cards (P4-T42).
+     *
+     * A separate schema from the form, not the form switched to disabled: a greyed-out
+     * input looks like something you could type in, and the form's live consequences
+     * panel has no place on a page that changes nothing.
+     */
+    public static function infolist(Schema $schema): Schema
+    {
+        return AdminDetails::schema($schema, [
+            AdminDetails::section(__('enrollment.identity'), [
+                AdminDetails::code('student_code', __('enrollment.student_code')),
+
+                AdminDetails::status('status', __('enrollment.status'), fn (StudentStatus $state): string => $state->label(), fn (StudentStatus $state): string => match ($state) {
+                    StudentStatus::Active => 'success',
+                    StudentStatus::Graduated => 'info',
+                    default => 'gray',
+                }),
+
+                AdminDetails::text('first_name', __('enrollment.first_name')),
+
+                AdminDetails::text('last_name', __('enrollment.last_name')),
+            ]),
+
+            AdminDetails::section(__('enrollment.contact'), [
+                AdminDetails::text('email', __('enrollment.email')),
+
+                AdminDetails::text('phone', __('enrollment.phone')),
+
+                AdminDetails::longText('address', __('enrollment.address')),
+            ]),
+
+            AdminDetails::section(__('enrollment.records'), [
+                AdminDetails::text('national_id', __('enrollment.national_id')),
+
+                AdminDetails::date('date_of_birth', __('enrollment.date_of_birth')),
+
+                AdminDetails::text('gender', __('enrollment.gender'))
+                    ->formatStateUsing(fn (?string $state): ?string => match ($state) {
+                        'male' => __('enrollment.gender_male'),
+                        'female' => __('enrollment.gender_female'),
+                        default => null,
+                    }),
+
+                AdminDetails::longText('notes', __('enrollment.notes')),
+            ], wide: true),
         ]);
     }
 

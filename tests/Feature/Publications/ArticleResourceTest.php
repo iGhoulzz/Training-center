@@ -754,12 +754,15 @@ it('tells the administrator and changes nothing when the disk cannot take a repl
 */
 
 it('shows a view-only actor the article without a way to change it', function () {
-    $article = Article::factory()->create(['title_en' => 'Read only title']);
+    $article = Article::factory()->create(['title_en' => 'Read only title', 'authors' => 'Read Only Author']);
 
     Livewire::actingAs(($this->actorWith)('view_any_article', 'view_article'))
         ->test(ViewArticle::class, ['record' => $article->getKey()])
         ->assertSuccessful()
-        ->assertFormSet(['title_en' => 'Read only title'])
+        // An infolist since P4-T42 (was the form switched to disabled). The page heading already prints
+        // the title, so the detail card is proven by the title entry itself and by the authors line.
+        ->assertSchemaComponentVisible('title_en', 'infolist')
+        ->assertSee('Read Only Author')
         ->assertActionHidden('edit');
 
     Livewire::actingAs($this->admin)

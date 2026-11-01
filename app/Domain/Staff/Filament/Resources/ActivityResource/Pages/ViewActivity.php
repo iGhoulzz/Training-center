@@ -5,9 +5,8 @@ declare(strict_types=1);
 namespace App\Domain\Staff\Filament\Resources\ActivityResource\Pages;
 
 use App\Domain\Staff\Filament\Resources\ActivityResource;
-use Filament\Infolists\Components\TextEntry;
+use App\Filament\Details\AdminDetails;
 use Filament\Resources\Pages\ViewRecord;
-use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 use Spatie\Activitylog\Models\Activity;
 
@@ -29,45 +28,34 @@ class ViewActivity extends ViewRecord
 
     public function infolist(Schema $schema): Schema
     {
-        return $schema->components([
-            Section::make(__('activity.activity'))->columns(2)->columnSpanFull()->schema([
-                TextEntry::make('created_at')
-                    ->label(__('activity.when'))
-                    ->dateTime(),
+        return AdminDetails::schema($schema, [
+            AdminDetails::section(__('activity.activity'), [
+                AdminDetails::dateTime('created_at', __('activity.when')),
 
-                TextEntry::make('causer_name')
-                    ->label(__('activity.who'))
+                AdminDetails::person('causer_name', __('activity.who'))
                     ->state(fn (Activity $record): string => ActivityResource::actorLabel($record)),
 
-                TextEntry::make('event')
-                    ->label(__('activity.action'))
-                    ->state(fn (Activity $record): string => ActivityResource::eventLabel($record->event))
-                    ->badge(),
+                AdminDetails::status('event', __('activity.action'))
+                    ->state(fn (Activity $record): string => ActivityResource::eventLabel($record->event)),
 
-                TextEntry::make('subject_type')
-                    ->label(__('activity.record'))
+                AdminDetails::text('subject_type', __('activity.record'))
                     ->state(fn (Activity $record): string => ActivityResource::subjectLabel($record)),
 
-                TextEntry::make('log_name')
-                    ->label(__('activity.log')),
+                AdminDetails::text('log_name', __('activity.log')),
 
-                TextEntry::make('properties.ip')
-                    ->label(__('activity.ip'))
+                AdminDetails::text('properties.ip', __('activity.ip'))
                     ->placeholder(__('activity.no_ip')),
-            ]),
+            ], wide: true),
 
-            Section::make(__('activity.changes'))->columnSpanFull()->schema([
-
-                TextEntry::make('attribute_changes')
-                    ->label(__('activity.changes'))
+            AdminDetails::section(__('activity.changes'), [
+                AdminDetails::longText('attribute_changes', __('activity.changes'))
                     ->state(fn (Activity $record): string => ActivityResource::describeChanges($record))
-                    ->extraAttributes(['class' => 'font-mono whitespace-pre-line break-words']),
+                    ->extraAttributes(['class' => 'font-mono'], merge: true),
 
-                TextEntry::make('properties')
-                    ->label(__('activity.details'))
+                AdminDetails::longText('properties', __('activity.details'))
                     ->state(fn (Activity $record): string => ActivityResource::describeProperties($record))
-                    ->extraAttributes(['class' => 'font-mono whitespace-pre-line break-words']),
-            ]),
+                    ->extraAttributes(['class' => 'font-mono'], merge: true),
+            ], wide: true),
         ]);
     }
 }

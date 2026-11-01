@@ -7,8 +7,10 @@
     a white card, and the ask section.
 
     The facts are programme-facts, the same component the card uses: hours always, and
-    price and start date only when NextUpcomingBatch found a planned batch. Without one
-    there is no price and no date, only the contact call to action. No seats, capacity or
+    price and start date only when NextUpcomingBatch found an intake (a Planned or Active
+    batch that has not started). Without one there is no price and no date, only the line
+    that says the programme is in session now when a batch is running (P4-T42), and the
+    contact call to action. No seats, capacity or
     enrolment count, and nothing on the course's own default price: a price with no batch
     behind it is a promise the centre has not made.
 --}}

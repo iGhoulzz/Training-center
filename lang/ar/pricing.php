@@ -16,6 +16,8 @@ return [
     'percentage_suffix' => '%',
     'percentage_value' => ':percentage%',
     'active' => 'نشط',
+    'inactive' => 'غير نشط',
+    'status' => 'الحالة',
     'create_discount' => 'خصم جديد',
     'view_discount' => 'عرض الخصم',
     'deactivate_discount' => 'تعطيل',

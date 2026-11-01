@@ -52,6 +52,10 @@ return [
     'replacement_pdf_file' => 'استبدال ملف PDF',
     'replacement_pdf_file_help' => 'يُترك هذا الحقل فارغًا للإبقاء على الملف الحالي. يحل الملف الجديد محل القديم لدى القرّاء بمجرد الحفظ. مستند PDF لا يتجاوز حجمه :megabytes ميغابايت.',
     'original_filename' => 'اسم الملف',
+    'article_details' => 'تفاصيل المقال',
+    'article_descriptions' => 'الأوصاف',
+    'article_document' => 'المستند',
+    'article_publication' => 'النشر',
 
     // The list.
     'status' => 'الحالة',
