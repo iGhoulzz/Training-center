@@ -19,7 +19,9 @@ use App\Domain\Finance\Support\Money;
  * and `effective_total_hours` for the batch it chose, so this class never works a
  * price out for itself and cannot disagree with the billing screens about what a
  * batch costs. A course with NO upcoming batch has no intake: its programme shows
- * the course's own `total_hours`, with no price and no date.
+ * the course's own `total_hours`, with no price and no date. If that course is
+ * running an Active batch (P4-T42), the programme says it is in session, since
+ * and until when, and still shows no price.
  *
  * NO MODEL LEAVES THIS CLASS. Every course is turned into a PublicProgramme by
  * the one private method below, which names each property, so a column added to
@@ -44,28 +46,31 @@ final class PublicProgrammeCatalogue
      * Every active course, in display order.
      *
      * Courses with an upcoming batch come first, by start date and then by name;
-     * the courses with none follow, by name. Two courses that tie on both fall
-     * back to their id, so the order never depends on how the database happened
-     * to return them.
+     * the courses in session with no upcoming batch follow, by name; the courses
+     * with neither come last, by name. Two courses that tie on all of it fall back
+     * to their id, so the order never depends on how the database happened to
+     * return them.
      *
      * @return list<PublicProgramme>
      */
     public function cards(): array
     {
-        $intakes = $this->nextBatches->forCourses();
+        $cards = $this->nextBatches->forCoursesWithSessions();
 
         $programmes = Course::query()
             ->active()
             ->get(self::COURSE_COLUMNS)
-            ->map(fn (Course $course): PublicProgramme => $this->project($course, $intakes[(int) $course->getKey()] ?? null))
+            ->map(fn (Course $course): PublicProgramme => $this->project($course, $cards[(int) $course->getKey()] ?? null))
             ->values()
             ->all();
 
         usort($programmes, function (PublicProgramme $first, PublicProgramme $second): int {
-            // A course with a date sorts before one without; null <=> null is equal,
-            // which sends two with no intake on to the name.
-            if (($first->startDate === null) !== ($second->startDate === null)) {
-                return $first->startDate === null ? 1 : -1;
+            // Three tiers: an intake, then in session with none, then nothing. Inside
+            // a tier, null <=> null is equal, which sends two with no date on to the name.
+            $tiers = $this->tier($first) <=> $this->tier($second);
+
+            if ($tiers !== 0) {
+                return $tiers;
             }
 
             return ($first->startDate <=> $second->startDate)
@@ -86,7 +91,7 @@ final class PublicProgrammeCatalogue
      */
     public function find(int $id): ?PublicProgramme
     {
-        $intakes = $this->nextBatches->forCourses();
+        $cards = $this->nextBatches->forCoursesWithSessions();
 
         $course = Course::query()
             ->active()
@@ -94,18 +99,32 @@ final class PublicProgrammeCatalogue
             ->first(self::COURSE_COLUMNS);
 
         return $course instanceof Course
-            ? $this->project($course, $intakes[(int) $course->getKey()] ?? null)
+            ? $this->project($course, $cards[(int) $course->getKey()] ?? null)
             : null;
+    }
+
+    /** 0 with an intake, 1 in session with none, 2 with neither. */
+    private function tier(PublicProgramme $programme): int
+    {
+        return match (true) {
+            $programme->startDate !== null => 0,
+            $programme->inSessionSince !== null => 1,
+            default => 2,
+        };
     }
 
     /**
      * The one place a course becomes a public programme: each property named, and
      * nothing handed over wholesale.
      *
-     * @param  array{batch_id: int, batch_code: string, start_date: string, price: Money, hours: int}|null  $intake  NextUpcomingBatch's entry for the course.
+     * @param  array{intake: array{batch_id: int, batch_code: string, start_date: string, price: Money, hours: int}|null, in_session: array{start_date: string, end_date: string|null}|null}|null  $card  NextUpcomingBatch's entry for the course.
      */
-    private function project(Course $course, ?array $intake): PublicProgramme
+    private function project(Course $course, ?array $card): PublicProgramme
     {
+        $intake = $card['intake'] ?? null;
+        // Only a course with no intake is described as in session: one story per card.
+        $inSession = $intake === null ? ($card['in_session'] ?? null) : null;
+
         return new PublicProgramme(
             id: (int) $course->getKey(),
             name: $course->name(),
@@ -113,6 +132,8 @@ final class PublicProgrammeCatalogue
             hours: $intake['hours'] ?? (int) $course->total_hours,
             price: $intake === null ? null : $intake['price']->toDecimal(),
             startDate: $intake['start_date'] ?? null,
+            inSessionSince: $inSession['start_date'] ?? null,
+            inSessionUntil: $inSession['end_date'] ?? null,
         );
     }
 }

@@ -17,7 +17,7 @@ is answered in the body; this table only says where.
 | P1 — the design handoff is untracked, so no worktree or reviewer can see it | New **T19**, in Wave 1: a cleaned copy is committed, reviewed by the owner before it is pushed, because this repository is public |
 | P2 — "certificates due this month" has no rule | **Dropped from phase 4** by the owner. T09 builds the one queue the data can define |
 | P2 — "no session for anonymous visitors" against the `web` group | T11 specifies which routes are sessionless and how, and leaves the verifier and every sign-in path on the full `web` stack |
-| P2 — which Batch a programme card shows | The owner decided: **the next upcoming batch**, with a defined fallback (T05, T12) |
+| P2 — which Batch a programme card shows | The owner decided: **the next upcoming batch** (Planned or Active, not yet started), with a defined fallback (T05, T12, T42) |
 | Wording — the verifier cannot make enumeration impossible | Corrected below |
 
 Task numbers are kept from round 1 so the review's references stay valid; the new
@@ -79,7 +79,7 @@ assumption.
 | **An expense counts in the month it was paid** | 2026-10-08 | One local calendar date per expense, `paid_on`. Rent paid on 1 October for the quarter counts wholly in October. No incurred date, no spreading across months. Matches revenue, which is already cash basis (§8) |
 | **Publications: in** | 2026-10-08 | A public PDF library. Genuinely new domain scope — a model, uploads, public file serving, a download counter. Requires amendments to §5, §6 and §12 |
 | **The public programme cards show price, start date, hours and description** | 2026-10-08 | **Not seats remaining.** The owner confirmed all four fields and then reversed on seats the same day: a quiet batch showing 2 of 20 taken broadcasts how full the centre is. The prototype's "seats left" pill is not built |
-| **A programme card shows the course's next upcoming batch** | 2026-10-08 | Rule in T05. With no upcoming batch the card shows the course without a date or price, and a contact call to action |
+| **A programme card shows the course's next upcoming batch** | 2026-10-08 | Rule in T05, amended 2026-11-01 (T42): a Planned **or Active** batch that has not started is an upcoming batch. With none, the card shows the course without a date or price, and a contact call to action. A batch already in session is shown as such (no price) |
 | **Three new admin surfaces are in** | 2026-10-08 | Finance hub, export history, report charts, and **one** certificate queue — completed but not yet issued |
 | **"Certificates due this month" is out of phase 4** | 2026-10-08 | Nothing in the data defines when a certificate falls due, and inventing a rule for a queue was not worth it. Recorded so it does not return as an assumption |
 | **The verifier keeps its identical not-found response** | 2026-10-08 | The design's distinct "enter a reference" message is handled **client-side**, before anything is submitted |
@@ -516,7 +516,7 @@ already lives in a model, an enum or a service, and only the selection is new.
   **The predicate stays the single definition** — a test runs both over the same
   fixture, so a drift fails.
 - **The next upcoming batch for each course** (the owner's rule for T12): among
-  the course's batches with status `planned` and `start_date` on or after the
+  the course's batches with status `planned` **or `active`** (T42) and `start_date` on or after the
   centre-local today, the earliest `start_date`, ties broken by lowest `id`.
   An inactive course has no card. Price comes from
   `PricingService::priceForBatch()` and hours from `effective_total_hours` —
@@ -2447,6 +2447,17 @@ read-only cards. The Article and Discount forms skipped the section-card pattern
     lacks. The submitted state is whitelisted against the drawn boxes, and writes
     still go through `UpdateRolePermissionsAction` and `RolePolicy`, unchanged. No
     permission is created or deleted.
+
+- **Public programmes: an Active batch counts as an intake; a batch in session
+  is shown as such** (owner request, 2026-11-01). `NextUpcomingBatch` takes the
+  earliest Planned or Active batch starting today or later (ties to the lowest id)
+  and shows its price and start date. When a course has no such intake but an
+  Active batch that started in the past and has no end date or one of today or
+  later, the programme (card and page) says "In session now: started {date}", with
+  ", runs until {date}" when there is an end date, and no price; the contact call
+  to action stays. With an intake and a batch in session, only the intake is shown.
+  A batch in session whose end date has passed counts as no intake. Still one query
+  for every course. `PublicProgramme` gains `inSessionSince` and `inSessionUntil`.
 
 **Tests.**
 - `AdminDetailsTest`: every View page in English and Arabic, with no disabled

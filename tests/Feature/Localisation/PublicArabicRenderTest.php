@@ -409,7 +409,26 @@ function publicArabicRenderedPages(TestCase $test): array
         'default_price' => '300.000',
     ]);
 
-    array_push($fixtures, 'Basalt Alpha', 'بازلت ألفا', 'Alpha syllabus.', 'منهج ألفا.', 'Basalt Beta', 'بازلت بيتا', 'Beta syllabus.', 'منهج بيتا.');
+    // Two programmes in session with no intake (P4-T42): one with an end date, one without.
+    $inSessionUntil = Course::factory()->create([
+        'name_en' => 'Basalt Gamma',
+        'name_ar' => 'بازلت غاما',
+        'description_en' => 'Gamma syllabus.',
+        'description_ar' => 'منهج غاما.',
+        'total_hours' => 30,
+    ]);
+    Batch::factory()->for($inSessionUntil)->active()->create(['start_date' => '2026-09-01', 'end_date' => '2026-12-15']);
+
+    $inSession = Course::factory()->create([
+        'name_en' => 'Basalt Delta',
+        'name_ar' => 'بازلت دلتا',
+        'description_en' => 'Delta syllabus.',
+        'description_ar' => 'منهج دلتا.',
+        'total_hours' => 20,
+    ]);
+    Batch::factory()->for($inSession)->active()->create(['start_date' => '2026-09-05', 'end_date' => null]);
+
+    array_push($fixtures, 'Basalt Alpha', 'بازلت ألفا', 'Alpha syllabus.', 'منهج ألفا.', 'Basalt Beta', 'بازلت بيتا', 'Beta syllabus.', 'منهج بيتا.', 'Basalt Gamma', 'بازلت غاما', 'Gamma syllabus.', 'منهج غاما.', 'Basalt Delta', 'بازلت دلتا', 'Delta syllabus.', 'منهج دلتا.');
 
     foreach ([
         'home' => '/',
@@ -417,6 +436,8 @@ function publicArabicRenderedPages(TestCase $test): array
         'programmes' => '/programmes',
         'programme with an intake' => "/programmes/{$withIntake->getKey()}",
         'programme without an intake' => "/programmes/{$withoutIntake->getKey()}",
+        'programme in session until a date' => "/programmes/{$inSessionUntil->getKey()}",
+        'programme in session, open ended' => "/programmes/{$inSession->getKey()}",
         'publications' => '/publications',
         'publications, second page' => '/publications?page=2',
         'publications in a topic' => '/publications?topic=Quartz',
@@ -536,6 +557,8 @@ it('finds the English text on the same pages in English, so the search is not bl
         'verify.not_found_body',
         'public.programmes.starts',
         'public.programmes.no_intake',
+        'public.programmes.in_session',
+        'public.programmes.in_session_until',
         'public.programmes.empty',
         'publications.public.count_in_topic_matching',
         'publications.public.empty_library',
@@ -680,6 +703,18 @@ it('shows the Arabic plural form that belongs to each count, on the library and 
 | The search's own self-tests: each must fail a planted sample
 |--------------------------------------------------------------------------
 */
+
+it('writes the in-session line on an Arabic programme with the reader\'s own months, and the no-end form without an end', function () {
+    $rendered = publicArabicRenderedPages($this);
+    $page = fn (string $label): string => implode(' ', publicArabicReadableStrings($rendered['pages']['ar'][$label]));
+
+    // Written by hand from lang/ar/public.php and Carbon's Arabic month names, not read back
+    // from the catalogue: the fixtures start on 2026-09-01 / 2026-09-05 and end on 2026-12-15.
+    expect($page('programme in session until a date'))->toContain('تُعقد حاليًا — بدأت في 01 سبتمبر 2026 وتستمر حتى 15 ديسمبر 2026')
+        ->and($page('programme in session, open ended'))->toContain('تُعقد حاليًا — بدأت في 05 سبتمبر 2026')
+        ->not->toContain('وتستمر حتى')
+        ->and($page('programme in session, open ended'))->not->toContain('LYD')->not->toContain('د.ل');
+});
 
 it('reads text and the attributes that carry words, and not code or addresses', function () {
     $html = '<html><head><title>The title</title><style>.a { content: "STYLE-BODY"; }</style>'

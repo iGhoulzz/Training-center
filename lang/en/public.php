@@ -154,8 +154,9 @@ return [
     | Draft copy pending the owner's text (2026-10-12): replace freely; keep the keys.
     |
     | Programmes. The card and the programme page show only what is public: the
-    | name, the description, the hours and, when an intake is planned, its price and
-    | start date. A course with no planned intake shows neither a date nor a price,
+    | name, the description, the hours and, when an intake is planned (a Planned or
+    | an Active batch that has not started), its price and start date. A course with no
+    | intake that is running a batch says it is in session, with no price. A course with no planned intake shows neither a date nor a price,
     | because a price with no intake behind it is a promise the centre has not made.
     | There are no seats or places anywhere: how many are taken is not public.
     */
@@ -174,6 +175,11 @@ return [
         'date_format' => 'd M Y',
 
         'no_intake' => 'No intake has been announced yet.',
+
+        // A programme with no intake that is running a batch now (P4-T42): the second
+        // form is used when that batch has an end date.
+        'in_session' => 'In session now: started :since',
+        'in_session_until' => 'In session now: started :since, runs until :until',
         'contact_cta' => 'Contact us about the next intake',
 
         'back' => 'All programmes',

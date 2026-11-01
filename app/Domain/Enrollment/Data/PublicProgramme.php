@@ -24,15 +24,21 @@ namespace App\Domain\Enrollment\Data;
  * planned, its price and start date. Seats, capacity, enrolments, the course code
  * and the course's own default price are ABSENT ON PURPOSE.
  *
- * WHERE THE VALUES COME FROM. `price` and `startDate` come from the next planned
- * batch, whose price PricingService has already worked out, so this class never
- * calculates a price. `hours` are that batch's effective hours, or the course's
- * own `total_hours` when no intake is planned.
+ * WHERE THE VALUES COME FROM. `price` and `startDate` come from the next intake (a
+ * Planned or an Active batch that has not started), whose price PricingService has
+ * already worked out, so this class never calculates a price. `hours` are that
+ * batch's effective hours, or the course's own `total_hours` when there is no intake.
  *
- * A COURSE WITH NO PLANNED INTAKE HAS NO PRICE AND NO DATE. `price` and
- * `startDate` are null together, and a template that reads them tests for null,
- * so a blank price can never look like a real one: a price with no batch behind it
- * is a promise the centre has not made.
+ * A COURSE WITH NO INTAKE HAS NO PRICE AND NO DATE. `price` and `startDate` are null
+ * together, and a template that reads them tests for null, so a blank price can
+ * never look like a real one: a price with no batch behind it is a promise the
+ * centre has not made.
+ *
+ * A COURSE WITH NO INTAKE MAY BE IN SESSION (P4-T42). `inSessionSince` and
+ * `inSessionUntil` describe the Active batch it is running now, and they are filled
+ * ONLY when there is no intake, so a card never carries two stories. `inSessionSince`
+ * is the batch's start date; `inSessionUntil` its end date, null when it has none.
+ * Neither ever comes with a price: the running batch is not one a person can join.
  */
 final readonly class PublicProgramme
 {
@@ -42,6 +48,8 @@ final readonly class PublicProgramme
      * @param  int  $hours  The planned intake's hours, else the course's own total hours.
      * @param  string|null  $price  The planned intake's price as bare decimal digits ("1450.000"), null with no intake.
      * @param  string|null  $startDate  The planned intake's start date as Y-m-d, null with no intake.
+     * @param  string|null  $inSessionSince  Start date (Y-m-d) of the batch in session, null unless the course has no intake and one is running.
+     * @param  string|null  $inSessionUntil  End date (Y-m-d) of that batch, null when it has none or none is running.
      */
     public function __construct(
         public int $id,
@@ -50,5 +58,7 @@ final readonly class PublicProgramme
         public int $hours,
         public ?string $price,
         public ?string $startDate,
+        public ?string $inSessionSince = null,
+        public ?string $inSessionUntil = null,
     ) {}
 }
