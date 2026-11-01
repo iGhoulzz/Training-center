@@ -14,8 +14,9 @@ use Filament\Resources\Pages\ViewRecord;
  *
  * This page is what makes the staff role's view-only grant mean something:
  * without it the register would list students that front-desk staff could never
- * open. Filament renders the resource form disabled here, and
- * ViewRecord::authorizeAccess() aborts 403 unless StudentPolicy::view() passes.
+ * open. StudentResource::infolist() draws the record as read-only text in cards,
+ * not the form switched to disabled, and ViewRecord::authorizeAccess() aborts 403
+ * unless StudentPolicy::view() passes.
  */
 class ViewStudent extends ViewRecord
 {

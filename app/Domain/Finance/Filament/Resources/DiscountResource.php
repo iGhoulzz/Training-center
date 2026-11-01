@@ -11,6 +11,7 @@ use App\Domain\Finance\Filament\Resources\DiscountResource\Pages\CreateDiscount;
 use App\Domain\Finance\Filament\Resources\DiscountResource\Pages\ListDiscounts;
 use App\Domain\Finance\Filament\Resources\DiscountResource\Pages\ViewDiscount;
 use App\Domain\Finance\Models\Discount;
+use App\Filament\Details\AdminDetails;
 use App\Filament\Tables\AdminColumns;
 use App\Filament\Tables\AdminTable;
 use App\Models\User;
@@ -20,7 +21,7 @@ use Filament\Actions\DeleteAction;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
-use Filament\Schemas\Components\Text;
+use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\IconColumn;
@@ -52,21 +53,38 @@ final class DiscountResource extends Resource
 
     public static function form(Schema $schema): Schema
     {
-        return $schema->columns(2)->extraAttributes(['class' => 'rounded-[14px] bg-gray-900 p-5 ring-1 ring-hairline [&_.fi-input]:text-base! [&_.fi-select-input]:text-base!'])->components([
-            Text::make(__('pricing.discount_definition'))->columnSpanFull(),
-            Text::make(__('pricing.immutable_hint'))->columnSpanFull(),
-            TextInput::make('name')
-                ->label(__('pricing.discount_name'))
-                ->required()
-                ->maxLength(150)
-                ->unique(ignoreRecord: true),
+        return $schema->extraAttributes(['class' => '[&_.fi-input]:text-base! [&_.fi-select-input]:text-base!'])->components([
+            Section::make(__('pricing.discount_definition'))->description(__('pricing.immutable_hint'))->columns(2)->columnSpanFull()->schema([
+                TextInput::make('name')
+                    ->label(__('pricing.discount_name'))
+                    ->required()
+                    ->maxLength(150)
+                    ->unique(ignoreRecord: true),
 
-            TextInput::make('percentage')
-                ->label(__('pricing.discount_percentage'))
-                ->required()
-                ->inputMode('decimal')
-                ->rules(['numeric', 'decimal:0,2', 'min:0.01', 'max:100'])
-                ->suffix(__('pricing.percentage_suffix')),
+                TextInput::make('percentage')
+                    ->label(__('pricing.discount_percentage'))
+                    ->required()
+                    ->inputMode('decimal')
+                    ->rules(['numeric', 'decimal:0,2', 'min:0.01', 'max:100'])
+                    ->suffix(__('pricing.percentage_suffix')),
+            ]),
+        ]);
+    }
+
+    /** The read-only definition: the same facts as the form, plus whether it is still offered (P4-T42). */
+    public static function infolist(Schema $schema): Schema
+    {
+        return AdminDetails::schema($schema, [
+            AdminDetails::section(__('pricing.discount_definition'), [
+                AdminDetails::text('name', __('pricing.discount_name')),
+
+                AdminDetails::text('percentage', __('pricing.discount_percentage'))
+                    ->formatStateUsing(fn (?string $state): ?string => $state === null
+                        ? null
+                        : __('pricing.percentage_value', ['percentage' => $state])),
+
+                AdminDetails::status('is_active', __('pricing.status'), fn (bool $state): string => $state ? __('pricing.active') : __('pricing.inactive'), fn (bool $state): string => $state ? 'success' : 'gray'),
+            ], __('pricing.immutable_hint'), wide: true),
         ]);
     }
 

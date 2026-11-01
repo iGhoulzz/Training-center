@@ -16,6 +16,8 @@ return [
     'percentage_suffix' => '%',
     'percentage_value' => ':percentage%',
     'active' => 'Active',
+    'inactive' => 'Inactive',
+    'status' => 'Status',
     'create_discount' => 'New discount',
     'view_discount' => 'View discount',
     'deactivate_discount' => 'Deactivate',

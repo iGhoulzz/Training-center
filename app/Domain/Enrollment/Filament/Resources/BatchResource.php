@@ -17,6 +17,7 @@ use App\Domain\Enrollment\Filament\Resources\BatchResource\RelationManagers\Inst
 use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Course;
 use App\Domain\Finance\Support\Money;
+use App\Filament\Details\AdminDetails;
 use App\Filament\Tables\AdminTable;
 use App\Models\User;
 use BackedEnum;
@@ -327,6 +328,44 @@ class BatchResource extends Resource
                     ],
                 ];
             })->visible(fn (string $operation): bool => $operation !== 'view'),
+        ]);
+    }
+
+    /**
+     * The read-only intake details: the same facts as the form, as text in cards (P4-T42).
+     *
+     * Both cards start collapsed, as the details always have on this page: the hero above
+     * them already says the code, course, status, dates and seats. The price keeps the
+     * permission it has on the form (`manage_pricing`).
+     */
+    public static function infolist(Schema $schema): Schema
+    {
+        return AdminDetails::schema($schema, [
+            AdminDetails::section(__('enrollment.batch_details'), [
+                AdminDetails::code('course.code', __('enrollment.course')),
+
+                AdminDetails::code('code', __('enrollment.batch_code')),
+
+                AdminDetails::status('status', __('enrollment.status'), fn (BatchStatus $state): string => $state->label(), fn (BatchStatus $state): string => $state->isOpen() ? 'success' : 'gray'),
+            ], wide: true)->collapsible()->collapsed(),
+
+            AdminDetails::section(__('enrollment.schedule'), [
+                AdminDetails::date('start_date', __('enrollment.start_date'))
+                    ->placeholder(__('enrollment.no_date')),
+
+                AdminDetails::date('end_date', __('enrollment.end_date'))
+                    ->placeholder(__('enrollment.no_date')),
+
+                AdminDetails::text('capacity', __('enrollment.capacity'))
+                    ->formatStateUsing(fn (mixed $state): string => filled($state) && (int) $state > 0 ? (string) $state : __('enrollment.no_capacity_limit_short')),
+
+                AdminDetails::text('total_hours', __('enrollment.total_hours'))
+                    ->placeholder(__('enrollment.inherits_from_course')),
+
+                AdminDetails::money('price', __('pricing.batch_price'), 'enrollment.money_lyd')
+                    ->placeholder(__('pricing.inherits_course_price'))
+                    ->visible(fn (): bool => auth()->user()?->can('manage_pricing') ?? false),
+            ], wide: true)->collapsible()->collapsed(),
         ]);
     }
 

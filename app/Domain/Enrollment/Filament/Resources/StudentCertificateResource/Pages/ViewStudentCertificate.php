@@ -7,9 +7,8 @@ namespace App\Domain\Enrollment\Filament\Resources\StudentCertificateResource\Pa
 use App\Domain\Enrollment\Enums\CertificateStatus;
 use App\Domain\Enrollment\Filament\Resources\StudentCertificateResource;
 use App\Domain\Enrollment\Models\StudentCertificate;
-use Filament\Infolists\Components\TextEntry;
+use App\Filament\Details\AdminDetails;
 use Filament\Resources\Pages\ViewRecord;
-use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 
 /**
@@ -36,62 +35,49 @@ class ViewStudentCertificate extends ViewRecord
 
     public function infolist(Schema $schema): Schema
     {
-        return $schema->components([
-            Section::make(__('certificates.printed_details'))->columns(2)->schema([
-                TextEntry::make('reference_number')
-                    ->label(__('certificates.reference_number')),
+        return AdminDetails::schema($schema, [
+            AdminDetails::section(__('certificates.printed_details'), [
+                AdminDetails::code('reference_number', __('certificates.reference_number')),
 
-                TextEntry::make('student_name')
-                    ->label(__('certificates.student')),
+                AdminDetails::text('student_name', __('certificates.student')),
 
-                TextEntry::make('course_name')
-                    ->label(__('certificates.course')),
+                AdminDetails::text('course_name', __('certificates.course')),
 
-                TextEntry::make('completed_on')
-                    ->label(__('certificates.completed_on'))
-                    ->date(),
+                AdminDetails::date('completed_on', __('certificates.completed_on')),
             ]),
-            Section::make(__('certificates.issuance_record'))->columns(2)->schema([
+            AdminDetails::section(__('certificates.issuance_record'), [
+                AdminDetails::dateTime('issued_at', __('certificates.issued_at')),
 
-                TextEntry::make('issued_at')
-                    ->label(__('certificates.issued_at'))
-                    ->dateTime(),
+                AdminDetails::person('issuedBy.name', __('certificates.issued_by')),
 
-                TextEntry::make('issuedBy.name')
-                    ->label(__('certificates.issued_by')),
-
-                TextEntry::make('status')
-                    ->label(__('certificates.status'))
-                    ->badge()
-                    ->formatStateUsing(fn (CertificateStatus $state): string => $state->label())
-                    ->color(fn (CertificateStatus $state): string => match ($state) {
+                AdminDetails::status(
+                    'status',
+                    __('certificates.status'),
+                    fn (CertificateStatus $state): string => $state->label(),
+                    fn (CertificateStatus $state): string => match ($state) {
                         CertificateStatus::Valid => 'success',
                         CertificateStatus::Replaced => 'gray',
                         CertificateStatus::Revoked => 'danger',
-                    }),
+                    },
+                ),
 
                 // The certificate this one superseded, if it was issued as a
                 // replacement — StudentCertificate::replaces()'s own docblock:
                 // the pointer lives on this (the newer) row.
-                TextEntry::make('replaces.reference_number')
-                    ->label(__('certificates.replaces'))
+                AdminDetails::code('replaces.reference_number', __('certificates.replaces'))
                     ->visible(fn (StudentCertificate $record): bool => $record->replaces_certificate_id !== null),
 
                 // Nothing about a revocation is erased elsewhere on this page —
                 // these three are additional facts, hidden entirely rather than
                 // shown blank when the certificate was never revoked, matching
                 // ViewCharge's identical treatment of its write-off fields.
-                TextEntry::make('revoked_at')
-                    ->label(__('certificates.revoked_at'))
-                    ->dateTime()
+                AdminDetails::dateTime('revoked_at', __('certificates.revoked_at'))
                     ->visible(fn (StudentCertificate $record): bool => $record->status === CertificateStatus::Revoked),
 
-                TextEntry::make('revokedBy.name')
-                    ->label(__('certificates.revoked_by'))
+                AdminDetails::person('revokedBy.name', __('certificates.revoked_by'))
                     ->visible(fn (StudentCertificate $record): bool => $record->status === CertificateStatus::Revoked),
 
-                TextEntry::make('revocation_reason')
-                    ->label(__('certificates.revocation_reason'))
+                AdminDetails::longText('revocation_reason', __('certificates.revocation_reason'))
                     ->visible(fn (StudentCertificate $record): bool => $record->status === CertificateStatus::Revoked),
             ]),
         ]);

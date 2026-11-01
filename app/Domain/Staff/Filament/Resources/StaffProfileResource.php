@@ -13,6 +13,7 @@ use App\Domain\Staff\Filament\Resources\StaffProfileResource\Pages\ListStaffProf
 use App\Domain\Staff\Filament\Resources\StaffProfileResource\Pages\ViewStaffProfile;
 use App\Domain\Staff\Filament\Resources\StaffProfileResource\RelationManagers\CertificatesRelationManager;
 use App\Domain\Staff\Models\StaffProfile;
+use App\Filament\Details\AdminDetails;
 use App\Filament\Tables\AdminColumns;
 use App\Filament\Tables\AdminTable;
 use App\Models\User;
@@ -24,7 +25,6 @@ use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Infolists\Components\ImageEntry;
-use Filament\Infolists\Components\TextEntry;
 use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Schemas\Components\Section;
@@ -143,37 +143,34 @@ class StaffProfileResource extends Resource
      */
     public static function infolist(Schema $schema): Schema
     {
-        return $schema->components([
-            TextEntry::make('user.name')
-                ->label(__('staff.user'))->weight('semibold')->size('lg')->columnSpanFull(),
+        return AdminDetails::schema($schema, [
+            AdminDetails::section(__('staff.profile_details'), [
+                // The owner of the profile is the first fact in the first card, not a line
+                // floating above the cards.
+                AdminDetails::person('user.name', __('staff.user'))
+                    ->weight('semibold'),
 
-            Section::make(__('staff.profile_details'))->columns(2)->columnSpanFull()->schema([
-                TextEntry::make('job_title')
-                    ->label(__('staff.job_title'))
+                AdminDetails::text('job_title', __('staff.job_title'))
                     ->placeholder(__('staff.no_job_title')),
 
-                TextEntry::make('employment_type')
-                    ->label(__('staff.employment_type'))
-                    ->formatStateUsing(fn (EmploymentType|string|null $state): string => $state instanceof EmploymentType
+                AdminDetails::status(
+                    'employment_type',
+                    __('staff.employment_type'),
+                    fn (EmploymentType|string|null $state): string => $state instanceof EmploymentType
                         ? $state->label()
-                        : (string) $state),
+                        : (string) $state,
+                ),
 
-                TextEntry::make('phone')
-                    ->label(__('staff.phone'))
+                AdminDetails::text('phone', __('staff.phone'))
                     ->placeholder(__('enrollment.no_phone')),
 
-                TextEntry::make('hire_date')
-                    ->label(__('staff.hire_date'))
-                    ->date()
+                AdminDetails::date('hire_date', __('staff.hire_date'))
                     ->placeholder(__('staff.no_hire_date')),
-            ]),
+            ], wide: true),
 
-            Section::make(__('staff.profile_documents'))->columnSpanFull()->schema([
-
-                TextEntry::make('qualifications')
-                    ->label(__('staff.qualifications'))
-                    ->placeholder(__('activity.empty_value'))
-                    ->columnSpanFull(),
+            AdminDetails::section(__('staff.profile_documents'), [
+                AdminDetails::longText('qualifications', __('staff.qualifications'))
+                    ->placeholder(__('activity.empty_value')),
 
                 ImageEntry::make('profile_photo_path')
                     ->label(__('staff.profile_photo'))
@@ -188,7 +185,7 @@ class StaffProfileResource extends Resource
                         : route('staff.profiles.photo', ['profile' => $record]))
                     ->visible(fn (?StaffProfile $record): bool => $record?->profile_photo_path !== null)
                     ->columnSpanFull(),
-            ]),
+            ], wide: true),
         ]);
     }
 

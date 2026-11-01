@@ -6,9 +6,8 @@ namespace App\Domain\Finance\Filament\Resources\ExpenseResource\Pages;
 
 use App\Domain\Finance\Filament\Resources\ExpenseResource;
 use App\Domain\Finance\Models\Expense;
-use Filament\Infolists\Components\TextEntry;
+use App\Filament\Details\AdminDetails;
 use Filament\Resources\Pages\ViewRecord;
-use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 
 /**
@@ -34,45 +33,34 @@ final class ViewExpense extends ViewRecord
 
     public function infolist(Schema $schema): Schema
     {
-        return $schema->components([
-            Section::make(__('expenses.payment_details'))->columns(2)->schema([
-                TextEntry::make('category.name_en')
-                    ->label(__('expenses.category'))
+        return AdminDetails::schema($schema, [
+            AdminDetails::section(__('expenses.payment_details'), [
+                AdminDetails::text('category.name_en', __('expenses.category'))
                     ->state(fn (Expense $record): string => $record->category->name()),
 
-                TextEntry::make('amount')
-                    ->label(__('expenses.amount'))
-                    ->formatStateUsing(fn (string $state): string => ExpenseResource::formatMoney($state)),
+                AdminDetails::money('amount', __('expenses.amount'), 'expenses.amount_lyd'),
 
-                TextEntry::make('paid_on')
-                    ->label(__('expenses.paid_on'))
-                    ->date(),
+                AdminDetails::date('paid_on', __('expenses.paid_on')),
 
-                TextEntry::make('description')
-                    ->label(__('expenses.description')),
+                AdminDetails::longText('description', __('expenses.description')),
 
-                TextEntry::make('recordedBy.name')
-                    ->label(__('expenses.recorded_by')),
+                AdminDetails::person('recordedBy.name', __('expenses.recorded_by')),
 
                 /*
-             * Nothing is erased by a reversal — these three columns are
-             * additional facts about the expense, not a replacement for anything
-             * above. Hidden entirely rather than shown blank when the expense was
-             * never reversed.
-             */
-                TextEntry::make('reversed_at')
-                    ->label(__('expenses.reversed_on'))
-                    ->dateTime()
+                 * Nothing is erased by a reversal — these three columns are
+                 * additional facts about the expense, not a replacement for anything
+                 * above. Hidden entirely rather than shown blank when the expense was
+                 * never reversed.
+                 */
+                AdminDetails::dateTime('reversed_at', __('expenses.reversed_on'))
                     ->visible(fn (Expense $record): bool => $record->isReversed()),
 
-                TextEntry::make('reversedBy.name')
-                    ->label(__('expenses.reversed_by'))
+                AdminDetails::person('reversedBy.name', __('expenses.reversed_by'))
                     ->visible(fn (Expense $record): bool => $record->isReversed()),
 
-                TextEntry::make('reversal_reason')
-                    ->label(__('expenses.reason'))
+                AdminDetails::longText('reversal_reason', __('expenses.reason'))
                     ->visible(fn (Expense $record): bool => $record->isReversed()),
-            ]),
+            ], wide: true),
         ]);
     }
 }

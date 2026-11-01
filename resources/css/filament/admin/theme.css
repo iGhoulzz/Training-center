@@ -587,6 +587,45 @@
         @apply text-[12.5px] text-gray-400;
     }
 
+    /*
+     * THE ADMIN DETAIL PAGE (P4-T42): the one look every View page has, drawn under `.tc-details`.
+     * App\Filament\Details\AdminDetails puts the class on the page's schema. A card is padded
+     * and headed like the forms' cards, a label is small and muted above its value, a value is
+     * the body size, and a missing value is a muted dash. Every measure is logical or symmetric,
+     * so the page reads the same mirrored for Arabic.
+     */
+    .tc-details {
+        @apply items-start gap-4;
+
+        & .fi-section-header {
+            @apply px-[18px] py-[18px];
+        }
+
+        & .fi-section-content {
+            @apply p-[18px];
+        }
+
+        & .fi-sc-has-gap {
+            @apply gap-[14px];
+        }
+
+        & .fi-in-entry {
+            @apply gap-1;
+        }
+
+        & .fi-in-entry-label {
+            @apply text-xs font-medium text-gray-400;
+        }
+
+        & .fi-in-entry-content {
+            @apply text-[13.5px] text-gray-50;
+        }
+
+        & .fi-in-placeholder {
+            @apply text-gray-500;
+        }
+    }
+
     /* The primary button: primary-500, primary-400 on hover, with the on-primary text and icon. */
     .fi-btn.fi-color-primary:not(.fi-outlined):not(label) {
         @apply bg-primary-500 text-on-primary;

@@ -11,8 +11,6 @@ use App\Domain\Finance\Queries\BatchOutstanding;
 use Filament\Actions\Action;
 use Filament\Resources\Pages\ViewRecord;
 use Filament\Schemas\Components\Actions;
-use Filament\Schemas\Components\EmbeddedSchema;
-use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\View;
 use Filament\Schemas\Schema;
 
@@ -22,8 +20,9 @@ use Filament\Schemas\Schema;
  * This page is what makes the staff role's view-only grant mean something:
  * without it the schedule would list batches that front-desk staff could never
  * open, and answering "when does the next English B1 start" is exactly their
- * job. Filament renders the resource form disabled here, and
- * ViewRecord::authorizeAccess() aborts 403 unless BatchPolicy::view() passes.
+ * job. The details below the hero are the resource's infolist (read-only text in
+ * cards), not the form switched to disabled, and ViewRecord::authorizeAccess()
+ * aborts 403 unless BatchPolicy::view() passes.
  */
 class ViewBatch extends ViewRecord
 {
@@ -46,7 +45,7 @@ class ViewBatch extends ViewRecord
                 'outstanding' => auth()->user()->can('view_any_charge') ? app(BatchOutstanding::class)->forBatch((int) $batch->getKey()) : null,
             ])->schema([Actions::make($this->getHeroActions())->key('hero-actions')]),
             $this->getRelationManagersContentComponent(),
-            Section::make(__('enrollment.batch_details'))->collapsible()->collapsed()->schema([EmbeddedSchema::make('form')]),
+            $this->getInfolistContentComponent(),
         ]);
     }
 
