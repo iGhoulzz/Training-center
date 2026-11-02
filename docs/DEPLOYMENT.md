@@ -1604,12 +1604,12 @@ the script takes its first-install path again, confirm
 ### D7. Locked out of the admin
 
 **When:** nobody can sign in to `/admin`, for example a one-time password that was
-lost, or an account that was deleted. In the panel, no administrator can reset the
-password of, delete, or deactivate **another super admin**, and nobody can reset their
-own password from the list (the row offers "Change password", which asks for the
-current one): so a locked-out super admin can only be recovered from the server.
-Anyone who can still sign in as a super admin should not be using these commands for
-an ordinary account; the panel's own "Reset password" does that.
+lost, or an account that was deleted. In the panel a super admin cannot delete or
+deactivate another super admin, and nobody can reset their own password from the list
+(the row offers "Change password", which asks for the current one). Anyone who can
+still sign in as a super admin should use the panel's own "Reset password" for another
+account; these commands are for when nobody can sign in at all, or a deleted account
+has to be brought back.
 
 These commands are the same trusted, actor-less path as `staff:bootstrap-production-owner`.
 They run as `www-data` from `current` (ground rule 3), they are **audited** (an entry in
