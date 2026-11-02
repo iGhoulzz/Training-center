@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Domain\Staff\Actions\ConsoleAccountRecovery;
 use App\Domain\Staff\Support\ActivityEvent;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
@@ -211,4 +212,25 @@ it('refuses restoring an email that no account has', function () {
         ->assertFailed();
 
     expect(Activity::query()->where('event', ActivityEvent::RESTORED)->exists())->toBeFalse();
+});
+
+/*
+|--------------------------------------------------------------------------
+| The service, decided under its own lock
+|--------------------------------------------------------------------------
+*/
+
+it('decides on the locked row, not on what the command read: no password for a deleted account, no restore for a live one', function () {
+    $service = app(ConsoleAccountRecovery::class);
+
+    $deleted = ($this->makeUser)('admin');
+    $original = $deleted->password;
+    $deleted->delete();
+
+    $live = ($this->makeUser)('admin');
+
+    expect($service->issueTemporaryPassword($deleted))->toBeNull()
+        ->and(User::withTrashed()->find($deleted->getKey())->password)->toBe($original)
+        ->and($service->restore($live))->toBeFalse()
+        ->and(Activity::query()->whereIn('event', [ActivityEvent::PASSWORD_RESET, ActivityEvent::RESTORED])->exists())->toBeFalse();
 });
