@@ -235,7 +235,15 @@ it('keeps every registered resource and navigable page in the shell', function (
 
     expect(array_map(fn ($group): ?string => $group->getLabel(), $panel->getNavigation()))
         ->toBe(['Front desk', 'Enrolment', 'Finance', 'Administration', 'More']);
-    expect($html)->not->toContain('href="'.PasswordChange::getNavigationUrl().'"');
+    // P4-T43: the page is now reachable from the user menu ("Change password"), so
+    // the rendered HTML names it. What must stay true is that it is no sidebar
+    // destination: the navigation holds no item for it.
+    $navigationUrls = collect($panel->getNavigation())
+        ->flatMap(fn ($group): array => array_map(fn ($item): ?string => $item->getUrl(), $group->getItems()))
+        ->all();
+
+    expect($navigationUrls)->not->toContain(PasswordChange::getNavigationUrl())
+        ->and($html)->toContain('href="'.PasswordChange::getNavigationUrl().'"');
 });
 
 it('curates the primary sidebar in design order and collapses the remaining destinations', function () {
