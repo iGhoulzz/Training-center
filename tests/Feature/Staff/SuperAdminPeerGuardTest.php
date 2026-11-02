@@ -411,6 +411,19 @@ it('refuses a crafted save that deactivates another super admin, and rolls the w
         ->and($this->superAdminB->fresh()->name)->toBe('Original Name');
 });
 
+it('refuses one save that demotes and deactivates another super admin together, and keeps both', function () {
+    Livewire::actingAs($this->superAdminA)
+        ->test(EditUser::class, ['record' => $this->superAdminB->getKey()])
+        ->fillForm(['roles' => ['admin'], 'is_active' => false])
+        ->call('save')
+        ->assertNotified(__('staff.save_refused_unauthorized'));
+
+    $fresh = $this->superAdminB->fresh();
+
+    expect($fresh->is_active)->toBeTrue()
+        ->and($fresh->isSuperAdmin())->toBeTrue();
+});
+
 it('lets a super admin edit another super admin and demote them from the edit page', function () {
     Livewire::actingAs($this->superAdminA)
         ->test(EditUser::class, ['record' => $this->superAdminB->getKey()])
