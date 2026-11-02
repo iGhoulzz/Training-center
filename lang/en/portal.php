@@ -26,7 +26,7 @@ declare(strict_types=1);
 */
 
 return [
-    'brand' => 'Student Portal',
+    'brand' => 'Trainee Portal',
 
     /*
     |--------------------------------------------------------------------------

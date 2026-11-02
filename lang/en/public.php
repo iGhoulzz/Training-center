@@ -45,7 +45,7 @@ return [
     | design's own sign-in copy and says why a student may have no login.
     */
     'portal' => [
-        'link' => 'Student portal',
+        'link' => 'Trainee Portal',
         'note' => 'No login yet? The registrar issues one when you enrol — a portal account needs an email on your student record.',
     ],
 

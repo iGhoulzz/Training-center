@@ -357,10 +357,10 @@ function retentionSnapshot(): array
         locale: 'en',
         filters: ['Period' => '2026-08'],
         dataset: new ReportDataset(
-            ['student_name' => 'Student'],
+            ['student_name' => 'Student', 'collected_total' => 'Collected total (LYD)'],
             [[
                 'carrier_id' => 1,
-                'cells' => ['student_name' => 'Retention Student'],
+                'cells' => ['student_name' => 'Retention Student', 'collected_total' => '0.000'],
             ]],
         ),
     ))->toArray();

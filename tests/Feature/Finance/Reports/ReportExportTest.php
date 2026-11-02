@@ -14,6 +14,7 @@ use App\Domain\Finance\Exports\ProfitReportExporter;
 use App\Domain\Finance\Exports\ReportDataBuilder;
 use App\Domain\Finance\Exports\ReportDataset;
 use App\Domain\Finance\Exports\ReportExporter;
+use App\Domain\Finance\Exports\ReportExportSummary;
 use App\Domain\Finance\Exports\ReportKind;
 use App\Domain\Finance\Exports\ReportSnapshot;
 use App\Domain\Finance\Exports\RevenueReportExporter;
@@ -275,10 +276,10 @@ it('keeps an export snapshot unchanged when source rows and worker locale change
         locale: 'en',
         filters: ['Student' => $fixture['student']->full_name],
         dataset: new ReportDataset(
-            ['student_name' => 'Student'],
+            ['student_name' => 'Student', 'collected_total' => 'Student collected total (LYD)'],
             [[
                 'carrier_id' => $fixture['charge']->getKey(),
-                'cells' => ['student_name' => $fixture['student']->full_name],
+                'cells' => ['student_name' => $fixture['student']->full_name, 'collected_total' => '0.000'],
             ]],
         ),
     );
@@ -307,6 +308,7 @@ it('keeps an export snapshot unchanged when source rows and worker locale change
         'snapshot' => $restored,
         'locale' => $restored->locale,
         'direction' => 'ltr',
+        'summary' => ReportExportSummary::fromSnapshot($restored),
     ])->render();
 
     expect($restored->locale)->toBe('en')
@@ -347,11 +349,182 @@ it('queues and generates a native xlsx with formula-like student names neutraliz
     Storage::disk('local')->assertExists($path);
 
     $values = xlsxValues(Storage::disk('local')->path($path));
+    $widths = xlsxColumnWidths(Storage::disk('local')->path($path));
 
     expect($values)->toContain('سجل دفعات الطالب')
         ->toContain('الطالب')
         ->toContain("'=HYPERLINK(\"https://example.test\") Target")
-        ->not->toContain('=HYPERLINK("https://example.test") Target');
+        ->not->toContain('=HYPERLINK("https://example.test") Target')
+        ->and($widths[2] ?? 0)->toBeGreaterThan(20)
+        ->and($widths[9] ?? 0)->toBeGreaterThan(30);
+});
+
+it('derives each export total from its frozen amount column', function (ReportKind $kind, array $cells, string $expected) {
+    $rows = [];
+    foreach ($cells as $index => $rowCells) {
+        $rows[] = ['carrier_id' => $index + 1, 'cells' => $rowCells];
+    }
+
+    $snapshot = new ReportSnapshot(
+        kind: $kind,
+        title: 'Frozen report',
+        locale: 'en',
+        filters: [],
+        dataset: new ReportDataset(array_fill_keys(array_keys($cells[0]), 'Amount'), $rows),
+    );
+
+    expect(ReportExportSummary::fromSnapshot($snapshot)->amount)->toBe($expected);
+})->with([
+    'revenue counts batch totals rather than repeated course totals' => [
+        ReportKind::Revenue,
+        [['course_total' => '9999.000', 'batch_total' => '1250.125'], ['course_total' => '9999.000', 'batch_total' => '300.001']],
+        '1550.126',
+    ],
+    'outstanding balances' => [ReportKind::OutstandingAged, [['outstanding' => '2.001'], ['outstanding' => '3.002']], '5.003'],
+    'payment methods' => [ReportKind::PaymentMethod, [['total' => '2.001'], ['total' => '3.002']], '5.003'],
+    'daily tender' => [ReportKind::DailyTender, [['total' => '2.001'], ['total' => '3.002']], '5.003'],
+    'wage cost' => [ReportKind::WageCost, [['total' => '2.001'], ['total' => '3.002']], '5.003'],
+    'negative profit' => [ReportKind::Profit, [['profit' => '-5.001'], ['profit' => '1.002']], '-3.999'],
+    'student collected total appears on every charge but counts once' => [
+        ReportKind::StudentPaymentHistory,
+        [['collected_total' => '500.001'], ['collected_total' => '500.001']],
+        '500.001',
+    ],
+]);
+
+it('shows the same localized frozen total in the spreadsheet and PDF report', function () {
+    Storage::fake('local');
+    Storage::fake('private');
+    $firstBatch = Batch::factory()->create();
+    $secondBatch = Batch::factory()->create();
+    $columns = [
+        'course_code' => 'الدورة',
+        'course_total' => 'إيرادات الدورة (د.ل.)',
+        'batch_code' => 'الدفعة',
+        'batch_total' => 'إيرادات الدفعة (د.ل.)',
+    ];
+    $snapshot = new ReportSnapshot(
+        kind: ReportKind::Revenue,
+        title: 'الإيرادات حسب الدورة والدفعة',
+        locale: 'ar',
+        filters: ['من' => '2026-08-01'],
+        dataset: new ReportDataset($columns, [
+            ['carrier_id' => $firstBatch->getKey(), 'cells' => [
+                'course_code' => 'ACC-201', 'course_total' => '9999.000',
+                'batch_code' => 'ACC-201-01', 'batch_total' => '1250.125',
+            ]],
+            ['carrier_id' => $secondBatch->getKey(), 'cells' => [
+                'course_code' => 'ACC-201', 'course_total' => '9999.000',
+                'batch_code' => 'ACC-201-02', 'batch_total' => '300.001',
+            ]],
+        ]),
+    );
+    $options = ['snapshot' => $snapshot->toArray()];
+    $export = new Export([
+        'exporter' => RevenueReportExporter::class,
+        'file_disk' => 'local',
+        'file_name' => 'arabic-revenue',
+        'total_rows' => 2,
+    ]);
+    $export->user()->associate($this->admin);
+    $export->save();
+
+    (new PrepareReportCsvExport($export, EloquentSerializeFacade::serialize(Batch::query()), $columns, $options))->handle();
+    (new CreateXlsxFile($export, $columns, $options))->handle();
+
+    $xlsxPath = $export->getFileDirectory().'/'.$export->file_name.'.xlsx';
+    expect(xlsxRows(Storage::disk('local')->path($xlsxPath)))
+        ->toContain(['إجمالي إيرادات الدفعات (د.ل.)', '1550.126']);
+
+    $summary = ReportExportSummary::fromSnapshot($snapshot);
+    $pdfHtml = view('finance.reports.pdf', [
+        'snapshot' => $snapshot,
+        'locale' => 'ar',
+        'direction' => 'rtl',
+        'summary' => $summary,
+    ])->render();
+    expect($summary->label)->toBe('إجمالي إيرادات الدفعات (د.ل.)')
+        ->and($pdfHtml)->toContain('إجمالي إيرادات الدفعات (د.ل.)', '1550.126');
+
+    $pdfJob = new GenerateReportPdfJob($snapshot->toArray(), $this->admin->getKey());
+    $pdfJob->handle();
+    Storage::disk('private')->assertExists("financial-reports/{$this->admin->getKey()}/{$pdfJob->reference}.pdf");
+});
+
+it('uses landscape pages for wide Arabic report PDFs and keeps narrow reports portrait', function () {
+    Storage::fake('private');
+    $fixture = reportHistoryFixture('Arabic', 'Student');
+    $wideColumns = [
+        'student_code' => 'رمز الطالب',
+        'student_name' => 'الطالب',
+        'charge_reference' => 'الفاتورة',
+        'charge_amount' => 'مبلغ الفاتورة (د.ل.)',
+        'due_date' => 'تاريخ الاستحقاق',
+        'written_off' => 'مشطوب',
+        'receipt_references' => 'الإيصالات',
+        'receipt_amounts' => 'مبالغ الإيصالات (د.ل.)',
+        'collected_total' => 'إجمالي المحصل من الطالب (د.ل.)',
+    ];
+    $wideSnapshot = new ReportSnapshot(
+        kind: ReportKind::StudentPaymentHistory,
+        title: 'سجل دفعات الطالب',
+        locale: 'ar',
+        filters: ['الطالب' => $fixture['student']->full_name],
+        dataset: new ReportDataset(
+            $wideColumns,
+            [[
+                'carrier_id' => $fixture['charge']->getKey(),
+                'cells' => array_fill_keys(array_keys($wideColumns), '500.000'),
+            ]],
+        ),
+    );
+    $wideJob = new GenerateReportPdfJob($wideSnapshot->toArray(), $this->admin->getKey());
+    $wideJob->handle();
+
+    $narrowSnapshot = new ReportSnapshot(
+        kind: ReportKind::Revenue,
+        title: 'Revenue by course and batch',
+        locale: 'en',
+        filters: ['From' => '2026-08-01'],
+        dataset: new ReportDataset(
+            ['course_code' => 'Course', 'course_total' => 'Course revenue (LYD)', 'batch_code' => 'Batch', 'batch_total' => 'Batch revenue (LYD)'],
+            [[
+                'carrier_id' => $fixture['charge']->getKey(),
+                'cells' => ['course_code' => 'ACC-201', 'course_total' => '5988.000', 'batch_code' => 'ACC-201-01', 'batch_total' => '5628.000'],
+            ]],
+        ),
+    );
+    $narrowJob = new GenerateReportPdfJob($narrowSnapshot->toArray(), $this->admin->getKey());
+    $narrowJob->handle();
+
+    $profitSnapshot = new ReportSnapshot(
+        kind: ReportKind::Profit,
+        title: 'الربح',
+        locale: 'ar',
+        filters: ['من' => '2026-08-01'],
+        dataset: new ReportDataset(
+            [
+                'revenue' => 'الإيراد المحصل (د.ل.)',
+                'wage_cost' => 'تكلفة الأجور (د.ل.)',
+                'expenses' => 'المصروفات المدفوعة (د.ل.، باستثناء المعكوسة)',
+                'profit' => 'الربح (د.ل.) = الإيراد - الأجور - المصروفات',
+            ],
+            [[
+                'carrier_id' => $fixture['charge']->getKey(),
+                'cells' => ['revenue' => '500.000', 'wage_cost' => '100.000', 'expenses' => '50.000', 'profit' => '350.000'],
+            ]],
+        ),
+    );
+    $profitJob = new GenerateReportPdfJob($profitSnapshot->toArray(), $this->admin->getKey());
+    $profitJob->handle();
+
+    $widePdf = Storage::disk('private')->get("financial-reports/{$this->admin->getKey()}/{$wideJob->reference}.pdf");
+    $narrowPdf = Storage::disk('private')->get("financial-reports/{$this->admin->getKey()}/{$narrowJob->reference}.pdf");
+    $profitPdf = Storage::disk('private')->get("financial-reports/{$this->admin->getKey()}/{$profitJob->reference}.pdf");
+
+    expect(pdfPageSize($widePdf))->toBe([841.89, 595.28])
+        ->and(pdfPageSize($narrowPdf))->toBe([595.28, 841.89])
+        ->and(pdfPageSize($profitPdf))->toBe([841.89, 595.28]);
 });
 
 it('queues the pdf action and the job stores a real pdf then notifies the requester', function () {
@@ -513,6 +686,15 @@ function reportHistoryFixture(string $firstName, string $lastName): array
  */
 function reportSnapshotOptions(ReportKind $kind, object $carrier, array $cells): array
 {
+    $amountColumn = match ($kind) {
+        ReportKind::Revenue => 'batch_total',
+        ReportKind::OutstandingAged => 'outstanding',
+        ReportKind::PaymentMethod, ReportKind::DailyTender, ReportKind::WageCost => 'total',
+        ReportKind::Profit => 'profit',
+        ReportKind::StudentPaymentHistory => 'collected_total',
+    };
+    $cells += [$amountColumn => '0.000'];
+
     return [
         'snapshot' => (new ReportSnapshot(
             kind: $kind,
@@ -559,4 +741,60 @@ function xlsxValues(string $path): array
     $reader->close();
 
     return $values;
+}
+
+/** @return list<list<string|int|float|bool|null>> */
+function xlsxRows(string $path): array
+{
+    $reader = new Reader;
+    $reader->open($path);
+    $rows = [];
+
+    foreach ($reader->getSheetIterator() as $sheet) {
+        foreach ($sheet->getRowIterator() as $row) {
+            $rows[] = array_map(static fn ($cell): string|int|float|bool|null => $cell->getValue(), $row->getCells());
+        }
+    }
+
+    $reader->close();
+
+    return $rows;
+}
+
+/** @return array<int, float> */
+function xlsxColumnWidths(string $path): array
+{
+    $zip = new ZipArchive;
+    if ($zip->open($path) !== true) {
+        throw new RuntimeException('The report XLSX could not be opened.');
+    }
+
+    $sheet = $zip->getFromName('xl/worksheets/sheet1.xml');
+    $zip->close();
+    if (! is_string($sheet)) {
+        throw new RuntimeException('The report XLSX has no first worksheet.');
+    }
+
+    $document = new DOMDocument;
+    $document->loadXML($sheet);
+    $xpath = new DOMXPath($document);
+    $widths = [];
+
+    foreach ($xpath->query('//*[local-name()="cols"]/*[local-name()="col"]') as $column) {
+        for ($index = (int) $column->getAttribute('min'); $index <= (int) $column->getAttribute('max'); $index++) {
+            $widths[$index] = (float) $column->getAttribute('width');
+        }
+    }
+
+    return $widths;
+}
+
+/** @return array{float, float} */
+function pdfPageSize(string $pdf): array
+{
+    if (preg_match('/\/MediaBox\s*\[\s*0\s+0\s+([\d.]+)\s+([\d.]+)\s*\]/', $pdf, $matches) !== 1) {
+        throw new RuntimeException('The report PDF has no page dimensions.');
+    }
+
+    return [(float) $matches[1], (float) $matches[2]];
 }

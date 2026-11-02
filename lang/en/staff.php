@@ -151,7 +151,7 @@ return [
      */
     'permissions' => [
         'access_admin_panel' => 'Sign in to the admin panel',
-        'access_student_portal' => 'Sign in to the student portal',
+        'access_student_portal' => 'Sign in to the Trainee Portal',
         'adjust_charge' => 'Adjust the amount of a charge',
         'apply_discount' => 'Apply a discount when enrolling a student',
         'assign_instructor' => 'Assign instructors to batches',
@@ -235,14 +235,14 @@ return [
             'finance' => 'Finance',
             'publications' => 'Publications',
             'administration' => 'Administration',
-            'portal' => 'Student portal (a student\'s own data)',
+            'portal' => 'Trainee Portal (a student\'s own data)',
             'other' => 'Other',
         ],
     ],
 
     'permission_help' => [
         'access_admin_panel' => 'Without this a user cannot open the staff dashboard, whatever else the role holds.',
-        'access_student_portal' => 'Lets a student account open the student portal.',
+        'access_student_portal' => 'Lets a student account open the Trainee Portal.',
         'adjust_charge' => 'Corrects a bill after it was raised. The change is recorded and the earlier amount is kept.',
         'apply_discount' => 'Picks an existing discount at enrolment. It does not allow creating or changing discounts.',
         'assign_instructor' => 'Adds instructors to a batch and removes them.',

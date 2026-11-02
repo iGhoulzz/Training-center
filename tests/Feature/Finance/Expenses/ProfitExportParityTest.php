@@ -6,6 +6,7 @@ use App\Domain\Enrollment\Models\Batch;
 use App\Domain\Enrollment\Models\Course;
 use App\Domain\Enrollment\Models\Enrollment;
 use App\Domain\Finance\Exports\ReportDataBuilder;
+use App\Domain\Finance\Exports\ReportExportSummary;
 use App\Domain\Finance\Exports\ReportKind;
 use App\Domain\Finance\Exports\ReportSnapshot;
 use App\Domain\Finance\Filament\Pages\Reports\ProfitReportPage;
@@ -241,6 +242,7 @@ it('puts the same expenses figure under the same heading into the document the P
     // queued with.
     $html = view('finance.reports.pdf', [
         'snapshot' => $snapshot,
+        'summary' => ReportExportSummary::fromSnapshot($snapshot),
         'locale' => $snapshot->locale,
         'direction' => 'ltr',
     ])->render();

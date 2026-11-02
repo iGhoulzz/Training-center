@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Domain\Finance\Jobs;
 
 use App\Domain\Finance\Exports\ReportExportAuthorization;
+use App\Domain\Finance\Exports\ReportExportSummary;
+use App\Domain\Finance\Exports\ReportKind;
 use App\Domain\Finance\Exports\ReportSnapshot;
 use App\Domain\Staff\Enums\PathKind;
 use App\Domain\Staff\Services\FileLifecycleService;
@@ -59,6 +61,7 @@ final class GenerateReportPdfJob implements ShouldQueue
         }
 
         $snapshot = ReportSnapshot::fromArray($this->snapshot);
+        $summary = ReportExportSummary::fromSnapshot($snapshot);
         $originalLocale = app()->getLocale();
 
         try {
@@ -67,11 +70,17 @@ final class GenerateReportPdfJob implements ShouldQueue
 
             File::ensureDirectoryExists(storage_path('app/mpdf'));
 
-            $mpdf = new Mpdf(['tempDir' => storage_path('app/mpdf')]);
+            $mpdf = new Mpdf([
+                'tempDir' => storage_path('app/mpdf'),
+                'format' => count($snapshot->dataset->columns) >= 7 || $snapshot->kind === ReportKind::Profit
+                    ? 'A4-L'
+                    : 'A4',
+            ]);
             $mpdf->WriteHTML(view('finance.reports.pdf', [
                 'snapshot' => $snapshot,
                 'locale' => $snapshot->locale,
                 'direction' => $direction,
+                'summary' => $summary,
             ])->render());
 
             $path = "financial-reports/{$this->requesterId}/{$this->reference}.pdf";
