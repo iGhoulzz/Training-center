@@ -135,7 +135,7 @@ abstract class ReportExporter extends Exporter
                 }
             }
 
-            $options->setColumnWidth((float) min(48, max(18, $length + 4)), $index);
+            $options->setColumnWidth(min(48, max(18, $length + 4)), $index);
         }
 
         return $options;
