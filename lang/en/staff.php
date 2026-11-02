@@ -54,6 +54,7 @@ return [
     'create_staff_profile' => 'New staff profile',
     'edit_staff_profile' => 'Edit staff profile',
     'reset_password' => 'Reset password',
+    'change_password' => 'Change password',
     'upload_certificate' => 'Upload certificate',
     'download' => 'Download',
     'delete_photo' => 'Remove photo',

@@ -11,6 +11,7 @@ use App\Domain\Staff\Exceptions\LastSuperAdminException;
 use App\Domain\Staff\Filament\Resources\UserResource\Pages\CreateUser;
 use App\Domain\Staff\Filament\Resources\UserResource\Pages\EditUser;
 use App\Domain\Staff\Filament\Resources\UserResource\Pages\ListUsers;
+use App\Filament\Pages\PasswordChange;
 use App\Filament\Tables\AdminColumns;
 // App\Models\Role, never the vendor model — the architecture test fails the
 // build on a Spatie\Permission\Models\Role import outside app/Models/Role.php.
@@ -261,6 +262,24 @@ class UserResource extends Resource
             ->recordUrl(null)
             ->recordActions([
                 AdminTable::rowMenu([
+                    /*
+                     * YOUR OWN ROW GETS "CHANGE PASSWORD", NEVER "RESET PASSWORD" (P4-T43).
+                     *
+                     * A reset on one's own account replaced the password hash under the
+                     * actor's own session: AuthenticateSession ended the session before the
+                     * one-time password was shown, so the old password was gone and nobody
+                     * saw the new one (the 2026-11-01 incident). The self-service page asks
+                     * for the current password and keeps the session. A plain link: there
+                     * is nothing to authorize, it is one's own credential, and the page
+                     * itself requires the current password. resetPassword below is refused
+                     * on one's own row by UserPolicy as well, so the two never both show.
+                     */
+                    Action::make('changePassword')
+                        ->label(__('staff.change_password'))
+                        ->icon(Heroicon::OutlinedKey)
+                        ->url(fn (): string => PasswordChange::getUrl())
+                        ->visible(fn (User $record): bool => self::isOwnRecord($record)),
+
                     Action::make('resetPassword')
                         ->label(__('staff.reset_password'))
                         ->icon(Heroicon::OutlinedKey)

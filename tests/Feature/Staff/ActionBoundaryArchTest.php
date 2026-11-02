@@ -258,6 +258,36 @@ it('does not call the trusted system writer from application code', function () 
     );
 });
 
+it('does not call the trusted console recovery service from application code', function () {
+    // ConsoleAccountRecovery (P4-T43) issues a temporary password and restores a
+    // deleted account with NO actor and NO authorization: it exists for the
+    // server console, where holding a shell is the authorization. Reached from a
+    // controller, a Filament page or a Livewire component it would be an
+    // unauthenticated account takeover, so exactly two console commands and the
+    // service itself may name it. Exact paths, so a same-basename file elsewhere
+    // is still an offender.
+    $allowedPaths = [
+        'app/Domain/Staff/Actions/ConsoleAccountRecovery.php',
+        'app/Console/Commands/IssueTemporaryPasswordCommand.php',
+        'app/Console/Commands/RestoreUserCommand.php',
+    ];
+    $offenders = array_values(array_filter(
+        filesMatching('/\bConsoleAccountRecovery\b/'),
+        fn (string $path): bool => ! in_array(str_replace('\\', '/', $path), $allowedPaths, true),
+    ));
+
+    expect($offenders)->toBeEmpty(
+        'ConsoleAccountRecovery is for the server console only; only the two staff:* recovery commands '
+        .'may call it from application code: '.implode(', ', $offenders),
+    );
+
+    // Not vacuous: both commands do reference it, so an allowlist entry that
+    // stops matching anything is noticed.
+    $users = array_map(fn (string $path): string => str_replace('\\', '/', $path), filesMatching('/\bConsoleAccountRecovery\b/'));
+    expect($users)->toContain('app/Console/Commands/IssueTemporaryPasswordCommand.php')
+        ->and($users)->toContain('app/Console/Commands/RestoreUserCommand.php');
+});
+
 it('does not delete or deactivate users outside the sanctioned Actions', function () {
     // Deleting a user or flipping is_active can remove the last super admin, so
     // both belong to DeleteUserAction / DeactivateUserAction where the invariant

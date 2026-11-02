@@ -31,6 +31,7 @@ return [
     'create_staff_profile' => 'ملف وظيفي جديد',
     'edit_staff_profile' => 'تعديل الملف الوظيفي',
     'reset_password' => 'إعادة تعيين كلمة المرور',
+    'change_password' => 'تغيير كلمة المرور',
     'upload_certificate' => 'رفع شهادة',
     'download' => 'تنزيل',
     'delete_photo' => 'إزالة الصورة',

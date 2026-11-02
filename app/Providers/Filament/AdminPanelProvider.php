@@ -17,11 +17,13 @@ use App\Domain\Staff\Filament\Resources\ActivityResource;
 use App\Domain\Staff\Filament\Resources\UserResource;
 use App\Filament\Pages\Auth\Login;
 use App\Filament\Pages\Dashboard;
+use App\Filament\Pages\PasswordChange;
 use App\Http\Middleware\ForcePasswordChange;
 use App\Http\Middleware\LogOutInactiveUser;
 use App\Http\Middleware\SetGuestPanelLocale;
 use App\Http\Middleware\SetLocale;
 use BezhanSalleh\FilamentShield\FilamentShieldPlugin;
+use Filament\Actions\Action;
 use Filament\Facades\Filament;
 use Filament\FontProviders\LocalFontProvider;
 use Filament\Http\Middleware\Authenticate;
@@ -107,6 +109,18 @@ class AdminPanelProvider extends PanelProvider
                     ? Blade::render('<x-locale-switch variant="admin" />')
                     : ''),
             )
+            /*
+             * "CHANGE PASSWORD" FOR EVERY ADMIN-PANEL USER (P4-T43), above Sign out in the
+             * dropdown under the initials. It opens the self-service PasswordChange page,
+             * which asks for the current password and keeps the session. The URL is a
+             * closure: the page's route does not exist yet while the panel is being built.
+             */
+            ->userMenuItems([
+                Action::make('changePassword')
+                    ->label(fn (): string => __('navigation.change_password'))
+                    ->icon(Heroicon::OutlinedKey)
+                    ->url(fn (): string => PasswordChange::getUrl()),
+            ])
             ->sidebarWidth('16.125rem')
             // 1440px, the prototype's main column. The class is defined in theme.css.
             ->maxContentWidth('tc-width-admin')

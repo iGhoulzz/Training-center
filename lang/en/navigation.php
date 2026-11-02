@@ -16,4 +16,6 @@ return [
     'publications' => 'Publications',
     'password_change' => 'Change your password',
     'password_change_description' => 'Confirm your current password and choose a new password of at least :minimum characters, with at least one capital letter and one symbol.',
+    'change_password' => 'Change password',
+    'password_change_back' => 'Back to the dashboard',
 ];

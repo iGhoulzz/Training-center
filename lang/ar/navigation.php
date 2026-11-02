@@ -16,4 +16,6 @@ return [
     'publications' => 'المنشورات',
     'password_change' => 'تغيير كلمة المرور',
     'password_change_description' => 'أكد كلمة مرورك الحالية واختر كلمة مرور جديدة لا تقل عن :minimum أحرف، وتحتوي على حرف كبير ورمز واحد على الأقل.',
+    'change_password' => 'تغيير كلمة المرور',
+    'password_change_back' => 'العودة إلى لوحة التحكم',
 ];
