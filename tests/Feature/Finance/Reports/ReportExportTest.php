@@ -347,11 +347,90 @@ it('queues and generates a native xlsx with formula-like student names neutraliz
     Storage::disk('local')->assertExists($path);
 
     $values = xlsxValues(Storage::disk('local')->path($path));
+    $widths = xlsxColumnWidths(Storage::disk('local')->path($path));
 
     expect($values)->toContain('سجل دفعات الطالب')
         ->toContain('الطالب')
         ->toContain("'=HYPERLINK(\"https://example.test\") Target")
-        ->not->toContain('=HYPERLINK("https://example.test") Target');
+        ->not->toContain('=HYPERLINK("https://example.test") Target')
+        ->and($widths[2] ?? 0)->toBeGreaterThan(20)
+        ->and($widths[9] ?? 0)->toBeGreaterThan(30);
+});
+
+it('uses landscape pages for wide Arabic report PDFs and keeps narrow reports portrait', function () {
+    Storage::fake('private');
+    $fixture = reportHistoryFixture('Arabic', 'Student');
+    $wideColumns = [
+        'student_code' => 'رمز الطالب',
+        'student_name' => 'الطالب',
+        'charge_reference' => 'الفاتورة',
+        'charge_amount' => 'مبلغ الفاتورة (د.ل.)',
+        'due_date' => 'تاريخ الاستحقاق',
+        'written_off' => 'مشطوب',
+        'receipt_references' => 'الإيصالات',
+        'receipt_amounts' => 'مبالغ الإيصالات (د.ل.)',
+        'collected_total' => 'إجمالي المحصل من الطالب (د.ل.)',
+    ];
+    $wideSnapshot = new ReportSnapshot(
+        kind: ReportKind::StudentPaymentHistory,
+        title: 'سجل دفعات الطالب',
+        locale: 'ar',
+        filters: ['الطالب' => $fixture['student']->full_name],
+        dataset: new ReportDataset(
+            $wideColumns,
+            [[
+                'carrier_id' => $fixture['charge']->getKey(),
+                'cells' => array_fill_keys(array_keys($wideColumns), '500.000'),
+            ]],
+        ),
+    );
+    $wideJob = new GenerateReportPdfJob($wideSnapshot->toArray(), $this->admin->getKey());
+    $wideJob->handle();
+
+    $narrowSnapshot = new ReportSnapshot(
+        kind: ReportKind::Revenue,
+        title: 'Revenue by course and batch',
+        locale: 'en',
+        filters: ['From' => '2026-08-01'],
+        dataset: new ReportDataset(
+            ['course_code' => 'Course', 'course_total' => 'Course revenue (LYD)', 'batch_code' => 'Batch', 'batch_total' => 'Batch revenue (LYD)'],
+            [[
+                'carrier_id' => $fixture['charge']->getKey(),
+                'cells' => ['course_code' => 'ACC-201', 'course_total' => '5988.000', 'batch_code' => 'ACC-201-01', 'batch_total' => '5628.000'],
+            ]],
+        ),
+    );
+    $narrowJob = new GenerateReportPdfJob($narrowSnapshot->toArray(), $this->admin->getKey());
+    $narrowJob->handle();
+
+    $profitSnapshot = new ReportSnapshot(
+        kind: ReportKind::Profit,
+        title: 'الربح',
+        locale: 'ar',
+        filters: ['من' => '2026-08-01'],
+        dataset: new ReportDataset(
+            [
+                'revenue' => 'الإيراد المحصل (د.ل.)',
+                'wage_cost' => 'تكلفة الأجور (د.ل.)',
+                'expenses' => 'المصروفات المدفوعة (د.ل.، باستثناء المعكوسة)',
+                'profit' => 'الربح (د.ل.) = الإيراد - الأجور - المصروفات',
+            ],
+            [[
+                'carrier_id' => $fixture['charge']->getKey(),
+                'cells' => ['revenue' => '500.000', 'wage_cost' => '100.000', 'expenses' => '50.000', 'profit' => '350.000'],
+            ]],
+        ),
+    );
+    $profitJob = new GenerateReportPdfJob($profitSnapshot->toArray(), $this->admin->getKey());
+    $profitJob->handle();
+
+    $widePdf = Storage::disk('private')->get("financial-reports/{$this->admin->getKey()}/{$wideJob->reference}.pdf");
+    $narrowPdf = Storage::disk('private')->get("financial-reports/{$this->admin->getKey()}/{$narrowJob->reference}.pdf");
+    $profitPdf = Storage::disk('private')->get("financial-reports/{$this->admin->getKey()}/{$profitJob->reference}.pdf");
+
+    expect(pdfPageSize($widePdf))->toBe([841.89, 595.28])
+        ->and(pdfPageSize($narrowPdf))->toBe([595.28, 841.89])
+        ->and(pdfPageSize($profitPdf))->toBe([841.89, 595.28]);
 });
 
 it('queues the pdf action and the job stores a real pdf then notifies the requester', function () {
@@ -559,4 +638,42 @@ function xlsxValues(string $path): array
     $reader->close();
 
     return $values;
+}
+
+/** @return array<int, float> */
+function xlsxColumnWidths(string $path): array
+{
+    $zip = new ZipArchive;
+    if ($zip->open($path) !== true) {
+        throw new RuntimeException('The report XLSX could not be opened.');
+    }
+
+    $sheet = $zip->getFromName('xl/worksheets/sheet1.xml');
+    $zip->close();
+    if (! is_string($sheet)) {
+        throw new RuntimeException('The report XLSX has no first worksheet.');
+    }
+
+    $document = new DOMDocument;
+    $document->loadXML($sheet);
+    $xpath = new DOMXPath($document);
+    $widths = [];
+
+    foreach ($xpath->query('//*[local-name()="cols"]/*[local-name()="col"]') as $column) {
+        for ($index = (int) $column->getAttribute('min'); $index <= (int) $column->getAttribute('max'); $index++) {
+            $widths[$index] = (float) $column->getAttribute('width');
+        }
+    }
+
+    return $widths;
+}
+
+/** @return array{float, float} */
+function pdfPageSize(string $pdf): array
+{
+    if (preg_match('/\/MediaBox\s*\[\s*0\s+0\s+([\d.]+)\s+([\d.]+)\s*\]/', $pdf, $matches) !== 1) {
+        throw new RuntimeException('The report PDF has no page dimensions.');
+    }
+
+    return [(float) $matches[1], (float) $matches[2]];
 }

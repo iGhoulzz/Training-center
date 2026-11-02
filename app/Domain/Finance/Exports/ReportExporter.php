@@ -17,6 +17,7 @@ use Illuminate\Database\Eloquent\SoftDeletingScope;
 use Illuminate\Support\Facades\URL;
 use LogicException;
 use OpenSpout\Common\Entity\Row;
+use OpenSpout\Writer\XLSX\Options;
 use OpenSpout\Writer\XLSX\Writer;
 
 /** Adapts calculated report rows to Filament's model-backed queued exporter. */
@@ -95,6 +96,41 @@ abstract class ReportExporter extends Exporter
         $writer->addRow(Row::fromValues([]));
 
         return $writer;
+    }
+
+    public function getXlsxWriterOptions(): Options
+    {
+        $snapshot = $this->capturedSnapshot();
+        $options = new Options;
+        $index = 0;
+
+        foreach ($snapshot->dataset->columns as $name => $label) {
+            $index++;
+            $length = mb_strwidth($label);
+
+            if ($index === 1) {
+                $length = max($length, mb_strwidth($snapshot->title));
+
+                foreach (array_keys($snapshot->filters) as $filterLabel) {
+                    $length = max($length, mb_strwidth($filterLabel));
+                }
+            } elseif ($index === 2) {
+                foreach ($snapshot->filters as $filterValue) {
+                    $length = max($length, mb_strwidth($filterValue));
+                }
+            }
+
+            foreach ($snapshot->dataset->rows as $row) {
+                $value = $row['cells'][$name] ?? null;
+                if ($value !== null) {
+                    $length = max($length, mb_strwidth((string) $value));
+                }
+            }
+
+            $options->setColumnWidth((float) min(48, max(18, $length + 4)), $index);
+        }
+
+        return $options;
     }
 
     public static function getCompletedNotificationBody(Export $export): string

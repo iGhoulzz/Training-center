@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Domain\Finance\Jobs;
 
 use App\Domain\Finance\Exports\ReportExportAuthorization;
+use App\Domain\Finance\Exports\ReportKind;
 use App\Domain\Finance\Exports\ReportSnapshot;
 use App\Domain\Staff\Enums\PathKind;
 use App\Domain\Staff\Services\FileLifecycleService;
@@ -67,7 +68,12 @@ final class GenerateReportPdfJob implements ShouldQueue
 
             File::ensureDirectoryExists(storage_path('app/mpdf'));
 
-            $mpdf = new Mpdf(['tempDir' => storage_path('app/mpdf')]);
+            $mpdf = new Mpdf([
+                'tempDir' => storage_path('app/mpdf'),
+                'format' => count($snapshot->dataset->columns) >= 7 || $snapshot->kind === ReportKind::Profit
+                    ? 'A4-L'
+                    : 'A4',
+            ]);
             $mpdf->WriteHTML(view('finance.reports.pdf', [
                 'snapshot' => $snapshot,
                 'locale' => $snapshot->locale,
