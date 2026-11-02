@@ -9,15 +9,18 @@ use App\Models\User;
 use Illuminate\Support\Facades\Gate;
 
 /**
- * A UserPolicy that no longer protects any super admin (P4-T43).
+ * A UserPolicy that no longer protects any super admin from deletion or
+ * deactivation (P4-T43).
  *
- * Guard 5 means no actor can reach a super admin through the Actions, so the
- * last-super-admin invariant (guard 3) is never the first thing to refuse. The
- * invariant is still the second line of defence, and a later change to the
- * policy must not be able to make it dead: these tests install this policy to
- * prove the Actions still hand the write to SuperAdminInvariantService.
+ * Guard 5 means no actor can delete or deactivate another super admin through the
+ * Actions, so the last-super-admin invariant (guard 3) is not the first thing to
+ * refuse those two writes. The invariant is still the second line of defence, and
+ * a later change to the policy must not be able to make it dead: these tests
+ * install this policy to prove the Actions still hand the write to
+ * SuperAdminInvariantService.
  *
- * It keeps the permission and self rules - only the rank refusal is removed.
+ * It keeps the permission and self rules and guard 1 - only the guard 5 refusal
+ * is removed.
  */
 final class PermissiveUserPolicy extends UserPolicy
 {
@@ -29,18 +32,13 @@ final class PermissiveUserPolicy extends UserPolicy
         Gate::policy(User::class, self::class);
     }
 
-    public function update(User $actor, User $target): bool
-    {
-        return $actor->can('update_user');
-    }
-
     public function delete(User $actor, User $target): bool
     {
         return $actor->can('delete_user') && ! $actor->is($target);
     }
 
-    public function resetPassword(User $actor, User $target): bool
+    public function deactivate(User $actor, User $target): bool
     {
-        return $actor->can('reset_user_password') && ! $actor->is($target);
+        return $actor->can('update_user');
     }
 }

@@ -205,8 +205,8 @@ it('refuses to deactivate the last active super admin through the UI', function 
     // so the actor is a super admin deactivated while their session stayed open,
     // as the delete test below does for the same reason.
     //
-    // Guard 5 (P4-T43) refuses that actor in the policy before the invariant is asked,
-    // so the permissive policy puts the invariant back in the first position.
+    // Guard 5 (P4-T43) refuses that deactivation in the policy before the invariant is
+    // asked, so the permissive policy puts the invariant back in the first position.
     PermissiveUserPolicy::install();
 
     $lastActive = ($this->makeUser)('super_admin');
@@ -230,7 +230,7 @@ it('refuses to delete the last active super admin through the UI', function () {
     // already be deactivated — a session that outlived its account. The
     // invariant must still hold on that path.
     //
-    // Guard 5 (P4-T43) hides the delete action for any super admin target and the
+    // Guard 5 (P4-T43) hides the delete action for any other super admin and the
     // Action refuses it, so the invariant is the second line of defence; the
     // permissive policy puts it back in the first position.
     PermissiveUserPolicy::install();

@@ -14,8 +14,9 @@ use Illuminate\Support\Facades\Gate;
 /**
  * Deactivates a staff account (sets is_active = false).
  *
- * Authorizes via UserPolicy::update — which requires the update_user ability
- * and refuses a non-super-admin acting on a super admin (guard 1) — then, when
+ * Authorizes via UserPolicy::deactivate — which requires the update_user ability,
+ * refuses a non-super-admin acting on a super admin (guard 1) and refuses
+ * deactivating ANOTHER super admin (guard 5, P4-T43) — then, when
  * the target is a super admin, routes the write through
  * SuperAdminInvariantService so deactivating the last active super admin is
  * refused atomically (guard 3, 422).
@@ -51,7 +52,7 @@ final class DeactivateUserAction
 
             $lockedUser = User::query()->lockForUpdate()->findOrFail($target->getKey());
 
-            Gate::forUser($actor)->authorize('update', $lockedUser);
+            Gate::forUser($actor)->authorize('deactivate', $lockedUser);
 
             // AFTER the gate, so an actor with no business here is told so rather
             // than shown a rule about their own account. Before the no-op check

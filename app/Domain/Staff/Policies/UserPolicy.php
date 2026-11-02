@@ -16,27 +16,24 @@ use App\Models\User;
  *   2. No user can modify their own roles or permissions.
  *   4. A role or permission write requires the assign_role ability.
  *      The student role is never assignable through the staff screens.
- *   5. (P4-T43) Nobody acts on ANOTHER super admin through the panel. Super
- *      admins are no longer peers: update (and with it deactivate, activate and
- *      every role change, which authorize through update), delete and
- *      resetPassword are all refused when the target is a super admin and is
- *      not the actor. A super admin still manages everyone below them.
+ *   5. (P4-T43) A super admin is never DELETED or DEACTIVATED by another
+ *      super admin through the panel: delete and deactivate are refused when
+ *      the target is a super admin and is not the actor. Everything else a
+ *      super admin did to another super admin before this guard (create, edit,
+ *      demote, reset the password) is unchanged, by the owner's decision of
+ *      2026-11-02. Removing a super admin is a server-console job; so is
+ *      recovering one that was removed.
  *   Self rules (P4-T43): nobody resets their own password through the
  *   administrator flow (resetPassword is refused on self - the self-service
  *   page asks for the current password and keeps the session), and the existing
  *   self rules stay: no self-deletion, no self-deactivation, no own role edits.
- *   A super admin may still edit their OWN profile (name, email, locale): the
- *   account is theirs, and the edit page offers no password, role or active
- *   state change on it.
  *
  * Why guard 5 exists: on 2026-11-01 one of two super admins reset his own
  * password from the list (the one-time password was lost with his session) and
  * then deleted the other super admin to see what the button did. Both were
- * locked out. Taking a peer's account is also an account-takeover primitive
- * (reset the password, or change the email and reset by mail), so another super
- * admin is as untouchable to a super admin as any super admin is to an admin.
- * Recovery of a genuinely locked-out account is a server-console job: the
- * audited staff:issue-temporary-password and staff:restore-user commands.
+ * locked out. Recovery of a genuinely locked-out account is a server-console
+ * job: the audited staff:issue-temporary-password and staff:restore-user
+ * commands.
  *
  * The request-path Actions (SyncUserRolesAction, DeleteUserAction,
  * DeactivateUserAction, ActivateUserAction, ResetUserPasswordAction) authorize
@@ -54,7 +51,7 @@ use App\Models\User;
  * The project's first non-negotiable is that authorization is permission-based,
  * never role-based: $user->can('delete_user'), never $user->hasRole('admin').
  *
- * mayActOn() and assignRole() below break that rule on purpose, and this is the
+ * outranks(), refusesSuperAdminTarget() and assignRole() below break that rule on purpose, and this is the
  * only place in the codebase where they should. What they express is *rank* —
  * "is this person a super admin" — which is not reducible to a permission
  * check. Encoding it as a permission would mean inventing a synthetic
@@ -109,12 +106,9 @@ class UserPolicy
     }
 
     /**
-     * Edit an account - and, because the Actions authorize it, activate or
-     * deactivate it and change its roles.
-     *
-     * Another super admin is refused (guard 5): editing their email is as good
-     * as taking the account. One's own account is allowed, so a super admin can
-     * still correct their own name or locale.
+     * Edit an account - and, because the Actions authorize it, activate it and
+     * change its roles. Guard 1 only: a super admin may edit another super admin
+     * (owner decision of 2026-11-02); deactivating one is `deactivate`.
      */
     public function update(User $actor, User $target): bool
     {
@@ -122,7 +116,23 @@ class UserPolicy
             return false;
         }
 
-        return $this->mayActOn($actor, $target);
+        return $this->outranks($actor, $target);
+    }
+
+    /**
+     * Deactivate an account (guard 5, P4-T43). The same permission as update,
+     * the same guard 1, and nobody deactivates ANOTHER super admin from the
+     * panel. One's own account passes this gate on purpose: the Action then
+     * refuses it with the typed SelfDeactivationException, so an actor is told
+     * the self rule rather than a bare 403.
+     */
+    public function deactivate(User $actor, User $target): bool
+    {
+        if (! $this->update($actor, $target)) {
+            return false;
+        }
+
+        return ! $this->refusesSuperAdminTarget($actor, $target);
     }
 
     public function delete(User $actor, User $target): bool
@@ -136,7 +146,8 @@ class UserPolicy
             return false;
         }
 
-        return $this->mayActOn($actor, $target);
+        // Guards 1 and 5: no super admin is deleted from the panel, by anyone.
+        return $this->outranks($actor, $target) && ! $this->refusesSuperAdminTarget($actor, $target);
     }
 
     /**
@@ -195,8 +206,8 @@ class UserPolicy
      * the session's stored hash no longer matches, and AuthenticateSession ends
      * the session before the one-time password is shown - the actor is locked
      * out holding a password nobody saw. The self-service PasswordChange page
-     * is the way to change one's own password. Another super admin is refused
-     * too (guard 5).
+     * is the way to change one's own password. Another super admin's password
+     * may be reset by a super admin, as before.
      */
     public function resetPassword(User $actor, User $target): bool
     {
@@ -208,27 +219,30 @@ class UserPolicy
             return false;
         }
 
-        return $this->mayActOn($actor, $target);
+        return $this->outranks($actor, $target);
     }
 
     /**
-     * Guards 1 and 5: a super admin is acted on by nobody but themselves.
-     *
-     * Guard 1 (a non-super-admin may never act on a super admin) is the special
-     * case of this where the actor is not a super admin; guard 5 extends it to
-     * the other super admins, so the only super admin a super admin may touch is
-     * their own account. The abilities that must also refuse the actor's own
-     * account (delete, resetPassword) say so before asking this.
+     * Guard 5: is this a super admin other than the actor? Delete and deactivate
+     * refuse such a target, whoever asks.
+     */
+    private function refusesSuperAdminTarget(User $actor, User $target): bool
+    {
+        return $target->isSuperAdmin() && ! $actor->is($target);
+    }
+
+    /**
+     * Guard 1: a non-super-admin may never act on a super admin.
      *
      * Note this tests the target's *role*, not their permissions. A user holding
      * delete_user directly via givePermissionTo() still cannot reach a super
      * admin, and a user holding both admin and super_admin is treated as a
      * super admin in both directions.
      */
-    private function mayActOn(User $actor, User $target): bool
+    private function outranks(User $actor, User $target): bool
     {
-        if ($target->isSuperAdmin()) {
-            return $actor->is($target);
+        if ($target->isSuperAdmin() && ! $actor->isSuperAdmin()) {
+            return false;
         }
 
         return true;

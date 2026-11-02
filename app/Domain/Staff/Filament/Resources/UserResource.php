@@ -133,14 +133,21 @@ class UserResource extends Resource
                 // Disabled on one's own record (P4-T33): nobody deactivates themself.
                 // Disabled is the UX half only - a forged payload can still set the
                 // state, and DeactivateUserAction is what refuses it.
+                //
+                // Also disabled on ANOTHER super admin's record while it is active
+                // (guard 5, P4-T43): a super admin is not deactivated from the panel.
+                // Switching it back on stays possible once it is off. Again the UX
+                // half; DeactivateUserAction authorizes `deactivate` and refuses.
                 Toggle::make('is_active')
                     ->label(__('staff.is_active'))
                     ->dehydrated(false)
                     ->default(true)
-                    ->disabled(fn (?User $record): bool => self::isOwnRecord($record))
-                    ->helperText(fn (?User $record): ?string => self::isOwnRecord($record)
-                        ? __('staff.is_active_own_account_hint')
-                        : null),
+                    ->disabled(fn (?User $record): bool => self::isOwnRecord($record) || self::isProtectedSuperAdminRecord($record))
+                    ->helperText(fn (?User $record): ?string => match (true) {
+                        self::isOwnRecord($record) => __('staff.is_active_own_account_hint'),
+                        self::isProtectedSuperAdminRecord($record) => __('staff.is_active_super_admin_hint'),
+                        default => null,
+                    }),
 
                 // NOTE: no ->relationship('roles'). This field is display-only;
                 // SyncUserRolesAction performs the write from the page's save hook.
@@ -168,6 +175,21 @@ class UserResource extends Resource
     private static function isOwnRecord(?User $record): bool
     {
         return $record instanceof User && $record->is(auth()->user());
+    }
+
+    /**
+     * Is this an active super admin the signed-in actor may not deactivate?
+     */
+    private static function isProtectedSuperAdminRecord(?User $record): bool
+    {
+        $actor = auth()->user();
+
+        return $record instanceof User
+            && ! self::isOwnRecord($record)
+            && $record->is_active
+            && $record->isSuperAdmin()
+            && $actor instanceof User
+            && ! $actor->can('deactivate', $record);
     }
 
     /**

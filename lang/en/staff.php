@@ -283,6 +283,7 @@ return [
      */
     'cannot_deactivate_self' => 'You cannot deactivate your own account. Ask another administrator to do it.',
     'is_active_own_account_hint' => 'You cannot deactivate your own account.',
+    'is_active_super_admin_hint' => 'A super admin cannot be deactivated here. This is done on the server.',
     'account_details' => 'Account details and access',
     'users_and_roles' => 'Users & roles',
     'users_description' => 'Administration · staff accounts and their profiles in one place',

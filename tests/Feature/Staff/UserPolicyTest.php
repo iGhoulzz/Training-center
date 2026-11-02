@@ -64,12 +64,11 @@ it('allows an admin to update a staff user', function () {
     expect($this->admin->can('update', $this->staff))->toBeTrue();
 });
 
-// P4-T43, guard 5. This was 'allows a super admin to update another super admin'.
-it('forbids a super admin from updating another super admin', function () {
+it('allows a super admin to update another super admin', function () {
     $other = User::factory()->create();
     $other->assignRole('super_admin');
 
-    expect($this->superAdmin->can('update', $other))->toBeFalse();
+    expect($this->superAdmin->can('update', $other))->toBeTrue();
 });
 
 // Guard 2: nobody manages their own account roles or deletes themselves.
@@ -114,10 +113,8 @@ it('treats a user holding both admin and super_admin as a super admin', function
 
     // Protected as a target...
     expect($this->admin->can('update', $dual))->toBeFalse()
-        // ...and privileged as an actor: it may grant super_admin, but (guard 5,
-        // P4-T43) it is a super admin itself and so cannot touch another one.
-        ->and($dual->can('update', $this->superAdmin))->toBeFalse()
-        ->and($dual->can('update', $this->staff))->toBeTrue()
+        // ...and privileged as an actor.
+        ->and($dual->can('update', $this->superAdmin))->toBeTrue()
         ->and($dual->can('assignRole', [User::class, role('super_admin')]))->toBeTrue();
 });
 

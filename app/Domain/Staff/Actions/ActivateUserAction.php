@@ -16,8 +16,9 @@ use Illuminate\Support\Facades\Gate;
  * The toggle is not model-bound, so both directions must resolve to an Action.
  * Activation is authorized through UserPolicy::update for the same reason
  * deactivation is: an admin must not be able to restore a super admin's access
- * (guard 1), nobody without update_user may flip the column at all, and (guard 5,
- * P4-T43) nobody activates ANOTHER super admin either.
+ * (guard 1) and nobody without update_user may flip the column at all. A super
+ * admin may reactivate another super admin: it only adds to the population, and
+ * guard 5 (P4-T43) refuses deleting or deactivating one, not restoring one.
  *
  * The authorization is asked of the LOCKED row, in the one global lock order
  * (super_admin role, then the user), like DeleteUserAction and

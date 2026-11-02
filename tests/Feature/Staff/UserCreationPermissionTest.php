@@ -14,7 +14,6 @@ use Filament\Actions\CreateAction;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Livewire\Livewire;
-use Tests\Feature\Staff\Support\PermissiveUserPolicy;
 
 /**
  * Permission-model consistency for account creation (P1-T05b).
@@ -130,11 +129,6 @@ it('refuses to strip the role from the last active super admin through the edit 
     // Guard 2 blocks self-edits and guard 1 blocks lesser actors, so the only
     // actor who can attempt this is another super admin — who must be inactive
     // for the target to be the LAST ACTIVE one.
-    //
-    // Guard 5 (P4-T43) refuses that actor in the policy before the invariant is asked;
-    // the permissive policy puts the invariant back in the first position.
-    PermissiveUserPolicy::install();
-
     $target = User::factory()->create(['is_active' => true]);
     $this->system->assignRoles($target, 'super_admin');
 

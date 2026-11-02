@@ -8,6 +8,8 @@ use App\Domain\Staff\Actions\DeleteUserAction;
 use App\Domain\Staff\Actions\ResetUserPasswordAction;
 use App\Domain\Staff\Actions\SyncUserRolesAction;
 use App\Domain\Staff\Actions\SystemRoleWriter;
+use App\Domain\Staff\Exceptions\LastSuperAdminException;
+use App\Domain\Staff\Filament\Resources\UserResource\Pages\CreateUser;
 use App\Domain\Staff\Filament\Resources\UserResource\Pages\EditUser;
 use App\Domain\Staff\Filament\Resources\UserResource\Pages\ListUsers;
 use App\Filament\Pages\PasswordChange;
@@ -23,12 +25,13 @@ use PHPUnit\Framework\ExpectationFailedException;
  *
  * One super admin reset his OWN password from the list (AuthenticateSession ended
  * his session before the one-time password was shown) and then deleted the other
- * super admin. The owner's decisions, each tested both ways here:
+ * super admin. The owner's decisions, as narrowed on 2026-11-02, each tested both
+ * ways here:
  *
  *   - "Reset password" never applies to one's own account; "Change password" does.
- *   - Nobody deletes, deactivates, resets the password of, edits, or strips the
- *     super_admin role from ANOTHER super admin through the panel. A super admin
- *     still manages everyone below them.
+ *   - A super admin cannot DELETE or DEACTIVATE another super admin from the
+ *     panel. Creating, editing, demoting and resetting the password of one is
+ *     unchanged, and a super admin still manages everyone below them.
  *
  * Actors who stand for a PERMISSION hold exactly the permissions named, never
  * super_admin (which holds every one and would pass whichever ability the code
@@ -67,6 +70,7 @@ dataset('guarded abilities', [
     'update' => ['update', 'update_user'],
     'delete' => ['delete', 'delete_user'],
     'resetPassword' => ['resetPassword', 'reset_user_password'],
+    'deactivate' => ['deactivate', 'update_user'],
 ]);
 
 /*
@@ -75,15 +79,28 @@ dataset('guarded abilities', [
 |--------------------------------------------------------------------------
 */
 
-it('refuses a super admin any guarded ability on another super admin: :dataset', function (string $ability) {
+it('refuses a super admin deleting or deactivating another super admin: :dataset', function (string $ability) {
     expect($this->superAdminA->can($ability, $this->superAdminB))->toBeFalse()
         ->and($this->superAdminB->can($ability, $this->superAdminA))->toBeFalse();
-})->with('guarded abilities');
+})->with(['delete', 'deactivate']);
+
+it('still lets a super admin edit or reset the password of another super admin: :dataset', function (string $ability, string $permission) {
+    $oneShort = ($this->userWith)('view_any_user', 'view_user');
+    $holder = ($this->userWith)($permission);
+
+    expect($this->superAdminA->can($ability, $this->superAdminB))->toBeTrue()
+        // One permission short, and one rank short (guard 1): refused.
+        ->and($oneShort->can($ability, $this->superAdminB))->toBeFalse()
+        ->and($holder->can($ability, $this->superAdminB))->toBeFalse();
+})->with([
+    'update' => ['update', 'update_user'],
+    'resetPassword' => ['resetPassword', 'reset_user_password'],
+]);
 
 it('still lets a super admin use every guarded ability on an ordinary account: :dataset', function (string $ability) {
     expect($this->superAdminA->can($ability, $this->admin))->toBeTrue()
         ->and($this->superAdminA->can($ability, $this->staff))->toBeTrue();
-})->with('guarded abilities');
+})->with(['update', 'delete', 'resetPassword', 'deactivate']);
 
 it('allows exactly the holder of the permission to act on an ordinary account, and nobody one permission short: :dataset', function (string $ability, string $permission) {
     $holder = ($this->userWith)($permission);
@@ -121,8 +138,10 @@ it('treats an account holding both admin and super_admin as a super admin target
     $this->system->assignRoles($dual, ['admin', 'super_admin']);
 
     expect($this->superAdminA->can('delete', $dual))->toBeFalse()
-        ->and($this->superAdminA->can('resetPassword', $dual))->toBeFalse()
-        ->and($this->superAdminA->can('update', $dual))->toBeFalse();
+        ->and($this->superAdminA->can('deactivate', $dual))->toBeFalse()
+        ->and($this->superAdminA->can('resetPassword', $dual))->toBeTrue()
+        ->and($this->superAdminA->can('update', $dual))->toBeTrue()
+        ->and($this->admin->can('update', $dual))->toBeFalse();
 });
 
 /*
@@ -157,13 +176,12 @@ it('still lets a super admin deactivate an admin', function () {
     expect($this->admin->fresh()->is_active)->toBeFalse();
 });
 
-it('refuses a super admin reactivating another super admin and changes nothing', function () {
+it('still lets a super admin reactivate another super admin, since that only adds to the population', function () {
     $this->superAdminB->forceFill(['is_active' => false])->save();
 
-    expect(fn () => app(ActivateUserAction::class)->execute($this->superAdminA, $this->superAdminB))
-        ->toThrow(AuthorizationException::class);
+    app(ActivateUserAction::class)->execute($this->superAdminA, $this->superAdminB);
 
-    expect($this->superAdminB->fresh()->is_active)->toBeFalse();
+    expect($this->superAdminB->fresh()->is_active)->toBeTrue();
 });
 
 it('still lets a super admin reactivate a deactivated admin, and refuses one without update_user', function () {
@@ -179,14 +197,44 @@ it('still lets a super admin reactivate a deactivated admin, and refuses one wit
     expect($this->admin->fresh()->is_active)->toBeTrue();
 });
 
-it('refuses a super admin resetting another super admin password and leaves it untouched', function () {
+it('decides ActivateUserAction on the locked row, not on the instance the caller holds', function () {
+    // The caller's copy is stale twice over: it says the account is already active
+    // (an early return on it would skip the activation) and says it is an ordinary
+    // admin. The database says it is a DEACTIVATED SUPER ADMIN. An admin holding
+    // update_user must be refused on the database's rank, and a super admin must
+    // reactivate on the database's is_active.
+    $target = ($this->makeUser)('admin');
+    $stale = User::query()->findOrFail($target->getKey());
+    $stale->loadMissing('roles');
+
+    $this->system->syncRoles($target, ['super_admin']);
+    $target->forceFill(['is_active' => false])->save();
+
+    expect($stale->is_active)->toBeTrue()
+        ->and($stale->roles->pluck('name')->all())->toBe(['admin']);
+
+    expect(fn () => app(ActivateUserAction::class)->execute($this->admin, $stale))
+        ->toThrow(AuthorizationException::class);
+    expect($target->fresh()->is_active)->toBeFalse();
+
+    app(ActivateUserAction::class)->execute($this->superAdminA, $stale);
+
+    expect($target->fresh()->is_active)->toBeTrue();
+});
+
+it('lets a super admin reset another super admin password, and refuses an actor without reset_user_password', function () {
+    $oneShort = ($this->userWith)('update_user');
     $original = $this->superAdminB->password;
 
-    expect(fn () => app(ResetUserPasswordAction::class)->execute($this->superAdminA, $this->superAdminB))
+    expect(fn () => app(ResetUserPasswordAction::class)->execute($oneShort, $this->superAdminB))
         ->toThrow(AuthorizationException::class);
+    expect($this->superAdminB->fresh()->password)->toBe($original);
 
-    expect($this->superAdminB->fresh()->password)->toBe($original)
-        ->and($this->superAdminB->fresh()->must_change_password)->toBeFalse();
+    $plain = app(ResetUserPasswordAction::class)->execute($this->superAdminA, $this->superAdminB);
+
+    expect($plain)->toHaveLength(16)
+        ->and($this->superAdminB->fresh()->must_change_password)->toBeTrue()
+        ->and($this->superAdminB->fresh()->password)->not->toBe($original);
 });
 
 it('refuses resetting your own password through the Action and leaves it untouched', function () {
@@ -216,13 +264,25 @@ it('still lets a super admin reset an admin password, and refuses an actor witho
         ->and($this->admin->fresh()->must_change_password)->toBeTrue();
 });
 
-it('refuses a super admin stripping or changing the roles of another super admin', function () {
-    expect(fn () => app(SyncUserRolesAction::class)->execute($this->superAdminA, $this->superAdminB, ['admin']))
-        ->toThrow(AuthorizationException::class);
-    expect(fn () => app(SyncUserRolesAction::class)->execute($this->superAdminA, $this->superAdminB, ['super_admin', 'staff']))
-        ->toThrow(AuthorizationException::class);
+it('lets a super admin demote another super admin while another active one remains', function () {
+    app(SyncUserRolesAction::class)->execute($this->superAdminA, $this->superAdminB, ['admin']);
 
-    expect($this->superAdminB->fresh()->roles()->pluck('name')->all())->toBe(['super_admin']);
+    expect($this->superAdminB->fresh()->roles()->pluck('name')->all())->toBe(['admin'])
+        ->and($this->superAdminA->fresh()->isSuperAdmin())->toBeTrue();
+});
+
+it('still refuses demoting the LAST active super admin (guard 3), and an actor without assign_role', function () {
+    // A stale session of a deactivated super admin acts on the only active one.
+    $lastActive = $this->superAdminB;
+    $this->superAdminA->forceFill(['is_active' => false])->save();
+    $oneShort = ($this->userWith)('update_user');
+
+    expect(fn () => app(SyncUserRolesAction::class)->execute($oneShort, $lastActive, ['admin']))
+        ->toThrow(AuthorizationException::class);
+    expect(fn () => app(SyncUserRolesAction::class)->execute($this->superAdminA, $lastActive, ['admin']))
+        ->toThrow(LastSuperAdminException::class);
+
+    expect($lastActive->fresh()->roles()->pluck('name')->all())->toBe(['super_admin']);
 });
 
 it('still lets a super admin change the roles of an ordinary account, and refuses an actor without assign_role', function () {
@@ -254,11 +314,11 @@ it('refuses an admin touching any super admin through every Action (guard 1 stay
 |--------------------------------------------------------------------------
 */
 
-it('shows a super admin no destructive action on another super admin, and every one on an admin', function () {
+it('shows a super admin no Delete on another super admin, and Delete and Reset password on an admin', function () {
     $component = Livewire::actingAs($this->superAdminA)->test(ListUsers::class);
 
     $component->assertTableActionHidden('delete', $this->superAdminB)
-        ->assertTableActionHidden('resetPassword', $this->superAdminB)
+        ->assertTableActionVisible('resetPassword', $this->superAdminB)
         ->assertTableActionHidden('changePassword', $this->superAdminB)
         ->assertTableActionVisible('delete', $this->admin)
         ->assertTableActionVisible('resetPassword', $this->admin)
@@ -293,20 +353,25 @@ it('replaces Reset password with Change password on your own row, for a holder o
         ->assertTableActionVisible('changePassword', $oneShort);
 });
 
-it('does not run a hidden reset-password or delete action on a super admin when invoked directly', function () {
-    $original = $this->superAdminB->password;
+it('does not run a hidden Delete on another super admin, or Reset password on your own row, when invoked directly', function () {
     $component = Livewire::actingAs($this->superAdminA)->test(ListUsers::class);
 
-    expect(fn () => $component->callTableAction('resetPassword', $this->superAdminB))
-        ->toThrow(ExpectationFailedException::class);
     expect(fn () => $component->callTableAction('delete', $this->superAdminB))
         ->toThrow(ExpectationFailedException::class);
     expect(fn () => $component->callTableAction('resetPassword', $this->superAdminA))
         ->toThrow(ExpectationFailedException::class);
 
-    expect($this->superAdminB->fresh()->password)->toBe($original)
-        ->and(User::find($this->superAdminB->id))->not->toBeNull()
+    expect(User::find($this->superAdminB->id))->not->toBeNull()
         ->and(User::find($this->superAdminA->id))->not->toBeNull();
+});
+
+it('resets another super admin password from the list and shows the one-time password', function () {
+    Livewire::actingAs($this->superAdminA)
+        ->test(ListUsers::class)
+        ->callTableAction('resetPassword', $this->superAdminB)
+        ->assertNotified(__('staff.temp_password_generated'));
+
+    expect($this->superAdminB->fresh()->must_change_password)->toBeTrue();
 });
 
 /*
@@ -315,21 +380,59 @@ it('does not run a hidden reset-password or delete action on a super admin when 
 |--------------------------------------------------------------------------
 */
 
-it('refuses a super admin the edit page of another super admin', function () {
+it('opens the edit page of another super admin, with the Active toggle disabled and explained', function () {
     Livewire::actingAs($this->superAdminA)
         ->test(EditUser::class, ['record' => $this->superAdminB->getKey()])
-        ->assertForbidden();
+        ->assertSuccessful()
+        ->assertFormFieldIsDisabled('is_active')
+        ->assertSee('A super admin cannot be deactivated here.');
 
     $this->actingAs($this->superAdminA)
         ->get('/admin/users/'.$this->superAdminB->getKey().'/edit')
-        ->assertForbidden();
+        ->assertSuccessful();
+
+    // The control for an ordinary account stays live and quiet.
+    Livewire::actingAs($this->superAdminA)
+        ->test(EditUser::class, ['record' => $this->admin->getKey()])
+        ->assertFormFieldIsEnabled('is_active')
+        ->assertDontSee('A super admin cannot be deactivated here.');
 });
 
-it('does not link another super admin row to an edit page, and links an admin row', function () {
+it('refuses a crafted save that deactivates another super admin, and rolls the whole save back', function () {
+    $this->superAdminB->forceFill(['name' => 'Original Name'])->save();
+
     Livewire::actingAs($this->superAdminA)
-        ->test(ListUsers::class)
-        ->assertDontSee('/admin/users/'.$this->superAdminB->getKey().'/edit')
-        ->assertSee('/admin/users/'.$this->admin->getKey().'/edit');
+        ->test(EditUser::class, ['record' => $this->superAdminB->getKey()])
+        ->fillForm(['name' => 'Renamed In The Same Payload', 'is_active' => false])
+        ->call('save')
+        ->assertNotified(__('staff.save_refused_unauthorized'));
+
+    expect($this->superAdminB->fresh()->is_active)->toBeTrue()
+        ->and($this->superAdminB->fresh()->name)->toBe('Original Name');
+});
+
+it('lets a super admin edit another super admin and demote them from the edit page', function () {
+    Livewire::actingAs($this->superAdminA)
+        ->test(EditUser::class, ['record' => $this->superAdminB->getKey()])
+        ->fillForm(['name' => 'Renamed Peer', 'roles' => ['admin']])
+        ->call('save')
+        ->assertHasNoFormErrors();
+
+    expect($this->superAdminB->fresh()->name)->toBe('Renamed Peer')
+        ->and($this->superAdminB->fresh()->roles()->pluck('name')->all())->toBe(['admin']);
+});
+
+it('lets a super admin switch a deactivated super admin back on from the edit page', function () {
+    $this->superAdminB->forceFill(['is_active' => false])->save();
+
+    Livewire::actingAs($this->superAdminA)
+        ->test(EditUser::class, ['record' => $this->superAdminB->getKey()])
+        ->assertFormFieldIsEnabled('is_active')
+        ->fillForm(['is_active' => true])
+        ->call('save')
+        ->assertHasNoFormErrors();
+
+    expect($this->superAdminB->fresh()->is_active)->toBeTrue();
 });
 
 it('lets a super admin edit their own profile and keeps their roles and active state', function () {
@@ -364,4 +467,49 @@ it('still refuses an admin the edit page of a super admin (guard 1)', function (
     Livewire::actingAs($this->admin)
         ->test(EditUser::class, ['record' => $this->superAdminA->getKey()])
         ->assertForbidden();
+});
+
+/*
+|--------------------------------------------------------------------------
+| Creating a super admin
+|--------------------------------------------------------------------------
+*/
+
+it('creates a super admin from the create page and shows the one-time password', function () {
+    // The reviewer's P2: the save rolled back with "needs the password-reset
+    // permission", because the new account was a super admin by the time its
+    // password was issued and the policy refused a super admin resetting one.
+    Livewire::actingAs($this->superAdminA)
+        ->test(CreateUser::class)
+        ->fillForm([
+            'name' => 'Third Super Admin',
+            'email' => 'third@example.test',
+            'locale' => 'en',
+            'is_active' => true,
+            'roles' => ['super_admin'],
+        ])
+        ->call('create')
+        ->assertHasNoFormErrors()
+        ->assertNotified(__('staff.temp_password_generated'));
+
+    $created = User::query()->where('email', 'third@example.test')->firstOrFail();
+
+    expect($created->isSuperAdmin())->toBeTrue()
+        ->and($created->must_change_password)->toBeTrue();
+});
+
+it('refuses an admin creating a super admin, and a creator without reset_user_password creating anyone', function () {
+    Livewire::actingAs($this->admin)
+        ->test(CreateUser::class)
+        ->fillForm(['name' => 'X', 'email' => 'x@example.test', 'locale' => 'en', 'is_active' => true, 'roles' => ['super_admin']])
+        ->call('create')
+        ->assertHasFormErrors(['roles.0']);
+
+    $oneShort = ($this->userWith)('access_admin_panel', 'view_any_user', 'view_user', 'create_user', 'assign_role');
+
+    Livewire::actingAs($oneShort)
+        ->test(CreateUser::class)
+        ->assertForbidden();
+
+    expect(User::query()->whereIn('email', ['x@example.test'])->exists())->toBeFalse();
 });

@@ -114,9 +114,9 @@ it('keeps the last-super-admin guard: a stale session of a deactivated super adm
     // way it can still be reached: an actor whose account was deactivated while
     // their session stayed open, acting on the one active super admin left.
     //
-    // Guard 5 (P4-T43) now refuses that actor in the policy first, so the invariant is
-    // the second line of defence; the permissive policy puts it back in the first
-    // position to prove it still holds.
+    // Guard 5 (P4-T43) refuses one super admin deactivating another in the policy first,
+    // so the invariant is the second line of defence; the permissive policy puts it
+    // back in the first position to prove it still holds.
     PermissiveUserPolicy::install();
 
     $lastActive = ($this->makeUser)('super_admin');
