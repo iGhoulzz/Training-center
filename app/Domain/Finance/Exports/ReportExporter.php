@@ -17,6 +17,7 @@ use Illuminate\Database\Eloquent\SoftDeletingScope;
 use Illuminate\Support\Facades\URL;
 use LogicException;
 use OpenSpout\Common\Entity\Row;
+use OpenSpout\Common\Entity\Style\Style;
 use OpenSpout\Writer\XLSX\Options;
 use OpenSpout\Writer\XLSX\Writer;
 
@@ -84,6 +85,7 @@ abstract class ReportExporter extends Exporter
     public function configureXlsxWriterAfterOpen(Writer $writer): Writer
     {
         $snapshot = $this->capturedSnapshot();
+        $summary = ReportExportSummary::fromSnapshot($snapshot);
         $writer->addRow(Row::fromValues([self::spreadsheetSafe($snapshot->title)]));
 
         foreach ($snapshot->filters as $label => $value) {
@@ -93,6 +95,10 @@ abstract class ReportExporter extends Exporter
             ]));
         }
 
+        $writer->addRow(Row::fromValues([
+            self::spreadsheetSafe($summary->label),
+            $summary->amount,
+        ], (new Style)->setFontBold()));
         $writer->addRow(Row::fromValues([]));
 
         return $writer;
@@ -101,6 +107,7 @@ abstract class ReportExporter extends Exporter
     public function getXlsxWriterOptions(): Options
     {
         $snapshot = $this->capturedSnapshot();
+        $summary = ReportExportSummary::fromSnapshot($snapshot);
         $options = new Options;
         $index = 0;
 
@@ -109,12 +116,13 @@ abstract class ReportExporter extends Exporter
             $length = mb_strwidth($label);
 
             if ($index === 1) {
-                $length = max($length, mb_strwidth($snapshot->title));
+                $length = max($length, mb_strwidth($snapshot->title), mb_strwidth($summary->label));
 
                 foreach (array_keys($snapshot->filters) as $filterLabel) {
                     $length = max($length, mb_strwidth($filterLabel));
                 }
             } elseif ($index === 2) {
+                $length = max($length, mb_strwidth($summary->amount));
                 foreach ($snapshot->filters as $filterValue) {
                     $length = max($length, mb_strwidth($filterValue));
                 }

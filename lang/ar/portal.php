@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 return [
-    'brand' => 'بوابة الطالب',
+    'brand' => 'بوابة المتدرب',
     'overview_title' => 'نظرة عامة',
     'overview_navigation_label' => 'نظرة عامة',
     'overview_name' => 'الاسم',

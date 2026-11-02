@@ -19,6 +19,15 @@ return [
         'profit' => ['navigation' => 'Profit', 'title' => 'Profit'],
         'student_payment_history' => ['navigation' => 'Student payments', 'title' => 'Student payment history'],
     ],
+    'export_totals' => [
+        'revenue' => 'Total batch revenue (LYD)',
+        'outstanding_aged' => 'Total outstanding (LYD)',
+        'payment_method' => 'Total collected (LYD)',
+        'daily_tender' => 'Total collected today (LYD)',
+        'wage_cost' => 'Total wage cost (LYD)',
+        'profit' => 'Net profit (LYD)',
+        'student_payment_history' => 'Student collected total (LYD)',
+    ],
     'filters' => [
         'from' => 'From',
         'to' => 'To',

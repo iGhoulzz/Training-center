@@ -7,6 +7,7 @@
         h1 { font-size: 18pt; margin: 0; margin-block-end: 8pt; }
         .filters { margin-block-end: 16pt; }
         .filter { margin-block-end: 3pt; }
+        .summary { background: #eff6ff; border: 1px solid #bfdbfe; font-weight: bold; padding: 8pt; margin-block-end: 12pt; }
         table { border-collapse: collapse; width: 100%; }
         th, td { border: 1px solid #d1d5db; padding: 6pt; vertical-align: top; }
         th { background: #f3f4f6; font-weight: bold; }
@@ -20,6 +21,7 @@
             <div class="filter"><strong>{{ $label }}:</strong> {{ $value }}</div>
         @endforeach
     </div>
+    <div class="summary">{{ $summary->label }}: {{ $summary->amount }}</div>
     <table>
         <thead>
             <tr>

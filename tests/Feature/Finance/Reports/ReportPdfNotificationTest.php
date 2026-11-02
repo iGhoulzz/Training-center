@@ -74,8 +74,8 @@ beforeEach(function () {
             locale: 'en',
             filters: ['Period' => '2026-08'],
             dataset: new ReportDataset(
-                ['amount' => 'Amount'],
-                [['carrier_id' => 1, 'cells' => ['amount' => '125.000']]],
+                ['batch_total' => 'Batch revenue (LYD)'],
+                [['carrier_id' => 1, 'cells' => ['batch_total' => '125.000']]],
             ),
         );
 
