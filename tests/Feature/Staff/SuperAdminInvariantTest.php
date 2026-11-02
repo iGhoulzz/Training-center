@@ -9,6 +9,7 @@ use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Tests\Feature\Staff\Support\PermissiveUserPolicy;
 
 /**
  * SuperAdminInvariantService is guard 3 — at least one active super admin must
@@ -108,6 +109,13 @@ it('runs the mutation and the survivor check inside one locked transaction', fun
 it('is the path the DeleteUserAction takes for a super-admin target', function () {
     // A survivor so the delete is allowed to commit; we only care that the
     // Action routes the write through the locking invariant service.
+    //
+    // Guard 5 (P4-T43) refuses a super admin deleting another one (as deactivating), so the branch is
+    // unreachable under the real policy and is kept as the second line of defence:
+    // the permissive policy stands for a future change that lets a super admin
+    // through, and the Action must still take the invariant's lock.
+    PermissiveUserPolicy::install();
+
     $actor = User::factory()->create();
     $actor->assignRole('super_admin');
 

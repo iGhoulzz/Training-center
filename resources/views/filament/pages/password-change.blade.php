@@ -7,6 +7,20 @@
     </form>
 
     {{--
+        A VOLUNTARY CHANGE CAN BE ABANDONED (P4-T43).
+
+        Reached from the user menu or one's own row in Users & roles, the account is not
+        flagged, so there is somewhere to go back to. A flagged account is contained on
+        this page and is offered no link away from it; ForcePasswordChange would turn
+        any such link straight back, so it is simply not drawn.
+    --}}
+    @unless (filament()->auth()->user()?->must_change_password)
+        <x-filament::button tag="a" :href="filament()->getUrl()" color="gray" outlined class="w-full">
+            {{ __('navigation.password_change_back') }}
+        </x-filament::button>
+    @endunless
+
+    {{--
         THE WAY OFF THIS PAGE (G1-U3).
 
         The page renders no panel chrome, so the topbar user menu that normally

@@ -225,6 +225,7 @@ return [
         'guard_name' => 'guard_name',
         'locale' => 'locale',
         'must_change_password' => 'must_change_password',
+        'source' => 'Source',
         'added' => 'added',
         'removed' => 'removed',
         'assigned_hours' => 'assigned_hours',

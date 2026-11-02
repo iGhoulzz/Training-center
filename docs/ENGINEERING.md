@@ -156,7 +156,7 @@ app(DeactivateUserAction::class)->execute($actor, $target);
 app(DeleteUserAction::class)->execute($actor, $target);
 ```
 
-Actions require a real actor. **Seeders, factories, and console setup use the separately named trusted path**, `App\Domain\Staff\Actions\SystemRoleWriter` — never the request-path Actions. The name is deliberately unmistakable so a system write can never be confused for an authorized one.
+Actions require a real actor. **Seeders, factories, and console setup use the separately named trusted path**, `App\Domain\Staff\Actions\SystemRoleWriter` — never the request-path Actions. The name is deliberately unmistakable so a system write can never be confused for an authorized one. A second trusted actorless path exists for the server console only: `App\Domain\Staff\Actions\ConsoleAccountRecovery` (P4-T43), used by `staff:issue-temporary-password` and `staff:restore-user`, which writes an audit entry with no causer and the source `console`; an architecture test confines it to those two commands.
 
 Filament must call these Actions explicitly from its create/update/delete hooks. **`Select::make('roles')->relationship('roles')` is forbidden** — it persists via the relation's `sync()`/`detach()`, reaching around every guard, and it *is* reachable from the UI.
 
@@ -230,7 +230,7 @@ Rank resolves through `User::isSuperAdmin()` / `Role::isSuperAdmin()`, comparing
 
 ### Guards and the CLI path
 
-Guards 1, 2, and 4 are actor-relative, so they do not apply where there is no actor — that is what `SystemRoleWriter` is for, and its use is confined to seeding and setup. **Guard 3 has no exemption**: `SystemRoleWriter::syncRoles()` engages `SuperAdminInvariantService` whenever the write would actually remove the role, because losing the last super admin is unrecoverable and a seeder is no more entitled to cause that than a request is. The invariant engages only on removal, so bootstrapping a fresh install is never blocked.
+Guards 1, 2, and 4 are actor-relative, so they do not apply where there is no actor — that is what `SystemRoleWriter` is for, and its use is confined to seeding and setup (`ConsoleAccountRecovery`, for the two server-console recovery commands, is the same kind of path and is confined the same way). **Guard 3 has no exemption**: `SystemRoleWriter::syncRoles()` engages `SuperAdminInvariantService` whenever the write would actually remove the role, because losing the last super admin is unrecoverable and a seeder is no more entitled to cause that than a request is. The invariant engages only on removal, so bootstrapping a fresh install is never blocked.
 
 ### Creating an account requires permission to issue its credential
 

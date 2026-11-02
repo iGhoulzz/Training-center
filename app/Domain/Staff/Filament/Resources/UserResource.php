@@ -11,6 +11,7 @@ use App\Domain\Staff\Exceptions\LastSuperAdminException;
 use App\Domain\Staff\Filament\Resources\UserResource\Pages\CreateUser;
 use App\Domain\Staff\Filament\Resources\UserResource\Pages\EditUser;
 use App\Domain\Staff\Filament\Resources\UserResource\Pages\ListUsers;
+use App\Filament\Pages\PasswordChange;
 use App\Filament\Tables\AdminColumns;
 // App\Models\Role, never the vendor model — the architecture test fails the
 // build on a Spatie\Permission\Models\Role import outside app/Models/Role.php.
@@ -132,14 +133,21 @@ class UserResource extends Resource
                 // Disabled on one's own record (P4-T33): nobody deactivates themself.
                 // Disabled is the UX half only - a forged payload can still set the
                 // state, and DeactivateUserAction is what refuses it.
+                //
+                // Also disabled on ANOTHER super admin's record while it is active
+                // (guard 5, P4-T43): a super admin is not deactivated from the panel.
+                // Switching it back on stays possible once it is off. Again the UX
+                // half; DeactivateUserAction authorizes `deactivate` and refuses.
                 Toggle::make('is_active')
                     ->label(__('staff.is_active'))
                     ->dehydrated(false)
                     ->default(true)
-                    ->disabled(fn (?User $record): bool => self::isOwnRecord($record))
-                    ->helperText(fn (?User $record): ?string => self::isOwnRecord($record)
-                        ? __('staff.is_active_own_account_hint')
-                        : null),
+                    ->disabled(fn (?User $record): bool => self::isOwnRecord($record) || self::isProtectedSuperAdminRecord($record))
+                    ->helperText(fn (?User $record): ?string => match (true) {
+                        self::isOwnRecord($record) => __('staff.is_active_own_account_hint'),
+                        self::isProtectedSuperAdminRecord($record) => __('staff.is_active_super_admin_hint'),
+                        default => null,
+                    }),
 
                 // NOTE: no ->relationship('roles'). This field is display-only;
                 // SyncUserRolesAction performs the write from the page's save hook.
@@ -167,6 +175,21 @@ class UserResource extends Resource
     private static function isOwnRecord(?User $record): bool
     {
         return $record instanceof User && $record->is(auth()->user());
+    }
+
+    /**
+     * Is this an active super admin the signed-in actor may not deactivate?
+     */
+    private static function isProtectedSuperAdminRecord(?User $record): bool
+    {
+        $actor = auth()->user();
+
+        return $record instanceof User
+            && ! self::isOwnRecord($record)
+            && $record->is_active
+            && $record->isSuperAdmin()
+            && $actor instanceof User
+            && ! $actor->can('deactivate', $record);
     }
 
     /**
@@ -261,6 +284,24 @@ class UserResource extends Resource
             ->recordUrl(null)
             ->recordActions([
                 AdminTable::rowMenu([
+                    /*
+                     * YOUR OWN ROW GETS "CHANGE PASSWORD", NEVER "RESET PASSWORD" (P4-T43).
+                     *
+                     * A reset on one's own account replaced the password hash under the
+                     * actor's own session: AuthenticateSession ended the session before the
+                     * one-time password was shown, so the old password was gone and nobody
+                     * saw the new one (the 2026-11-01 incident). The self-service page asks
+                     * for the current password and keeps the session. A plain link: there
+                     * is nothing to authorize, it is one's own credential, and the page
+                     * itself requires the current password. resetPassword below is refused
+                     * on one's own row by UserPolicy as well, so the two never both show.
+                     */
+                    Action::make('changePassword')
+                        ->label(__('staff.change_password'))
+                        ->icon(Heroicon::OutlinedKey)
+                        ->url(fn (): string => PasswordChange::getUrl())
+                        ->visible(fn (User $record): bool => self::isOwnRecord($record)),
+
                     Action::make('resetPassword')
                         ->label(__('staff.reset_password'))
                         ->icon(Heroicon::OutlinedKey)

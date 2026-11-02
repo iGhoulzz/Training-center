@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Livewire\Livewire;
 use PHPUnit\Framework\ExpectationFailedException;
+use Tests\Feature\Staff\Support\PermissiveUserPolicy;
 
 /**
  * Staff account management UI (P1-T05).
@@ -203,6 +204,11 @@ it('refuses to deactivate the last active super admin through the UI', function 
     // Reached through another account since P4-T33: nobody deactivates themself,
     // so the actor is a super admin deactivated while their session stayed open,
     // as the delete test below does for the same reason.
+    //
+    // Guard 5 (P4-T43) refuses that deactivation in the policy before the invariant is
+    // asked, so the permissive policy puts the invariant back in the first position.
+    PermissiveUserPolicy::install();
+
     $lastActive = ($this->makeUser)('super_admin');
     $deactivatedActor = ($this->makeUser)('super_admin', ['is_active' => false]);
 
@@ -223,6 +229,12 @@ it('refuses to delete the last active super admin through the UI', function () {
     // (guard 2 blocks self-deletion), which means the acting super admin must
     // already be deactivated — a session that outlived its account. The
     // invariant must still hold on that path.
+    //
+    // Guard 5 (P4-T43) hides the delete action for any other super admin and the
+    // Action refuses it, so the invariant is the second line of defence; the
+    // permissive policy puts it back in the first position.
+    PermissiveUserPolicy::install();
+
     $lastActive = ($this->makeUser)('super_admin');
     $deactivatedActor = ($this->makeUser)('super_admin', ['is_active' => false]);
 

@@ -13,6 +13,7 @@ use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\Feature\Staff\Support\PermissiveUserPolicy;
 
 /**
  * The request-path write boundary. Every security-sensitive role/permission/user
@@ -176,13 +177,17 @@ it('forbids an admin from deleting a super admin (guard 1)', function () {
     expect(User::find($this->superAdmin->id))->not->toBeNull();
 });
 
-it('lets a super admin delete another super admin when survivors remain', function () {
+// P4-T43, guard 5 (owner decision of 2026-11-02). This was 'lets a super admin delete
+// another super admin when survivors remain' - the incident of 2026-11-01. It is
+// refused now; removing a super admin is done on the server.
+it('refuses a super admin deleting another super admin, even when survivors remain (guard 5)', function () {
     $second = User::factory()->create();
     $second->assignRole('super_admin');
 
-    $this->deleteUser->execute($this->superAdmin, $second);
+    expect(fn () => $this->deleteUser->execute($this->superAdmin, $second))
+        ->toThrow(AuthorizationException::class);
 
-    expect(User::find($second->id))->toBeNull();
+    expect(User::find($second->id))->not->toBeNull();
 });
 
 it('lets a super admin delete an ordinary account', function () {
@@ -198,10 +203,15 @@ it('lets a super admin delete an ordinary account', function () {
 */
 
 it('refuses to deactivate the last active super admin (guard 3, 422 business rule)', function () {
-    // Self-deactivation is refused outright since P4-T33, so the invariant is
-    // reached the one way left: a super admin whose account was deactivated while
-    // their session stayed open (two super admins deactivating each other at the
-    // same moment ends up here) acts on the single active super admin.
+    // Self-deactivation is refused outright since P4-T33, and since P4-T43 (guard 5)
+    // no actor deactivates another super admin through the policy, so the invariant is
+    // the SECOND line of defence and is reached only if the policy ever lets a super
+    // admin through. This installs a policy that does, and proves the Action still
+    // hands the write to SuperAdminInvariantService: a super admin whose account was
+    // deactivated while their session stayed open acts on the single active super
+    // admin.
+    PermissiveUserPolicy::install();
+
     $staleSuperAdmin = User::factory()->create(['is_active' => false]);
     $staleSuperAdmin->assignRole('super_admin');
 
@@ -211,16 +221,31 @@ it('refuses to deactivate the last active super admin (guard 3, 422 business rul
     expect($this->superAdmin->fresh()->is_active)->toBeTrue();
 });
 
-it('allows deactivating a super admin when another active one remains', function () {
-    // Was a super admin deactivating themself; nobody may do that since P4-T33, so
-    // the surviving super admin deactivates the other one.
+it('refuses deactivating another super admin even when another active one remains (guard 5)', function () {
+    // Was 'allows deactivating a super admin when another active one remains'
+    // (P4-T43, owner decision of 2026-11-02): a super admin is not deactivated from
+    // the panel.
     $second = User::factory()->create();
     $second->assignRole('super_admin');
 
-    $this->deactivate->execute($this->superAdmin, $second);
+    expect(fn () => $this->deactivate->execute($this->superAdmin, $second))
+        ->toThrow(AuthorizationException::class);
 
-    expect($second->fresh()->is_active)->toBeFalse()
+    expect($second->fresh()->is_active)->toBeTrue()
         ->and($this->superAdmin->fresh()->is_active)->toBeTrue();
+});
+
+it('lets the invariant, not the policy, refuse deleting the last active super admin when the policy would allow it', function () {
+    // The paired control for the deactivate test above, on the delete path.
+    PermissiveUserPolicy::install();
+
+    $staleSuperAdmin = User::factory()->create(['is_active' => false]);
+    $staleSuperAdmin->assignRole('super_admin');
+
+    expect(fn () => $this->deleteUser->execute($staleSuperAdmin, $this->superAdmin))
+        ->toThrow(LastSuperAdminException::class);
+
+    expect(User::find($this->superAdmin->id))->not->toBeNull();
 });
 
 /*

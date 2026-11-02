@@ -2470,6 +2470,40 @@ read-only cards. The Article and Discount forms skipped the section-card pattern
 
 ---
 
+### Task 43 — Your own password, and no super admin deleted from the screen
+**Owner: Claude · `p4/t43-own-password-and-super-admin-guard` · from main · requested by the owner on 2026-11-02**
+
+**Why.** It started with an incident in production. A super admin used "Reset password" on his own row. The
+password changed, the session ended before the one-time password was shown, and he was locked out. The other
+super admin's account was then deleted while testing whether that was possible. Both owners were locked out
+until the lead restored them on the server.
+
+**What changed**
+- **"Reset password" is refused on your own account.** The policy, the Action and the button all refuse it.
+  Your own row shows "Change password" instead.
+- **A "Change password" item in the user menu.** It opens the existing self-service page, which requires the
+  current password. A voluntary change keeps the session and refreshes the session's password hash.
+- **Guard 5 (owner decision).** A super admin may not **delete** or **deactivate** another super admin from the
+  panel. Creating, editing, demoting and resetting another super admin's password stay allowed. Demoting and
+  then deleting is possible in two logged steps, by design. Guard 3 (the last active super admin) is unchanged.
+- **Audited console recovery:** `staff:issue-temporary-password {email}` and `staff:restore-user {email}`,
+  through the trusted `ConsoleAccountRecovery` writer. Each writes an activity entry with `source=console`. An
+  architecture test keeps the writer out of app code. DEPLOYMENT.md gains a "Locked out" section.
+- **`ActivateUserAction`** now locks the role row, then the user row, then authorizes against the locked row.
+
+**Tests.**
+- `SuperAdminPeerGuardTest` (47).
+- `VoluntaryPasswordChangeTest` (10).
+- `ConsoleAccountRecoveryCommandsTest` (12).
+- An `ActionBoundaryArchTest` rule.
+
+**Follow-ups.**
+- `EditUser` writes the user row before taking the role lock. This is pre-existing; a one-line
+  `Role::lockSuperAdminRow()` first would fix it.
+- The password-change page has no rate limit.
+
+---
+
 ## What this plan does not cover
 
 From §12, recorded so they do not reappear as assumptions: multi-tenancy,

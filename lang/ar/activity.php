@@ -172,6 +172,7 @@ return [
         'guard_name' => 'حارس المصادقة',
         'locale' => 'اللغة',
         'must_change_password' => 'يلزم تغيير كلمة المرور',
+        'source' => 'المصدر',
         'added' => 'المضاف',
         'removed' => 'المزال',
         'assigned_hours' => 'الساعات المسندة',

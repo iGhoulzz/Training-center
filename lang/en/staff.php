@@ -54,6 +54,7 @@ return [
     'create_staff_profile' => 'New staff profile',
     'edit_staff_profile' => 'Edit staff profile',
     'reset_password' => 'Reset password',
+    'change_password' => 'Change password',
     'upload_certificate' => 'Upload certificate',
     'download' => 'Download',
     'delete_photo' => 'Remove photo',
@@ -282,6 +283,7 @@ return [
      */
     'cannot_deactivate_self' => 'You cannot deactivate your own account. Ask another administrator to do it.',
     'is_active_own_account_hint' => 'You cannot deactivate your own account.',
+    'is_active_super_admin_hint' => 'A super admin cannot be deactivated here. This is done on the server.',
     'account_details' => 'Account details and access',
     'users_and_roles' => 'Users & roles',
     'users_description' => 'Administration · staff accounts and their profiles in one place',

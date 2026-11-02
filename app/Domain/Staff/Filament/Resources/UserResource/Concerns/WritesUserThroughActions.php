@@ -54,8 +54,17 @@ trait WritesUserThroughActions
     protected function writeGuardedUserState(): void
     {
         try {
-            $this->syncRolesThroughAction();
+            /*
+             * THE ACTIVE STATE IS DECIDED FIRST, AGAINST THE ROLES THE TARGET HOLDS NOW.
+             * Guard 5 refuses deactivating another super admin. Syncing roles first let one
+             * save demote a peer and then deactivate the account the demotion had just made
+             * ordinary, so the guard never saw a super admin. In this order a payload that
+             * demotes and deactivates a peer together is refused whole, and the outer edit
+             * transaction rolls the demotion back with it. (Demoting, and deactivating later
+             * in a separate save, stays possible by the owner's decision.)
+             */
             $this->applyActiveStateThroughAction();
+            $this->syncRolesThroughAction();
         } catch (AuthorizationException) {
             $this->refuseSave(__('staff.save_refused_unauthorized'));
         } catch (LastSuperAdminException) {
