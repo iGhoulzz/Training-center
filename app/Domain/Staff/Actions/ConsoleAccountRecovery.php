@@ -66,7 +66,11 @@ final class ConsoleAccountRecovery
                 return null;
             }
 
-            $plain = $this->temporaryPassword->issue($live);
+            // The model's own `updated` entry is switched off for this write: it
+            // would carry whichever user the process happens to be signed in as
+            // and no marker of the console. The one explicit entry below is the
+            // whole record.
+            $plain = $this->temporaryPassword->issue($live->disableLogging());
 
             // Recorded explicitly, because the hash is not audited and the diff
             // may be empty (see ResetUserPasswordAction). No password, no hash.
@@ -91,7 +95,9 @@ final class ConsoleAccountRecovery
                 return false;
             }
 
-            $deleted->restore();
+            // Same reason: the model's own `restored` entry would be attributed to
+            // an ambient user and double the explicit one below.
+            $deleted->disableLogging()->restore();
 
             self::recordConsoleEvent($deleted, ActivityEvent::RESTORED);
 
