@@ -108,6 +108,14 @@ and `job_batches` tables, which the normal migrations create.
 The suite needs a second database, `training_center_test`, reachable by the same
 user. See the gate below.
 
+### Locked-out administrators
+
+If nobody can sign in to the admin, a person with a shell on the server recovers an
+account with `php artisan staff:issue-temporary-password {email}` (prints a one-time
+password) and `php artisan staff:restore-user {email}` (restores a deleted account).
+Both are audited; the production command lines are in `docs/DEPLOYMENT.md`, "Locked
+out of the admin".
+
 ## The gate
 
 ```bash

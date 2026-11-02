@@ -1601,6 +1601,46 @@ the script takes its first-install path again, confirm
 | Brevo support | | |
 | Domain registrar | | |
 
+### D7. Locked out of the admin
+
+**When:** nobody can sign in to `/admin`, for example a one-time password that was
+lost, or an account that was deleted. In the panel, no administrator can reset the
+password of, delete, or deactivate **another super admin**, and nobody can reset their
+own password from the list (the row offers "Change password", which asks for the
+current one): so a locked-out super admin can only be recovered from the server.
+Anyone who can still sign in as a super admin should not be using these commands for
+an ordinary account; the panel's own "Reset password" does that.
+
+These commands are the same trusted, actor-less path as `staff:bootstrap-production-owner`.
+They run as `www-data` from `current` (ground rule 3), they are **audited** (an entry in
+the activity log with no signed-in user and the source `console`), and they cannot be
+reached from the web.
+
+**A. The account exists, the password is lost.** Issue a temporary password. It is printed
+once, must be changed at the next sign-in, and ends every open session of that account:
+
+```bash
+cd /srv/training-center/current && sudo -u www-data /usr/bin/php artisan staff:issue-temporary-password owner@center.example
+```
+
+The command asks for confirmation (add `--force` in a script). It refuses an unknown
+email and a deleted account (restore it first, below). The account must be active:
+the command warns when it is not.
+
+**B. The account was deleted.** Restore it. The roles it held are kept (a deletion in the
+panel is a soft delete), and the restore is recorded in the activity log:
+
+```bash
+cd /srv/training-center/current && sudo -u www-data /usr/bin/php artisan staff:restore-user owner@center.example
+```
+
+It refuses an account that is not deleted. Its password is unchanged, so if that was lost
+too, run **A** next.
+
+**Record it.** Add the date, the account and the reason to the evidence log. The activity
+log shows both commands under "Password reset by an administrator" and "Restored" with
+no person named.
+
 ---
 
 ## E. Recurring operations and monitoring
