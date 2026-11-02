@@ -60,17 +60,17 @@ final class ConsoleAccountRecovery
         return DB::transaction(function () use ($account): ?string {
             // The live-only query: a soft-deleted row is not found, and the
             // decision is made on the locked row rather than the caller's.
-            $locked = User::query()->lockForUpdate()->find($account->getKey());
+            $live = User::query()->lockForUpdate()->find($account->getKey());
 
-            if ($locked === null) {
+            if ($live === null) {
                 return null;
             }
 
-            $plain = $this->temporaryPassword->issue($locked);
+            $plain = $this->temporaryPassword->issue($live);
 
             // Recorded explicitly, because the hash is not audited and the diff
             // may be empty (see ResetUserPasswordAction). No password, no hash.
-            self::recordConsoleEvent($locked, ActivityEvent::PASSWORD_RESET);
+            self::recordConsoleEvent($live, ActivityEvent::PASSWORD_RESET);
 
             return $plain;
         });
@@ -85,15 +85,15 @@ final class ConsoleAccountRecovery
     public function restore(User $account): bool
     {
         return DB::transaction(function () use ($account): bool {
-            $locked = User::onlyTrashed()->lockForUpdate()->find($account->getKey());
+            $deleted = User::onlyTrashed()->lockForUpdate()->find($account->getKey());
 
-            if ($locked === null) {
+            if ($deleted === null) {
                 return false;
             }
 
-            $locked->restore();
+            $deleted->restore();
 
-            self::recordConsoleEvent($locked, ActivityEvent::RESTORED);
+            self::recordConsoleEvent($deleted, ActivityEvent::RESTORED);
 
             return true;
         });
